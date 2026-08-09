@@ -1,6 +1,0 @@
-# Repos that carry the shared prompt as a managed block.
-# Paths are local checkouts; ~ is expanded.
-~/personal/modal
-~/personal/fyra
-~/personal/field
-~/ninjudd/msg
