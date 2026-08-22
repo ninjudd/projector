@@ -1,10 +1,12 @@
 ---
-status: now
+status: done
 ---
 
 # Turn agent-config into Projector
 
 ## 1. Outcome
+
+**Outcome:** Shipped.
 
 Projector is a framework for getting work done in any Git repository. It keeps
 project intent in Git, gives people and agents one command-line interface for
@@ -419,3 +421,38 @@ Projector is ready for its first release when all of these are true:
 ## 12. Open questions
 
 No open questions remain for the first implementation.
+
+## 13. Completion record
+
+The implementation is complete in the following reviewable changes:
+
+- The Projector plan, CLI, portable workflows, dual-host packaging, installer,
+  and migration skill are in the native GitHub stack
+  [#24](https://github.com/ninjudd/projector/pull/24),
+  [#25](https://github.com/ninjudd/projector/pull/25), and
+  [#27](https://github.com/ninjudd/projector/pull/27).
+- The private dual-host replacement for `gog` is in
+  a private configuration repository
+  at `5f2d1fc`. Its isolated install was verified before Projector removed the
+  public copy.
+- Modal is migrated in
+  its private repository at
+  `8005461`.
+- Fyra is migrated in
+  its private repository at
+  `d7b514b`.
+- Field is migrated in
+  its private repository at
+  `f330bdd`.
+- msg is migrated in
+  [`ninjudd/msg` #59](https://github.com/ninjudd/msg/pull/59) at `0a27c5c`.
+
+Each migration passes `projector check`, `git diff --check`, an `rg` sweep for
+legacy paths, and the binary-inclusive `command grep -rl` confirmation. The
+real migrations exposed list-prose, folder-entry-point, relative-link, and
+multiline-link cases that were added to the Projector implementation before
+this closeout.
+
+Projector records `status: done` in the final implementation pull request, as
+required by `docs/projects/README.md`. The repository owner retains the merge
+checkpoint for this stack and the rollout pull requests.
