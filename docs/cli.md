@@ -41,24 +41,26 @@ nothing and exits 0.
 
 ## Browse projects
 
-Run `list` to group projects by status without creating an index:
+Run `list` to group projects by priority without creating an index. Each row
+shows the project's status, and completed projects group together at the end:
 
 ```console
 $ project list
 now:
-  projector                    Turn agent-config into Projector
+  projector                    in-progress  Turn agent-config into Projector
 ```
 
-Add `--status next` to select one status. Run `show <project>` to print the
-entry point, including its frontmatter, or `search <query>` to search project
-names, metadata, plans, and supplemental Markdown files.
+Add `--status ready` or `--priority next` to select one value, or both to
+intersect them. Run `show <project>` to print the entry point, including its
+frontmatter, or `search <query>` to search project names, metadata, plans, and
+supplemental Markdown files.
 
 `list` and `search` read every project, so one plan that does not match the
 format fails the command rather than dropping that project from the results:
 
 ```console
 $ project list
-project: docs/projects/payments/readme.md: status must be one of now|next|later|done (run 'project check' for the full report)
+project: docs/projects/payments/readme.md: status must be one of draft|ready|in-progress|completed (run 'project check' for the full report)
 ```
 
 Run `check` for every problem at once. `show <project>` still reads a single
@@ -72,9 +74,11 @@ Project names are paths relative to `docs/projects/`. For example,
 Create a top-level or nested project:
 
 ```sh
-project create payments --status next
-project create invoices --parent payments --status later
+project create payments --status ready --priority next
+project create invoices --parent payments --priority later
 ```
+
+`create` defaults to `--status draft` and `--priority later`.
 
 `create` opens the new plan when stdin and stdout are interactive. Pass
 `--no-edit` to leave the generated plan ready for another command. In a
@@ -84,13 +88,20 @@ Run `edit <project>` to open an existing plan with `$VISUAL` or `$EDITOR`.
 `edit` has no `--json` mode because the editor owns the interactive session.
 It exits 69 without a terminal or configured editor.
 
-Change only the status scalar with `status`, or use `done` as a readable
-shorthand:
+Change only the status scalar with `status`, only the priority scalar with
+`priority`, or use `done` as a readable shorthand for
+`status <project> completed`:
 
 ```sh
-project status payments now
+project status payments in-progress
+project priority payments now
 project done payments/invoices
 ```
+
+`priority` adds the field when a plan has none, which happens only for a
+completed project being rescheduled. Set the priority first in that case:
+`status` refuses to move a completed plan to another status while it has no
+priority, rather than writing a plan that `check` would then reject.
 
 Projector preserves unrelated frontmatter, formatting, and uncommitted plan
 content. It writes through a temporary file in the project directory and
@@ -106,7 +117,8 @@ $ project check
 Project plans are valid.
 ```
 
-The command reports malformed frontmatter, invalid statuses, missing top-level
+The command reports malformed frontmatter, invalid statuses, invalid or
+missing priorities, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
@@ -114,25 +126,26 @@ filesystems.
 
 ## Consume JSON
 
-Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`, `done`,
-or `check`. Responses use stdout only for JSON and include
-`"schema_version": 1`.
+Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+`priority`, `done`, or `check`. Responses use stdout only for JSON and include
+`"schema_version": 2`.
 
 For example:
 
 ```console
-$ project list --status now --json
+$ project list --priority now --json
 {
   "projects": [
     {
       "name": "projector",
       "owner": null,
       "path": "docs/projects/projector/readme.md",
-      "status": "now",
+      "priority": "now",
+      "status": "in-progress",
       "title": "Turn agent-config into Projector"
     }
   ],
-  "schema_version": 1
+  "schema_version": 2
 }
 ```
 

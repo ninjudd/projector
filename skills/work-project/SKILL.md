@@ -15,9 +15,10 @@ repository and current runtime behavior as authoritative evidence.
    the code and documentation they cite.
 3. Check every open question before claiming readiness. Resolve a product
    choice with the user when the repository cannot answer it.
-4. Run `project status <name> now` only when implementation truly begins.
-   Keep the status change in the implementation pull request; do not open a
-   status-only change.
+4. Run `project status <name> in-progress` only when implementation truly
+   begins, and `project priority <name> now` when the work also becomes the
+   current focus. Keep both changes in the implementation pull request; do not
+   open a status-only change.
 
 ## Implement coherent work
 
@@ -31,8 +32,9 @@ criterion. Append numbered sections rather than renumbering cited sections.
 Create a nested project only when it has an independently useful lifecycle;
 use a supplemental document for details belonging to the parent.
 
-Do not infer a parent's status from a child or vice versa. Do not move project
-directories, generate a tracked status index, or duplicate status elsewhere.
+Do not infer a parent's status or priority from a child or vice versa. Do not
+move project directories, generate a tracked status index, or duplicate either
+field elsewhere.
 
 ## Verify the current slice
 
@@ -45,6 +47,7 @@ git diff --check
 ```
 
 Compare the result against the plan's acceptance criteria. If required work
-remains, record the exact state and leave the project `now`, `next`, or
-`later` as the user's real scheduling intent requires. If every criterion is
-proven, continue with `finish-project` in the same implementation change.
+remains, record the exact state, leave the status `in-progress`, and set the
+priority to `now`, `next`, or `later` as the user's real scheduling intent
+requires. If every criterion is proven, continue with `finish-project` in the
+same implementation change.

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .core import (
+    PRIORITIES,
     STATUSES,
     EnvironmentError,
     ProjectorError,
@@ -31,6 +32,7 @@ def parser() -> argparse.ArgumentParser:
 
     listing = subcommands.add_parser("list", help="list projects")
     listing.add_argument("--status", choices=STATUSES)
+    listing.add_argument("--priority", choices=PRIORITIES)
     add_output(listing)
 
     show = subcommands.add_parser("show", help="show one project")
@@ -40,11 +42,13 @@ def parser() -> argparse.ArgumentParser:
     search = subcommands.add_parser("search", help="search project content")
     search.add_argument("query")
     search.add_argument("--status", choices=STATUSES)
+    search.add_argument("--priority", choices=PRIORITIES)
     add_output(search)
 
     create = subcommands.add_parser("create", help="create a project")
     create.add_argument("project")
-    create.add_argument("--status", choices=STATUSES, default="later")
+    create.add_argument("--status", choices=STATUSES, default="draft")
+    create.add_argument("--priority", choices=PRIORITIES, default="later")
     create.add_argument("--parent")
     create.add_argument("--no-edit", action="store_true")
     add_output(create)
@@ -57,7 +61,12 @@ def parser() -> argparse.ArgumentParser:
     status.add_argument("status", choices=STATUSES)
     add_output(status)
 
-    done = subcommands.add_parser("done", help="mark a project done")
+    priority = subcommands.add_parser("priority", help="change project priority")
+    priority.add_argument("project")
+    priority.add_argument("priority", choices=PRIORITIES)
+    add_output(priority)
+
+    done = subcommands.add_parser("done", help="mark a project completed")
     done.add_argument("project")
     add_output(done)
 
@@ -101,6 +110,8 @@ def run(arguments: argparse.Namespace) -> int:
         projects = store.projects()
         if arguments.status:
             projects = [project for project in projects if project.status == arguments.status]
+        if arguments.priority:
+            projects = [project for project in projects if project.priority == arguments.priority]
         if arguments.json_output:
             print(json_text({"projects": [project.public(store.root) for project in projects]}))
         else:
@@ -113,21 +124,26 @@ def run(arguments: argparse.Namespace) -> int:
         else:
             print(content, end="" if content.endswith("\n") else "\n")
     elif command == "search":
-        matches = store.search(arguments.query, arguments.status)
+        matches = store.search(arguments.query, arguments.status, arguments.priority)
         if arguments.json_output:
             print(json_text({"matches": matches}))
         else:
             for match in matches:
                 print(f"{match['project']}\t{match['path']}:{match['line']}\t{match['text']}")
     elif command == "create":
-        project = store.create(arguments.project, arguments.status, arguments.parent)
+        project = store.create(
+            arguments.project, arguments.status, arguments.priority, arguments.parent
+        )
         emit_path(store, project.path, arguments.json_output, "created")
         if not arguments.no_edit and sys.stdin.isatty() and sys.stdout.isatty():
             open_editor(project.path)
     elif command == "edit":
         open_editor(store.resolve(arguments.project).path)
+    elif command == "priority":
+        project, changed = store.set_priority(arguments.project, arguments.priority)
+        emit_path(store, project.path, arguments.json_output, "updated" if changed else "unchanged")
     elif command in ("status", "done"):
-        new_status = arguments.status if command == "status" else "done"
+        new_status = arguments.status if command == "status" else "completed"
         project, changed = store.set_status(arguments.project, new_status)
         emit_path(store, project.path, arguments.json_output, "updated" if changed else "unchanged")
         if command == "done":
