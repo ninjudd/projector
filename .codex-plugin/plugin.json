@@ -13,8 +13,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Projector",
-    "shortDescription": "Plan, implement, migrate, and review Git projects",
-    "longDescription": "Projector keeps project plans in Git and gives coding agents portable workflows for planning, implementation, migration, review, and review fixes.",
+    "shortDescription": "Plan, implement, and review Git projects",
+    "longDescription": "Projector keeps project plans in Git and gives coding agents portable workflows for planning, implementation, review, and review fixes.",
     "developerName": "Justin Balthrop",
     "category": "Productivity",
     "capabilities": ["Planning", "Code", "Review"],

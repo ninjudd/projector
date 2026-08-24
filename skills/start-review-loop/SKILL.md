@@ -113,23 +113,26 @@ Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
 
 ## Gate readiness claims in plans
 
-A plan's `status: now` is an executable-readiness claim. On a pull request
-whose substance is a plan, or one that changes a plan from `next` or `later`
-to `now`, every question introduced or changed by that pull request must be
-answered or explicitly deferred to implementation. A readiness flip owns every
-question still open at the flip, even if the questions predate the diff.
+A plan's `status: ready` or `status: in-progress` is an executable-readiness
+claim. On a pull request whose substance is a plan, or one that changes a plan
+from `draft` to either of those, every question introduced or changed by that
+pull request must be answered or explicitly deferred to implementation. A
+readiness flip owns every question still open at the flip, even if the
+questions predate the diff.
 
 An owned unresolved question is a blocking inline finding. A pre-existing
-question on a plan already at `now` is noted in the review body rather than a
-thread, because this change did not introduce the blocker. A question explicitly
-answered by building the implementation does not block.
+question on a plan already at `ready` or `in-progress` is noted in the review
+body rather than a thread, because this change did not introduce the blocker.
+A question explicitly answered by building the implementation does not block.
 
-Plans at `next`, `later`, or `done` make no executable-readiness claim, so
-their open questions do not withhold approval. Name the status and questions in
-the review body so the exemption is visible. Run `project list --json`, match
-the changed path to the longest canonical project directory, and read its state
-with `project show <name> --json`. Supplemental documents carry no
-independent status.
+Plans at `draft` or `completed` make no executable-readiness claim, so their
+open questions do not withhold approval. A plan's `priority` — `now`, `next`,
+or `later` — schedules the work and never claims readiness, so never gate on
+it. Name the status and questions in the review body so the exemption is
+visible. Run `project list --json`, match the changed path to the longest
+canonical project directory, and read its state with
+`project show <name> --json`. Supplemental documents carry no independent
+status.
 
 ## Continue after fixes
 

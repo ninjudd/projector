@@ -11,19 +11,21 @@ Read `docs/projects/README.md` before changing project plans.
 - Store each project at `docs/projects/<name>/readme.md`. The lowercase
   filename is the project sentinel.
 - Derive the canonical name from the path relative to `docs/projects/`.
-- Use only `now`, `next`, `later`, or `done` in `status`
-  frontmatter.
-- Treat `now` as the only executable-readiness claim. A plan at `now` must
-  answer or deliberately defer every question that blocks implementation.
-- Change status in frontmatter. Never move a project, create a shared status
-  list, or generate a tracked index.
+- Use only `draft`, `ready`, `in-progress`, or `completed` in `status`
+  frontmatter, and only `now`, `next`, or `later` in `priority`. Priority is
+  required unless the status is `completed`.
+- Treat `ready` as the executable-readiness claim. A plan at `ready` or
+  `in-progress` must answer or deliberately defer every question that blocks
+  implementation. Priority makes no readiness claim.
+- Change status and priority in frontmatter. Never move a project, create a
+  shared queue file, or generate a tracked index.
 - Allow supplemental files and recursively nested projects. A directory is a
   project only when it has its own lowercase `readme.md`.
 - Number plan sections and append new sections without renumbering cited
   sections.
-- Keep status current in the same pull request that changes what it claims.
-  Mark a completed project `done` and record whether it shipped, was
-  abandoned, or was superseded.
+- Keep status and priority current in the same pull request that changes what
+  they claim. Mark a finished project `completed` and record whether it
+  shipped, was abandoned, or was superseded.
 
 Use `project` for project discovery and mutation rather than duplicating
 frontmatter parsing in a skill:
@@ -32,6 +34,7 @@ frontmatter parsing in a skill:
 project list --json
 project show <name> --json
 project status <name> <status>
+project priority <name> <priority>
 project check
 ```
 

@@ -2,10 +2,11 @@
 
 Projector is a Git-native framework for getting work done in any repository.
 It gives every project a permanent plan under `docs/projects/`, derives status
-views from frontmatter, and supplies one CLI for people and coding agents.
+and priority views from frontmatter, and supplies one CLI for people and coding
+agents.
 
-Projects never move when their status changes. Two branches working on
-different projects therefore edit different files instead of contending on a
+Projects never move when their status or priority changes. Two branches working
+on different projects therefore edit different files instead of contending on a
 shared `now.md`, `next.md`, or `later.md` queue.
 
 ## Install the CLI
@@ -58,9 +59,9 @@ directories or touch user-owned files. Run `./install.sh status` before an
 upgrade to inspect those paths.
 
 The plugin provides `plan-project`, `work-project`, `finish-project`,
-`migrate-projects`, `start-review-loop`, and `start-fix-loop`. Claude invokes a
-plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`. The core
-workflows use the local CLI and do not require MCP.
+`start-review-loop`, and `start-fix-loop`. Claude invokes a plugin skill as
+`/projector:<skill>`; Codex invokes it as `$<skill>`. The core workflows use
+the local CLI and do not require MCP.
 
 ## Adopt Projector in a repository
 
@@ -68,7 +69,7 @@ Run `init` from anywhere inside a Git repository:
 
 ```sh
 project init
-project create cool-new-feature --status next --no-edit
+project create cool-new-feature --status ready --priority next --no-edit
 project check
 ```
 
@@ -84,25 +85,27 @@ docs/projects/cool-new-feature/
     └── readme.md
 ```
 
-Each project entry point has one `status` value: `now`, `next`, `later`, or
-`done`. Run `project list` to group projects at query time. Projector never
-writes a tracked status index.
+Each project entry point carries two independent fields. `status` is the
+lifecycle: `draft`, `ready`, `in-progress`, or `completed`. `priority` is the
+schedule: `now`, `next`, or `later`. Run `project list` to group projects at
+query time. Projector never writes a tracked status index.
 
 ## Use the CLI
 
 ```sh
-project list [--status now|next|later|done] [--json]
+project list [--status <status>] [--priority now|next|later] [--json]
 project show <project> [--json]
-project search <query> [--status <status>] [--json]
-project create <project> [--status later] [--parent <project>]
+project search <query> [--status <status>] [--priority <priority>] [--json]
+project create <project> [--status draft] [--priority later] [--parent <project>]
 project edit <project>
-project status <project> <status>
+project status <project> draft|ready|in-progress|completed
+project priority <project> now|next|later
 project done <project>
 project check [--json]
 ```
 
 Use `--json` when an agent or script consumes output. Every JSON response has
-`"schema_version": 1`; diagnostics go to stderr. See [the CLI
+`"schema_version": 2`; diagnostics go to stderr. See [the CLI
 reference](docs/cli.md), [the plugin guide](docs/plugins.md), and [the project
 convention](docs/projects/README.md) for the complete contracts.
 

@@ -1,5 +1,5 @@
 ---
-status: done
+status: completed
 ---
 
 # Turn agent-config into Projector
@@ -453,7 +453,7 @@ real migrations exposed list-prose, folder-entry-point, relative-link, and
 multiline-link cases that were added to the Projector implementation before
 this closeout.
 
-Projector records `status: done` in the final implementation pull request, as
+Projector records completion in the final implementation pull request, as
 required by `docs/projects/README.md`. The repository owner retains the merge
 checkpoint for this stack and the rollout pull requests.
 
@@ -469,3 +469,41 @@ contradict them are listed here rather than rewritten above.
   `project`. Read every `projector <subcommand>` example above as
   `project <subcommand>`. See [the CLI guide](../../cli.md) for the current
   surface.
+
+- **`status` and `priority` are separate fields.** Sections 3, 4, 8, and 11
+  describe the original single-field model, in which
+  `status: now|next|later|done` carried both the lifecycle and the schedule.
+  That conflation was wrong: "how far along is this work" and "when should we
+  do it" are independent, and one field could not state both, so a plan being
+  actively written could not be marked as current attention without also
+  claiming it was executable. The format now uses two required fields:
+
+  ```yaml
+  ---
+  status: draft
+  priority: later
+  ---
+  ```
+
+  `status` is the lifecycle — `draft`, `ready`, `in-progress`, or
+  `completed`. `priority` is the schedule — `now`, `next`, or `later`.
+  Priority is required unless the status is `completed`, because finished work
+  needs no schedule. The readiness claim that section 3 assigned to `now`
+  belongs to `ready` and `in-progress`; priority makes none at all.
+
+  The CLI gains `project priority <project> <priority>` and a `--priority`
+  flag on `list`, `search`, and `create`. `project done` writes
+  `status: completed`. `list` groups by priority and shows each project's
+  status, with completed projects last. JSON responses carry
+  `"schema_version": 2` and include `priority`. Nothing outside this
+  repository had adopted the single-field format, so this was a clean
+  replacement rather than a migration: no compatibility shim reads the old
+  vocabulary.
+
+  This also retired the `migrate-projects` skill that sections 6, 8, and 11
+  introduced. It imported the pre-Projector `now.md`/`next.md`/`later.md` and
+  `all/` convention, and section 13 records that every known repository —
+  Modal, Fyra, Field, and msg — completed that import. Section 11 committed to
+  promoting migration into the CLI only if ongoing use proved it durable; it
+  did not, so the skill, its script, and its tests are removed rather than
+  updated to emit two fields.

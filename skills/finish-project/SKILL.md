@@ -28,9 +28,10 @@ and link the replacement when one exists. Preserve the history of decisions
 and unanswered questions that still explain the result.
 
 Run `project done <name>` in the implementation change that completes the
-project. Do not defer the status update to a follow-up pull request, and do not
-mark an early slice done when later slices still carry the same promised
-outcome.
+project; it sets the status to `completed`, after which the project needs no
+priority. Do not defer the status update to a follow-up pull request, and do
+not mark an early slice completed when later slices still carry the same
+promised outcome.
 
 ## Validate the handoff
 
