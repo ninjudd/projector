@@ -15,6 +15,18 @@ projector init
 If projects already exist but the convention file is missing, `init` adds only
 that file. It refuses to replace an existing convention file.
 
+Every other command requires that directory. When it is missing, Projector
+names the path it looked for and exits 66 instead of reporting an empty
+repository:
+
+```console
+$ projector list
+projector: projects directory not found: docs/projects (run 'projector init' to adopt the convention)
+```
+
+An adopted repository with no projects yet is not an error. `list` prints
+nothing and exits 0.
+
 ## Browse projects
 
 Run `list` to group projects by status without creating an index:
@@ -28,6 +40,17 @@ now:
 Add `--status next` to select one status. Run `show <project>` to print the
 entry point, including its frontmatter, or `search <query>` to search project
 names, metadata, plans, and supplemental Markdown files.
+
+`list` and `search` read every project, so one plan that does not match the
+format fails the command rather than dropping that project from the results:
+
+```console
+$ projector list
+projector: docs/projects/payments/readme.md: status must be one of now|next|later|done (run 'projector check' for the full report)
+```
+
+Run `check` for every problem at once. `show <project>` still reads a single
+valid plan while another plan is malformed.
 
 Project names are paths relative to `docs/projects/`. For example,
 `docs/projects/payments/invoices/readme.md` is `payments/invoices`.
@@ -108,6 +131,6 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `65` | Project data is invalid or a mutation is unsafe. |
-| `66` | The requested project does not exist. |
+| `66` | The requested project or the projects directory does not exist. |
 | `67` | The requested project is ambiguous. |
 | `69` | Git or the interactive editor environment is unavailable. |

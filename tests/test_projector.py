@@ -162,14 +162,17 @@ class DiscoveryTests(RepositoryTestCase):
                 json.loads(stdout)["path"],
             )
 
-    def test_invalid_plan_does_not_disable_unrelated_projects(self) -> None:
+    def test_invalid_plan_fails_discovery_with_a_diagnostic(self) -> None:
         self.plan("good", "now")
         self.plan("bad", "shipped")
 
-        code, stdout, stderr = self.invoke("list")
-        self.assertEqual(0, code, stderr)
-        self.assertIn("good", stdout)
-        self.assertNotIn("bad", stdout)
+        for arguments in (("list",), ("search", "good")):
+            code, stdout, stderr = self.invoke(*arguments)
+            self.assertEqual(65, code, arguments)
+            self.assertEqual("", stdout)
+            self.assertIn("bad/readme.md", stderr)
+            self.assertIn("status must be one of", stderr)
+            self.assertIn("projector check", stderr)
 
         code, stdout, stderr = self.invoke("show", "good")
         self.assertEqual(0, code, stderr)
@@ -178,6 +181,31 @@ class DiscoveryTests(RepositoryTestCase):
         code, _, stderr = self.invoke("show", "bad")
         self.assertEqual(65, code)
         self.assertIn("status must be one of", stderr)
+
+    def test_list_accepts_an_adopted_repository_with_no_projects(self) -> None:
+        code, stdout, stderr = self.invoke("list", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual([], json.loads(stdout)["projects"])
+
+    def test_commands_require_the_projects_directory(self) -> None:
+        (self.projects / "README.md").unlink()
+        self.projects.rmdir()
+
+        for arguments in (
+            ("list",),
+            ("search", "needle"),
+            ("show", "alpha"),
+            ("create", "alpha", "--no-edit"),
+            ("status", "alpha", "now"),
+            ("done", "alpha"),
+        ):
+            code, stdout, stderr = self.invoke(*arguments)
+            self.assertEqual(66, code, arguments)
+            self.assertEqual("", stdout, arguments)
+            self.assertIn("projects directory not found", stderr)
+            self.assertIn("projector init", stderr)
+            self.assertFalse(self.projects.exists(), arguments)
 
 
 class MutationTests(RepositoryTestCase):
