@@ -112,7 +112,8 @@ index that can become stale or conflict with another branch.
 
 ## Rename a project deliberately
 
-Changing status or priority never changes a project path. If the project itself needs a
-new name or parent, use `git mv` and update every inbound reference in the same
-change. Start the sweep with `rg`, then confirm it with `command grep -rl` so a
-binary-classified text file cannot hide a stale reference.
+Changing status or priority never changes a project path. If the project
+itself needs a new name or parent, use `git mv` and update every inbound
+reference in the same change. Start the sweep with `rg`, then confirm it with
+`command grep -rl` so a binary-classified text file cannot hide a stale
+reference.

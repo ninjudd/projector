@@ -63,6 +63,6 @@ git diff --check
 
 Confirm that the status makes an honest readiness claim, the priority matches
 the user's real scheduling intent, the acceptance criteria are observable, and
-every open question has an owner or deliberate deferral. Leave the plan changes visible for ordinary Git review; do not commit,
-push, or open a pull request unless the user or repository workflow asks for
-those actions.
+every open question has an owner or deliberate deferral. Leave the plan changes
+visible for ordinary Git review; do not commit, push, or open a pull request
+unless the user or repository workflow asks for those actions.
