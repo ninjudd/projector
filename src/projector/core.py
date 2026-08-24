@@ -301,10 +301,11 @@ class ProjectStore:
         if status != "completed":
             project = self.resolve(name)
             if project.priority is None:
-                choices = "|".join(PRIORITIES)
+                choices = ", ".join(PRIORITIES[:-1]) + f", or {PRIORITIES[-1]}"
                 raise ProjectorError(
                     f"{self._relative(project.path)}: leaving completed needs a"
-                    f" priority first; run projector priority {name} {choices}"
+                    f" priority first; run projector priority {name} with"
+                    f" {choices}"
                 )
         return self._set_field(name, "status", status)
 

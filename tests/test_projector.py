@@ -623,7 +623,7 @@ class ValidationTests(RepositoryTestCase):
     def test_invalid_encoding_has_a_diagnostic_without_a_traceback(self) -> None:
         path = self.projects / "encoded" / "readme.md"
         path.parent.mkdir()
-        path.write_bytes(b"---\nstatus: now\n---\n\n# Bad \xff\n")
+        path.write_bytes(b"---\nstatus: draft\npriority: later\n---\n\n# Bad \xff\n")
 
         code, _, stderr = self.invoke("show", "encoded")
 
