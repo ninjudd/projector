@@ -368,7 +368,7 @@ class MutationTests(RepositoryTestCase):
         code, _, stderr = self.invoke("status", "alpha", "in-progress")
 
         self.assertEqual(65, code)
-        self.assertIn("projector priority alpha", stderr)
+        self.assertIn("run project priority alpha", stderr)
         self.assertEqual(before, path.read_text())
 
         code, _, stderr = self.invoke("check")

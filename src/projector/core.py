@@ -304,7 +304,7 @@ class ProjectStore:
                 choices = ", ".join(PRIORITIES[:-1]) + f", or {PRIORITIES[-1]}"
                 raise ProjectorError(
                     f"{self._relative(project.path)}: leaving completed needs a"
-                    f" priority first; run projector priority {name} with"
+                    f" priority first; run project priority {name} with"
                     f" {choices}"
                 )
         return self._set_field(name, "status", status)
