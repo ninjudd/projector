@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import json
 import unittest
 from pathlib import Path
@@ -51,6 +52,15 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("projector", codex["plugins"][0]["name"])
         self.assertTrue((ROOT / ".claude-plugin" / "plugin.json").exists())
         self.assertTrue((ROOT / ".codex-plugin" / "plugin.json").exists())
+
+    def test_the_installed_command_is_project(self) -> None:
+        configuration = configparser.ConfigParser()
+        configuration.read(ROOT / "setup.cfg")
+
+        scripts = configuration["options.entry_points"]["console_scripts"].strip()
+
+        self.assertEqual("project = projector.cli:main", scripts)
+        self.assertEqual("projector-cli", configuration["metadata"]["name"])
 
     def test_public_review_loops_have_no_personal_identity_defaults(self) -> None:
         for name in ("start-review-loop", "start-fix-loop"):

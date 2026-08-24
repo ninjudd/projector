@@ -10,5 +10,5 @@ status directories, or symlinks, and do not move a project when its status
 changes. Number plan sections and never renumber them after another document
 or code comment cites them.
 
-Run `projector list` to browse projects and `projector check` to validate the
+Run `project list` to browse projects and `project check` to validate the
 tree.

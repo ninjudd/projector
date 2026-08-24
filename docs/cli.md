@@ -1,15 +1,23 @@
 # Use the Projector CLI
 
-Projector discovers the Git root from your current directory and reads projects
-under `docs/projects/`. Pass `--root <path>` to select a repository explicitly,
-or `--projects-dir <path>` to use another project-plan directory.
+Projector installs one command, `project`. It discovers the Git root from your
+current directory and reads projects under `docs/projects/`. Pass
+`--root <path>` to select a repository explicitly, or `--projects-dir <path>` to
+use another project-plan directory.
+
+Running the package as a module is equivalent when the command is not on your
+`PATH`:
+
+```sh
+python3 -m projector check
+```
 
 ## Adopt a repository
 
 Run `init` once to create `docs/projects/README.md`:
 
 ```sh
-projector init
+project init
 ```
 
 If projects already exist but the convention file is missing, `init` adds only
@@ -20,8 +28,8 @@ missing, Projector names the path it looked for and exits 66 instead of
 reporting an empty repository:
 
 ```console
-$ projector list
-projector: projects directory not found: docs/projects (run 'projector init' to adopt the convention)
+$ project list
+project: projects directory not found: docs/projects (run 'project init' to adopt the convention)
 ```
 
 `check` is the exception, because reporting problems is its job: it records the
@@ -36,7 +44,7 @@ nothing and exits 0.
 Run `list` to group projects by status without creating an index:
 
 ```console
-$ projector list
+$ project list
 now:
   projector                    Turn agent-config into Projector
 ```
@@ -49,8 +57,8 @@ names, metadata, plans, and supplemental Markdown files.
 format fails the command rather than dropping that project from the results:
 
 ```console
-$ projector list
-projector: docs/projects/payments/readme.md: status must be one of now|next|later|done (run 'projector check' for the full report)
+$ project list
+project: docs/projects/payments/readme.md: status must be one of now|next|later|done (run 'project check' for the full report)
 ```
 
 Run `check` for every problem at once. `show <project>` still reads a single
@@ -64,8 +72,8 @@ Project names are paths relative to `docs/projects/`. For example,
 Create a top-level or nested project:
 
 ```sh
-projector create payments --status next
-projector create invoices --parent payments --status later
+project create payments --status next
+project create invoices --parent payments --status later
 ```
 
 `create` opens the new plan when stdin and stdout are interactive. Pass
@@ -80,8 +88,8 @@ Change only the status scalar with `status`, or use `done` as a readable
 shorthand:
 
 ```sh
-projector status payments now
-projector done payments/invoices
+project status payments now
+project done payments/invoices
 ```
 
 Projector preserves unrelated frontmatter, formatting, and uncommitted plan
@@ -94,7 +102,7 @@ commands make no Git commits.
 Run `check` before handing over project changes:
 
 ```console
-$ projector check
+$ project check
 Project plans are valid.
 ```
 
@@ -113,7 +121,7 @@ or `check`. Responses use stdout only for JSON and include
 For example:
 
 ```console
-$ projector list --status now --json
+$ project list --status now --json
 {
   "projects": [
     {

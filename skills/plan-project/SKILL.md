@@ -11,7 +11,7 @@ agent can execute without reconstructing the conversation.
 ## Establish context
 
 1. Read the repository instructions and `docs/projects/README.md`.
-2. Run `projector list --json` and search for overlapping or parent projects.
+2. Run `project list --json` and search for overlapping or parent projects.
 3. Inspect the code and current documentation that constrain the work. Do not
    design from the request alone when the repository can answer a question.
 4. Resolve the intended canonical name and whether this is a top-level or
@@ -20,9 +20,9 @@ agent can execute without reconstructing the conversation.
 
 ## Write the plan
 
-Use `projector create <name> --status <status> --no-edit`, or inspect the
-existing project with `projector show <name> --json`, edit its plan content,
-and change scheduling with `projector status <name> <status>`. Choose status
+Use `project create <name> --status <status> --no-edit`, or inspect the
+existing project with `project show <name> --json`, edit its plan content,
+and change scheduling with `project status <name> <status>`. Choose status
 from the user's intent:
 
 - Use `later` for recorded work that is not ready or prioritized.
@@ -45,8 +45,8 @@ than relying on chat history.
 Run:
 
 ```sh
-projector show <name>
-projector check
+project show <name>
+project check
 git diff --check
 ```
 

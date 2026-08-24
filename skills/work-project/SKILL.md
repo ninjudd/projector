@@ -10,12 +10,12 @@ repository and current runtime behavior as authoritative evidence.
 
 ## Start from the project
 
-1. Read the repository instructions and run `projector show <name> --json`.
+1. Read the repository instructions and run `project show <name> --json`.
 2. Read the entry point, its supplemental files, relevant nested projects, and
    the code and documentation they cite.
 3. Check every open question before claiming readiness. Resolve a product
    choice with the user when the repository cannot answer it.
-4. Run `projector status <name> now` only when implementation truly begins.
+4. Run `project status <name> now` only when implementation truly begins.
    Keep the status change in the implementation pull request; do not open a
    status-only change.
 
@@ -39,8 +39,8 @@ directories, generate a tracked status index, or duplicate status elsewhere.
 Run the repository's full validation gate plus:
 
 ```sh
-projector show <name>
-projector check
+project show <name>
+project check
 git diff --check
 ```
 

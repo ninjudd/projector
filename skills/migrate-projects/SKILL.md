@@ -36,12 +36,12 @@ The mapping is deliberate:
 
 ## Apply and verify
 
-Require a completely clean repository and an installed `projector` executable,
+Require a completely clean repository and an installed `project` executable,
 then run:
 
 ```sh
 python3 <skill-directory>/scripts/migrate_projects.py --root . --apply
-projector check
+project check
 rg -n 'docs/projects/all|\]\(all/' .
 command grep -rl 'docs/projects/all\|](all/' .
 git diff --check

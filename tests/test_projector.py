@@ -172,7 +172,7 @@ class DiscoveryTests(RepositoryTestCase):
             self.assertEqual("", stdout)
             self.assertIn("bad/readme.md", stderr)
             self.assertIn("status must be one of", stderr)
-            self.assertIn("projector check", stderr)
+            self.assertIn("project check", stderr)
 
         code, stdout, stderr = self.invoke("show", "good")
         self.assertEqual(0, code, stderr)
@@ -232,7 +232,7 @@ class DiscoveryTests(RepositoryTestCase):
             self.assertEqual(66, code, arguments)
             self.assertEqual("", stdout, arguments)
             self.assertIn("projects directory not found", stderr)
-            self.assertIn("projector init", stderr)
+            self.assertIn("project init", stderr)
             self.assertFalse(self.projects.exists(), arguments)
 
 

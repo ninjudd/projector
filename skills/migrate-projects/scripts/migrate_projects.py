@@ -447,22 +447,22 @@ def repair_markdown_links(root: Path, report: Report) -> None:
             path.write_text(updated, encoding="utf-8")
 
 
-def projector_command() -> list[str]:
-    executable = shutil.which("projector")
+def project_command() -> list[str]:
+    executable = shutil.which("project")
     if executable:
         return [executable]
     if importlib.util.find_spec("projector") is not None:
         return [sys.executable, "-m", "projector"]
-    raise RuntimeError("install the projector CLI before applying migration")
+    raise RuntimeError("install the Projector CLI before applying migration")
 
 
 def apply(root: Path, report: Report) -> None:
     if report.errors:
         raise RuntimeError("refusing to apply an ambiguous migration")
-    command = projector_command()
+    command = project_command()
     probe = subprocess.run([*command, "--help"], text=True, capture_output=True)
     if probe.returncode:
-        raise RuntimeError("projector CLI is unavailable or failed its preflight")
+        raise RuntimeError("Projector CLI is unavailable or failed its preflight")
     dirty = git(root, "status", "--porcelain").stdout
     if dirty:
         raise RuntimeError("repository has uncommitted changes")
@@ -550,7 +550,7 @@ def _apply_changes(root: Path, report: Report, command: list[str]) -> None:
     )
     if initialized.returncode:
         raise RuntimeError(
-            f"projector init failed:\n{initialized.stderr or initialized.stdout}"
+            f"project init failed:\n{initialized.stderr or initialized.stdout}"
         )
     git(root, "add", "docs/projects/README.md")
 
@@ -562,7 +562,7 @@ def _apply_changes(root: Path, report: Report, command: list[str]) -> None:
         capture_output=True,
     )
     if check.returncode:
-        raise RuntimeError(f"projector check failed:\n{check.stderr or check.stdout}")
+        raise RuntimeError(f"project check failed:\n{check.stderr or check.stdout}")
 
 
 def render(report: Report) -> str:

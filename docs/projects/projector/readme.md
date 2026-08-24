@@ -456,3 +456,16 @@ this closeout.
 Projector records `status: done` in the final implementation pull request, as
 required by `docs/projects/README.md`. The repository owner retains the merge
 checkpoint for this stack and the rollout pull requests.
+
+## 14. Later corrections
+
+Sections 1 through 13 record the project as it shipped. Later changes that
+contradict them are listed here rather than rewritten above.
+
+- **The installed command is `project`, not `projector`.** Sections 4, 6, 8, 9,
+  10, and 13 name the executable `projector`. The framework, this repository,
+  the Python package, the distribution `projector-cli`, and the host plugin
+  `projector@projector` keep that name; only the command a person types is
+  `project`. Read every `projector <subcommand>` example above as
+  `project <subcommand>`. See [the CLI guide](../../cli.md) for the current
+  surface.

@@ -308,12 +308,12 @@ class MigrationTests(unittest.TestCase):
         self.commit_fixture()
 
         with mock.patch.object(
-            MIGRATE, "projector_command", side_effect=RuntimeError("install projector")
+            MIGRATE, "project_command", side_effect=RuntimeError("install the CLI")
         ):
             code, _, stderr = self.invoke("--apply")
 
         self.assertEqual(65, code)
-        self.assertIn("install projector", stderr)
+        self.assertIn("install the CLI", stderr)
         self.assertTrue((self.all / "alpha.md").exists())
 
     def test_destination_file_is_reported_before_apply(self) -> None:

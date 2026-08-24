@@ -15,8 +15,12 @@ Projector requires Python 3.9 or newer. Install an isolated executable with
 
 ```sh
 pipx install git+https://github.com/ninjudd/projector.git
-projector --help
+project --help
 ```
+
+The framework is Projector; the command it installs is `project`. The
+repository, the `projector-cli` distribution, the Python package, and the
+`projector@projector` host plugin all keep the longer name.
 
 For local development, install the checkout in editable mode:
 
@@ -24,7 +28,7 @@ For local development, install the checkout in editable mode:
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -e .
-.venv/bin/projector --help
+.venv/bin/project --help
 ```
 
 ## Install the agent workflows
@@ -63,9 +67,9 @@ workflows use the local CLI and do not require MCP.
 Run `init` from anywhere inside a Git repository:
 
 ```sh
-projector init
-projector create cool-new-feature --status next --no-edit
-projector check
+project init
+project create cool-new-feature --status next --no-edit
+project check
 ```
 
 This creates the convention at `docs/projects/README.md` and the project plan
@@ -81,20 +85,20 @@ docs/projects/cool-new-feature/
 ```
 
 Each project entry point has one `status` value: `now`, `next`, `later`, or
-`done`. Run `projector list` to group projects at query time. Projector never
+`done`. Run `project list` to group projects at query time. Projector never
 writes a tracked status index.
 
 ## Use the CLI
 
 ```sh
-projector list [--status now|next|later|done] [--json]
-projector show <project> [--json]
-projector search <query> [--status <status>] [--json]
-projector create <project> [--status later] [--parent <project>]
-projector edit <project>
-projector status <project> <status>
-projector done <project>
-projector check [--json]
+project list [--status now|next|later|done] [--json]
+project show <project> [--json]
+project search <query> [--status <status>] [--json]
+project create <project> [--status later] [--parent <project>]
+project edit <project>
+project status <project> <status>
+project done <project>
+project check [--json]
 ```
 
 Use `--json` when an agent or script consumes output. Every JSON response has

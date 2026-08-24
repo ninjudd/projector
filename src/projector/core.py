@@ -171,7 +171,7 @@ class ProjectStore:
         if not self.projects_dir.is_dir():
             raise ProjectNotFound(
                 f"projects directory not found: {self._relative(self.projects_dir)}"
-                " (run 'projector init' to adopt the convention)"
+                " (run 'project init' to adopt the convention)"
             )
 
     def _entry_points(self) -> list[Path]:
@@ -193,7 +193,7 @@ class ProjectStore:
                 if not message.startswith(prefix):
                     message = f"{prefix} {message}"
                 raise ProjectorError(
-                    f"{message} (run 'projector check' for the full report)"
+                    f"{message} (run 'project check' for the full report)"
                 ) from error
             folded = project.name.casefold()
             if folded in found:

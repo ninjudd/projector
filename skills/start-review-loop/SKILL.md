@@ -126,9 +126,9 @@ answered by building the implementation does not block.
 
 Plans at `next`, `later`, or `done` make no executable-readiness claim, so
 their open questions do not withhold approval. Name the status and questions in
-the review body so the exemption is visible. Run `projector list --json`, match
+the review body so the exemption is visible. Run `project list --json`, match
 the changed path to the longest canonical project directory, and read its state
-with `projector show <name> --json`. Supplemental documents carry no
+with `project show <name> --json`. Supplemental documents carry no
 independent status.
 
 ## Continue after fixes
