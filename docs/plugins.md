@@ -82,6 +82,6 @@ migration.
 ## Work without MCP
 
 Projector currently ships no MCP server. Every core skill uses the public
-`projector` CLI and ordinary Git or GitHub commands. A future MCP adapter can
+`project` CLI and ordinary Git or GitHub commands. A future MCP adapter can
 expose the same versioned project operations without becoming the package that
 contains the skills.

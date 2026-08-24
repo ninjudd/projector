@@ -25,14 +25,14 @@ Read `docs/projects/README.md` before changing project plans.
   Mark a completed project `done` and record whether it shipped, was
   abandoned, or was superseded.
 
-Use `projector` for project discovery and mutation rather than duplicating
+Use `project` for project discovery and mutation rather than duplicating
 frontmatter parsing in a skill:
 
 ```sh
-projector list --json
-projector show <name> --json
-projector status <name> <status>
-projector check
+project list --json
+project show <name> --json
+project status <name> <status>
+project check
 ```
 
 ## Keep the core portable

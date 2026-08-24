@@ -10,7 +10,7 @@ the outcome.
 
 ## Prove the outcome
 
-1. Read the repository instructions and `projector show <name> --json`.
+1. Read the repository instructions and `project show <name> --json`.
 2. Enumerate every acceptance criterion and identify the strongest available
    evidence for it: tests, runtime behavior, generated artifacts, or current
    external state.
@@ -27,7 +27,7 @@ design. State whether the project shipped, was abandoned, or was superseded,
 and link the replacement when one exists. Preserve the history of decisions
 and unanswered questions that still explain the result.
 
-Run `projector done <name>` in the implementation change that completes the
+Run `project done <name>` in the implementation change that completes the
 project. Do not defer the status update to a follow-up pull request, and do not
 mark an early slice done when later slices still carry the same promised
 outcome.
@@ -37,8 +37,8 @@ outcome.
 Run:
 
 ```sh
-projector show <name>
-projector check
+project show <name>
+project check
 git diff --check
 ```
 

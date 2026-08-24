@@ -74,9 +74,9 @@ install_codex() {
 }
 
 show_status() {
-  command -v projector >/dev/null 2>&1 &&
-    printf '%-12s %s\n' "cli" "$(command -v projector)" ||
-    printf '%-12s %s\n' "cli-missing" "projector"
+  command -v project >/dev/null 2>&1 &&
+    printf '%-12s %s\n' "cli" "$(command -v project)" ||
+    printf '%-12s %s\n' "cli-missing" "project"
 
   local host source target state
   for host in claude codex; do

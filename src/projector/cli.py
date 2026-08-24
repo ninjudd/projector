@@ -18,7 +18,7 @@ from .core import (
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="projector")
+    result = argparse.ArgumentParser(prog="project")
     result.add_argument("--root", type=Path, help="Git repository root")
     result.add_argument(
         "--projects-dir",
@@ -149,10 +149,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return run(parser().parse_args(argv))
     except ProjectorError as error:
-        print(f"projector: {error}", file=sys.stderr)
+        print(f"project: {error}", file=sys.stderr)
         return error.exit_code
     except (OSError, UnicodeDecodeError) as error:
-        print(f"projector: {error}", file=sys.stderr)
+        print(f"project: {error}", file=sys.stderr)
         return 65
 
 
