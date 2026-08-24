@@ -150,10 +150,10 @@ class ProjectStore:
 
     def _project_from_path(self, path: Path) -> Project:
         relative = path.parent.relative_to(self.projects_dir).as_posix()
-        if relative == "." or not valid_name(relative):
-            raise ProjectorError(f"{path}: invalid project name {relative!r}")
-        text = self._read_text(path)
         display_path = Path(self._relative(path))
+        if relative == "." or not valid_name(relative):
+            raise ProjectorError(f"{display_path}: invalid project name {relative!r}")
+        text = self._read_text(path)
         metadata, _ = parse_frontmatter(text, display_path)
         status = metadata.get("status")
         if status not in STATUSES:
@@ -189,9 +189,9 @@ class ProjectStore:
                 project = self._project_from_path(path)
             except (ProjectorError, OSError, UnicodeDecodeError) as error:
                 message = str(error)
-                display = self._relative(path)
-                if display not in message:
-                    message = f"{display}: {message}"
+                prefix = f"{self._relative(path)}:"
+                if not message.startswith(prefix):
+                    message = f"{prefix} {message}"
                 raise ProjectorError(
                     f"{message} (run 'projector check' for the full report)"
                 ) from error

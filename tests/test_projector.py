@@ -182,6 +182,34 @@ class DiscoveryTests(RepositoryTestCase):
         self.assertEqual(65, code)
         self.assertIn("status must be one of", stderr)
 
+    def test_diagnostics_stay_repository_relative(self) -> None:
+        uppercase = self.projects / "Payments" / "readme.md"
+        uppercase.parent.mkdir(parents=True)
+        uppercase.write_text(
+            PLAN.format(status="now", extra="", title="Pay", body="Done"),
+            encoding="utf-8",
+        )
+
+        code, _, stderr = self.invoke("list")
+
+        self.assertEqual(65, code)
+        self.assertIn("docs/projects/Payments/readme.md: invalid project name", stderr)
+        self.assertNotIn(str(self.root), stderr)
+
+        code, stdout, _ = self.invoke("check", "--json")
+
+        self.assertEqual(65, code)
+        self.assertNotIn(str(self.root), stdout)
+        invalid = [
+            issue
+            for issue in json.loads(stdout)["issues"]
+            if issue["code"] == "invalid-project"
+        ]
+        self.assertEqual(
+            ["invalid project name 'Payments'"],
+            [issue["message"] for issue in invalid],
+        )
+
     def test_list_accepts_an_adopted_repository_with_no_projects(self) -> None:
         code, stdout, stderr = self.invoke("list", "--json")
 

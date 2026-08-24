@@ -15,14 +15,18 @@ projector init
 If projects already exist but the convention file is missing, `init` adds only
 that file. It refuses to replace an existing convention file.
 
-Every other command requires that directory. When it is missing, Projector
-names the path it looked for and exits 66 instead of reporting an empty
-repository:
+Every command except `init` and `check` requires that directory. When it is
+missing, Projector names the path it looked for and exits 66 instead of
+reporting an empty repository:
 
 ```console
 $ projector list
 projector: projects directory not found: docs/projects (run 'projector init' to adopt the convention)
 ```
+
+`check` is the exception, because reporting problems is its job: it records the
+absent directory as a `missing-projects-dir` issue and exits 65 like any other
+validation failure.
 
 An adopted repository with no projects yet is not an error. `list` prints
 nothing and exits 0.
