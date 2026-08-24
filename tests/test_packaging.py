@@ -11,7 +11,6 @@ PUBLISHED_SKILLS = {
     "plan-project",
     "work-project",
     "finish-project",
-    "migrate-projects",
     "start-review-loop",
     "start-fix-loop",
     "gh-stack",

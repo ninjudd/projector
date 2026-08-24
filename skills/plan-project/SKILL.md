@@ -20,16 +20,27 @@ agent can execute without reconstructing the conversation.
 
 ## Write the plan
 
-Use `project create <name> --status <status> --no-edit`, or inspect the
-existing project with `project show <name> --json`, edit its plan content,
-and change scheduling with `project status <name> <status>`. Choose status
-from the user's intent:
+Use `project create <name> --status <status> --priority <priority> --no-edit`,
+or inspect the existing project with `project show <name> --json`, edit its
+plan content, and change the lifecycle with `project status <name> <status>`
+or the schedule with `project priority <name> <priority>`.
 
-- Use `later` for recorded work that is not ready or prioritized.
-- Use `next` for a plan ready to become current when capacity opens.
-- Leave the transition to `now` to `work-project`, which keeps the readiness
+Choose the status from how finished the plan is:
+
+- Use `draft` while the plan is still being written or still has questions
+  that block implementation.
+- Use `ready` once the plan can be executed as written.
+- Leave the transition to `in-progress` to `work-project`, which keeps that
   claim with the implementation pull request.
-- Do not create a new plan as `done`.
+- Do not create a new plan as `completed`.
+
+Choose the priority from the user's scheduling intent, independently of the
+status:
+
+- Use `now` when the project deserves current attention, including when
+  planning it is itself the current work.
+- Use `next` when it should become current as capacity opens.
+- Use `later` for recorded but unscheduled work.
 
 Keep the plan proportional to the work. State the outcome, constraints,
 acceptance evidence, implementation sequence, decisions with rejected
@@ -50,8 +61,8 @@ project check
 git diff --check
 ```
 
-Confirm that the status makes an honest readiness claim, the acceptance
-criteria are observable, and every open question has an owner or deliberate
-deferral. Leave the plan changes visible for ordinary Git review; do not commit,
+Confirm that the status makes an honest readiness claim, the priority matches
+the user's real scheduling intent, the acceptance criteria are observable, and
+every open question has an owner or deliberate deferral. Leave the plan changes visible for ordinary Git review; do not commit,
 push, or open a pull request unless the user or repository workflow asks for
 those actions.

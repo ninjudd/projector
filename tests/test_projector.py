@@ -16,7 +16,7 @@ from projector.core import AmbiguousProject, ProjectStore
 
 PLAN = """---
 status: {status}
-{extra}---
+{priority}{extra}---
 
 # {title}
 
@@ -24,6 +24,10 @@ status: {status}
 
 {body}
 """
+
+
+def priority_line(priority: str | None) -> str:
+    return f"priority: {priority}\n" if priority else ""
 
 
 class RepositoryTestCase(unittest.TestCase):
@@ -41,16 +45,18 @@ class RepositoryTestCase(unittest.TestCase):
     def plan(
         self,
         name: str,
-        status: str = "later",
+        status: str = "draft",
         title: str | None = None,
         body: str = "A useful result.",
         extra: str = "",
+        priority: str | None = "later",
     ) -> Path:
         path = self.projects / name / "readme.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             PLAN.format(
                 status=status,
+                priority=priority_line(priority),
                 title=title or name.rsplit("/", 1)[-1].title(),
                 body=body,
                 extra=extra,
@@ -74,8 +80,8 @@ class RepositoryTestCase(unittest.TestCase):
 
 class DiscoveryTests(RepositoryTestCase):
     def test_list_discovers_top_level_and_nested_projects_from_a_subdirectory(self) -> None:
-        self.plan("payments", "now", "Payments")
-        self.plan("payments/invoices", "next", "Invoices")
+        self.plan("payments", "in-progress", "Payments", priority="now")
+        self.plan("payments/invoices", "ready", "Invoices", priority="next")
         notes = self.projects / "payments" / "notes"
         notes.mkdir()
         (notes / "design.md").write_text("No project sentinel.\n", encoding="utf-8")
@@ -86,17 +92,18 @@ class DiscoveryTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         payload = json.loads(stdout)
-        self.assertEqual(1, payload["schema_version"])
+        self.assertEqual(2, payload["schema_version"])
         self.assertEqual(
             ["payments", "payments/invoices"],
             [project["name"] for project in payload["projects"]],
         )
 
-    def test_status_filter_and_human_groups_are_queries_only(self) -> None:
-        self.plan("alpha", "now", "Alpha")
-        self.plan("beta", "later", "Beta")
+    def test_status_and_priority_filters_and_human_groups_are_queries_only(self) -> None:
+        self.plan("alpha", "in-progress", "Alpha", priority="now")
+        self.plan("beta", "draft", "Beta", priority="later")
+        self.plan("gamma", "completed", "Gamma", priority=None)
 
-        code, stdout, _ = self.invoke("list", "--status", "now")
+        code, stdout, _ = self.invoke("list", "--status", "in-progress")
 
         self.assertEqual(0, code)
         self.assertIn("now:", stdout)
@@ -104,19 +111,35 @@ class DiscoveryTests(RepositoryTestCase):
         self.assertNotIn("beta", stdout)
         self.assertFalse((self.projects / "now.md").exists())
 
+        code, stdout, _ = self.invoke("list", "--priority", "later")
+
+        self.assertEqual(0, code)
+        self.assertIn("later:", stdout)
+        self.assertIn("beta", stdout)
+        self.assertNotIn("alpha", stdout)
+        self.assertNotIn("gamma", stdout)
+
+        code, stdout, _ = self.invoke("list")
+
+        self.assertEqual(0, code)
+        self.assertIn("completed:", stdout)
+        self.assertLess(stdout.index("now:"), stdout.index("later:"))
+        self.assertLess(stdout.index("later:"), stdout.index("completed:"))
+
     def test_show_returns_frontmatter_and_content(self) -> None:
-        path = self.plan("alpha", "next", "Alpha")
+        path = self.plan("alpha", "ready", "Alpha", priority="next")
         code, stdout, _ = self.invoke("show", "alpha", "--json")
         payload = json.loads(stdout)
 
         self.assertEqual(0, code)
-        self.assertEqual("next", payload["project"]["status"])
+        self.assertEqual("ready", payload["project"]["status"])
+        self.assertEqual("next", payload["project"]["priority"])
         self.assertEqual(path.relative_to(self.root).as_posix(), payload["project"]["path"])
-        self.assertIn("status: next", payload["project"]["content"])
+        self.assertIn("status: ready", payload["project"]["content"])
 
     def test_search_reports_the_nearest_containing_project(self) -> None:
-        self.plan("parent", "now", body="Parent only")
-        self.plan("parent/child", "next", body="Needle in child")
+        self.plan("parent", "in-progress", body="Parent only", priority="now")
+        self.plan("parent/child", "ready", body="Needle in child", priority="next")
         design = self.projects / "parent" / "child" / "design.md"
         design.write_text("Another needle.\n", encoding="utf-8")
 
@@ -133,7 +156,15 @@ class DiscoveryTests(RepositoryTestCase):
         (alternate / "README.md").write_text("# Plans\n", encoding="utf-8")
         path = alternate / "alpha" / "readme.md"
         path.parent.mkdir()
-        path.write_text(PLAN.format(status="later", extra="", title="Alpha", body="Done"))
+        path.write_text(
+            PLAN.format(
+                status="draft",
+                priority=priority_line("later"),
+                extra="",
+                title="Alpha",
+                body="Done",
+            )
+        )
 
         code, stdout, _ = self.invoke(
             "--root", str(self.root), "--projects-dir", "plans", "list", "--json"
@@ -163,7 +194,7 @@ class DiscoveryTests(RepositoryTestCase):
             )
 
     def test_invalid_plan_fails_discovery_with_a_diagnostic(self) -> None:
-        self.plan("good", "now")
+        self.plan("good", "in-progress", priority="now")
         self.plan("bad", "shipped")
 
         for arguments in (("list",), ("search", "good")):
@@ -238,19 +269,26 @@ class DiscoveryTests(RepositoryTestCase):
 
 class MutationTests(RepositoryTestCase):
     def test_create_supports_nested_projects_without_moving_the_parent(self) -> None:
-        parent = self.plan("payments", "now")
+        parent = self.plan("payments", "in-progress", priority="now")
 
         code, stdout, stderr = self.invoke(
-            "create", "invoices", "--parent", "payments", "--status", "next", "--no-edit"
+            "create",
+            "invoices",
+            "--parent",
+            "payments",
+            "--status",
+            "ready",
+            "--priority",
+            "next",
+            "--no-edit",
         )
 
         self.assertEqual(0, code, stderr)
         self.assertEqual("docs/projects/payments/invoices/readme.md\n", stdout)
         self.assertTrue(parent.exists())
-        self.assertIn(
-            "status: next",
-            (self.projects / "payments" / "invoices" / "readme.md").read_text(),
-        )
+        created = (self.projects / "payments" / "invoices" / "readme.md").read_text()
+        self.assertIn("status: ready", created)
+        self.assertIn("priority: next", created)
 
     def test_create_refuses_invalid_or_existing_names(self) -> None:
         self.plan("alpha")
@@ -272,34 +310,66 @@ class MutationTests(RepositoryTestCase):
     def test_status_changes_only_the_status_scalar(self) -> None:
         path = self.plan(
             "alpha",
-            "later",
+            "draft",
             extra="owner: team\ncustom: keep-me\n",
             body="Uncommitted body edit.\n",
         )
         before = path.read_text()
 
-        code, stdout, stderr = self.invoke("status", "alpha", "now", "--json")
+        code, stdout, stderr = self.invoke("status", "alpha", "ready", "--json")
 
         self.assertEqual(0, code, stderr)
         self.assertEqual("updated", json.loads(stdout)["action"])
-        self.assertEqual(before.replace("status: later", "status: now"), path.read_text())
+        self.assertEqual(before.replace("status: draft", "status: ready"), path.read_text())
+
+    def test_priority_changes_only_the_priority_scalar(self) -> None:
+        path = self.plan(
+            "alpha",
+            "draft",
+            extra="owner: team\n",
+            body="Uncommitted body edit.\n",
+        )
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("priority", "alpha", "next", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(
+            before.replace("priority: later", "priority: next"), path.read_text()
+        )
+
+    def test_priority_inserts_a_line_when_a_completed_project_has_none(self) -> None:
+        path = self.plan("alpha", "completed", priority=None)
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("priority", "alpha", "next", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(
+            before.replace(
+                "status: completed\n", "status: completed\npriority: next\n"
+            ),
+            path.read_text(),
+        )
 
     def test_status_preserves_comments_and_crlf_line_endings(self) -> None:
-        path = self.plan("alpha", "later")
+        path = self.plan("alpha", "draft")
         before = path.read_bytes().replace(
-            b"status: later\n", b"status: later # keep for Q3\n"
+            b"status: draft\n", b"status: draft # keep for Q3\n"
         ).replace(b"\n", b"\r\n")
         path.write_bytes(before)
 
-        code, _, stderr = self.invoke("status", "alpha", "now")
+        code, _, stderr = self.invoke("status", "alpha", "ready")
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            before.replace(b"status: later", b"status: now"), path.read_bytes()
+            before.replace(b"status: draft", b"status: ready"), path.read_bytes()
         )
 
     def test_status_refuses_a_concurrent_body_edit(self) -> None:
-        path = self.plan("alpha", "later")
+        path = self.plan("alpha", "draft")
         original_atomic_write = ProjectStore._atomic_write
 
         def collide(target: Path, content: str, signature: tuple[int, int, int]) -> None:
@@ -307,24 +377,24 @@ class MutationTests(RepositoryTestCase):
             original_atomic_write(target, content, signature)
 
         with mock.patch.object(ProjectStore, "_atomic_write", side_effect=collide):
-            code, _, stderr = self.invoke("status", "alpha", "now")
+            code, _, stderr = self.invoke("status", "alpha", "ready")
 
         self.assertEqual(65, code)
         self.assertIn("changed before", stderr)
         self.assertIn("Concurrent edit", path.read_text())
 
     def test_done_changes_status_and_reminds_about_the_outcome(self) -> None:
-        path = self.plan("alpha", "now")
+        path = self.plan("alpha", "in-progress", priority="now")
         code, _, stderr = self.invoke("done", "alpha")
         self.assertEqual(0, code)
-        self.assertIn("status: done", path.read_text())
+        self.assertIn("status: completed", path.read_text())
         self.assertIn("shipped", stderr)
 
     def test_status_reports_when_no_file_changed(self) -> None:
-        path = self.plan("alpha", "now")
+        path = self.plan("alpha", "in-progress", priority="now")
         before = path.stat().st_mtime_ns
 
-        code, stdout, stderr = self.invoke("status", "alpha", "now", "--json")
+        code, stdout, stderr = self.invoke("status", "alpha", "in-progress", "--json")
 
         self.assertEqual(0, code, stderr)
         self.assertEqual("unchanged", json.loads(stdout)["action"])
@@ -397,6 +467,8 @@ class ValidationTests(RepositoryTestCase):
 
     def test_check_reports_every_invalid_plan(self) -> None:
         self.plan("bad-status", "waiting")
+        self.plan("bad-priority", priority="someday")
+        self.plan("missing-priority", "ready", priority=None)
         malformed = self.projects / "malformed" / "readme.md"
         malformed.parent.mkdir()
         malformed.write_text("# Missing frontmatter\n")
@@ -407,14 +479,30 @@ class ValidationTests(RepositoryTestCase):
         self.assertEqual(65, code)
         self.assertFalse(payload["valid"])
         invalid = [issue for issue in payload["issues"] if issue["code"] == "invalid-project"]
-        self.assertEqual(2, len(invalid))
+        self.assertEqual(4, len(invalid))
         encoded = json.dumps(payload)
         self.assertNotIn(str(self.root), encoded)
+
+    def test_completed_projects_do_not_require_priority(self) -> None:
+        self.plan("finished", "completed", priority=None)
+
+        code, stdout, stderr = self.invoke("check")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("Project plans are valid.\n", stdout)
 
     def test_check_reports_wrong_case_missing_plans_and_broken_links(self) -> None:
         uppercase = self.projects / "uppercase" / "README.md"
         uppercase.parent.mkdir()
-        uppercase.write_text(PLAN.format(status="later", extra="", title="Upper", body="Done"))
+        uppercase.write_text(
+            PLAN.format(
+                status="draft",
+                priority=priority_line("later"),
+                extra="",
+                title="Upper",
+                body="Done",
+            )
+        )
         self.plan("linked", body="See [missing](missing.md).")
 
         code, stdout, _ = self.invoke("check", "--json")

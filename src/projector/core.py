@@ -13,15 +13,24 @@ from typing import Iterable, Optional
 from urllib.parse import unquote, urlsplit
 
 
-STATUSES = ("now", "next", "later", "done")
+STATUSES = ("draft", "ready", "in-progress", "completed")
+PRIORITIES = ("now", "next", "later")
 NAME_PART = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 FRONTMATTER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
-STATUS_LINE = re.compile(
-    r"^(?P<prefix>status:[ \t]*)(?P<value>[^#\r\n]*?)"
-    r"(?P<suffix>[ \t]*(?:#.*)?)$",
-    re.MULTILINE,
-)
+
+
+def _field_line(field: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"^(?P<prefix>{field}:[ \t]*)(?P<value>[^#\r\n]*?)"
+        r"(?P<suffix>[ \t]*(?:#.*)?)$",
+        re.MULTILINE,
+    )
+
+
+STATUS_LINE = _field_line("status")
+PRIORITY_LINE = _field_line("priority")
+FIELD_LINES = {"status": STATUS_LINE, "priority": PRIORITY_LINE}
 
 
 class ProjectorError(Exception):
@@ -50,6 +59,7 @@ class Project:
     title: str
     status: str
     path: Path
+    priority: Optional[str] = None
     owner: Optional[str] = None
 
     def public(self, root: Path) -> dict[str, object]:
@@ -159,10 +169,21 @@ class ProjectStore:
         if status not in STATUSES:
             choices = "|".join(STATUSES)
             raise ProjectorError(f"{display_path}: status must be one of {choices}")
+        priority = metadata.get("priority")
+        choices = "|".join(PRIORITIES)
+        if priority is None:
+            if status != "completed":
+                raise ProjectorError(
+                    f"{display_path}: priority must be one of {choices}"
+                    " unless status is completed"
+                )
+        elif priority not in PRIORITIES:
+            raise ProjectorError(f"{display_path}: priority must be one of {choices}")
         return Project(
             name=relative,
             title=title_from_text(text, relative),
             status=status,
+            priority=priority,
             owner=metadata.get("owner"),
             path=path,
         )
@@ -226,7 +247,13 @@ class ProjectStore:
         self._create_exclusive(target, template)
         return target
 
-    def create(self, name: str, status: str = "later", parent: str | None = None) -> Project:
+    def create(
+        self,
+        name: str,
+        status: str = "draft",
+        priority: str = "later",
+        parent: str | None = None,
+    ) -> Project:
         self._require_projects_dir()
         if parent:
             if "/" in name or not valid_name(name):
@@ -239,6 +266,8 @@ class ProjectStore:
             )
         if status not in STATUSES:
             raise ProjectorError(f"invalid status: {status}")
+        if priority not in PRIORITIES:
+            raise ProjectorError(f"invalid priority: {priority}")
         if "/" in name:
             self.resolve(name.rsplit("/", 1)[0])
         path = self.projects_dir / name / "readme.md"
@@ -249,7 +278,7 @@ class ProjectStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         title = name.rsplit("/", 1)[-1].replace("-", " ").title()
         body = (
-            f"---\nstatus: {status}\n---\n\n# {title}\n\n"
+            f"---\nstatus: {status}\npriority: {priority}\n---\n\n# {title}\n\n"
             "## 1. Outcome\n\nDescribe the result this project produces.\n\n"
             "## 2. Acceptance criteria\n\n"
             "- Define the evidence that proves the project is complete.\n"
@@ -269,16 +298,29 @@ class ProjectStore:
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:
             raise ProjectorError(f"invalid status: {status}")
+        return self._set_field(name, "status", status)
+
+    def set_priority(self, name: str, priority: str) -> tuple[Project, bool]:
+        if priority not in PRIORITIES:
+            raise ProjectorError(f"invalid priority: {priority}")
+        return self._set_field(name, "priority", priority)
+
+    def _set_field(self, name: str, field: str, value: str) -> tuple[Project, bool]:
         project = self.resolve(name)
         before = self._read_text(project.path)
         original_stat = project.path.stat()
         metadata, _ = parse_frontmatter(before, project.path)
-        if metadata.get("status") == status:
+        if metadata.get(field) == value:
             return project, False
-        match = STATUS_LINE.search(before)
-        if not match or match.group("value").strip().strip("\"'") != project.status:
-            raise ProjectorError(f"{project.path}: cannot update status safely")
-        after = before[: match.start("value")] + status + before[match.end("value") :]
+        match = FIELD_LINES[field].search(before)
+        if match is None and field == "priority" and "priority" not in metadata:
+            after = self._insert_priority(before, project.path, value)
+        elif not match or (
+            match.group("value").strip().strip("\"'") != getattr(project, field)
+        ):
+            raise ProjectorError(f"{project.path}: cannot update {field} safely")
+        else:
+            after = before[: match.start("value")] + value + before[match.end("value") :]
         current_stat = project.path.stat()
         signature = (original_stat.st_ino, original_stat.st_size, original_stat.st_mtime_ns)
         current = (current_stat.st_ino, current_stat.st_size, current_stat.st_mtime_ns)
@@ -286,6 +328,16 @@ class ProjectStore:
             raise ProjectorError(f"{project.path}: changed while it was being read")
         self._atomic_write(project.path, after, signature)
         return self.resolve(name), True
+
+    @staticmethod
+    def _insert_priority(before: str, path: Path, value: str) -> str:
+        match = STATUS_LINE.search(before)
+        if not match:
+            raise ProjectorError(f"{path}: cannot update priority safely")
+        line_end = before.find("\n", match.end())
+        insert_at = len(before) if line_end < 0 else line_end + 1
+        newline = "\r\n" if "\r\n" in before else "\n"
+        return before[:insert_at] + f"priority: {value}{newline}" + before[insert_at:]
 
     @staticmethod
     def _atomic_write(
@@ -305,16 +357,35 @@ class ProjectStore:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
-    def search(self, query: str, status: str | None = None) -> list[dict[str, object]]:
+    def search(
+        self,
+        query: str,
+        status: str | None = None,
+        priority: str | None = None,
+    ) -> list[dict[str, object]]:
         projects = self.projects()
         roots = sorted(projects, key=lambda project: len(project.path.parts), reverse=True)
         matches: list[dict[str, object]] = []
         needle = query.casefold()
+
+        def selected(project: Project) -> bool:
+            return (not status or project.status == status) and (
+                not priority or project.priority == priority
+            )
+
         for project in projects:
             metadata = " ".join(
-                value for value in (project.name, project.title, project.status, project.owner) if value
+                value
+                for value in (
+                    project.name,
+                    project.title,
+                    project.status,
+                    project.priority,
+                    project.owner,
+                )
+                if value
             )
-            if (not status or project.status == status) and needle in metadata.casefold():
+            if selected(project) and needle in metadata.casefold():
                 matches.append(
                     {
                         "project": project.name,
@@ -330,7 +401,7 @@ class ProjectStore:
                 (project for project in roots if path == project.path or project.path.parent in path.parents),
                 None,
             )
-            if owner is None or (status and owner.status != status):
+            if owner is None or not selected(owner):
                 continue
             for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if needle in line.casefold():
@@ -521,18 +592,32 @@ class ProjectStore:
             return stream.read()
 
 def json_text(payload: dict[str, object]) -> str:
-    return json.dumps({"schema_version": 1, **payload}, indent=2, sort_keys=True)
+    return json.dumps({"schema_version": 2, **payload}, indent=2, sort_keys=True)
 
 
 def grouped_projects(projects: Iterable[Project]) -> str:
+    remaining = list(projects)
+    groups: list[tuple[str, list[Project]]] = [
+        (
+            priority,
+            [
+                project
+                for project in remaining
+                if project.status != "completed" and project.priority == priority
+            ],
+        )
+        for priority in PRIORITIES
+    ]
+    groups.append(
+        ("completed", [project for project in remaining if project.status == "completed"])
+    )
     rows: list[str] = []
-    for status in STATUSES:
-        group = [project for project in projects if project.status == status]
+    for label, group in groups:
         if not group:
             continue
-        rows.append(f"{status}:")
+        rows.append(f"{label}:")
         rows.extend(
-            f"  {project.name:<28} {project.title}"
+            f"  {project.name:<28} {project.status:<12} {project.title}"
             + (f" [{project.owner}]" if project.owner else "")
             for project in group
         )

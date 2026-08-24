@@ -1,9 +1,9 @@
 # Projects
 
 Use `docs/projects/` to keep project plans with the code they change. Each
-project has one permanent directory, and the project status lives in
-frontmatter. You do not maintain separate queue files or move a project when
-its status changes.
+project has one permanent directory, and the project status and priority live
+in frontmatter. You do not maintain separate queue files or move a project
+when its status or priority changes.
 
 ## Lay out projects
 
@@ -36,46 +36,54 @@ the two project names are `cool-new-feature` and
 `cool-new-feature/sub-feature`. A nested project belongs to its parent but has
 its own status and plan.
 
-Do not add an `all/` directory. Do not create `now/`, `next/`, `later/`, or
-`done/` indexes, directories, or symlinks. Those structures make status changes
+Do not add an `all/` directory. Do not create status or priority indexes,
+directories, or symlinks. Those structures make status and priority changes
 modify shared files or paths. Recursive `readme.md` discovery provides the
 index instead.
 
-## Set project status
+## Set project status and priority
 
-Begin every `readme.md` with YAML frontmatter containing one `status` field:
+Begin every `readme.md` with YAML frontmatter containing a `status` field and
+a `priority` field:
 
 ```yaml
 ---
-status: later
+status: draft
+priority: later
 ---
 ```
 
-Use one of these values:
+`status` records where the work is in its lifecycle:
 
-- `now`: The project is receiving attention. Keep a blocked project here when
-  it still occupies the team's current attention, and explain the blocker in
-  the project plan.
-- `next`: The project is ready to become current when capacity opens.
-- `later`: The project is recorded but not scheduled.
-- `done`: The project no longer needs work. State whether it shipped, was
+- `draft`: The plan is still being written. It makes no readiness claim.
+- `ready`: The plan is complete enough to execute. Every question that blocks
+  implementation is answered or deliberately deferred.
+- `in-progress`: Implementation has begun and the project is being worked.
+  Keep a blocked project here while its blocker is being resolved, and explain
+  the blocker in the project plan.
+- `completed`: The project no longer needs work. State whether it shipped, was
   abandoned, or was superseded in the project plan.
 
-These values supersede the older `Draft`, `Active`, `Blocked`, `Stalled`,
-`Shipped`, `Superseded`, `Abandoned`, and `Reference` lifecycle keywords. For
-the plan review gate, `now` is the only value that claims the project is
-executable; it replaces the readiness claim previously made by `Active` and
-`Blocked`. The `next` and `later` values make no readiness claim. The `done`
-value claims the work has a recorded outcome.
+`priority` records when the work should happen:
+
+- `now`: The project deserves the team's current attention.
+- `next`: The project should become current when capacity opens.
+- `later`: The project is recorded but not scheduled.
+
+The two fields are independent claims. A `draft` can be `priority: now` when
+planning it is the current focus, and an `in-progress` project can drop to
+`later` when it is deliberately set aside. Priority is required unless the
+status is `completed`; completed work needs no schedule.
 
 Add `owner` only in a repository where more than one person could own the
 project. Add other metadata only after a command or workflow needs it. The file
 path already supplies the project name, so do not duplicate it in frontmatter.
 
-Change status in the pull request that makes the change true. For example, the
-pull request that begins implementation changes the status from `next` to
-`now`. The pull request that completes the final implementation changes it to
-`done`. A stale status is worse than a missing status.
+Change status and priority in the pull request that makes the change true. For
+example, the pull request that begins implementation changes the status from
+`ready` to `in-progress`. The pull request that completes the final
+implementation changes it to `completed`. A stale status is worse than a
+missing status.
 
 ## Write a project plan
 
@@ -85,8 +93,8 @@ existing sections. Add new sections at the end.
 
 Write the smallest plan that makes the intended outcome, constraints,
 decisions, verification, and unresolved questions clear. Keep the reason for a
-status change in the body rather than adding more status values. Split material
-into a supplemental file when it obscures the main plan.
+status or priority change in the body rather than adding more field values.
+Split material into a supplemental file when it obscures the main plan.
 
 ## Find projects before the CLI exists
 
@@ -95,7 +103,7 @@ projects. Until that CLI ships, use repository-local searches:
 
 ```sh
 find docs/projects -name readme.md -print
-rg -l '^status: now$' docs/projects -g readme.md
+rg -l '^priority: now$' docs/projects -g readme.md
 rg -n 'search term' docs/projects
 ```
 
@@ -104,7 +112,7 @@ index that can become stale or conflict with another branch.
 
 ## Rename a project deliberately
 
-Changing status never changes a project path. If the project itself needs a
+Changing status or priority never changes a project path. If the project itself needs a
 new name or parent, use `git mv` and update every inbound reference in the same
 change. Start the sweep with `rg`, then confirm it with `command grep -rl` so a
 binary-classified text file cannot hide a stale reference.
