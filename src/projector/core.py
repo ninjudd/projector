@@ -150,10 +150,10 @@ class ProjectStore:
 
     def _project_from_path(self, path: Path) -> Project:
         relative = path.parent.relative_to(self.projects_dir).as_posix()
-        if relative == "." or not valid_name(relative):
-            raise ProjectorError(f"{path}: invalid project name {relative!r}")
-        text = self._read_text(path)
         display_path = Path(self._relative(path))
+        if relative == "." or not valid_name(relative):
+            raise ProjectorError(f"{display_path}: invalid project name {relative!r}")
+        text = self._read_text(path)
         metadata, _ = parse_frontmatter(text, display_path)
         status = metadata.get("status")
         if status not in STATUSES:
@@ -167,9 +167,15 @@ class ProjectStore:
             path=path,
         )
 
+    def _require_projects_dir(self) -> None:
+        if not self.projects_dir.is_dir():
+            raise ProjectNotFound(
+                f"projects directory not found: {self._relative(self.projects_dir)}"
+                " (run 'projector init' to adopt the convention)"
+            )
+
     def _entry_points(self) -> list[Path]:
-        if not self.projects_dir.exists():
-            return []
+        self._require_projects_dir()
         paths: list[Path] = []
         for directory, _, filenames in os.walk(self.projects_dir):
             if "readme.md" in filenames:
@@ -177,14 +183,18 @@ class ProjectStore:
         return sorted(paths)
 
     def projects(self) -> list[Project]:
-        if not self.projects_dir.exists():
-            return []
         found: dict[str, Project] = {}
         for path in self._entry_points():
             try:
                 project = self._project_from_path(path)
-            except (ProjectorError, OSError, UnicodeDecodeError):
-                continue
+            except (ProjectorError, OSError, UnicodeDecodeError) as error:
+                message = str(error)
+                prefix = f"{self._relative(path)}:"
+                if not message.startswith(prefix):
+                    message = f"{prefix} {message}"
+                raise ProjectorError(
+                    f"{message} (run 'projector check' for the full report)"
+                ) from error
             folded = project.name.casefold()
             if folded in found:
                 raise AmbiguousProject(
@@ -217,6 +227,7 @@ class ProjectStore:
         return target
 
     def create(self, name: str, status: str = "later", parent: str | None = None) -> Project:
+        self._require_projects_dir()
         if parent:
             if "/" in name or not valid_name(name):
                 raise UsageError("--parent requires one valid project name segment")
