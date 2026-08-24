@@ -217,7 +217,13 @@ class DiscoveryTests(RepositoryTestCase):
         uppercase = self.projects / "Payments" / "readme.md"
         uppercase.parent.mkdir(parents=True)
         uppercase.write_text(
-            PLAN.format(status="now", extra="", title="Pay", body="Done"),
+            PLAN.format(
+                status="draft",
+                priority=priority_line("now"),
+                extra="",
+                title="Pay",
+                body="Done",
+            ),
             encoding="utf-8",
         )
 
@@ -256,7 +262,8 @@ class DiscoveryTests(RepositoryTestCase):
             ("search", "needle"),
             ("show", "alpha"),
             ("create", "alpha", "--no-edit"),
-            ("status", "alpha", "now"),
+            ("status", "alpha", "ready"),
+            ("priority", "alpha", "now"),
             ("done", "alpha"),
         ):
             code, stdout, stderr = self.invoke(*arguments)

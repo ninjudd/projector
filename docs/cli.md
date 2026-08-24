@@ -60,7 +60,7 @@ format fails the command rather than dropping that project from the results:
 
 ```console
 $ project list
-project: docs/projects/payments/readme.md: status must be one of now|next|later|done (run 'project check' for the full report)
+project: docs/projects/payments/readme.md: status must be one of draft|ready|in-progress|completed (run 'project check' for the full report)
 ```
 
 Run `check` for every problem at once. `show <project>` still reads a single
