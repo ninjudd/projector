@@ -354,6 +354,25 @@ class MutationTests(RepositoryTestCase):
             path.read_text(),
         )
 
+    def test_status_off_completed_requires_a_priority_first(self) -> None:
+        path = self.plan("alpha", "completed", priority=None)
+        before = path.read_text()
+
+        code, _, stderr = self.invoke("status", "alpha", "in-progress")
+
+        self.assertEqual(65, code)
+        self.assertIn("projector priority alpha", stderr)
+        self.assertEqual(before, path.read_text())
+
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code, stderr)
+
+        code, _, stderr = self.invoke("priority", "alpha", "now")
+        self.assertEqual(0, code, stderr)
+        code, _, stderr = self.invoke("status", "alpha", "in-progress")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("status: in-progress", path.read_text())
+
     def test_status_preserves_comments_and_crlf_line_endings(self) -> None:
         path = self.plan("alpha", "draft")
         before = path.read_bytes().replace(

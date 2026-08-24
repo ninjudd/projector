@@ -99,7 +99,9 @@ project done payments/invoices
 ```
 
 `priority` adds the field when a plan has none, which happens only for a
-completed project being rescheduled.
+completed project being rescheduled. Set the priority first in that case:
+`status` refuses to move a completed plan to another status while it has no
+priority, rather than writing a plan that `check` would then reject.
 
 Projector preserves unrelated frontmatter, formatting, and uncommitted plan
 content. It writes through a temporary file in the project directory and

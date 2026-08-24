@@ -298,6 +298,14 @@ class ProjectStore:
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:
             raise ProjectorError(f"invalid status: {status}")
+        if status != "completed":
+            project = self.resolve(name)
+            if project.priority is None:
+                choices = "|".join(PRIORITIES)
+                raise ProjectorError(
+                    f"{self._relative(project.path)}: leaving completed needs a"
+                    f" priority first; run projector priority {name} {choices}"
+                )
         return self._set_field(name, "status", status)
 
     def set_priority(self, name: str, priority: str) -> tuple[Project, bool]:
