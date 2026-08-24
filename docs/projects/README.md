@@ -28,7 +28,7 @@ notes, or other files when the work needs them; none are required.
 
 Use the exact lowercase name. Uppercase `README.md` remains the conventional
 entry point for the documentation root and non-project directories; lowercase
-`readme.md` identifies a Projector project. `projector check` will enforce this
+`readme.md` identifies a Projector project. `project check` will enforce this
 distinction once the CLI ships. Until then, maintain the casing by hand.
 
 The path relative to `docs/projects/` is the project's name. In the example,
