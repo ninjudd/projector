@@ -32,6 +32,21 @@ Read access can submit a visible review, but repositories requiring an
 approval from a collaborator need the reviewer to have write access; verify
 that a clean approval changes `reviewDecision` to `APPROVED`.
 
+The reviewer may instead be the Projector reviewer GitHub App
+(https://github.com/apps/projector-reviewer), which is required in
+organizations enforcing SAML SSO, where a bot user account cannot sign in.
+Mint its token with `bin/projector-reviewer-token`; the reviewer login is
+`projector-reviewer[bot]`. Installation tokens cannot call `gh api user`, so
+confirm the app reviewer by reading the target repository under the minted
+token:
+
+```sh
+GH_TOKEN="$(projector-reviewer-token <owner>/<repo>)" gh api repos/<owner>/<repo> --jq .full_name
+```
+
+App tokens expire after an hour and the script caches and renews them, so
+mint per command rather than exporting once for the session.
+
 Watch only the repository containing the current working directory. Track pull
 requests this conversation creates or explicitly adopts; authorship by the
 operator is necessary for ordinary ownership but does not adopt every pull
