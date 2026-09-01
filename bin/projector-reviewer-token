@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Mint (and cache) a GitHub App installation token for the Projector reviewer app:
+#   https://github.com/apps/projector-reviewer  (reviews post as projector-reviewer[bot])
+#
+# One-time setup (the private key is the only secret; generate it from the app's
+# settings page):
+#   mv <downloaded>.private-key.pem ~/.config/projector/reviewer-app.pem
+#   chmod 600 ~/.config/projector/reviewer-app.pem
+#
+# Usage:
+#   GH_TOKEN=$(projector-reviewer-token) gh pr review 123 --approve
+#   GH_TOKEN=$(projector-reviewer-token owner/repo) gh ...
+#
+# With no argument the repo is derived from the current directory's origin
+# remote. The app must be installed on the repo's owner (user or org).
+# Tokens last 1h; cached per owner and renewed with a 5-minute margin, so call
+# per invocation rather than exporting once per session.
+#
+# Running your own app instance instead: put its numeric id in
+# ~/.config/projector/reviewer-app-id and its key at the pem path above.
+set -euo pipefail
+
+app_id=4796294
+slug=projector-reviewer
+
+cfg="$HOME/.config/projector"
+key="$cfg/reviewer-app.pem"
+
+if [[ -f "$cfg/reviewer-app-id" ]]; then
+    app_id=$(cat "$cfg/reviewer-app-id")
+fi
+if [[ ! -f "$key" ]]; then
+    echo "$slug: missing $key (see header of this script)" >&2
+    exit 1
+fi
+
+repo="${1:-}"
+if [[ -z "$repo" ]]; then
+    url=$(git remote get-url origin 2>/dev/null) || {
+        echo "projector-reviewer-token: no owner/repo argument and no origin remote here" >&2
+        exit 1
+    }
+    repo=$(sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##' <<<"$url")
+fi
+owner=${repo%%/*}
+
+now=$(date +%s)
+cache="$cfg/reviewer-token-$owner"
+
+if [[ -f $cache ]]; then
+    exp=$(sed -n 1p "$cache")
+    if (( exp - now > 300 )); then
+        sed -n 2p "$cache"
+        exit 0
+    fi
+fi
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+payload=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$((now-60))" "$((now+540))" "$app_id" | b64url)
+sig=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" -binary | b64url)
+jwt="$header.$payload.$sig"
+
+api="https://api.github.com"
+auth=(-H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+
+inst_id=$(curl -sf "${auth[@]}" "$api/repos/$repo/installation" | jq -r .id) || {
+    echo "projector-reviewer-token: no installation covering $repo -- is the app installed on $owner and approved?" >&2
+    exit 1
+}
+token=$(curl -sf -X POST "${auth[@]}" "$api/app/installations/$inst_id/access_tokens" | jq -r .token) || {
+    echo "projector-reviewer-token: failed to mint installation token" >&2
+    exit 1
+}
+
+umask 077
+printf '%s\n%s\n' "$((now + 3300))" "$token" > "$cache"
+echo "$token"
