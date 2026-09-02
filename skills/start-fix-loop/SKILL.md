@@ -52,11 +52,18 @@ because the watcher can see its findings.
    commit or direct push.
 4. Record the tracked `owner/repo#number` set in a persistent recurring goal.
 5. Run the bundled `scripts/watch-threads.sh` with a durable state file, the
-   repository, an interval of at least 30 seconds, and a finite renotification
-   interval. Use the host's persistent process or monitor facility.
-6. Filter every emitted event against the literal tracked set. The watcher
-   scans repository-wide review state so it can remain generic; visibility is
-   not authorization.
+   repository, `--author <operator>`, an interval of at least 30 seconds, and a
+   finite renotification interval. Use the host's persistent process or monitor
+   facility.
+6. Filter every emitted event against the literal tracked set. Narrowing the
+   watcher by author is not that filter and does not replace it: the operator
+   authors pull requests this conversation never adopted. It removes the noise
+   the tracked-set filter cannot, because `DRAFT` fires on a pull request
+   merely being a draft rather than on review activity, and it re-announces on
+   the renotification interval — so without `--author` every colleague's
+   work-in-progress arrives every cycle, and a watcher producing too many
+   events is stopped, which reads to this skill as nothing outstanding.
+   Visibility is not authorization either way.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts, and
 body-only reviews directly. Verify the watcher's state file contains every
