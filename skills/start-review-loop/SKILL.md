@@ -106,58 +106,25 @@ refuses the verdict anyway. Because the setting is layered, a repository can
 grant it without granting it everywhere, and `~/.projector.toml` can grant it
 everywhere you work; read it per repository rather than once per machine.
 
-Never convert another author's pull request to a draft. Draft gating below is a
-self-review mechanism; on someone else's pull request, `REQUEST_CHANGES` is
-already the list-visible signal.
+### Draft means changes are needed
 
-### Which pull requests Projector gates
+On your own pull request draft state *is* the verdict: draft means changes
+are needed, ready means the head is clean. **A review with findings marks it
+draft; a clean review marks it ready.** Publish the review, then `gh pr ready
+<number>` or `gh pr ready <number> --undo` to match the verdict you just
+gave. Nothing else enters into it — not when this loop first saw the pull
+request, not who put it in draft, not whether it was ever a draft. Setting a
+state it already holds is a no-op, so there is no case to analyse.
 
-Gating applies to self-review only. A tracked pull request is
-**Projector-gated** when the reviewer authored it and it is a draft the author
-put it in, whether at the start or by hand before this loop published a review
-on the head. Opening your own pull request as a draft is how you opt in: the
-loop then owns its readiness and marks it ready for review on a clean head,
-exactly like a self-review before the work goes out for human eyes.
-
-So **open your own pull requests as drafts by default**, every layer of a
-stack included. Nothing this loop does reverses that choice in either
-direction: it never demotes a ready pull request, and a pull request left
-ready goes to human review ungated. What is not a default is leaving it ready
-— that is a deliberate choice to skip the gate.
-
-The author drafting their own pull request is that same opt-in whenever it
-happens, as long as this loop has not yet published a review on the current
-head. First sight is a poll landing at an arbitrary moment, so it cannot be
-what decides whether the author meant to gate: a hand-draft a few minutes
-after the loop's first pass means what the same gesture a few minutes before
-it would have meant. Once a review is published on that head, or when anyone
-but the author changes the state, leave draft state alone.
-
-The window before this loop first sees a draft is covered too. Marking a
-**gated** draft ready is this loop's move to make on a clean head, and an
-explicit user instruction can always ask for it. **Absent one of those, never
-mark a draft pull request ready**, whether or not gating has been established
-yet. The prohibition cannot wait on adoption, because that window is exactly
-where the damage lands — undrafting a pull request no loop has seen yet is
-what makes it permanently ungated, and re-drafting afterward does not undo
-it.
-
-A pull request the author leaves ready is **not** gated. Review it and publish
-findings exactly the same way, but never convert it to a draft yourself — it
-was published deliberately, and demoting it would retract a pull request from
+Draft carries the outcome there because GitHub refuses `APPROVE` and
+`REQUEST_CHANGES` on your own pull request and `reviewDecision` never moves.
+On someone else's, leave draft state alone: `REQUEST_CHANGES` is already the
+list-visible signal, and drafting their pull request would retract it from
 human view without being asked.
 
-**Explicit user instruction re-gates a tracked pull request**, and it is the
-way back in once the author's own draft no longer counts — after a review is
-published on the head, or when the draft came from someone else. That is the
-same authority heading every other resolution order in this skill. Without
-this route such a pull request would strand: a draft no loop will ever mark
-ready, which the fix loop's watcher goes on announcing as unsigned-off. Record
-the change in durable state and gate it normally from there.
-
-Record gated-ness in the loop's durable state when a pull request is adopted.
-Set draft or ready **once per reviewed head**, and never re-fight a state a
-person changed by hand; their last word stands until a new head arrives.
+So **open your own pull requests as drafts by default**, every layer of a
+stack included. The draft says the head has not been signed off; the ready
+transition is the sign-off a reader sees in the pull-request list.
 
 ## Establish the loop
 
@@ -177,8 +144,7 @@ person changed by hand; their last word stands until a new head arrives.
    conversation. Review any current head without a completed exact-head review
    immediately; do not baseline it away.
 5. Start or reuse a persistent recurring goal that records the repository,
-   operator, tracked pull requests, which of them are Projector-gated, and
-   reviewed SHAs.
+   operator, tracked pull requests, and reviewed SHAs.
 6. Run the bundled `scripts/watch-prs.sh` with a durable state file,
    `--author <operator>`, `--worktree <repository>`, and an interval of at
    least 30 seconds. Use the host's persistent process or monitor facility.
@@ -281,16 +247,16 @@ Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
 
 **Findings open, self-review:** submit a `COMMENT` review, verdict
-`changes-requested`. If the pull request is Projector-gated and not already a
-draft, convert it with `gh pr ready <number> --undo`.
+`changes-requested`, then convert it to a draft with `gh pr ready <number>
+--undo`.
 
 **Findings open, cross-author:** submit a `REQUEST_CHANGES` review, verdict
 `changes-requested`. Leave draft state alone.
 
 **Clean head, self-review:** submit a `COMMENT` review naming the exact SHA and
-what was checked, verdict `approved`. If the pull request is Projector-gated,
-mark it ready with `gh pr ready <number>`. That transition is the sign-off a
-reader sees in the pull-request list.
+what was checked, verdict `approved`, then mark it ready with `gh pr ready
+<number>`. That transition is the sign-off a reader sees in the pull-request
+list.
 
 **Clean head, cross-author:** submit a `COMMENT` review naming the exact SHA and
 what was checked, verdict `approved`. Say plainly in the body that the head
@@ -301,9 +267,9 @@ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
-Record a SHA as reviewed only after its review is published and, in a gated
-self-review, its draft or ready state is set. Verify both: re-read the review
-body and the pull request's `isDraft`. Never resolve the author's findings,
+Record a SHA as reviewed only after its review is published and, on a clean
+self-review, the pull request is ready. Verify both: re-read the review body
+and the pull request's `isDraft`. Never resolve the author's findings,
 claim a newer SHA was reviewed, or merge.
 
 ## Gate readiness claims in plans
