@@ -92,11 +92,19 @@ migration.
 
 ## Release an update
 
-Bump `version` in `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
-and `setup.cfg` in the change that alters skills, scripts, manifests, or the
-CLI. A test asserts the three agree, because `./install.sh status` compares the
-installed CLI against `setup.cfg` and a version that never moves cannot report
-a stale install. The version is what a release delivers: a host caches an installed
+Projector ships two artifacts and they carry separate versions. Bump the
+**plugin** version in both `.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json` when skills, scripts, or manifests change; a test
+asserts those two agree, because they describe one plugin to two hosts and a
+one-sided bump leaves the other on a stale cache entry. Bump the **CLI**
+version in `setup.cfg` when the CLI changes, which is what `./install.sh
+status` compares an installed command against.
+
+The two need not match, and forcing them to would be worse than letting them
+drift: a skills-only release would move the CLI version too and every install
+would report `cli-stale` for a command that did not change.
+
+The plugin version is what a release delivers: a host caches an installed
 plugin in a directory named by that string, so an update that finds an
 unchanged version resolves to the copy already on disk and installs nothing.
 Claude Code records the path it used, which you can read back:
