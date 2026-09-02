@@ -21,10 +21,17 @@ instructions, or host user configuration, in that order. Confirm it with
 `gh auth status` and `gh api user --jq .login` under the token used for
 pushes.
 
-A review loop may place a different reviewer's token in `GH_TOKEN`. If the
-ambient identity is not the operator, do not derive scope from it and do not
-push through it. Hold the validated operator login literally; never use
-`@me`.
+A review loop may run under a different reviewer identity. If the ambient
+identity is not the operator, do not derive scope from it and do not push
+through it. Hold the validated operator login literally; never use `@me`.
+
+Findings arrive from two kinds of reviewer and both are answered the same way.
+A **cross-author** reviewer — a teammate, Codex, Bugbot, or a review loop run by
+someone else — posts real `CHANGES_REQUESTED` verdicts. A **self-review** loop,
+which GitHub allows only to post `COMMENT` reviews on the operator's own pull
+requests, records its outcome in the review body's verdict line and in draft
+state instead. Read both signals; never treat an unmoved `reviewDecision` as
+evidence that nothing is outstanding.
 
 Default scope is not every operator pull request. Build the tracked set from
 pull requests created by this conversation plus any pull request the user
@@ -45,11 +52,18 @@ because the watcher can see its findings.
    commit or direct push.
 4. Record the tracked `owner/repo#number` set in a persistent recurring goal.
 5. Run the bundled `scripts/watch-threads.sh` with a durable state file, the
-   repository, an interval of at least 30 seconds, and a finite renotification
-   interval. Use the host's persistent process or monitor facility.
-6. Filter every emitted event against the literal tracked set. The watcher
-   scans repository-wide review state so it can remain generic; visibility is
-   not authorization.
+   repository, `--author <operator>`, an interval of at least 30 seconds, and a
+   finite renotification interval. Use the host's persistent process or monitor
+   facility.
+6. Filter every emitted event against the literal tracked set. Narrowing the
+   watcher by author is not that filter and does not replace it: the operator
+   authors pull requests this conversation never adopted. It removes the noise
+   the tracked-set filter cannot, because `DRAFT` fires on a pull request
+   merely being a draft rather than on review activity, and it re-announces on
+   the renotification interval — so without `--author` every colleague's
+   work-in-progress arrives every cycle, and a watcher producing too many
+   events is stopped, which reads to this skill as nothing outstanding.
+   Visibility is not authorization either way.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts, and
 body-only reviews directly. Verify the watcher's state file contains every
@@ -59,13 +73,23 @@ started; a live process cannot prove which file version it loaded.
 The watcher is level-triggered:
 
 - `FINDING` reports an unresolved inline thread.
-- `VERDICT` reports `CHANGES_REQUESTED`, including a review whose findings
-  exist only in its body.
-- `REVIEW` reports a non-verdict review body that has no inline thread.
+- `VERDICT` reports a real `CHANGES_REQUESTED`, including a review whose
+  findings exist only in its body.
+- `DRAFT` reports a pull request a review loop has not signed off. It clears
+  when the review loop marks the pull request ready, which is that loop's
+  sign-off on the current head.
+- `REVIEW` reports a review body that has no inline thread, the shape every
+  `COMMENT` review posts.
 
-Read review bodies and compare them with the thread set. Dispose of a body-only
-finding in a pull-request-level comment because there is no thread to reply to
-or resolve.
+Read review bodies and compare them with the thread set. A Projector review
+body carries a verdict line; read it rather than inferring the outcome. Dispose
+of a body-only finding in a pull-request-level comment because there is no
+thread to reply to or resolve.
+
+A `DRAFT` line is not itself a finding. It says the head has not been signed
+off, so look for the work in that pull request's threads and review bodies. A
+draft with no outstanding finding is waiting on the review loop to re-review,
+not on a code change.
 
 ## Verify and fix findings
 
@@ -93,8 +117,10 @@ and report the recurrence before changing it again.
 For every accepted finding, preserve this order:
 
 1. Commit the validated fix locally.
-2. Reply in its review thread under the operator identity. Name the commit and
-   state what was reproduced and changed.
+2. Reply in its review thread under the operator identity, opening the reply
+   with `<!-- projector-reply v=1 -->` so a loop sharing this login never reads
+   it back as a new finding. Name the commit and state what was reproduced and
+   changed.
 3. Push the pull request branch, never its base branch.
 4. Resolve the thread only after the push succeeds.
 5. Re-fetch `reviewThreads` and confirm `isResolved: true`.
@@ -125,13 +151,17 @@ A pull request is clean only when:
 
 - a clean verdict names its current head,
 - no unresolved threads remain,
-- `reviewDecision` is not `CHANGES_REQUESTED`, and
-- the current head is the one actually reviewed.
+- the current head is the one actually reviewed, and
+- the reviewer's own sign-off signal is clear: `reviewDecision` is not
+  `CHANGES_REQUESTED` for a cross-author reviewer, and the pull request is no
+  longer a draft where a self-review loop gates it.
 
 Report that state with the head SHA, fix commits, declined findings, and
-validation results, then keep watching. A stale `CHANGES_REQUESTED` after all
-fixes is a wait for re-review, not another code change. Do not manufacture an
-empty commit to trigger it.
+validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
+request still in draft after all fixes, is a wait for re-review rather than
+another code change. Do not manufacture an empty commit to trigger it, and
+never mark a gated pull request ready yourself — that is the review loop's
+sign-off to give.
 
 Drop closed or merged pull requests from the tracked set. An empty set is idle,
 not an instruction to stop; remain ready for pull requests this conversation

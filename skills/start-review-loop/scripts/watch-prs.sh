@@ -6,10 +6,12 @@
 #
 #   NEW PR     a pull request opened that the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
-#   RESPONDED  still CHANGES_REQUESTED, every thread resolved, head unchanged —
-#              the author answered without pushing, so no head event is coming.
-#              Once per head, and never alongside NEW PR or NEW HEAD, which
-#              already say to review that head.
+#   RESPONDED  every thread resolved and the head unchanged on a pull request
+#              still waiting for one: a draft (self-review, where the verdict
+#              never moves) or one at CHANGES_REQUESTED (cross-author, where
+#              gating never applies). The author answered without pushing, so
+#              no head event is coming. Once per head, and never alongside
+#              NEW PR or NEW HEAD, which already say to review that head.
 #   CLOSED     a tracked pull request left the open set
 #   BRANCH     the watched worktree changed branch
 #
@@ -23,11 +25,12 @@
 # live when the query runs, and under the review loop's GH_TOKEN that is the
 # reviewing account, which authors nothing — the watch would then be silent
 # from the first pass on, indistinguishable from a repository with nothing
-# open. Without the flag every open pull request is watched. This watcher
-# filters at the source where watch-threads.sh deliberately does not, because
-# its events are pushes: on a shared repository every push by anyone is one,
-# none of them is the loop's to review, and every line here is a Monitor
-# notification counting toward the limit that stops a watcher.
+# open. Without the flag every open pull request is watched. Filtering at the
+# source matters most here, because this watcher's events are pushes: on a
+# shared repository every push by anyone is one, none of them is the loop's to
+# review, and every line here is a Monitor notification counting toward the
+# limit that stops a watcher. watch-threads.sh takes the same flag, for the
+# same reason, on the one event of its own that fires without review activity.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
@@ -140,11 +143,29 @@ while true; do
       continue
     fi
 
-    # A push is not the only thing this loop can be waiting on. A pull request
-    # left at CHANGES_REQUESTED with every thread resolved is waiting on *us*:
-    # the author answered, and a fix that produced no push — a body correction,
-    # a reply, a declined finding — creates no new head for the check above to
-    # notice. Nothing else will ever arrive, so watching heads alone deadlocks.
+    # A push is not the only thing this loop can be waiting on. A draft pull
+    # request with every thread resolved is waiting on *us*: the author
+    # answered, and a fix that produced no push — a body correction, a reply, a
+    # declined finding — creates no new head for the check above to notice.
+    # Nothing else will ever arrive, so watching heads alone deadlocks, and the
+    # pull request stays a draft forever because only a re-review marks it
+    # ready.
+    #
+    # Both signals are needed, because the two review modes record the wait
+    # in different places and neither covers the other.
+    #
+    # Draft state carries a self-review: GitHub allows only a COMMENT review on
+    # your own pull request, so reviewDecision never leaves NONE and a filter on
+    # CHANGES_REQUESTED alone would match nothing, on every pass, forever.
+    #
+    # reviewDecision carries a cross-author review, where REQUEST_CHANGES works
+    # and gating never applies — the skill forbids drafting another author's
+    # pull request. A filter on draft state alone would match nothing there, so
+    # a cross-author pull request whose author answered every thread without
+    # pushing would sit at CHANGES_REQUESTED forever: no head event is coming
+    # and no draft flag will ever clear. That is this event's whole purpose,
+    # under the one mode the skill keeps first-class for human reviewers.
+    #
     # Asked once per repository; on failure every pull request's flag is simply
     # carried forward by the row rebuild below, and it retries next cycle.
     owner="${repo%%/*}"; name="${repo##*/}"
@@ -158,13 +179,15 @@ while true; do
                      orderBy:{field:CREATED_AT, direction:ASC}){
           pageInfo{ hasNextPage endCursor }
           nodes{
-            number reviewDecision
+            number isDraft reviewDecision
             reviewThreads(first:100){ nodes{ isResolved } } } } } }' \
       -f o="$owner" -f r="$name" \
       --jq '.data.repository.pullRequests.nodes[]
-            | select(.reviewDecision == "CHANGES_REQUESTED")
+            | select(.isDraft == true or .reviewDecision == "CHANGES_REQUESTED")
             | select([.reviewThreads.nodes[] | select(.isResolved == false)] | length == 0)
-            | "\(.number)"' 2>/dev/null || echo "__QUERYFAILED__")
+            | "\(.number) \(if .reviewDecision == "CHANGES_REQUESTED"
+                             then "changes-requested" else "draft" end)"' \
+      2>/dev/null || echo "__QUERYFAILED__")
 
     while read -r num sha ref; do
       [ -n "$num" ] || continue
@@ -195,9 +218,19 @@ while true; do
       # one, and every line here is a Monitor notification that counts toward
       # the limit that stops a watcher.
       if [ "$responded" != "__QUERYFAILED__" ] && [ -n "$known" ] && [ "$known" = "$sha" ]; then
-        if printf '%s\n' "$responded" | grep -qx "$num"; then
+        # Which signal matched decides the wording, and they call for opposite
+        # actions: a draft is gated and a clean re-review marks it ready, while
+        # a cross-author changes request is never gated and marking it ready is
+        # forbidden -- a clean re-review there is a COMMENT recommending a human
+        # approval. One message cannot say both.
+        rstate=$(printf '%s\n' "$responded" | awk -v n="$num" '$1==n {print $2; exit}')
+        if [ -n "$rstate" ]; then
           if [ "$flag" != "$sha" ]; then
-            echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still CHANGES_REQUESTED with every thread resolved; re-review this head"
+            if [ "$rstate" = "changes-requested" ]; then
+              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — changes requested with every thread resolved; re-review this head, and a clean one is a COMMENT, never an approval"
+            else
+              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
+            fi
             flag="$sha"
           fi
         else

@@ -99,6 +99,14 @@ Open pull requests; never merge them. The user owns the merge checkpoint.
 Create dependent work as a real GitHub stack when it crosses a reviewability
 boundary, and keep tests and documentation with the code they verify.
 
+Open your own pull request as a draft, and draft every layer of a stack you
+open. The draft is the opt-in that puts a pull request under review-loop
+gating: the loop owns its readiness from there and marks it ready for review
+on a clean head, which is a self-review landing before the work reaches human
+eyes. Open one ready only when you mean to skip that gate. A pull request that
+is already ready the first time a review loop sees it is never gated, and it is
+never demoted to a draft afterward.
+
 Use an imperative pull request title and a body that explains why the change
 exists. End every body with a `## Testing` section containing commands you ran
 from the directory you name, the expected result, the failure signal, and any
