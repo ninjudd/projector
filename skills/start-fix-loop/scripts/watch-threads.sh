@@ -252,7 +252,7 @@ EOF
         -f o="$owner" -f r="$name" -F n="$n" \
         --jq '.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved == false)
-              | "\(.id)\t\(.path):\(.line // "?")\t\(.comments.nodes[0].author.login // "?")\t\(.comments.nodes[0].body // "" | gsub("[\r\n]+"; " ") | .[0:130])"' \
+              | "\(.id)\t\(.path):\(.line // "?")\t\(.comments.nodes[0].author.login // "?")\t\(.comments.nodes[0].body // "" | gsub("<!--([^-]|-[^-]|--[^>])*-->"; "") | gsub("[\r\n\t]+"; " ") | sub("^ +"; "") | .[0:130])"' \
         2>/dev/null); then
         # The same rule as the repo-level guard, for the same reason, and it is
         # the case that falls between them: the repo query answered but this
@@ -280,6 +280,17 @@ EOF
         continue
       fi
 
+      # Strip HTML comments before snipping, the way the review query below
+      # does. Findings open with `<!-- projector-finding v=1 priority=<P>
+      # sha=<40-hex> -->` and fix-loop replies with `<!-- projector-reply
+      # v=1 -->`; the first is about 88 characters, so against a 130-character
+      # snippet it would leave roughly 42 characters of the actual finding in
+      # every notification the fix loop sees. Unlike the review query this one
+      # does not drop a body that strips to nothing: a review with no body is
+      # only a reply-carrier, but an unresolved thread is outstanding work
+      # whatever its last comment looks like, and dropping it is the one
+      # reading that must never be wrong. Tags are deliberately left alone --
+      # `<operator>` and friends are content here, not markup.
       while IFS=$'\t' read -r tid loc who snip; do
         [ -n "${tid:-}" ] || continue
         last=$(awk -v t="$tid" '$1==t {print $4}' "$STATE" 2>/dev/null)
