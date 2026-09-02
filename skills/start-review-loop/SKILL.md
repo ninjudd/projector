@@ -248,10 +248,12 @@ Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
 
 Immediately before submitting, list every verdict the reviewer has already
-posted on this exact SHA:
+posted on this exact SHA. The endpoint pages at 30 rows, oldest first, and
+every fix-loop thread reply adds a review object of its own, so the newest
+verdict is the first row a single page loses:
 
 ```sh
-gh api repos/<owner>/<repo>/pulls/<number>/reviews \
+gh api --paginate repos/<owner>/<repo>/pulls/<number>/reviews \
   --jq '.[] | select(.user.login == "<reviewer>")
         | select(.body | test("projector-review .* sha=<full-sha>"))
         | "\(.id) \(.submitted_at)"'
