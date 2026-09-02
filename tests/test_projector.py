@@ -705,15 +705,20 @@ class SelfReportingTests(unittest.TestCase):
     def test_package_dir_names_where_this_package_runs_from(self) -> None:
         stdout = StringIO()
 
-        with self.assertRaises(SystemExit) as raised:
-            with redirect_stdout(stdout):
-                main(["--package-dir"])
+        # A narrow width, because argparse's own version action reflows to the
+        # terminal and would fold a long path. `install.sh` reads this with
+        # `$(...)` and tests the result with `-d`, so a folded path reports
+        # every install stale forever. Pinning COLUMNS checks that at any
+        # width rather than at whatever depth this checkout happens to sit.
+        with mock.patch.dict(os.environ, {"COLUMNS": "20"}):
+            with self.assertRaises(SystemExit) as raised:
+                with redirect_stdout(stdout):
+                    main(["--package-dir"])
 
         self.assertEqual(0, raised.exception.code)
-        reported = Path(stdout.getvalue().strip())
-        # `install.sh status` diffs this against the checkout, so a path that
-        # is merely plausible is not enough -- it has to be this package, and
-        # it has to arrive unwrapped however long it is.
+        printed = stdout.getvalue().splitlines()
+        self.assertEqual(1, len(printed), printed)
+        reported = Path(printed[0])
         self.assertEqual(Path(cli.__file__).resolve().parent, reported)
         self.assertTrue((reported / "cli.py").is_file())
 
