@@ -6,8 +6,8 @@
 #
 #   NEW PR     a pull request opened that the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
-#   RESPONDED  still CHANGES_REQUESTED, every thread resolved, head unchanged —
-#              the author answered without pushing, so no head event is coming.
+#   RESPONDED  still a draft, every thread resolved, head unchanged — the
+#              author answered without pushing, so no head event is coming.
 #              Once per head, and never alongside NEW PR or NEW HEAD, which
 #              already say to review that head.
 #   CLOSED     a tracked pull request left the open set
@@ -140,11 +140,17 @@ while true; do
       continue
     fi
 
-    # A push is not the only thing this loop can be waiting on. A pull request
-    # left at CHANGES_REQUESTED with every thread resolved is waiting on *us*:
-    # the author answered, and a fix that produced no push — a body correction,
-    # a reply, a declined finding — creates no new head for the check above to
-    # notice. Nothing else will ever arrive, so watching heads alone deadlocks.
+    # A push is not the only thing this loop can be waiting on. A draft pull
+    # request with every thread resolved is waiting on *us*: the author
+    # answered, and a fix that produced no push — a body correction, a reply, a
+    # declined finding — creates no new head for the check above to notice.
+    # Nothing else will ever arrive, so watching heads alone deadlocks, and the
+    # pull request stays a draft forever because only a re-review marks it
+    # ready.
+    #
+    # Draft state, not reviewDecision, is the signal: reviews are self-reviews
+    # and can only ever be COMMENT, so reviewDecision never leaves NONE and a
+    # filter on CHANGES_REQUESTED would match nothing, on every pass, forever.
     # Asked once per repository; on failure every pull request's flag is simply
     # carried forward by the row rebuild below, and it retries next cycle.
     owner="${repo%%/*}"; name="${repo##*/}"
@@ -158,11 +164,11 @@ while true; do
                      orderBy:{field:CREATED_AT, direction:ASC}){
           pageInfo{ hasNextPage endCursor }
           nodes{
-            number reviewDecision
+            number isDraft
             reviewThreads(first:100){ nodes{ isResolved } } } } } }' \
       -f o="$owner" -f r="$name" \
       --jq '.data.repository.pullRequests.nodes[]
-            | select(.reviewDecision == "CHANGES_REQUESTED")
+            | select(.isDraft == true)
             | select([.reviewThreads.nodes[] | select(.isResolved == false)] | length == 0)
             | "\(.number)"' 2>/dev/null || echo "__QUERYFAILED__")
 
@@ -197,7 +203,7 @@ while true; do
       if [ "$responded" != "__QUERYFAILED__" ] && [ -n "$known" ] && [ "$known" = "$sha" ]; then
         if printf '%s\n' "$responded" | grep -qx "$num"; then
           if [ "$flag" != "$sha" ]; then
-            echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still CHANGES_REQUESTED with every thread resolved; re-review this head"
+            echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
             flag="$sha"
           fi
         else

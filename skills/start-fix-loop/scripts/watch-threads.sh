@@ -5,9 +5,11 @@
 # `persistent: true`, where each stdout line becomes one notification.
 #
 #   FINDING   an unresolved review thread that has not been announced recently
-#   VERDICT   a pull request sitting at CHANGES_REQUESTED, thread or no thread
-#   REVIEW    a submitted review carrying a body without a verdict — the shape
-#             Codex and Bugbot post, which never moves reviewDecision
+#   DRAFT     a pull request still in draft — the review loop has not signed
+#             off on it, so work remains even when no thread is open
+#   REVIEW    a submitted review carrying a body — the shape every COMMENT
+#             review posts, Projector's own included, which never moves
+#             reviewDecision
 #
 # This watch is deliberately **level-triggered**: it reports what is currently
 # unresolved rather than what just changed. An edge-triggered watch loses a
@@ -66,22 +68,25 @@ while true; do
       continue
     fi
 
-    # A verdict is outstanding work even with no thread attached to it. A
-    # reviewer may put every finding in the review summary body and open no
-    # inline thread at all, and then the thread query below is correctly
-    # silent while the pull request sits blocked at CHANGES_REQUESTED. Watching
-    # threads alone reads that as "nothing outstanding", which is the one
-    # reading that must never be wrong. Asked per repository rather than per
-    # pull request, because one query answers for all of them.
-    # Paginated, and it has to be: GraphQL connections cap `first` at 100 —
-    # `first:200` is rejected outright as EXCESSIVE_PAGINATION — so a single
-    # page would watch verdicts for 100 pull requests while the thread query
-    # above covers 200. That asymmetry fails in the worst available direction.
-    # A pull request past the page still has its threads watched, so a review
-    # with inline findings is still seen; the one lost is a review whose
-    # findings live only in the summary body, which is precisely the case this
-    # query exists to catch. `orderBy` is pinned so the traversal is stable
-    # across pages rather than arbitrary.
+    # Outstanding work with no thread attached to it takes two shapes, and this
+    # one query answers for both across the whole repository. A reviewer may put
+    # every finding in the review summary body and open no inline thread at all,
+    # and then the thread query below is correctly silent while the pull request
+    # sits blocked. Watching threads alone reads that as "nothing outstanding",
+    # which is the one reading that must never be wrong.
+    #
+    #   VERDICT — a real CHANGES_REQUESTED review. Available only when the
+    #   reviewer is not the pull request's author: a human teammate, Codex,
+    #   Bugbot, or a cross-author Projector review loop. This stays first-class;
+    #   the fix loop's whole job is answering real reviewers.
+    #
+    #   DRAFT — a pull request the review loop has not signed off. On a
+    #   self-review GitHub refuses APPROVE and REQUEST_CHANGES on your own pull
+    #   request, so every such review is a COMMENT review and reviewDecision
+    #   never leaves NONE. Draft state carries the outcome instead, and its
+    #   clearing is the handshake that says the head was accepted. Watching
+    #   reviewDecision alone would be silent on every self-reviewed pull
+    #   request forever, indistinguishable from a clean repository.
     #
     # Ask `reviews(states:[CHANGES_REQUESTED])` rather than `latestReviews`.
     # `latestReviews` is the most recent review *per author* whatever its
@@ -94,36 +99,56 @@ while true; do
     # it goes quiet on the pull requests being argued about and stays loud on
     # the ones nobody has touched. `last:1` is one line per pull request
     # rather than per author, which is what the skill documents.
+    #
+    # Paginated, and it has to be: GraphQL connections cap `first` at 100 —
+    # `first:200` is rejected outright as EXCESSIVE_PAGINATION — so a single
+    # page would watch 100 pull requests while the thread query above covers
+    # 200. That asymmetry fails in the worst available direction. A pull
+    # request past the page still has its threads watched, so a review with
+    # inline findings is still seen; the one lost is a review whose findings
+    # live only in the summary body, which is precisely the case this query
+    # exists to catch. `orderBy` is pinned so the traversal is stable across
+    # pages rather than arbitrary.
     if ! verdicts=$(gh api graphql --paginate -f query='
       query($o:String!,$r:String!,$endCursor:String){ repository(owner:$o,name:$r){
         pullRequests(states:OPEN, first:100, after:$endCursor,
                      orderBy:{field:CREATED_AT, direction:ASC}){
           pageInfo{ hasNextPage endCursor }
           nodes{
-            number reviewDecision
+            number isDraft reviewDecision headRefOid
             reviews(states:[CHANGES_REQUESTED], last:1){ nodes{
               author{login} body commit{oid} } } } } } }' \
       -f o="$owner" -f r="$name" \
-      --jq '.data.repository.pullRequests.nodes[]
-            | select(.reviewDecision == "CHANGES_REQUESTED")
-            | . as $pr | .reviews.nodes[]
-            | "\($pr.number)\t\(.author.login)\t\(.commit.oid)\t\(.body // "" | gsub("[\r\n]+"; " ") | .[0:130])"' \
+      --jq '.data.repository.pullRequests.nodes[] | . as $pr
+            | (if $pr.reviewDecision == "CHANGES_REQUESTED"
+               then $pr.reviews.nodes[]
+                    | "V\t\($pr.number)\t\(.commit.oid)\t\(.author.login)\t\(.body // "" | gsub("[\r\n]+"; " ") | .[0:130])"
+               else empty end),
+              (if $pr.isDraft then "D\t\($pr.number)\t\($pr.headRefOid)\t\t" else empty end)' \
       2>/dev/null); then
-      carried=$(awk -v s="$slug" '$1 ~ /^verdict:/ && $2==s' "$STATE" 2>/dev/null || true)
+      carried=$(awk -v s="$slug" '$1 ~ /^(verdict|draft):/ && $2==s' "$STATE" 2>/dev/null || true)
       [ -n "$carried" ] && new_state="$new_state$carried
 "
     else
-      while IFS=$'\t' read -r vn vwho vsha vsnip; do
+      while IFS=$'\t' read -r kind vn vsha vwho vsnip; do
         [ -n "${vn:-}" ] || continue
-        # Keyed on author and reviewed SHA, so a re-review of a new head is a
-        # new row and announces immediately rather than waiting out --renotify.
-        vid="verdict:$vwho:$vsha"
+        # Keyed on the reviewed or head SHA, so a push is a new row and
+        # announces immediately rather than waiting out --renotify.
+        if [ "$kind" = V ]; then
+          vid="verdict:$vwho:$vsha"
+          first="VERDICT $slug#$vn CHANGES_REQUESTED on ${vsha:0:8} [$vwho] — $vsnip"
+          again="VERDICT (still open) $slug#$vn CHANGES_REQUESTED on ${vsha:0:8} [$vwho] — $vsnip"
+        else
+          vid="draft:$vn:$vsha"
+          first="DRAFT $slug#$vn head=${vsha:0:8} — not signed off; clear open findings so the review loop can mark it ready"
+          again="DRAFT (still open) $slug#$vn head=${vsha:0:8} — still not signed off"
+        fi
         last=$(awk -v t="$vid" '$1==t {print $4}' "$STATE" 2>/dev/null)
         if [ -z "$last" ]; then
-          echo "VERDICT $slug#$vn CHANGES_REQUESTED on ${vsha:0:8} [$vwho] — $vsnip"
+          echo "$first"
           last=$now
         elif [ $((now - last)) -ge "$RENOTIFY" ]; then
-          echo "VERDICT (still open) $slug#$vn CHANGES_REQUESTED on ${vsha:0:8} [$vwho] — $vsnip"
+          echo "$again"
           last=$now
         fi
         new_state="$new_state$vid $slug $vn $last
@@ -152,8 +177,8 @@ EOF
         # That is a flood, on a repository whose API is already flaky, and
         # Monitor stops a watcher that produces too many events — leaving the
         # fix loop deaf while its skill reads silence as "nothing outstanding".
-        # Thread and review rows, excluding only verdict rows. The test is
-        # which kinds have already been rebuilt at this point: verdict rows
+        # Thread and review rows, excluding verdict and draft rows. The test is
+        # which kinds have already been rebuilt at this point: both of those
         # were, above, per repository, so carrying them again here would
         # duplicate them. Review rows are rebuilt below — past the `continue`
         # on the next line — so excluding them here drops them outright,
@@ -164,7 +189,7 @@ EOF
         # this carry-forward had to learn about one. The general rule: carry
         # every kind whose rebuild happens later in this iteration, exclude
         # only those already rebuilt before it.
-        carried=$(awk -v s="$slug" -v p="$n" '$1 !~ /^verdict:/ && $2==s && $3==p' "$STATE" 2>/dev/null || true)
+        carried=$(awk -v s="$slug" -v p="$n" '$1 !~ /^(verdict|draft):/ && $2==s && $3==p' "$STATE" 2>/dev/null || true)
         [ -n "$carried" ] && new_state="$new_state$carried
 "
         continue
