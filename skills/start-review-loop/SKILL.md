@@ -21,12 +21,22 @@ gh auth status
 gh api user --jq .login
 ```
 
+The **operator** is the other role these instructions name: the account whose
+pull requests are watched and whose branches carry the work. By default it is
+that same authenticated user, which is why neither role needs configuring. A
+reviewer override is what separates them, and every `<operator>` below means
+this login, never the reviewer's.
+
 Watch only the repository containing the current working directory. Track pull
 requests this conversation creates or explicitly adopts; authorship by the
 operator is necessary for ordinary ownership but does not adopt every pull
 request from another session. The watcher may observe the operator's broader
 set, but filter every event through the literal tracked set. Hold validated
-logins literally in every query; never use `@me`.
+logins literally in every query; never use `@me`. Under the default the two
+roles coincide and `@me` looks harmless, but its value follows whichever token
+is live, so under a reviewer override it resolves to the reviewer — an account
+that authors nothing here — and the watch goes silent from the first pass on,
+indistinguishable from a repository with nothing open.
 
 ### Two review modes, chosen per pull request
 
@@ -78,14 +88,6 @@ request from human view without being asked.
 Record gated-ness in the loop's durable state when a pull request is adopted.
 Set draft or ready **once per reviewed head**, and never re-fight a state a
 person changed by hand; their last word stands until a new head arrives.
-
-Watch only the repository containing the current working directory. Track pull
-requests this conversation creates or explicitly adopts; authorship by the
-operator is necessary for ordinary ownership but does not adopt every pull
-request from another session. The watcher may observe the operator's broader
-set, but filter every event through the literal tracked set. Hold validated
-logins literally in every query; never use `@me`, because its value changes
-with `GH_TOKEN`.
 
 ## Establish the loop
 
