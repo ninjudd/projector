@@ -67,9 +67,10 @@ pulling new commits does not update the command. Ask which one you have:
 ./install.sh status
 ```
 
-`cli-version` reports a command whose version matches the checkout. `cli-stale` reports
-one left behind by it, names both versions, and tells you to run
-`./install.sh cli`.
+`cli-current` reports a command whose installed source matches the checkout.
+`cli-stale` reports one that differs, or one too old to say where its source
+lives, and tells you to run `./install.sh cli`. The comparison is of the files
+themselves, so it holds whether or not anyone remembered to bump a version.
 
 ## Upgrade from agent-config
 
@@ -92,11 +93,19 @@ migration.
 
 ## Release an update
 
-Bump `version` in `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
-and `setup.cfg` in the change that alters skills, scripts, manifests, or the
-CLI. A test asserts the three agree, because `./install.sh status` compares the
-installed CLI against `setup.cfg` and a version that never moves cannot report
-a stale install. The version is what a release delivers: a host caches an installed
+Projector ships two artifacts and they carry separate versions. Bump the
+**plugin** version in both `.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json` when skills, scripts, or manifests change; a test
+asserts those two agree, because they describe one plugin to two hosts and a
+one-sided bump leaves the other on a stale cache entry. Bump the **CLI**
+version in `setup.cfg` when the CLI changes. The two need not match.
+
+Nothing depends on the CLI version being punctual. `./install.sh status`
+compares installed files against the checkout rather than version strings, so
+a release that forgets `setup.cfg` costs an inaccurate number and not a
+command that reports itself current while being behind.
+
+The plugin version is what a release delivers: a host caches an installed
 plugin in a directory named by that string, so an update that finds an
 unchanged version resolves to the copy already on disk and installs nothing.
 Claude Code records the path it used, which you can read back:

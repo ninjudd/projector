@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import configparser
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -110,47 +110,68 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(f"pipx install --force {ROOT}\n", self.log.read_text())
 
-    def fake_project(self, output: str) -> None:
-        """A `project` on PATH ahead of any real one, answering --version."""
+    def fake_project(self, package_dir: str | None) -> None:
+        """A `project` on PATH ahead of any real one.
+
+        Answers `--package-dir` with `package_dir`, or fails the way a command
+        too old to know the flag would when it is None.
+        """
 
         path = self.fake_bin / "project"
-        path.write_text(f"#!/bin/sh\n{output}\n")
+        if package_dir is None:
+            body = 'echo "usage: project" >&2; exit 2'
+        else:
+            body = (
+                'case "$1" in\n'
+                f'  --package-dir) echo "{package_dir}" ;;\n'
+                '  --version) echo "project 9.9.9" ;;\n'
+                'esac'
+            )
+        path.write_text(f"#!/bin/sh\n{body}\n")
         path.chmod(0o755)
 
-    def repo_version(self) -> str:
-        configuration = configparser.ConfigParser()
-        configuration.read(ROOT / "setup.cfg")
-        return configuration["metadata"]["version"]
+    def installed_copy(self, *, diverge: bool) -> str:
+        """A stand-in for the package a copying installer left behind."""
+
+        target = self.user_root / "site-packages" / "projector"
+        shutil.copytree(ROOT / "src" / "projector", target,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        if diverge:
+            (target / "cli.py").write_text(
+                (target / "cli.py").read_text() + "\n# shipped since this install\n"
+            )
+        return str(target)
 
     def test_status_reports_a_cli_matching_the_checkout(self) -> None:
-        self.fake_project(f'echo "project {self.repo_version()}"')
+        self.fake_project(self.installed_copy(diverge=False))
 
         result = self.install("status")
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn(f"cli-version  {self.repo_version()}", result.stdout)
+        self.assertIn("cli-current", result.stdout)
         self.assertNotIn("cli-stale", result.stdout)
 
     def test_status_reports_a_cli_left_behind_by_the_checkout(self) -> None:
-        self.fake_project('echo "project 0.0.1"')
+        # The case a version comparison misses: the CLI changed and nobody
+        # bumped setup.cfg, so the installed copy still calls itself current.
+        self.fake_project(self.installed_copy(diverge=True))
 
         result = self.install("status")
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("cli-stale", result.stdout)
-        self.assertIn("installed 0.0.1", result.stdout)
-        self.assertIn(f"repo {self.repo_version()}", result.stdout)
+        self.assertIn("differs from this checkout", result.stdout)
 
-    def test_status_treats_a_cli_without_version_as_stale(self) -> None:
-        # An install old enough to predate --version cannot report one, and
-        # an unreportable version is stale by definition.
-        self.fake_project('echo "usage: project" >&2; exit 2')
+    def test_status_treats_a_cli_that_cannot_locate_itself_as_stale(self) -> None:
+        # An install old enough to predate --package-dir cannot answer, and an
+        # command that cannot say where it lives is stale by definition.
+        self.fake_project(None)
 
         result = self.install("status")
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("cli-stale", result.stdout)
-        self.assertIn("installed version unknown", result.stdout)
+        self.assertIn("cannot report its source", result.stdout)
 
     def test_unknown_target_is_command_misuse(self) -> None:
         result = self.install("unknown")

@@ -73,33 +73,33 @@ install_codex() {
   CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" plugin add projector@projector
 }
 
-repo_cli_version() {
-  sed -n 's/^version[[:space:]]*=[[:space:]]*//p' "$REPO/setup.cfg" | head -1
-}
-
 # pipx and `pip install --user` both install a copy of the source, so a
 # checkout that has moved on leaves the command behind with nothing saying so.
 # The symlink still resolves and every old subcommand still works, while a
 # subcommand added since the install reports itself as an invalid choice --
 # which reads as a broken CLI rather than an old one.
+#
+# Compare what is installed rather than what it calls itself. A version can
+# only answer this if it is bumped on every CLI change, and a version nobody
+# bumped reports a stale command as current -- the false reassurance this
+# check exists to prevent. The installed copy is right there to diff.
 report_cli() {
-  local path installed repo
+  local path installed_dir version
   if ! path="$(command -v project 2>/dev/null)"; then
     printf '%-12s %s\n' "cli-missing" "project"
     return
   fi
   printf '%-12s %s\n' "cli" "$path"
 
-  repo="$(repo_cli_version)"
-  installed="$(project --version 2>/dev/null | awk '{print $NF}')" || true
-  if [ -z "$installed" ]; then
-    # No --version at all: the install predates this reporting, which is
-    # itself the staleness being reported.
-    printf '%-12s %s\n' "cli-stale" "installed version unknown, repo $repo -- run ./install.sh cli"
-  elif [ "$installed" = "$repo" ]; then
-    printf '%-12s %s\n' "cli-version" "$installed"
+  installed_dir="$(project --package-dir 2>/dev/null)" || true
+  if [ -z "$installed_dir" ] || [ ! -d "$installed_dir" ]; then
+    # Too old to say where it lives, which is itself the staleness.
+    printf '%-12s %s\n' "cli-stale" "installed command cannot report its source -- run ./install.sh cli"
+  elif diff -rq --exclude=__pycache__ "$installed_dir" "$REPO/src/projector" >/dev/null 2>&1; then
+    version="$(project --version 2>/dev/null | awk '{print $NF}')"
+    printf '%-12s %s\n' "cli-current" "${version:-matches checkout}"
   else
-    printf '%-12s %s\n' "cli-stale" "installed $installed, repo $repo -- run ./install.sh cli"
+    printf '%-12s %s\n' "cli-stale" "installed command differs from this checkout -- run ./install.sh cli"
   fi
 }
 
