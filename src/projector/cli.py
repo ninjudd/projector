@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
+from .config import ConfigError
 from .config import load as load_config
 from .core import (
     PRIORITIES,
@@ -17,6 +20,7 @@ from .core import (
     ProjectStore,
     discover_git_root,
     grouped_projects,
+    json_scalar,
     json_text,
 )
 
@@ -144,9 +148,12 @@ def format_value(value: object) -> str:
 
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
     if isinstance(value, (str, int, float)):
         return str(value)
-    return json.dumps(value, sort_keys=True)
+    # An array or table, which may itself contain a date.
+    return json.dumps(value, sort_keys=True, default=json_scalar)
 
 
 def run_config(arguments: argparse.Namespace) -> int:
@@ -200,11 +207,29 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def configured_projects_dir(root: Path) -> Optional[Path]:
+    """`projects.dir` from configuration, when the flag did not supply one."""
+
+    configured = load_config(root).get("projects.dir")
+    if configured is None:
+        return None
+    if not isinstance(configured, str):
+        raise ConfigError(f"projects.dir must be a string, not {type(configured).__name__}")
+    return Path(configured)
+
+
 def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "config":
         return run_config(arguments)
 
-    store = ProjectStore(Path.cwd(), arguments.root, arguments.projects_dir)
+    # Resolved once and passed down, so configuration and the store agree on
+    # the repository without asking git for it twice.
+    root = arguments.root.resolve() if arguments.root else discover_git_root(Path.cwd())
+    projects_dir = arguments.projects_dir
+    if projects_dir is None:
+        projects_dir = configured_projects_dir(root)
+
+    store = ProjectStore(Path.cwd(), root, projects_dir)
     command = arguments.command
 
     if command == "init":

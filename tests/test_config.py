@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
+from projector.cli import main
 from projector.config import ConfigError, config_paths, load, merge, user_config_path
+from projector.core import json_scalar
 
 
 def write(path: Path, text: str) -> Path:
@@ -158,3 +166,131 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigCommandTests(unittest.TestCase):
+    """The CLI paths. `ConfigTests` covers config.py; these cover cli.py, which
+    is where rendering lives and where a TOML date used to crash."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def config(self, text: str) -> Path:
+        return write(self.root / ".projector.toml", text)
+
+    def invoke(self, *arguments: str) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["--root", str(self.root), *arguments])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_a_toml_date_renders_as_iso_rather_than_crashing(self) -> None:
+        # `deadline = 2026-10-01` is valid TOML and what a person writes
+        # without thinking; tomllib hands back a datetime.date.
+        self.config("deadline = 2026-10-01\n")
+
+        code, stdout, _ = self.invoke("config", "get", "deadline")
+
+        self.assertEqual(0, code)
+        self.assertEqual("2026-10-01\n", stdout)
+
+    def test_one_date_does_not_poison_an_unrelated_listing(self) -> None:
+        self.config('deadline = 2026-10-01\nreviewer = "minjudd"\n')
+
+        code, stdout, _ = self.invoke("config", "list")
+
+        self.assertEqual(0, code)
+        self.assertIn("reviewer = minjudd", stdout)
+        self.assertIn("deadline = 2026-10-01", stdout)
+
+    def test_every_toml_temporal_type_survives_json(self) -> None:
+        self.config(
+            "day = 2026-10-01\n"
+            "at = 09:30:00\n"
+            "stamp = 2026-10-01T09:30:00Z\n"
+            "window = [2026-10-01, 2026-10-31]\n"
+        )
+
+        code, stdout, _ = self.invoke("config", "list", "--json")
+
+        self.assertEqual(0, code)
+        values = json.loads(stdout)["config"]
+        self.assertEqual("2026-10-01", values["day"])
+        self.assertEqual("09:30:00", values["at"])
+        self.assertEqual(["2026-10-01", "2026-10-31"], values["window"])
+        self.assertTrue(values["stamp"].startswith("2026-10-01T09:30:00"))
+
+    def test_an_unserializable_value_still_fails_loudly(self) -> None:
+        # The date handling must not become a blanket str() that hides a real
+        # serialization bug.
+        with self.assertRaises(TypeError):
+            json_scalar(object())
+
+    def test_get_exits_one_when_unset_and_zero_with_a_default(self) -> None:
+        self.config('reviewer = "minjudd"\n')
+
+        missing, stdout, _ = self.invoke("config", "get", "nope")
+        self.assertEqual(1, missing)
+        self.assertEqual("", stdout)
+
+        defaulted, stdout, _ = self.invoke("config", "get", "nope", "--default", "fallback")
+        self.assertEqual(0, defaulted)
+        self.assertEqual("fallback\n", stdout)
+
+    def test_booleans_print_the_way_the_file_spells_them(self) -> None:
+        self.config("[review]\nallow_approve = false\n")
+
+        _, stdout, _ = self.invoke("config", "get", "review.allow_approve")
+
+        self.assertEqual("false\n", stdout)
+
+    def test_projects_dir_comes_from_configuration(self) -> None:
+        plans = self.root / "plans"
+        plans.mkdir()
+        (plans / "README.md").write_text("# Plans\n")
+        self.config('[projects]\ndir = "plans"\n')
+
+        code, stdout, _ = self.invoke("list", "--json")
+
+        self.assertEqual(0, code)
+        self.assertEqual([], json.loads(stdout)["projects"])
+
+    def test_the_flag_beats_configuration(self) -> None:
+        for name in ("plans", "flagged"):
+            directory = self.root / name
+            directory.mkdir()
+            (directory / "README.md").write_text("# Dir\n")
+        write(
+            self.root / "flagged" / "alpha" / "readme.md",
+            "---\nstatus: draft\npriority: later\n---\n\n# Alpha\n\n## 1. Outcome\n\nDone.\n",
+        )
+        self.config('[projects]\ndir = "plans"\n')
+
+        code, stdout, _ = self.invoke("--projects-dir", "flagged", "list", "--json")
+
+        self.assertEqual(0, code)
+        self.assertEqual("alpha", json.loads(stdout)["projects"][0]["name"])
+
+    def test_a_wrongly_typed_projects_dir_is_an_error_not_a_traceback(self) -> None:
+        self.config("[projects]\ndir = 42\n")
+
+        code, _, stderr = self.invoke("list")
+
+        self.assertEqual(78, code)
+        self.assertIn("projects.dir must be a string", stderr)
+
+    def test_invalid_toml_reports_cleanly_through_the_cli(self) -> None:
+        self.config("reviewer = \n")
+
+        code, _, stderr = self.invoke("config", "list")
+
+        self.assertEqual(78, code)
+        self.assertIn("invalid TOML", stderr)

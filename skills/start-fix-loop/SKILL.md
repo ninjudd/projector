@@ -16,10 +16,15 @@ own tracked set and watcher state.
 ## Resolve ownership
 
 The **operator** owns the pull request branches and is the identity allowed to
-push fixes. Resolve that login once from explicit user input, repository
-instructions, or host user configuration, in that order. Confirm it with
-`gh auth status` and `gh api user --jq .login` under the token used for
-pushes.
+push fixes. Resolve that login once from explicit user input, then repository
+instructions. Confirm it with `gh auth status` and `gh api user --jq .login`
+under the token used for pushes.
+
+The operator is deliberately not a `.projector.toml` setting, though other
+Projector behavior is. A file naming a different account would scope this loop
+to pull requests it cannot push to, and the symptom is an empty watch -- which
+this skill reads as nothing outstanding. Ownership follows the token, not a
+file that can disagree with it.
 
 A review loop may run under a different reviewer identity. If the ambient
 identity is not the operator, do not derive scope from it and do not push

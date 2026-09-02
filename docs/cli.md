@@ -201,6 +201,24 @@ project config get review.effort --json
 Keys are not validated. Any key a skill or a script agrees on works, so this
 stays useful for settings Projector itself knows nothing about.
 
+These are the keys Projector reads today:
+
+| Key | Type | Default | Read by |
+| --- | --- | --- | --- |
+| `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
+| `reviewer` | string | the authenticated user | `start-review-loop`, as the identity that posts reviews |
+| `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
+
+`review.allow_approve` is off unless it is exactly `true`; an unset key means
+`false` rather than a question to ask. It never applies to a review of your own
+pull request, where GitHub refuses the verdict regardless.
+
+The operator -- the account whose pull requests are watched and whose branches
+carry fixes -- is deliberately not a key. It follows whichever token is
+authenticated, because a file naming a different account would scope a loop to
+pull requests it cannot push to and then go quiet, which both loops read as
+nothing outstanding.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,

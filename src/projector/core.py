@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -600,8 +601,27 @@ class ProjectStore:
         with path.open("r", encoding="utf-8", newline="") as stream:
             return stream.read()
 
+def json_scalar(value: object) -> str:
+    """Render a value `json` cannot, or refuse loudly.
+
+    TOML has first-class dates, times, and datetimes, so `tomllib` hands back
+    `datetime` objects for an unquoted `deadline = 2026-10-01` -- which is what
+    a person writes without thinking. ISO 8601 is the spelling the file used.
+    Anything else still raises, so an genuinely unserializable value fails
+    where it is introduced rather than becoming a silent `str()`.
+    """
+
+    # `datetime.datetime` subclasses `datetime.date`, so these two cover all
+    # three TOML temporal types.
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def json_text(payload: dict[str, object]) -> str:
-    return json.dumps({"schema_version": 2, **payload}, indent=2, sort_keys=True)
+    return json.dumps(
+        {"schema_version": 2, **payload}, indent=2, sort_keys=True, default=json_scalar
+    )
 
 
 def grouped_projects(projects: Iterable[Project]) -> str:

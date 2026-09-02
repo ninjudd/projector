@@ -38,6 +38,14 @@ class RepositoryTestCase(unittest.TestCase):
         self.projects = self.root / "docs" / "projects"
         self.projects.mkdir(parents=True)
         (self.projects / "README.md").write_text("# Projects\n", encoding="utf-8")
+        # Every command now reads layered configuration, and the user layer
+        # lives at $HOME/.projector.toml. Point HOME at an empty directory so
+        # a real one on the machine running the tests cannot reach them.
+        self.home = self.root / "home"
+        self.home.mkdir()
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
