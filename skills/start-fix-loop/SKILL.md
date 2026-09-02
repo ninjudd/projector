@@ -140,6 +140,11 @@ request buys nothing and spends someone's money to add noise to the pull
 request. This is the moment the temptation is strongest, because the fix looks
 incomplete until somebody confirms it; the push is the confirmation.
 
+Do not wait for one either. Those services are slow beside a local loop, and
+their findings are worth fixing without their latency being worth inheriting.
+Fix what they raise, push, and carry on; whether their re-review has landed is
+not this loop's business.
+
 Never resolve a finding you declined or could not fix. An open declined thread
 is the user's merge decision. Re-read and rerun the pull request body's
 `Testing` commands after each fix batch, and update stale claims in unwrapped
@@ -166,6 +171,12 @@ A pull request is clean only when:
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
   `CHANGES_REQUESTED` for a cross-author reviewer, and the pull request is no
   longer a draft where a self-review loop gates it.
+
+An external reviewer is not one of those conditions. A pending or absent
+re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
+report on the review loop's verdict and let theirs arrive whenever it does. A
+standing `CHANGES_REQUESTED` from one is a real verdict and does block, exactly
+as any other cross-author verdict would.
 
 Report that state with the head SHA, fix commits, declined findings, and
 validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
