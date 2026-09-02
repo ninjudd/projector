@@ -247,6 +247,16 @@ finding marker, and every review body carries the signature and verdict line.
 Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
 
+GitHub anchors an inline comment only to a file within the first 3,000 files
+of the diff, taken in path order; a thread on any later file fails with `422
+Path could not be resolved`, however correct the path and line. On a pull
+request that large, probe each anchor before the real submission: create a
+pending review holding the one comment, then delete it. When a file falls
+outside the window, anchor the finding to an in-window file that exercises the
+same code — the CI step, test, or README line that runs it — and name the real
+`path:line` in the first sentence, so a reader lands on the code rather than on
+the anchor.
+
 Immediately before submitting, list every verdict the reviewer has already
 posted on this exact SHA. The endpoint pages at 30 rows, oldest first, and
 every fix-loop thread reply adds a review object of its own, so the newest
