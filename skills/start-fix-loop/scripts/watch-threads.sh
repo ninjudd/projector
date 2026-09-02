@@ -197,7 +197,7 @@ while true; do
               author{login} body commit{oid} } } } } } }' \
       -f o="$owner" -f r="$name" \
       --jq '.data.repository.pullRequests.nodes[] | . as $pr
-            | ($pr.author.login // "") as $by
+            | ($pr.author.login // "?") as $by
             | (if $pr.reviewDecision == "CHANGES_REQUESTED"
                then $pr.reviews.nodes[]
                     | "V\t\($pr.number)\t\(.commit.oid)\t\($by)\t\(.author.login // "?")\t\(.body // "" | gsub("[\r\n\t]+"; " ") | .[0:130])"
