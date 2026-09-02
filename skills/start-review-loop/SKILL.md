@@ -23,17 +23,11 @@ That reads the GitHub login in `.projector.toml`, itself layered from the
 repository outward to `~/.projector.toml`, so one file can set a reviewer for
 every repository under a directory.
 
-An unset key, an empty value, and a command that cannot answer all mean the
-same thing: no override, so the reviewer is the authenticated user. `get`
-exits `1` on an unset key by design, and an installed `project` predating the
-`config` subcommand exits `2`; both are answers rather than reasons to go
-looking elsewhere.
-
-Exit `78` is not one of them. It means a `.projector.toml` on the walk is not
-valid TOML, and that same unparsed file is where `review.allow_approve` and
-`projects.dir` would have come from. Reading it as "no override" hides a
-broken file behind a working default, so report it and let the user fix it
-instead of reviewing under an assumption.
+`get` exits `1` when the key is unset and no `--default` is given. That is
+the one outcome meaning no override, and it resolves the reviewer to the
+authenticated user. Any other non-zero exit means the lookup itself failed
+rather than answered. Report it instead of defaulting past it, which would
+hide the failure behind a result that looks like it worked.
 
 A reviewer login sourced from anywhere but explicit user input or that key is
 not evidence — not your own notes, not a prior session's summary, not
