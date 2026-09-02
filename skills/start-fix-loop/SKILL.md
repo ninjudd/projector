@@ -134,6 +134,12 @@ Reply before pushing so a reviewer triggered by the push sees the reasoning,
 but push promptly because the named commit is briefly local-only. If a push
 fails, post that fact, leave the thread unresolved, and report the blocker.
 
+Fixing an external reviewer's finding is not a reason to ask that reviewer for
+another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
+request buys nothing and spends someone's money to add noise to the pull
+request. This is the moment the temptation is strongest, because the fix looks
+incomplete until somebody confirms it; the push is the confirmation.
+
 Never resolve a finding you declined or could not fix. An open declined thread
 is the user's merge decision. Re-read and rerun the pull request body's
 `Testing` commands after each fix batch, and update stale claims in unwrapped
@@ -180,3 +186,5 @@ finding on a pull request is deliberately declined.
 - Never push through the reviewer identity or to an unowned branch.
 - Never discard or overwrite uncommitted work to switch branches.
 - Never claim a watcher, review, or clean state without checking live evidence.
+- Never invoke an external reviewer unless the user names it, and never
+  re-request one after fixing its finding.

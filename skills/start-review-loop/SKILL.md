@@ -174,6 +174,9 @@ For every new head:
 7. Re-fetch the head before publishing. If it moved, revalidate findings and
    review the replacement SHA separately.
 
+Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
+user explicitly requests that service. This skill performs the local review.
+
 ## Label every review and finding
 
 The operator authors the pull request and posts the review, so nothing about
