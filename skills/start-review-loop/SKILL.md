@@ -100,6 +100,14 @@ request to a draft by hand before the loop first sees it is the same opt-in
 taken late, and the person's own state change is always allowed. What is not
 a default is leaving it ready — that is a deliberate choice to skip the gate.
 
+The window before this loop first sees a draft is covered too. Marking a draft
+ready is this loop's move to make on a clean head and nobody else's:
+**otherwise, never mark a draft pull request ready**, whether or not gating
+has been established yet. The prohibition cannot wait on adoption, because
+that window is exactly where the damage lands — undrafting a pull request no
+loop has seen yet is what makes it permanently ungated, and re-drafting
+afterward does not undo it.
+
 A pull request already ready for review when first seen is **not** gated.
 Review it and publish findings exactly the same way, but never convert it to a
 draft — it was published deliberately, and demoting it would retract a pull

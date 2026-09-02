@@ -107,6 +107,11 @@ eyes. Open one ready only when you mean to skip that gate. A pull request that
 is already ready the first time a review loop sees it is never gated, and it is
 never demoted to a draft afterward.
 
+Never mark your own draft ready yourself; that is the review loop's sign-off
+to give, or an explicit instruction's. The tempting move is undrafting once
+the reason you drafted is resolved — a red test now passing, say — and it is
+the one that spends the gate for good.
+
 Use an imperative pull request title and a body that explains why the change
 exists. End every body with a `## Testing` section containing commands you ran
 from the directory you name, the expected result, the failure signal, and any

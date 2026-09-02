@@ -181,9 +181,18 @@ as any other cross-author verdict would.
 Report that state with the head SHA, fix commits, declined findings, and
 validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
 request still in draft after all fixes, is a wait for re-review rather than
-another code change. Do not manufacture an empty commit to trigger it, and
-never mark a gated pull request ready yourself — that is the review loop's
-sign-off to give.
+another code change. Do not manufacture an empty commit to trigger it.
+
+Never mark a draft pull request ready yourself, whether or not a review loop
+has adopted it yet. Draft is an opt-in that only a review loop's sign-off or an
+explicit user instruction may spend. Waiting costs a re-review; readying early
+is one-way, because a loop that first sees a pull request ready never gates it
+and re-drafting by hand does not win the gate back. So if you opened it as a
+draft, you do not undraft it — not when the gate goes green, and not when the
+reason you drafted it is resolved. That last case is the one that feels
+justified: the red test you drafted around is passing, so the draft reads as
+stale state left over from a fixed problem. It is not. It is a standing
+request for review that has not been answered yet.
 
 Drop closed or merged pull requests from the tracked set. An empty set is idle,
 not an instruction to stop; remain ready for pull requests this conversation
