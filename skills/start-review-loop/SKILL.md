@@ -85,6 +85,16 @@ Review it and publish findings exactly the same way, but never convert it to a
 draft — it was published deliberately, and demoting it would retract a pull
 request from human view without being asked.
 
+**Explicit user instruction re-gates a tracked pull request**, and it is the
+way back in after a ready first sight. That is the same authority heading every
+other resolution order in this skill, and it is the only thing that overrides
+first sight: a person converting an already-seen pull request to a draft does
+not re-gate it on its own, because the loop must not read someone's state
+change as an instruction to take ownership of their readiness. Without this
+route a hand-drafted pull request would strand — a draft no loop will ever mark
+ready, which the fix loop's watcher goes on announcing as unsigned-off. Record
+the change in durable state and gate it normally from there.
+
 Record gated-ness in the loop's durable state when a pull request is adopted.
 Set draft or ready **once per reviewed head**, and never re-fight a state a
 person changed by hand; their last word stands until a new head arrives.
