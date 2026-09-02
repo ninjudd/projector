@@ -25,11 +25,12 @@
 # live when the query runs, and under the review loop's GH_TOKEN that is the
 # reviewing account, which authors nothing — the watch would then be silent
 # from the first pass on, indistinguishable from a repository with nothing
-# open. Without the flag every open pull request is watched. This watcher
-# filters at the source where watch-threads.sh deliberately does not, because
-# its events are pushes: on a shared repository every push by anyone is one,
-# none of them is the loop's to review, and every line here is a Monitor
-# notification counting toward the limit that stops a watcher.
+# open. Without the flag every open pull request is watched. Filtering at the
+# source matters most here, because this watcher's events are pushes: on a
+# shared repository every push by anyone is one, none of them is the loop's to
+# review, and every line here is a Monitor notification counting toward the
+# limit that stops a watcher. watch-threads.sh takes the same flag, for the
+# same reason, on the one event of its own that fires without review activity.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;

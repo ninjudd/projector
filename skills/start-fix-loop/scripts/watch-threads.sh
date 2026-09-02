@@ -5,8 +5,10 @@
 # `persistent: true`, where each stdout line becomes one notification.
 #
 #   FINDING   an unresolved review thread that has not been announced recently
-#   DRAFT     a pull request still in draft — the review loop has not signed
-#             off on it, so work remains even when no thread is open
+#   DRAFT     a pull request still in draft — no review loop has signed off on
+#             its head. Not itself a finding: the work, if any, is in that pull
+#             request's threads and review bodies, and a draft with none is
+#             waiting on a re-review rather than on a change
 #   REVIEW    a submitted review carrying a body — the shape every COMMENT
 #             review posts, Projector's own included, which never moves
 #             reviewDecision
@@ -19,14 +21,28 @@
 #
 # Usage:
 #   watch-threads.sh --repos owner/a[,owner/b...] --state <path>
-#                    [--interval 60] [--renotify 900]
+#                    [--author login[,login...]] [--interval 60] [--renotify 900]
 #
 # --renotify is how many seconds before a still-unresolved thread is announced
 # again. Set it high enough to be a reminder rather than a stream.
+#
+# --author narrows every event to pull requests those logins authored, which is
+# how the fix loop keeps to the operator's own on a shared repository. Pass
+# logins literally, never `@me`, whose value follows whichever token is live.
+# Without the flag every open pull request is watched, which is the right
+# default for a single-owner repository and the wrong one for a busy shared
+# repo -- above all for DRAFT. The other three events are review activity:
+# somebody had to open a thread or submit a review for them to fire, so they
+# are bounded by work already aimed at a pull request. DRAFT fires on a pull
+# request merely existing in draft, so unfiltered it announces every colleague's
+# organic work-in-progress, and re-announces it every --renotify seconds for as
+# long as it stays open. Every line is a Monitor notification counting toward
+# the limit that stops a watcher, and a stopped watcher leaves the fix loop
+# deaf while its skill reads silence as "nothing outstanding".
 
 set -uo pipefail
 
-REPOS=""; STATE=""; INTERVAL=60; RENOTIFY=900
+REPOS=""; STATE=""; INTERVAL=60; RENOTIFY=900; AUTHORS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -34,6 +50,7 @@ while [ $# -gt 0 ]; do
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --renotify) RENOTIFY="${2:-900}"; shift 2 ;;
+    --author)   AUTHORS="${2:-}"; shift 2 ;;
     *) echo "watch-threads.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -46,6 +63,65 @@ touch "$STATE" 2>/dev/null || { echo "watch-threads.sh: cannot write state file:
 [ "$INTERVAL" -lt 30 ] 2>/dev/null && INTERVAL=30
 
 REPO_LIST=$(printf '%s' "$REPOS" | tr ',' ' ')
+AUTHOR_LIST=$(printf '%s' "$AUTHORS" | tr ',' ' ')
+
+# A login that does not exist is not an error to `gh pr list --author`: it is
+# an empty answer, exit 0, on every pass, so a mistyped operator login gives a
+# watch that starts cleanly and never says anything. Refuse it once, here.
+# Distinguish a missing login from a failed lookup: `gh api` exits non-zero for
+# a network failure, a rate limit or a bad token exactly as it does for a 404,
+# and reporting "no such login" for a blip sends the reader off to re-resolve a
+# login that was right all along. Either way nothing runs on an unverified one.
+for a in $AUTHOR_LIST; do
+  case "$a" in
+    @*)    echo "watch-threads.sh: --author takes a literal login, not $a" >&2; exit 2 ;;
+    app/*) probe="apps/${a#app/}" ;;   # `gh pr list --author app/dependabot`
+    *)     probe="users/$a" ;;         # a user, or a bot as `dependabot[bot]`
+  esac
+  if ! err=$(gh api "$probe" 2>&1 >/dev/null); then
+    case "$err" in
+      *"HTTP 404"*) echo "watch-threads.sh: --author $a: no such GitHub login" >&2 ;;
+      *) echo "watch-threads.sh: --author $a: could not verify login — network or auth error, not a missing login: ${err%%$'\n'*}" >&2 ;;
+    esac
+    exit 2
+  fi
+done
+
+# True when no narrowing is in force, or when $1 is one of the watched logins.
+# The verdict query below filters with this rather than in its jq, so it keeps
+# paginating over every open pull request instead of inheriting the listing's
+# 200 ceiling.
+author_watched() {
+  [ -n "$AUTHOR_LIST" ] || return 0
+  local a
+  for a in $AUTHOR_LIST; do
+    [ "$a" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# One pull request number per line for $1, restricted to $AUTHOR_LIST when it
+# is set. Listed once per author rather than filtered client-side, so --limit
+# bounds each author's pull requests rather than the repository's: on a repo
+# with more than 200 open, a client-side filter over the first 200 would drop
+# the operator's own past the cut. Any listing failing fails the whole call, so
+# the caller carries this repository's rows forward rather than reading a
+# partial answer as "everything else resolved".
+list_prs() {
+  local repo="$1" a chunk out=""
+  if [ -z "$AUTHOR_LIST" ]; then
+    gh pr list --repo "$repo" --state open --limit 200 \
+      --json number --jq '.[].number' 2>/dev/null
+    return
+  fi
+  for a in $AUTHOR_LIST; do
+    chunk=$(gh pr list --repo "$repo" --author "$a" --state open --limit 200 \
+              --json number --jq '.[].number' 2>/dev/null) || return 1
+    [ -n "$chunk" ] && out="$out$chunk
+"
+  done
+  printf '%s' "$out"
+}
 
 while true; do
   now=$(date +%s)
@@ -61,7 +137,7 @@ while true; do
     # at all. Scans threads for up to 200 open pull requests per repository;
     # the verdict query below paginates instead and has no such ceiling, so
     # the 200 is this listing's limit and not the script's.
-    if ! prs=$(gh pr list --repo "$slug" --state open --limit 200 --json number --jq '.[].number' 2>/dev/null); then
+    if ! prs=$(list_prs "$slug"); then
       carried=$(grep " $slug " "$STATE" 2>/dev/null || true)
       [ -n "$carried" ] && new_state="$new_state$carried
 "
@@ -116,22 +192,31 @@ while true; do
           pageInfo{ hasNextPage endCursor }
           nodes{
             number isDraft reviewDecision headRefOid
+            author{login}
             reviews(states:[CHANGES_REQUESTED], last:1){ nodes{
               author{login} body commit{oid} } } } } } }' \
       -f o="$owner" -f r="$name" \
       --jq '.data.repository.pullRequests.nodes[] | . as $pr
+            | ($pr.author.login // "") as $by
             | (if $pr.reviewDecision == "CHANGES_REQUESTED"
                then $pr.reviews.nodes[]
-                    | "V\t\($pr.number)\t\(.commit.oid)\t\(.author.login)\t\(.body // "" | gsub("[\r\n]+"; " ") | .[0:130])"
+                    | "V\t\($pr.number)\t\(.commit.oid)\t\($by)\t\(.author.login // "?")\t\(.body // "" | gsub("[\r\n\t]+"; " ") | .[0:130])"
                else empty end),
-              (if $pr.isDraft then "D\t\($pr.number)\t\($pr.headRefOid)\t\t" else empty end)' \
+              (if $pr.isDraft then "D\t\($pr.number)\t\($pr.headRefOid)\t\($by)\t\t" else empty end)' \
       2>/dev/null); then
       carried=$(awk -v s="$slug" '$1 ~ /^(verdict|draft):/ && $2==s' "$STATE" 2>/dev/null || true)
       [ -n "$carried" ] && new_state="$new_state$carried
 "
     else
-      while IFS=$'\t' read -r kind vn vsha vwho vsnip; do
+      # Field order matters: tab is an IFS whitespace character, so a run of
+      # tabs collapses to one delimiter and an empty field in the middle of a
+      # row silently shifts every field after it. The author is therefore
+      # placed before the fields that can be empty, and the free-text snippet
+      # stays last because `read` gives the final variable everything left --
+      # a tab inside a review body would otherwise fake a field break.
+      while IFS=$'\t' read -r kind vn vsha vby vwho vsnip; do
         [ -n "${vn:-}" ] || continue
+        author_watched "${vby:-}" || continue
         # Keyed on the reviewed or head SHA, so a push is a new row and
         # announces immediately rather than waiting out --renotify.
         if [ "$kind" = V ]; then
@@ -140,7 +225,7 @@ while true; do
           again="VERDICT (still open) $slug#$vn CHANGES_REQUESTED on ${vsha:0:8} [$vwho] — $vsnip"
         else
           vid="draft:$vn:$vsha"
-          first="DRAFT $slug#$vn head=${vsha:0:8} — not signed off; clear open findings so the review loop can mark it ready"
+          first="DRAFT $slug#$vn head=${vsha:0:8} — no review loop has signed off this head; the work, if any, is in its threads and review bodies"
           again="DRAFT (still open) $slug#$vn head=${vsha:0:8} — still not signed off"
         fi
         last=$(awk -v t="$vid" '$1==t {print $4}' "$STATE" 2>/dev/null)
