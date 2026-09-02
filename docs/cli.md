@@ -12,8 +12,7 @@ Running the package as a module is equivalent when the command is not on your
 python3 -m projector check
 ```
 
-Print the version of the installed command, which is what `./install.sh status`
-compares against the checkout:
+Print the version of the installed command:
 
 ```sh
 project --version

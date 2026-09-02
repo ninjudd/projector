@@ -13,6 +13,7 @@ from unittest import mock
 
 import importlib.metadata as metadata
 
+from projector import cli
 from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectStore
 
@@ -681,8 +682,8 @@ class StoreTests(RepositoryTestCase):
         self.assertEqual("alpha", store.resolve("alpha").name)
 
 
-class VersionTests(unittest.TestCase):
-    """`install.sh status` reads `--version`, and reads silence as staleness.
+class SelfReportingTests(unittest.TestCase):
+    """`install.sh status` asks the installed command about itself.
 
     A regression here does not look like a break. It looks like every install
     reporting `cli-stale installed version unknown`, which reads as the check
@@ -700,6 +701,26 @@ class VersionTests(unittest.TestCase):
         # this exits 0 rather than failing on the absent command.
         self.assertEqual(0, raised.exception.code)
         self.assertRegex(stdout.getvalue().strip(), r"^project \S+$")
+
+    def test_package_dir_names_where_this_package_runs_from(self) -> None:
+        stdout = StringIO()
+
+        # A narrow width, because argparse's own version action reflows to the
+        # terminal and would fold a long path. `install.sh` reads this with
+        # `$(...)` and tests the result with `-d`, so a folded path reports
+        # every install stale forever. Pinning COLUMNS checks that at any
+        # width rather than at whatever depth this checkout happens to sit.
+        with mock.patch.dict(os.environ, {"COLUMNS": "20"}):
+            with self.assertRaises(SystemExit) as raised:
+                with redirect_stdout(stdout):
+                    main(["--package-dir"])
+
+        self.assertEqual(0, raised.exception.code)
+        printed = stdout.getvalue().splitlines()
+        self.assertEqual(1, len(printed), printed)
+        reported = Path(printed[0])
+        self.assertEqual(Path(cli.__file__).resolve().parent, reported)
+        self.assertTrue((reported / "cli.py").is_file())
 
     def test_the_queried_distribution_is_the_one_setup_cfg_installs(self) -> None:
         # A wrong name here is invisible: `version()` raises, the unknown
