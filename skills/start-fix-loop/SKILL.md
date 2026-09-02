@@ -169,8 +169,8 @@ A pull request is clean only when:
 - no unresolved threads remain,
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
-  `CHANGES_REQUESTED` for a cross-author reviewer, and the pull request is no
-  longer a draft where a self-review loop gates it.
+  `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
+  request is no longer a draft, which is how that loop signs off.
 
 An external reviewer is not one of those conditions. A pending or absent
 re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
@@ -181,9 +181,15 @@ as any other cross-author verdict would.
 Report that state with the head SHA, fix commits, declined findings, and
 validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
 request still in draft after all fixes, is a wait for re-review rather than
-another code change. Do not manufacture an empty commit to trigger it, and
-never mark a gated pull request ready yourself — that is the review loop's
-sign-off to give.
+another code change. Do not manufacture an empty commit to trigger it.
+
+Never mark a draft pull request ready yourself. A clean review is what clears
+a draft, so undrafting by hand sends the work to human reviewers carrying a
+sign-off nothing gave it. If you opened it as a draft, you do not undraft it —
+not when the reason you drafted it is resolved. That is the case that feels
+justified: the red test you drafted around is passing, so the draft reads as
+stale state left over from a fixed problem. It is not. It is a standing
+request for review that has not been answered yet.
 
 Drop closed or merged pull requests from the tracked set. An empty set is idle,
 not an instruction to stop; remain ready for pull requests this conversation
