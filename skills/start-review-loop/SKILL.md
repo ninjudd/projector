@@ -23,11 +23,9 @@ That reads the GitHub login in `.projector.toml`, itself layered from the
 repository outward to `~/.projector.toml`, so one file can set a reviewer for
 every repository under a directory.
 
-`get` exits `1` when the key is unset and no `--default` is given. That is
-the one outcome meaning no override, and it resolves the reviewer to the
-authenticated user. Any other non-zero exit means the lookup itself failed
-rather than answered. Report it instead of defaulting past it, which would
-hide the failure behind a result that looks like it worked.
+`get` exits `1` when the key is unset and no `--default` is given, and a key
+set to an empty string exits `0` with an empty value. Both mean no override:
+the reviewer is the authenticated user.
 
 A reviewer login sourced from anywhere but explicit user input or that key is
 not evidence — not your own notes, not a prior session's summary, not
