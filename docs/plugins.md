@@ -79,6 +79,44 @@ Inspect the upgrade before applying it:
 The host plugin managers own installed copies and future updates after the
 migration.
 
+## Release an update
+
+Bump `version` in both `.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json` in the change that alters skills, scripts, or
+manifests. The version is what a release delivers: a host caches an installed
+plugin in a directory named by that string, so an update that finds an
+unchanged version resolves to the copy already on disk and installs nothing.
+Claude Code records the path it used, which you can read back:
+
+```sh
+jq '.plugins["projector@projector"]' ~/.claude/plugins/installed_plugins.json
+```
+
+The packaging tests assert both manifests declare the same version, because a
+one-sided bump updates one host and leaves the other on its stale cache entry.
+
+Tagging follows the bump rather than replacing it. `claude plugin tag` derives
+the tag name from the manifest, so it can only publish a version the manifest
+already declares, and it refuses a dirty working tree:
+
+```sh
+claude plugin tag --dry-run .
+claude plugin tag . --push
+```
+
+The tag is `projector--v<version>`, and the command validates that
+`plugin.json` and the enclosing marketplace entry agree before creating it.
+
+Update an installed copy with each host's own command. Claude Code needs a
+restart to apply the update, and Codex refreshes a Git marketplace snapshot
+before it can see the new version:
+
+```sh
+claude plugin update projector@projector
+codex plugin marketplace upgrade
+codex plugin add projector@projector
+```
+
 ## Work without MCP
 
 Projector currently ships no MCP server. Every core skill uses the public
