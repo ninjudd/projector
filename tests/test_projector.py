@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import subprocess
@@ -699,6 +700,18 @@ class VersionTests(unittest.TestCase):
         # this exits 0 rather than failing on the absent command.
         self.assertEqual(0, raised.exception.code)
         self.assertRegex(stdout.getvalue().strip(), r"^project \S+$")
+
+    def test_the_queried_distribution_is_the_one_setup_cfg_installs(self) -> None:
+        # A wrong name here is invisible: `version()` raises, the unknown
+        # branch answers, and every install reports `cli-stale installed
+        # version unknown` while the suite stays green.
+        configuration = configparser.ConfigParser()
+        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+
+        with mock.patch.object(metadata, "version", return_value="9.9.9") as version:
+            self.assertEqual("9.9.9", distribution_version())
+
+        version.assert_called_once_with(configuration["metadata"]["name"])
 
     def test_an_uninstalled_distribution_reports_unknown(self) -> None:
         with mock.patch.object(
