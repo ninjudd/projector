@@ -113,8 +113,8 @@ are needed, ready means the head is clean. **A review with findings marks it
 draft; a clean review marks it ready.** Publish the review, then `gh pr ready
 <number>` or `gh pr ready <number> --undo` to match the verdict you just
 gave. Nothing else enters into it — not when this loop first saw the pull
-request, not who put it in draft, not whether it was ever a draft. Setting a
-state it already holds is a no-op, so there is no case to analyse.
+request, not who last changed the state, not whether it was ever a draft.
+Setting a state it already holds is a no-op, so there is no case to analyse.
 
 Draft carries the outcome there because GitHub refuses `APPROVE` and
 `REQUEST_CHANGES` on your own pull request and `reviewDecision` never moves.
