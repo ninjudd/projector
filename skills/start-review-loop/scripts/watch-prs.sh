@@ -9,7 +9,7 @@
 #   RESPONDED  every thread resolved and the head unchanged on a pull request
 #              still waiting for one: a draft (self-review, where the verdict
 #              never moves) or one at CHANGES_REQUESTED (cross-author, where
-#              gating never applies). The author answered without pushing, so
+#              draft state is never touched). The author answered without pushing, so
 #              no head event is coming. Once per head, and never alongside
 #              NEW PR or NEW HEAD, which already say to review that head.
 #   CLOSED     a tracked pull request left the open set
@@ -159,7 +159,7 @@ while true; do
     # CHANGES_REQUESTED alone would match nothing, on every pass, forever.
     #
     # reviewDecision carries a cross-author review, where REQUEST_CHANGES works
-    # and gating never applies — the skill forbids drafting another author's
+    # and draft state is untouched — the skill forbids drafting another author's
     # pull request. A filter on draft state alone would match nothing there, so
     # a cross-author pull request whose author answered every thread without
     # pushing would sit at CHANGES_REQUESTED forever: no head event is coming
@@ -219,8 +219,8 @@ while true; do
       # the limit that stops a watcher.
       if [ "$responded" != "__QUERYFAILED__" ] && [ -n "$known" ] && [ "$known" = "$sha" ]; then
         # Which signal matched decides the wording, and they call for opposite
-        # actions: a draft is gated and a clean re-review marks it ready, while
-        # a cross-author changes request is never gated and marking it ready is
+        # actions: a clean re-review marks a self-reviewed draft ready, while
+        # on a cross-author changes request marking it ready is
         # forbidden -- a clean re-review there is a COMMENT recommending a human
         # approval. One message cannot say both.
         rstate=$(printf '%s\n' "$responded" | awk -v n="$num" '$1==n {print $2; exit}')

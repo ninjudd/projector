@@ -100,12 +100,14 @@ Create dependent work as a real GitHub stack when it crosses a reviewability
 boundary, and keep tests and documentation with the code they verify.
 
 Open your own pull request as a draft, and draft every layer of a stack you
-open. The draft is the opt-in that puts a pull request under review-loop
-gating: the loop owns its readiness from there and marks it ready for review
-on a clean head, which is a self-review landing before the work reaches human
-eyes. Open one ready only when you mean to skip that gate. A pull request that
-is already ready the first time a review loop sees it is never gated, and it is
-never demoted to a draft afterward.
+open. A review loop marks a pull request ready on a clean head, so the draft
+says the work has not been signed off yet and the ready transition says it
+has — a self-review landing before the work reaches human eyes.
+
+Never mark your own draft ready yourself; a clean review is what clears it.
+The tempting move is undrafting once the reason you drafted is resolved — a
+red test now passing, say — which sends the work to human reviewers carrying
+a sign-off nothing gave it.
 
 Use an imperative pull request title and a body that explains why the change
 exists. End every body with a `## Testing` section containing commands you ran
