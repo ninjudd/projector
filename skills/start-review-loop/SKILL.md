@@ -118,9 +118,9 @@ Setting a state it already holds is a no-op, so there is no case to analyse.
 
 Draft carries the outcome there because GitHub refuses `APPROVE` and
 `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
-and draft state is the only channel left. On someone else's it does move, so
-draft state is not needed as a channel and is not yours to move: post
-`REQUEST_CHANGES` and leave their state alone.
+and draft state is the only list-visible channel left. On someone else's
+`reviewDecision` does move, so draft state is not needed as a channel and is
+not yours to move: post `REQUEST_CHANGES` and leave their state alone.
 
 So **open your own pull requests as drafts by default**, every layer of a
 stack included. The draft says the head has not been signed off; the ready
