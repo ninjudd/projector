@@ -74,6 +74,20 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("project = projector.cli:main", scripts)
         self.assertEqual("projector-cli", configuration["metadata"]["name"])
 
+    def test_the_cli_version_matches_the_published_plugin_version(self) -> None:
+        configuration = configparser.ConfigParser()
+        configuration.read(ROOT / "setup.cfg")
+
+        # The CLI installs as a copy, so the only way to tell a stale command
+        # from a current one is to compare versions -- and that comparison is
+        # worthless if the CLI's version sits still while the plugins move.
+        # Tie all three together here so a release cannot bump the manifests
+        # and silently leave the CLI claiming the version it shipped last time.
+        self.assertEqual(
+            self.manifest("claude")["version"],
+            configuration["metadata"]["version"],
+        )
+
     def test_public_review_loops_have_no_personal_identity_defaults(self) -> None:
         for name in ("start-review-loop", "start-fix-loop"):
             text = (ROOT / "skills" / name / "SKILL.md").read_text()

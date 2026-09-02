@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import os
 import subprocess
 import tempfile
@@ -108,6 +109,48 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(f"pipx install --force {ROOT}\n", self.log.read_text())
+
+    def fake_project(self, output: str) -> None:
+        """A `project` on PATH ahead of any real one, answering --version."""
+
+        path = self.fake_bin / "project"
+        path.write_text(f"#!/bin/sh\n{output}\n")
+        path.chmod(0o755)
+
+    def repo_version(self) -> str:
+        configuration = configparser.ConfigParser()
+        configuration.read(ROOT / "setup.cfg")
+        return configuration["metadata"]["version"]
+
+    def test_status_reports_a_cli_matching_the_checkout(self) -> None:
+        self.fake_project(f'echo "project {self.repo_version()}"')
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"cli-version  {self.repo_version()}", result.stdout)
+        self.assertNotIn("cli-stale", result.stdout)
+
+    def test_status_reports_a_cli_left_behind_by_the_checkout(self) -> None:
+        self.fake_project('echo "project 0.0.1"')
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("cli-stale", result.stdout)
+        self.assertIn("installed 0.0.1", result.stdout)
+        self.assertIn(f"repo {self.repo_version()}", result.stdout)
+
+    def test_status_treats_a_cli_without_version_as_stale(self) -> None:
+        # An install old enough to predate --version cannot report one, and
+        # an unreportable version is stale by definition.
+        self.fake_project('echo "usage: project" >&2; exit 2')
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("cli-stale", result.stdout)
+        self.assertIn("installed version unknown", result.stdout)
 
     def test_unknown_target_is_command_misuse(self) -> None:
         result = self.install("unknown")

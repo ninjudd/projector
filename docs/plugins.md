@@ -60,6 +60,17 @@ do not install the CLI, so install it separately before running a project
 workflow. `all` installs each host CLI it finds, skips a missing host, and exits
 69 only when neither Claude Code nor Codex is installed.
 
+`pipx` installs a copy of the source rather than a link to your checkout, so
+pulling new commits does not update the command. Ask which one you have:
+
+```sh
+./install.sh status
+```
+
+`cli-version` reports a command that matches the checkout. `cli-stale` reports
+one left behind by it, names both versions, and tells you to run
+`./install.sh cli`.
+
 ## Upgrade from agent-config
 
 The old installer linked whole configuration and skill directories into each
@@ -81,9 +92,11 @@ migration.
 
 ## Release an update
 
-Bump `version` in both `.claude-plugin/plugin.json` and
-`.codex-plugin/plugin.json` in the change that alters skills, scripts, or
-manifests. The version is what a release delivers: a host caches an installed
+Bump `version` in `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
+and `setup.cfg` in the change that alters skills, scripts, manifests, or the
+CLI. A test asserts the three agree, because `./install.sh status` compares the
+installed CLI against `setup.cfg` and a version that never moves cannot report
+a stale install. The version is what a release delivers: a host caches an installed
 plugin in a directory named by that string, so an update that finds an
 unchanged version resolves to the copy already on disk and installs nothing.
 Claude Code records the path it used, which you can read back:
