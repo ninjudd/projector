@@ -185,7 +185,9 @@ while true; do
       --jq '.data.repository.pullRequests.nodes[]
             | select(.isDraft == true or .reviewDecision == "CHANGES_REQUESTED")
             | select([.reviewThreads.nodes[] | select(.isResolved == false)] | length == 0)
-            | "\(.number)"' 2>/dev/null || echo "__QUERYFAILED__")
+            | "\(.number) \(if .reviewDecision == "CHANGES_REQUESTED"
+                             then "changes-requested" else "draft" end)"' \
+      2>/dev/null || echo "__QUERYFAILED__")
 
     while read -r num sha ref; do
       [ -n "$num" ] || continue
@@ -216,9 +218,19 @@ while true; do
       # one, and every line here is a Monitor notification that counts toward
       # the limit that stops a watcher.
       if [ "$responded" != "__QUERYFAILED__" ] && [ -n "$known" ] && [ "$known" = "$sha" ]; then
-        if printf '%s\n' "$responded" | grep -qx "$num"; then
+        # Which signal matched decides the wording, and they call for opposite
+        # actions: a draft is gated and a clean re-review marks it ready, while
+        # a cross-author changes request is never gated and marking it ready is
+        # forbidden -- a clean re-review there is a COMMENT recommending a human
+        # approval. One message cannot say both.
+        rstate=$(printf '%s\n' "$responded" | awk -v n="$num" '$1==n {print $2; exit}')
+        if [ -n "$rstate" ]; then
           if [ "$flag" != "$sha" ]; then
-            echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
+            if [ "$rstate" = "changes-requested" ]; then
+              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — changes requested with every thread resolved; re-review this head, and a clean one is a COMMENT, never an approval"
+            else
+              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
+            fi
             flag="$sha"
           fi
         else
