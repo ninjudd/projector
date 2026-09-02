@@ -21,7 +21,20 @@ project config get review.username
 
 That reads the GitHub login in `.projector.toml`, itself layered from the
 repository outward to `~/.projector.toml`, so one file can set a reviewer for
-every repository under a directory. Confirm whatever you resolve under the token actually used:
+every repository under a directory.
+
+An absent key, an empty value, and a command that errors all mean the same
+thing: no override, so the reviewer is the authenticated user. An installed
+`project` predating the `config` subcommand fails the third way, and that is
+still an answer rather than a reason to go looking elsewhere. A reviewer login
+sourced from anywhere but explicit user input or that key is not evidence —
+not your own notes, not a prior session's summary, not repository lore. The
+operator's version of this rule fails loudly, filtering the watch to an
+account with no matching pull requests and going silent. This one fails
+quietly in the opposite direction, posting review after review as the wrong
+account, so the source matters more here rather than less.
+
+Confirm whatever you resolve under the token actually used:
 
 ```sh
 gh auth status
