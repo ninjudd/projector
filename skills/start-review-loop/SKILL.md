@@ -62,6 +62,14 @@ time this loop saw it. Opening your own pull request as a draft is how you opt
 in: the loop then owns its readiness and marks it ready for review on a clean
 head, exactly like a self-review before the work goes out for human eyes.
 
+So **open your own pull requests as drafts by default**, every layer of a
+stack included. Gating is decided at first sight, and nothing this loop does
+later reverses that: once it has seen a pull request ready, it will not demote
+it, and the work goes to human review ungated. Converting your own pull
+request to a draft by hand before the loop first sees it is the same opt-in
+taken late, and the person's own state change is always allowed. What is not
+a default is leaving it ready — that is a deliberate choice to skip the gate.
+
 A pull request already ready for review when first seen is **not** gated.
 Review it and publish findings exactly the same way, but never convert it to a
 draft — it was published deliberately, and demoting it would retract a pull
