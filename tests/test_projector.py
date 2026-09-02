@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import subprocess
@@ -10,7 +11,9 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from projector.cli import main
+import importlib.metadata as metadata
+
+from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectStore
 
 
@@ -676,6 +679,45 @@ class StoreTests(RepositoryTestCase):
         store = ProjectStore(deep)
         self.assertEqual(self.root.resolve(), store.root)
         self.assertEqual("alpha", store.resolve("alpha").name)
+
+
+class VersionTests(unittest.TestCase):
+    """`install.sh status` reads `--version`, and reads silence as staleness.
+
+    A regression here does not look like a break. It looks like every install
+    reporting `cli-stale installed version unknown`, which reads as the check
+    working, so pin the action rather than trusting it.
+    """
+
+    def test_version_exits_zero_and_names_the_distribution(self) -> None:
+        stdout = StringIO()
+
+        with self.assertRaises(SystemExit) as raised:
+            with redirect_stdout(stdout):
+                main(["--version"])
+
+        # argparse's version action short-circuits the required subparser, so
+        # this exits 0 rather than failing on the absent command.
+        self.assertEqual(0, raised.exception.code)
+        self.assertRegex(stdout.getvalue().strip(), r"^project \S+$")
+
+    def test_the_queried_distribution_is_the_one_setup_cfg_installs(self) -> None:
+        # A wrong name here is invisible: `version()` raises, the unknown
+        # branch answers, and every install reports `cli-stale installed
+        # version unknown` while the suite stays green.
+        configuration = configparser.ConfigParser()
+        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+
+        with mock.patch.object(metadata, "version", return_value="9.9.9") as version:
+            self.assertEqual("9.9.9", distribution_version())
+
+        version.assert_called_once_with(configuration["metadata"]["name"])
+
+    def test_an_uninstalled_distribution_reports_unknown(self) -> None:
+        with mock.patch.object(
+            metadata, "version", side_effect=metadata.PackageNotFoundError
+        ):
+            self.assertEqual("unknown", distribution_version())
 
 
 if __name__ == "__main__":

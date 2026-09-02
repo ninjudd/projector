@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.metadata as metadata
 import json
 import os
 import shlex
@@ -25,8 +26,27 @@ from .core import (
 )
 
 
+def distribution_version() -> str:
+    """The version of the installed distribution, not of this source tree.
+
+    `install.sh status` compares this against `setup.cfg` to tell a stale
+    install from a current one. A checkout that was never installed has no
+    distribution to report, which is itself the answer.
+    """
+
+    try:
+        return metadata.version("projector-cli")
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="project")
+    result.add_argument(
+        "--version",
+        action="version",
+        version=f"project {distribution_version()}",
+    )
     result.add_argument("--root", type=Path, help="Git repository root")
     result.add_argument(
         "--projects-dir",
