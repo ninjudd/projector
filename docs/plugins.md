@@ -67,7 +67,7 @@ pulling new commits does not update the command. Ask which one you have:
 ./install.sh status
 ```
 
-`cli-version` reports a command that matches the checkout. `cli-stale` reports
+`cli-version` reports a command whose version matches the checkout. `cli-stale` reports
 one left behind by it, names both versions, and tells you to run
 `./install.sh cli`.
 
