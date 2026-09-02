@@ -12,9 +12,16 @@ SHA actually begins.
 ## Resolve identity and scope
 
 The loop runs as one GitHub identity, the **reviewer**. By default that is
-simply the authenticated user; resolve an override from explicit user input,
-repository instructions, then host user configuration. Confirm it under the
-token actually used:
+simply the authenticated user. Resolve an override from explicit user input,
+then configuration:
+
+```sh
+project config get review.username
+```
+
+That reads the GitHub login in `.projector.toml`, itself layered from the
+repository outward to `~/.projector.toml`, so one file can set a reviewer for
+every repository under a directory. Confirm whatever you resolve under the token actually used:
 
 ```sh
 gh auth status
@@ -26,6 +33,11 @@ pull requests are watched and whose branches carry the work. By default it is
 that same authenticated user, which is why neither role needs configuring. A
 reviewer override is what separates them, and every `<operator>` below means
 this login, never the reviewer's.
+
+The operator is deliberately not a setting. It is whoever the token says you
+are, and a configuration file naming someone else would filter the watch to
+that account's pull requests, match none of yours, and go quiet -- silence
+this skill cannot tell apart from a repository with nothing outstanding.
 
 Watch only the repository containing the current working directory. Track pull
 requests this conversation creates or explicitly adopts; authorship by the
@@ -55,10 +67,18 @@ clean, post a `COMMENT` review saying so — **never `APPROVE`**. An approval is
 person vouching for code, and a loop must not vouch on the reviewer's behalf;
 recommend it in the body and let a human click it.
 
-That last rule is the one configurable piece of this skill. A repository or
-user configuration may explicitly permit the loop to post a real `APPROVE` on a
-clean cross-author review. It is off unless the configuration says otherwise,
-and it never applies to a self-review, where GitHub refuses the verdict anyway.
+That last rule is the one configurable piece of this skill:
+
+```sh
+project config get review.allow_approve
+```
+
+`true` permits a real `APPROVE` on a clean cross-author review. Anything else,
+including the key being unset, leaves it off -- treat a missing key as `false`
+rather than as a reason to ask. It never applies to a self-review, where GitHub
+refuses the verdict anyway. Because the setting is layered, a repository can
+grant it without granting it everywhere, and `~/.projector.toml` can grant it
+everywhere you work; read it per repository rather than once per machine.
 
 Never convert another author's pull request to a draft. Draft gating below is a
 self-review mechanism; on someone else's pull request, `REQUEST_CHANGES` is
@@ -154,7 +174,7 @@ For every new head:
 7. Re-fetch the head before publishing. If it moved, revalidate findings and
    review the replacement SHA separately.
 
-Do not invoke a separate Codex, Claude, Bugbot, or other reviewer unless the
+Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
 
 ## Label every review and finding

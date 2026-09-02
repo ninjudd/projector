@@ -11,7 +11,7 @@ shared `now.md`, `next.md`, or `later.md` queue.
 
 ## Install the CLI
 
-Projector requires Python 3.9 or newer. Install an isolated executable with
+Projector requires Python 3.11 or newer. Install an isolated executable with
 `pipx` after the first Projector release reaches the default branch:
 
 ```sh

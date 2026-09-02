@@ -16,10 +16,15 @@ own tracked set and watcher state.
 ## Resolve ownership
 
 The **operator** owns the pull request branches and is the identity allowed to
-push fixes. Resolve that login once from explicit user input, repository
-instructions, or host user configuration, in that order. Confirm it with
-`gh auth status` and `gh api user --jq .login` under the token used for
-pushes.
+push fixes. Resolve that login once from explicit user input, then repository
+instructions. Confirm it with `gh auth status` and `gh api user --jq .login`
+under the token used for pushes.
+
+The operator is deliberately not a `.projector.toml` setting, though other
+Projector behavior is. A file naming a different account would scope this loop
+to pull requests it cannot push to, and the symptom is an empty watch -- which
+this skill reads as nothing outstanding. Ownership follows the token, not a
+file that can disagree with it.
 
 A review loop may run under a different reviewer identity. If the ambient
 identity is not the operator, do not derive scope from it and do not push
@@ -129,6 +134,17 @@ Reply before pushing so a reviewer triggered by the push sees the reasoning,
 but push promptly because the named commit is briefly local-only. If a push
 fails, post that fact, leave the thread unresolved, and report the blocker.
 
+Fixing an external reviewer's finding is not a reason to ask that reviewer for
+another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
+request buys nothing and spends someone's money to add noise to the pull
+request. This is the moment the temptation is strongest, because the fix looks
+incomplete until somebody confirms it; the push is the confirmation.
+
+Do not wait for one either. Those services are slow beside a local loop, and
+their findings are worth fixing without their latency being worth inheriting.
+Fix what they raise, push, and carry on; whether their re-review has landed is
+not this loop's business.
+
 Never resolve a finding you declined or could not fix. An open declined thread
 is the user's merge decision. Re-read and rerun the pull request body's
 `Testing` commands after each fix batch, and update stale claims in unwrapped
@@ -156,6 +172,12 @@ A pull request is clean only when:
   `CHANGES_REQUESTED` for a cross-author reviewer, and the pull request is no
   longer a draft where a self-review loop gates it.
 
+An external reviewer is not one of those conditions. A pending or absent
+re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
+report on the review loop's verdict and let theirs arrive whenever it does. A
+standing `CHANGES_REQUESTED` from one is a real verdict and does block, exactly
+as any other cross-author verdict would.
+
 Report that state with the head SHA, fix commits, declined findings, and
 validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
 request still in draft after all fixes, is a wait for re-review rather than
@@ -175,4 +197,5 @@ finding on a pull request is deliberately declined.
 - Never push through the reviewer identity or to an unowned branch.
 - Never discard or overwrite uncommitted work to switch branches.
 - Never claim a watcher, review, or clean state without checking live evidence.
-- Never invoke an external reviewer unless the user explicitly names it.
+- Never invoke an external reviewer unless the user names it, and never
+  re-request one after fixing its finding.
