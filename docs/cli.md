@@ -124,6 +124,83 @@ Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
 filesystems.
 
+## Read configuration
+
+Projector reads settings from `.projector.toml` files. Put a value in the file
+nearest the code it applies to: a repository's own file is checked in with the
+repository, a file in a parent directory covers every repository beneath it,
+and `~/.projector.toml` covers everything you do.
+
+Files are merged lowest precedence first:
+
+1. `~/.projector.toml`, read wherever the repository lives.
+2. Every `.projector.toml` from your home directory down to the repository
+   root, nearest last.
+
+The walk stops at your home directory, so a file above it is never read. When
+the repository is not under your home directory -- a checkout at `/opt/src`, a
+mounted volume, a container's `/workspace` -- no ancestor is read, and
+`~/.projector.toml` is still applied. A worktree inside the repository, as
+`.claude/worktrees/<name>` is, keeps the repository and its parents on the
+walk.
+
+Tables merge key by key, so a nearer file overrides one setting without
+discarding the rest:
+
+```toml
+# ~/ninjudd/.projector.toml — every repository in this directory
+reviewer = "minjudd"
+
+[review]
+effort = "xhigh"
+model = "sonnet"
+```
+
+```toml
+# ~/ninjudd/projector/.projector.toml — this repository only
+[review]
+model = "fable"
+```
+
+Together those resolve `review.effort` to `xhigh` and `review.model` to
+`fable`. Arrays replace rather than append.
+
+Read one value with a dotted key, which reaches into a table:
+
+```sh
+project config get review.effort
+project config get review.effort --default medium
+```
+
+`get` exits `1` when the key is unset and no `--default` is given, so a caller
+can branch on the exit status rather than parse the output. Print everything,
+or the files that contributed:
+
+```sh
+project config list
+project config paths
+```
+
+Add `--json` to any of them. `get --json` and `list --json` report which file
+each value came from, which is the quickest way to find out why a setting is
+not what you expected:
+
+```sh
+project config get review.effort --json
+```
+
+```json
+{
+  "key": "review.effort",
+  "schema_version": 2,
+  "source": "/Users/you/ninjudd/.projector.toml",
+  "value": "xhigh"
+}
+```
+
+Keys are not validated. Any key a skill or a script agrees on works, so this
+stays useful for settings Projector itself knows nothing about.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
@@ -159,3 +236,4 @@ Projector uses these exit codes:
 | `66` | The requested project or the projects directory does not exist. |
 | `67` | The requested project is ambiguous. |
 | `69` | Git or the interactive editor environment is unavailable. |
+| `78` | A `.projector.toml` file is not valid TOML. |

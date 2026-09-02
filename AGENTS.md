@@ -36,6 +36,7 @@ project show <name> --json
 project status <name> <status>
 project priority <name> <priority>
 project check
+project config get <key>
 ```
 
 ## Keep the core portable

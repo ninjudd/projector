@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
+from .config import load as load_config
 from .core import (
     PRIORITIES,
     STATUSES,
     EnvironmentError,
     ProjectorError,
     ProjectStore,
+    discover_git_root,
     grouped_projects,
     json_text,
 )
@@ -71,6 +74,22 @@ def parser() -> argparse.ArgumentParser:
     add_output(done)
 
     add_output(subcommands.add_parser("check", help="validate all projects"))
+
+    config = subcommands.add_parser("config", help="read layered configuration")
+    config_commands = config.add_subparsers(dest="config_command", required=True)
+
+    config_get = config_commands.add_parser("get", help="print one value")
+    config_get.add_argument("key", help="dotted key, for example review.effort")
+    config_get.add_argument("--default", help="printed when the key is unset")
+    add_output(config_get)
+
+    config_list = config_commands.add_parser("list", help="print the merged configuration")
+    add_output(config_list)
+
+    config_paths = config_commands.add_parser(
+        "paths", help="print the files that contribute, lowest precedence first"
+    )
+    add_output(config_paths)
     return result
 
 
@@ -100,7 +119,91 @@ def emit_path(store: ProjectStore, path: Path, json_output: bool, action: str) -
         print(relative)
 
 
+def config_start(arguments: argparse.Namespace) -> Path:
+    """Where the walk begins: the repository root, or the working directory.
+
+    Configuration is useful outside a repository -- the user layer alone still
+    answers -- so a missing repository is not an error here, unlike everywhere
+    else in this CLI.
+    """
+
+    if arguments.root:
+        return arguments.root.resolve()
+    try:
+        return discover_git_root(Path.cwd())
+    except EnvironmentError:
+        return Path.cwd().resolve()
+
+
+def format_value(value: object) -> str:
+    """Render a scalar the way the TOML file spells it.
+
+    Booleans matter: `str(True)` is `True`, which no shell comparison against a
+    config file's `true` will match.
+    """
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    return json.dumps(value, sort_keys=True)
+
+
+def run_config(arguments: argparse.Namespace) -> int:
+    config = load_config(config_start(arguments))
+    command = arguments.config_command
+
+    if command == "get":
+        value = config.get(arguments.key)
+        if value is None:
+            value = arguments.default
+            source = None
+        else:
+            source = config.source(arguments.key)
+        if arguments.json_output:
+            print(
+                json_text(
+                    {
+                        "key": arguments.key,
+                        "value": value,
+                        "source": str(source) if source else None,
+                    }
+                )
+            )
+        elif value is not None:
+            print(format_value(value))
+        # Unset and undefaulted is not an error, it is an answer -- report it
+        # in the exit status so a caller can branch without parsing output.
+        return 0 if value is not None else 1
+
+    if command == "list":
+        flat = config.flat()
+        if arguments.json_output:
+            print(
+                json_text(
+                    {
+                        "config": config.values,
+                        "sources": {key: str(path) for key, path in config.sources.items()},
+                    }
+                )
+            )
+        else:
+            for key in sorted(flat):
+                print(f"{key} = {format_value(flat[key])}")
+        return 0
+
+    if arguments.json_output:
+        print(json_text({"paths": [str(path) for path in config.paths]}))
+    else:
+        for path in config.paths:
+            print(path)
+    return 0
+
+
 def run(arguments: argparse.Namespace) -> int:
+    if arguments.command == "config":
+        return run_config(arguments)
+
     store = ProjectStore(Path.cwd(), arguments.root, arguments.projects_dir)
     command = arguments.command
 
