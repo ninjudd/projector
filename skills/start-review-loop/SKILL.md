@@ -246,6 +246,25 @@ finding marker, and every review body carries the signature and verdict line.
 Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
 
+Immediately before submitting, check whether this exact SHA already carries a
+verdict from the reviewer that this loop did not post:
+
+```sh
+gh api repos/<owner>/<repo>/pulls/<number>/reviews \
+  --jq '.[] | select(.user.login == "<reviewer>")
+        | select(.body | test("projector-review .* sha=<full-sha>"))
+        | "\(.id) \(.submitted_at)"'
+```
+
+A row this loop did not publish means another loop under the same account is
+reviewing this pull request. Hold the review and ask the user which loop
+continues, rather than either submitting or standing down. Two verdicts from one
+account on one commit read as a single thorough loop, so the collision goes
+unnoticed unless this check catches it. Standing down silently is no better: a
+second reviewer is sometimes invited deliberately, and a head both loops walk
+away from gets no verdict at all. The tracked-set filter does not prevent this,
+because both loops can legitimately own the pull request.
+
 **Findings open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
 --undo`.
