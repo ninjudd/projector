@@ -180,4 +180,3 @@ finding on a pull request is deliberately declined.
 - Never push through the reviewer identity or to an unowned branch.
 - Never discard or overwrite uncommitted work to switch branches.
 - Never claim a watcher, review, or clean state without checking live evidence.
-- Never invoke an external reviewer unless the user explicitly names it.
