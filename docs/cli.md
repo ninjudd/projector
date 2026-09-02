@@ -149,9 +149,8 @@ discarding the rest:
 
 ```toml
 # ~/ninjudd/.projector.toml — every repository in this directory
-reviewer = "minjudd"
-
 [review]
+username = "minjudd"
 effort = "xhigh"
 model = "sonnet"
 ```
@@ -161,6 +160,10 @@ model = "sonnet"
 [review]
 model = "fable"
 ```
+
+The `[review]` table is where identity and review policy live together, so
+`review.username` sits beside `review.allow_approve` rather than floating at
+the top level as though `operator` might join it.
 
 Together those resolve `review.effort` to `xhigh` and `review.model` to
 `fable`. Arrays replace rather than append.
@@ -206,7 +209,7 @@ These are the keys Projector reads today:
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
-| `reviewer` | string | the authenticated user | `start-review-loop`, as the identity that posts reviews |
+| `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means

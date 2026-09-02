@@ -16,12 +16,12 @@ simply the authenticated user. Resolve an override from explicit user input,
 then configuration:
 
 ```sh
-project config get reviewer
+project config get review.username
 ```
 
-That reads `.projector.toml`, itself layered from the repository outward to
-`~/.projector.toml`, so one file can set a reviewer for every repository under
-a directory. Confirm whatever you resolve under the token actually used:
+That reads the GitHub login in `.projector.toml`, itself layered from the
+repository outward to `~/.projector.toml`, so one file can set a reviewer for
+every repository under a directory. Confirm whatever you resolve under the token actually used:
 
 ```sh
 gh auth status
