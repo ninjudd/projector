@@ -40,12 +40,31 @@ def distribution_version() -> str:
         return "unknown"
 
 
+class PackageDir(argparse.Action):
+    """Print where this command's package actually lives, and exit.
+
+    `install.sh status` diffs that directory against the checkout. argparse's
+    own `version` action reflows its text to the terminal width, which would
+    fold a long path across lines and defeat the caller reading it.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: D102
+        print(Path(__file__).resolve().parent)
+        parser.exit()
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="project")
     result.add_argument(
         "--version",
         action="version",
         version=f"project {distribution_version()}",
+    )
+    result.add_argument(
+        "--package-dir",
+        nargs=0,
+        action=PackageDir,
+        help=argparse.SUPPRESS,
     )
     result.add_argument("--root", type=Path, help="Git repository root")
     result.add_argument(
