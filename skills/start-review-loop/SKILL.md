@@ -144,7 +144,8 @@ transition is the sign-off a reader sees in the pull-request list.
    conversation. Review any current head without a completed exact-head review
    immediately; do not baseline it away.
 5. Start or reuse a persistent recurring goal that records the repository,
-   operator, tracked pull requests, and reviewed SHAs.
+   operator, tracked pull requests, and every reviewed SHA paired with the id
+   of the review this loop published for it.
 6. Run the bundled `scripts/watch-prs.sh` with a durable state file,
    `--author <operator>`, `--worktree <repository>`, and an interval of at
    least 30 seconds. Use the host's persistent process or monitor facility.
@@ -246,8 +247,8 @@ finding marker, and every review body carries the signature and verdict line.
 Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
 
-Immediately before submitting, check whether this exact SHA already carries a
-verdict from the reviewer that this loop did not post:
+Immediately before submitting, list every verdict the reviewer has already
+posted on this exact SHA:
 
 ```sh
 gh api repos/<owner>/<repo>/pulls/<number>/reviews \
@@ -256,14 +257,17 @@ gh api repos/<owner>/<repo>/pulls/<number>/reviews \
         | "\(.id) \(.submitted_at)"'
 ```
 
-A row this loop did not publish means another loop under the same account is
-reviewing this pull request. Hold the review and ask the user which loop
-continues, rather than either submitting or standing down. Two verdicts from one
-account on one commit read as a single thorough loop, so the collision goes
-unnoticed unless this check catches it. Standing down silently is no better: a
-second reviewer is sometimes invited deliberately, and a head both loops walk
-away from gets no verdict at all. The tracked-set filter does not prevent this,
-because both loops can legitimately own the pull request.
+Compare each id against the record. An id this loop recorded is its own,
+including the second verdict a `RESPONDED` re-review legitimately publishes on
+an unmoved head, so it never trips the check. An id absent from the record
+means another loop under the same account is reviewing this pull request. Hold
+the review and ask the user which loop continues, rather than either submitting
+or standing down. Two verdicts from one account on one commit read as a single
+thorough loop, so the collision goes unnoticed unless this check catches it.
+Standing down silently is no better: a second reviewer is sometimes invited
+deliberately, and a head both loops walk away from gets no verdict at all. The
+tracked-set filter does not prevent this, because both loops can legitimately
+own the pull request.
 
 **Findings open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
@@ -286,10 +290,10 @@ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
-Record a SHA as reviewed only after its review is published and, on a clean
-self-review, the pull request is ready. Verify both: re-read the review body
-and the pull request's `isDraft`. Never resolve the author's findings,
-claim a newer SHA was reviewed, or merge.
+Record a SHA as reviewed, paired with the published review's id, only after
+that review is published and, on a clean self-review, the pull request is
+ready. Verify both: re-read the review body and the pull request's `isDraft`.
+Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
 
 ## Gate readiness claims in plans
 
