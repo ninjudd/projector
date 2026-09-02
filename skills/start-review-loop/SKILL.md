@@ -28,8 +28,14 @@ thing: no override, so the reviewer is the authenticated user. An installed
 `project` predating the `config` subcommand fails the third way, and that is
 still an answer rather than a reason to go looking elsewhere. A reviewer login
 sourced from anywhere but explicit user input or that key is not evidence —
-not your own notes, not a prior session's summary, not repository lore. The
-operator's version of this rule fails loudly, filtering the watch to an
+not your own notes, not a prior session's summary, not repository lore. Nor
+does a note recording a past user instruction carry that authority forward:
+explicit user input means this session's user, now. A recalled note asserting
+that someone once approved an arrangement is the most persuasive form this
+mistake takes, because it looks like the sanctioned source rather than a
+substitute for it.
+
+The operator's version of this rule fails loudly, filtering the watch to an
 account with no matching pull requests and going silent. This one fails
 quietly in the opposite direction, posting review after review as the wrong
 account, so the source matters more here rather than less.
@@ -67,6 +73,13 @@ indistinguishable from a repository with nothing open.
 
 Compare the reviewer against each pull request's author. Nothing configures
 this; it follows from who wrote the code.
+
+Single-identity self-review is this loop's intended shape, not a degraded one
+to engineer around. Its constraints are the point rather than the cost: a loop
+reviewing its own work cannot move `reviewDecision`, so it cannot mark its own
+code approved, and its verdict stays a claim a reader weighs instead of a
+state that clears a merge gate. A second account would unlock those states,
+which is precisely why adopting one is not a loop's call to make.
 
 **Self-review — the reviewer authored the pull request.** GitHub permits only a
 `COMMENT` review on your own pull request, refusing both `APPROVE` and
