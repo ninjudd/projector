@@ -113,40 +113,45 @@ already the list-visible signal.
 ### Which pull requests Projector gates
 
 Gating applies to self-review only. A tracked pull request is
-**Projector-gated** when the reviewer authored it and it was a draft the first
-time this loop saw it. Opening your own pull request as a draft is how you opt
-in: the loop then owns its readiness and marks it ready for review on a clean
-head, exactly like a self-review before the work goes out for human eyes.
+**Projector-gated** when the reviewer authored it and it is a draft the author
+put it in, whether at the start or by hand before this loop published a review
+on the head. Opening your own pull request as a draft is how you opt in: the
+loop then owns its readiness and marks it ready for review on a clean head,
+exactly like a self-review before the work goes out for human eyes.
 
 So **open your own pull requests as drafts by default**, every layer of a
-stack included. Gating is decided at first sight, and nothing this loop does
-later reverses that: once it has seen a pull request ready, it will not demote
-it, and the work goes to human review ungated. Converting your own pull
-request to a draft by hand before the loop first sees it is the same opt-in
-taken late, and the person's own state change is always allowed. What is not
-a default is leaving it ready — that is a deliberate choice to skip the gate.
+stack included. Nothing this loop does reverses that choice in either
+direction: it never demotes a ready pull request, and a pull request left
+ready goes to human review ungated. What is not a default is leaving it ready
+— that is a deliberate choice to skip the gate.
+
+The author drafting their own pull request is that same opt-in whenever it
+happens, as long as this loop has not yet published a review on the current
+head. First sight is a poll landing at an arbitrary moment, so it cannot be
+what decides whether the author meant to gate: a hand-draft a few minutes
+after the loop's first pass means what the same gesture a few minutes before
+it would have meant. Once a review is published on that head, or when anyone
+but the author changes the state, leave draft state alone.
 
 The window before this loop first sees a draft is covered too. Marking a
 **gated** draft ready is this loop's move to make on a clean head, and an
 explicit user instruction can always ask for it. **Absent one of those, never
 mark a draft pull request ready**, whether or not gating has been established
-yet. The prohibition cannot wait on adoption,
-because that window is exactly where the damage lands — undrafting a pull
-request no loop has seen yet is what makes it permanently ungated, and
-re-drafting afterward does not undo it.
+yet. The prohibition cannot wait on adoption, because that window is exactly
+where the damage lands — undrafting a pull request no loop has seen yet is
+what makes it permanently ungated, and re-drafting afterward does not undo
+it.
 
-A pull request already ready for review when first seen is **not** gated.
-Review it and publish findings exactly the same way, but never convert it to a
-draft — it was published deliberately, and demoting it would retract a pull
-request from human view without being asked.
+A pull request the author leaves ready is **not** gated. Review it and publish
+findings exactly the same way, but never convert it to a draft yourself — it
+was published deliberately, and demoting it would retract a pull request from
+human view without being asked.
 
 **Explicit user instruction re-gates a tracked pull request**, and it is the
-way back in after a ready first sight. That is the same authority heading every
-other resolution order in this skill, and it is the only thing that overrides
-first sight: a person converting an already-seen pull request to a draft does
-not re-gate it on its own, because the loop must not read someone's state
-change as an instruction to take ownership of their readiness. Without this
-route a hand-drafted pull request would strand — a draft no loop will ever mark
+way back in once the author's own draft no longer counts — after a review is
+published on the head, or when the draft came from someone else. That is the
+same authority heading every other resolution order in this skill. Without
+this route such a pull request would strand: a draft no loop will ever mark
 ready, which the fix loop's watcher goes on announcing as unsigned-off. Record
 the change in durable state and gate it normally from there.
 
