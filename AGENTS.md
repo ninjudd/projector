@@ -41,7 +41,7 @@ project config get <key>
 
 ## Keep the core portable
 
-The Python CLI has no runtime dependencies and supports Python 3.9 or newer.
+The Python CLI has no runtime dependencies and supports Python 3.11 or newer.
 Prefer the standard library unless a dependency has a concrete cross-platform
 benefit that justifies its installation and release cost.
 
