@@ -6,10 +6,12 @@
 #
 #   NEW PR     a pull request opened that the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
-#   RESPONDED  still a draft, every thread resolved, head unchanged — the
-#              author answered without pushing, so no head event is coming.
-#              Once per head, and never alongside NEW PR or NEW HEAD, which
-#              already say to review that head.
+#   RESPONDED  every thread resolved and the head unchanged on a pull request
+#              still waiting for one: a draft (self-review, where the verdict
+#              never moves) or one at CHANGES_REQUESTED (cross-author, where
+#              gating never applies). The author answered without pushing, so
+#              no head event is coming. Once per head, and never alongside
+#              NEW PR or NEW HEAD, which already say to review that head.
 #   CLOSED     a tracked pull request left the open set
 #   BRANCH     the watched worktree changed branch
 #
@@ -148,9 +150,21 @@ while true; do
     # pull request stays a draft forever because only a re-review marks it
     # ready.
     #
-    # Draft state, not reviewDecision, is the signal: reviews are self-reviews
-    # and can only ever be COMMENT, so reviewDecision never leaves NONE and a
-    # filter on CHANGES_REQUESTED would match nothing, on every pass, forever.
+    # Both signals are needed, because the two review modes record the wait
+    # in different places and neither covers the other.
+    #
+    # Draft state carries a self-review: GitHub allows only a COMMENT review on
+    # your own pull request, so reviewDecision never leaves NONE and a filter on
+    # CHANGES_REQUESTED alone would match nothing, on every pass, forever.
+    #
+    # reviewDecision carries a cross-author review, where REQUEST_CHANGES works
+    # and gating never applies — the skill forbids drafting another author's
+    # pull request. A filter on draft state alone would match nothing there, so
+    # a cross-author pull request whose author answered every thread without
+    # pushing would sit at CHANGES_REQUESTED forever: no head event is coming
+    # and no draft flag will ever clear. That is this event's whole purpose,
+    # under the one mode the skill keeps first-class for human reviewers.
+    #
     # Asked once per repository; on failure every pull request's flag is simply
     # carried forward by the row rebuild below, and it retries next cycle.
     owner="${repo%%/*}"; name="${repo##*/}"
@@ -164,11 +178,11 @@ while true; do
                      orderBy:{field:CREATED_AT, direction:ASC}){
           pageInfo{ hasNextPage endCursor }
           nodes{
-            number isDraft
+            number isDraft reviewDecision
             reviewThreads(first:100){ nodes{ isResolved } } } } } }' \
       -f o="$owner" -f r="$name" \
       --jq '.data.repository.pullRequests.nodes[]
-            | select(.isDraft == true)
+            | select(.isDraft == true or .reviewDecision == "CHANGES_REQUESTED")
             | select([.reviewThreads.nodes[] | select(.isResolved == false)] | length == 0)
             | "\(.number)"' 2>/dev/null || echo "__QUERYFAILED__")
 
