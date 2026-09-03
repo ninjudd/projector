@@ -206,8 +206,12 @@ signature misstates what produced it is worse than an unlabeled one: a reader
 weighs a finding by what reviewed it.
 
 The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
-marker's `verdict=`. `approved` means every finding on this exact head is
-resolved or absent; `changes-requested` means at least one is open.
+marker's `verdict=`. `approved` means no finding thread on the pull request is
+open — a thread outlives the head it was filed on, so findings from earlier
+heads count until resolved; `changes-requested` means at least one is open.
+Under the verdict line, print the census the verdict rests on — `6 finding
+threads: 4 resolved, 2 open` — so a reader can see the verdict was earned.
+`approved` requires that last number to be zero.
 
 **Every inline finding opens with a marker:**
 
@@ -218,23 +222,30 @@ resolved or absent; `changes-requested` means at least one is open.
 Keep the visible finding text as it always was: priority, impact, and the
 verified code path or reproduction.
 
-### Reading unresolved findings back
+### Outstanding findings
 
-A finding is outstanding when its thread is unresolved. Enumerate them by
-thread state, not by author, and match the marker to separate Projector
-findings from ordinary review conversation:
+A finding is outstanding while its thread is unresolved, and a head is
+**clean** only when no finding thread is outstanding. This query is that test.
+Run it by thread state, not by author, and match the marker to separate
+Projector findings from ordinary review conversation:
 
 ```sh
 gh api graphql -f query='
   query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
     pullRequest(number:$n){ reviewThreads(first:100){ nodes{
-      isResolved path line comments(first:1){nodes{body}} } } } } }' \
+      isResolved isOutdated path line originalLine
+      comments(first:1){nodes{body}} } } } } }' \
   -f o=<owner> -f r=<repo> -F n=<number> \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
         | select(.comments.nodes[0].body | test("projector-finding"))
-        | "\(.path):\(.line)"'
+        | "\(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
 ```
+
+An `outdated` row is a thread whose line the fix moved: GitHub nulls `line`
+and keeps `originalLine`. It is still outstanding — outdated says the code
+changed, not that the finding was addressed — and only the author resolving
+the thread closes it.
 
 Both loops key on the marker rather than on a login. A reply the fix loop posts
 inside a thread carries `<!-- projector-reply v=1 -->` so it is never read back
@@ -281,6 +292,17 @@ deliberately, and a head both loops walk away from gets no verdict at all. The
 tracked-set filter does not prevent this, because both loops can legitimately
 own the pull request.
 
+Whether a head is *clean* or has *findings open* is decided by the
+outstanding-findings query above, not by what inspection found. Run it now. A
+head is clean when the query returns nothing; a head you inspected and found
+nothing wrong in is not clean while a finding thread is open. The reviewer
+never resolves threads, so the reviewer's own re-verification cannot close a
+finding — only the author resolving it does — and a fix-cycle head arrives with
+its threads exactly as the author left them. The watcher applies this same test
+from its side: `RESPONDED` fires only when every thread is resolved. `NEW HEAD`
+cannot, because a push says nothing about threads, so on every head the check
+is yours.
+
 **Findings open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
 --undo`.
@@ -304,8 +326,11 @@ verdict as one.
 
 Record a SHA as reviewed, paired with the published review's id, only after
 that review is published and, on a clean self-review, the pull request is
-ready. Verify both: re-read the review body and the pull request's `isDraft`.
-Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
+ready. Verify the input as well as the outputs: before an `approved` verdict,
+the outstanding-findings query returned nothing; after publishing, re-read the
+review body and the pull request's `isDraft`. Never resolve the author's
+findings, claim a newer SHA was reviewed, or merge. Resolving is the author's
+act, which is why your verification alone never closes a finding.
 
 ## Gate readiness claims in plans
 
