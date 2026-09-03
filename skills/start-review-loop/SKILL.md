@@ -210,8 +210,10 @@ marker's `verdict=`. `approved` means no finding thread on the pull request is
 open — a thread outlives the head it was filed on, so findings from earlier
 heads count until resolved; `changes-requested` means at least one is open.
 Under the verdict line, print the census the verdict rests on — `6 finding
-threads: 4 resolved, 2 open` — so a reader can see the verdict was earned.
-`approved` requires that last number to be zero.
+threads: 4 resolved, 2 open` — counting the threads this review opens among the
+open, so a changes-requested review on a fresh head never prints `0 open` above
+its own findings. `approved` requires that last number to be zero, and printing
+it lets a reader see the verdict was earned.
 
 **Every inline finding opens with a marker:**
 
@@ -225,9 +227,10 @@ verified code path or reproduction.
 ### Outstanding findings
 
 A finding is outstanding while its thread is unresolved, and a head is
-**clean** only when no finding thread is outstanding. This query is that test.
-Run it by thread state, not by author, and match the marker to separate
-Projector findings from ordinary review conversation:
+**clean** only when no finding thread is outstanding and this review opens
+none. This query is the thread half of that test. Run it by thread state, not
+by author, and match the marker to separate Projector findings from ordinary
+review conversation:
 
 ```sh
 gh api graphql -f query='
@@ -292,16 +295,17 @@ deliberately, and a head both loops walk away from gets no verdict at all. The
 tracked-set filter does not prevent this, because both loops can legitimately
 own the pull request.
 
-Whether a head is *clean* or has *findings open* is decided by the
-outstanding-findings query above, not by what inspection found. Run it now. A
-head is clean when the query returns nothing; a head you inspected and found
-nothing wrong in is not clean while a finding thread is open. The reviewer
-never resolves threads, so the reviewer's own re-verification cannot close a
-finding — only the author resolving it does — and a fix-cycle head arrives with
-its threads exactly as the author left them. The watcher applies this same test
-from its side: `RESPONDED` fires only when every thread is resolved. `NEW HEAD`
-cannot, because a push says nothing about threads, so on every head the check
-is yours.
+A head is *clean* only when the outstanding-findings query above returns
+nothing **and this review posts no finding**. Run the query now, before
+choosing a branch. Both tests are one-way: an open thread makes the head not
+clean whatever inspection found, and a new finding makes it not clean whatever
+the query returned. The first matters most on a fix-cycle head, which arrives
+with its threads exactly as the author left them: the reviewer never resolves
+threads — only the author does — so a head you inspected and found nothing
+wrong in is still not clean while a finding thread is open. The watcher applies
+the thread test from its side: `RESPONDED` fires only when every thread is
+resolved. `NEW HEAD` cannot, because a push says nothing about threads, so on
+every head the check is yours.
 
 **Findings open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
@@ -327,7 +331,8 @@ verdict as one.
 Record a SHA as reviewed, paired with the published review's id, only after
 that review is published and, on a clean self-review, the pull request is
 ready. Verify the input as well as the outputs: before an `approved` verdict,
-the outstanding-findings query returned nothing; after publishing, re-read the
+the outstanding-findings query returned nothing and the review carries no
+finding; after publishing, re-read the
 review body and the pull request's `isDraft`. Never resolve the author's
 findings, claim a newer SHA was reviewed, or merge. Resolving is the author's
 act, which is why your verification alone never closes a finding.
