@@ -228,16 +228,18 @@ verified code path or reproduction.
 
 A finding is outstanding while its thread is unresolved, and a head is
 **clean** only when no finding thread is outstanding and this review opens
-none. This query is the thread half of that test. Run it by thread state, not
-by author, and match the marker to separate Projector findings from ordinary
-review conversation:
+none. This query is the thread half of that test, and it pages so that a pull
+request with more than a hundred threads is still read to the end. Run it by
+thread state, not by author, and match the marker to separate Projector
+findings from ordinary review conversation:
 
 ```sh
-gh api graphql -f query='
-  query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
-    pullRequest(number:$n){ reviewThreads(first:100){ nodes{
-      isResolved isOutdated path line originalLine
-      comments(first:1){nodes{body}} } } } } }' \
+gh api graphql --paginate -f query='
+  query($o:String!,$r:String!,$n:Int!,$endCursor:String){ repository(owner:$o,name:$r){
+    pullRequest(number:$n){ reviewThreads(first:100, after:$endCursor){
+      pageInfo{hasNextPage endCursor}
+      nodes{ isResolved isOutdated path line originalLine
+        comments(first:1){nodes{body}} } } } } }' \
   -f o=<owner> -f r=<repo> -F n=<number> \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
