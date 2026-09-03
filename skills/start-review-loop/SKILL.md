@@ -330,14 +330,14 @@ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
-Record a SHA as reviewed, paired with the published review's id, only after
-that review is published and, on a clean self-review, the pull request is
-ready. Verify the input as well as the outputs: before an `approved` verdict,
-the outstanding-findings query returned nothing and the review carries no
-finding; after publishing, re-read the
-review body and the pull request's `isDraft`. Never resolve the author's
-findings, claim a newer SHA was reviewed, or merge. Resolving is the author's
-act, which is why your verification alone never closes a finding.
+Record a SHA as reviewed, paired with the published review's id, only after that
+review is published and, on a clean self-review, the pull request is ready.
+Verify the input as well as the outputs: before an `approved` verdict, the
+outstanding-findings query returned nothing and the review carries no finding;
+after publishing, re-read the review body and the pull request's `isDraft`.
+Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
+Resolving is the author's act, which is why your verification alone never closes
+a finding.
 
 ## Gate readiness claims in plans
 
