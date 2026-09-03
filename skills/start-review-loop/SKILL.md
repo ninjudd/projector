@@ -144,7 +144,8 @@ transition is the sign-off a reader sees in the pull-request list.
    conversation. Review any current head without a completed exact-head review
    immediately; do not baseline it away.
 5. Start or reuse a persistent recurring goal that records the repository,
-   operator, tracked pull requests, and reviewed SHAs.
+   operator, tracked pull requests, and every reviewed SHA paired with the id
+   of the review this loop published for it.
 6. Run the bundled `scripts/watch-prs.sh` with a durable state file,
    `--author <operator>`, `--worktree <repository>`, and an interval of at
    least 30 seconds. Use the host's persistent process or monitor facility.
@@ -205,8 +206,14 @@ signature misstates what produced it is worse than an unlabeled one: a reader
 weighs a finding by what reviewed it.
 
 The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
-marker's `verdict=`. `approved` means every finding on this exact head is
-resolved or absent; `changes-requested` means at least one is open.
+marker's `verdict=`. `approved` means no finding thread on the pull request is
+open — a thread outlives the head it was filed on, so findings from earlier
+heads count until resolved; `changes-requested` means at least one is open.
+Under the verdict line, print the census the verdict rests on — `6 finding
+threads: 4 resolved, 2 open` — counting the threads this review opens among the
+open, so a changes-requested review on a fresh head never prints `0 open` above
+its own findings. `approved` requires that last number to be zero, and printing
+it lets a reader see the verdict was earned.
 
 **Every inline finding opens with a marker:**
 
@@ -217,23 +224,33 @@ resolved or absent; `changes-requested` means at least one is open.
 Keep the visible finding text as it always was: priority, impact, and the
 verified code path or reproduction.
 
-### Reading unresolved findings back
+### Outstanding findings
 
-A finding is outstanding when its thread is unresolved. Enumerate them by
+A finding is outstanding while its thread is unresolved, and a head is
+**clean** only when no finding thread is outstanding and this review opens
+none. This query is the thread half of that test, and it pages so that a pull
+request with more than a hundred threads is still read to the end. Run it by
 thread state, not by author, and match the marker to separate Projector
 findings from ordinary review conversation:
 
 ```sh
-gh api graphql -f query='
-  query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
-    pullRequest(number:$n){ reviewThreads(first:100){ nodes{
-      isResolved path line comments(first:1){nodes{body}} } } } } }' \
+gh api graphql --paginate -f query='
+  query($o:String!,$r:String!,$n:Int!,$endCursor:String){ repository(owner:$o,name:$r){
+    pullRequest(number:$n){ reviewThreads(first:100, after:$endCursor){
+      pageInfo{hasNextPage endCursor}
+      nodes{ isResolved isOutdated path line originalLine
+        comments(first:1){nodes{body}} } } } } }' \
   -f o=<owner> -f r=<repo> -F n=<number> \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
         | select(.comments.nodes[0].body | test("projector-finding"))
-        | "\(.path):\(.line)"'
+        | "\(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
 ```
+
+An `outdated` row is a thread whose line the fix moved: GitHub nulls `line`
+and keeps `originalLine`. It is still outstanding — outdated says the code
+changed, not that the finding was addressed — and only the author resolving
+the thread closes it.
 
 Both loops key on the marker rather than on a login. A reply the fix loop posts
 inside a thread carries `<!-- projector-reply v=1 -->` so it is never read back
@@ -245,6 +262,52 @@ Findings always go out as inline threads in **one** review, each carrying the
 finding marker, and every review body carries the signature and verdict line.
 Do not drip-feed findings or use ordinary issue comments for them. What differs
 between the modes is only the review state and what marks the outcome.
+
+GitHub anchors an inline comment only to a file within the first 3,000 files
+of the diff, taken in path order; a thread on any later file fails with `422
+Path could not be resolved`, however correct the path and line. On a pull
+request that large, probe each anchor before the real submission: create a
+pending review holding the one comment, then delete it. When a file falls
+outside the window, anchor the finding to an in-window file that exercises the
+same code — the CI step, test, or README line that runs it — and name the real
+`path:line` in the first sentence, so a reader lands on the code rather than on
+the anchor.
+
+Immediately before submitting, list every verdict the reviewer has already
+posted on this exact SHA. The endpoint pages at 30 rows, oldest first, and
+every fix-loop thread reply adds a review object of its own, so the newest
+verdict is the first row a single page loses:
+
+```sh
+gh api --paginate repos/<owner>/<repo>/pulls/<number>/reviews \
+  --jq '.[] | select(.user.login == "<reviewer>")
+        | select(.body | test("projector-review .* sha=<full-sha>"))
+        | "\(.id) \(.submitted_at)"'
+```
+
+Compare each id against the record. An id this loop recorded is its own,
+including the second verdict a `RESPONDED` re-review legitimately publishes on
+an unmoved head, so it never trips the check. An id absent from the record
+means another loop under the same account is reviewing this pull request. Hold
+the review and ask the user which loop continues, rather than either submitting
+or standing down. Two verdicts from one account on one commit read as a single
+thorough loop, so the collision goes unnoticed unless this check catches it.
+Standing down silently is no better: a second reviewer is sometimes invited
+deliberately, and a head both loops walk away from gets no verdict at all. The
+tracked-set filter does not prevent this, because both loops can legitimately
+own the pull request.
+
+A head is *clean* only when the outstanding-findings query above returns
+nothing **and this review posts no finding**. Run the query now, before
+choosing a branch. Both tests are one-way: an open thread makes the head not
+clean whatever inspection found, and a new finding makes it not clean whatever
+the query returned. The first matters most on a fix-cycle head, which arrives
+with its threads exactly as the author left them: the reviewer never resolves
+threads — only the author does — so a head you inspected and found nothing
+wrong in is still not clean while a finding thread is open. The watcher applies
+the thread test from its side: `RESPONDED` fires only when every thread is
+resolved. `NEW HEAD` cannot, because a push says nothing about threads, so on
+every head the check is yours.
 
 **Findings open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
@@ -267,10 +330,14 @@ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
-Record a SHA as reviewed only after its review is published and, on a clean
-self-review, the pull request is ready. Verify both: re-read the review body
-and the pull request's `isDraft`. Never resolve the author's findings,
-claim a newer SHA was reviewed, or merge.
+Record a SHA as reviewed, paired with the published review's id, only after that
+review is published and, on a clean self-review, the pull request is ready.
+Verify the input as well as the outputs: before an `approved` verdict, the
+outstanding-findings query returned nothing and the review carries no finding;
+after publishing, re-read the review body and the pull request's `isDraft`.
+Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
+Resolving is the author's act, which is why your verification alone never closes
+a finding.
 
 ## Gate readiness claims in plans
 
