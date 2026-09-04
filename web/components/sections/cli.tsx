@@ -69,13 +69,13 @@ export function Cli() {
         </>
       }
     >
-      <div className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
-        <div>
+      <div className="grid gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-16">
+        <div className="min-w-0">
           <dl className="overflow-hidden rounded-xl border border-line bg-surface">
             {commands.map(([command, description]) => (
               <div
                 key={command}
-                className="grid gap-1 border-b border-line px-4 py-3 last:border-b-0 sm:grid-cols-[15rem_1fr] sm:gap-4"
+                className="grid gap-1 border-b border-line px-4 py-3 last:border-b-0 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-4"
               >
                 <dt className="font-mono text-[13px] text-fg">
                   <span className="text-faint">project </span>
@@ -95,7 +95,7 @@ export function Cli() {
             <ArrowUpRightIcon className="h-4 w-4" />
           </a>
         </div>
-        <div>
+        <div className="min-w-0">
           <CodeBlock lang="json" title="project list --priority now --json" code={json} />
           <ul className="mt-8 space-y-5">
             {guarantees.map((item) => (
