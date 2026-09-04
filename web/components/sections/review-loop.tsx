@@ -51,7 +51,7 @@ export function ReviewLoop() {
       <div className="mt-16 grid gap-10 lg:grid-cols-[1fr_1fr] lg:gap-16">
         <blockquote className="border-l-2 border-accent pl-6">
           <p className="font-display text-3xl leading-tight tracking-tight text-fg sm:text-4xl">
-            Never mark your own draft ready yourself. A clean review is what clears it.
+            Never mark your own draft ready yourself; a clean review is what clears it.
           </p>
           <footer className="mt-4 font-mono text-xs text-faint">
             AGENTS.md, the Projector contributor instructions
