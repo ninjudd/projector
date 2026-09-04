@@ -173,13 +173,61 @@ For every new head:
    preparing or cleaning up a review.
 3. Confirm the scratch worktree's `HEAD` equals GitHub's recorded SHA.
 4. Only then post a concise start comment naming the short SHA, carrying the
-   same signature line as a review body.
+   review signature line's model and effort segments and a start marker, and
+   keep the comment id and `created_at` the call returns:
+
+   ```
+   <!-- projector-start v=1 sha=<full-sha> -->
+   ```
+
+   ```sh
+   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> \
+     --jq '"\(.id) \(.created_at)"'
+   ```
+
 5. Inspect both the new range and the pull-request-wide integration diff. Read
    the code and documentation the change depends on.
 6. Run focused tests and reproductions proportional to risk. Verify every
    prospective finding against the exact code.
-7. Re-fetch the head before publishing. If it moved, revalidate findings and
-   review the replacement SHA separately.
+7. Re-fetch the head before publishing. If it moved, the review in progress is
+   of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
+   comment as described next instead of repeating step 4, and revalidate every
+   prospective finding against the new head.
+
+### One start comment per review
+
+A start comment belongs to the review it opens, not to the SHA it first named,
+and it lives only until that review is published. When the head moves before
+publication — step 7 catches it, or the watcher reports `NEW HEAD` while
+inspection is still running — do not post a second start comment. Edit the
+existing one so it names the new short SHA, says the head moved from the old
+one, and says the review is being updated for the new changes, and set its
+marker's `sha=` to the new full SHA:
+
+```sh
+gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
+```
+
+`-F` reads the body from the file; `-f` would post the literal path. Re-read
+the comment afterwards and confirm it names the new SHA.
+
+Once the review is published and verified, delete the start comment. The
+review's signature line carries how long the review took, so the comment has
+nothing left to say, and a pull request that keeps one per review is noise a
+reader scrolls past:
+
+```sh
+gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
+```
+
+A start comment on a pull request therefore means a review in progress. A
+session resuming mid-review looks for one on GitHub rather than in memory and
+edits it instead of posting a second one. The exception is a leftover from a
+session that stopped between publishing and deleting: a comment whose
+`created_at` is earlier than the `submitted_at` of a Projector review on its
+`sha=`. Delete that one. Compare the timestamps rather than testing for the
+review's presence, because a `RESPONDED` re-review runs on an unmoved head and
+its live start comment shares its `sha=` with the verdict that preceded it.
 
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
@@ -194,9 +242,9 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-🔭 **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>**
+🔭 **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> -->
+<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> -->
 ```
 
 State the model and effort **actually running this review** — the model
@@ -204,6 +252,20 @@ identifier the host reports for the running session and its reasoning-effort or
 thinking level — never a default copied from this file. A review whose
 signature misstates what produced it is worse than an unlabeled one: a reader
 weighs a finding by what reviewed it.
+
+`<duration>` is how long the review took, measured from the start comment's
+`created_at` to the moment the body is composed, in minutes and seconds under
+an hour and hours and minutes past it — `took 12m 34s`, `took 1h 04m`. When
+the head moved during the review, say how many heads the time covers: `took
+14m 02s over 2 heads`. The marker's `seconds=` carries the same span as a whole
+number. Compute it in Python rather than with `date`, whose timestamp parsing
+differs between platforms:
+
+```sh
+python3 -c 'import sys, datetime as d
+s = d.datetime.fromisoformat(sys.argv[1])
+print(int((d.datetime.now(d.UTC) - s).total_seconds()))' <created_at>
+```
 
 The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
 marker's `verdict=`. `approved` means no finding thread on the pull request is
@@ -334,10 +396,11 @@ Record a SHA as reviewed, paired with the published review's id, only after that
 review is published and, on a clean self-review, the pull request is ready.
 Verify the input as well as the outputs: before an `approved` verdict, the
 outstanding-findings query returned nothing and the review carries no finding;
-after publishing, re-read the review body and the pull request's `isDraft`.
-Never resolve the author's findings, claim a newer SHA was reviewed, or merge.
-Resolving is the author's act, which is why your verification alone never closes
-a finding.
+after publishing, re-read the review body and the pull request's `isDraft`,
+and only then delete the start comment, so the pull request is never left with
+neither. Never resolve the author's findings, claim a newer SHA was reviewed,
+or merge. Resolving is the author's act, which is why your verification alone
+never closes a finding.
 
 ## Gate readiness claims in plans
 
