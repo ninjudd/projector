@@ -18,9 +18,12 @@ Open <http://localhost:3000>.
 
 ```sh
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 npm run build
 ```
+
+`npm run typecheck` generates the Next.js route types before it runs `tsc`,
+so it passes on a fresh checkout where no build has produced them yet.
 
 ## Deploy
 
