@@ -31,7 +31,7 @@ const skills = [
 
 function Host({ name, note, invoke }: { name: string; note: string; invoke: string }) {
   return (
-    <div className="rounded-2xl border border-line bg-surface-2/60 p-6">
+    <div className="min-w-0 rounded-2xl border border-line bg-surface-2/60 p-6">
       <div className="flex items-baseline justify-between gap-4">
         <h3 className="text-lg font-semibold tracking-tight text-fg">{name}</h3>
         <a
