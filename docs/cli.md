@@ -26,6 +26,10 @@ Run `init` once to create `docs/projects/README.md`:
 project init
 ```
 
+The file states the convention, links to the Projector repository, and shows
+how to install the CLI, so a reader who meets `docs/projects/` in another
+repository knows where the `project` command comes from.
+
 If projects already exist but the convention file is missing, `init` adds only
 that file. It refuses to replace an existing convention file.
 

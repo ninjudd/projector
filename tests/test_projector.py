@@ -454,7 +454,9 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual("docs/projects/README.md\n", stdout)
-        self.assertIn("lowercase `readme.md`", (self.root / stdout.strip()).read_text())
+        convention = (self.root / stdout.strip()).read_text()
+        self.assertIn("lowercase `readme.md`", convention)
+        self.assertIn("https://github.com/ninjudd/projector", convention)
 
         code, _, stderr = self.invoke("init")
         self.assertEqual(65, code)
