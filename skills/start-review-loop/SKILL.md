@@ -222,9 +222,12 @@ gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
 
 A start comment on a pull request therefore means a review in progress. A
 session resuming mid-review looks for one on GitHub rather than in memory and
-edits it instead of posting a second one. The exception is a comment whose
-`sha=` already has a Projector review on the pull request: the session that
-published it stopped before deleting, so delete it now.
+edits it instead of posting a second one. The exception is a leftover from a
+session that stopped between publishing and deleting: a comment whose
+`created_at` is earlier than the `submitted_at` of a Projector review on its
+`sha=`. Delete that one. Compare the timestamps rather than testing for the
+review's presence, because a `RESPONDED` re-review runs on an unmoved head and
+its live start comment shares its `sha=` with the verdict that preceded it.
 
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
