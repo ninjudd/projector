@@ -22,7 +22,7 @@ const instrumentSerif = Instrument_Serif({
 
 const title = "Projector — Project plans that live in Git";
 const description =
-  "Projector gives every project a permanent home under docs/projects/, one CLI for people and coding agents, and review loops that carry a pull request to a clean head.";
+  "Projector keeps each project's plan as a Markdown file in the repository, under docs/projects/, and gives developers and coding agents one CLI to update it.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

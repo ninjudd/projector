@@ -1,101 +1,90 @@
-import { ArrowRightIcon } from "@/components/icons";
+import type { ReactNode } from "react";
+import { ArrowUpRightIcon } from "@/components/icons";
 import { Code } from "@/components/inline-code";
 import { Section } from "@/components/section";
+import { DOCS } from "@/lib/links";
 
-const skills = [
+const steps: { title: string; invoke: string; body: ReactNode }[] = [
   {
-    name: "plan-project",
-    body: "Turn a requested outcome into a durable plan that another person or agent can execute without reconstructing the conversation.",
+    title: "Ask for a plan",
+    invoke: "/projector:plan-project a session chooser opened by the detach key",
+    body: (
+      <>
+        The agent reads the repository and the existing projects first, asks only what the code
+        cannot answer, and writes the plan with <Code>project create</Code>. It leaves the change
+        for ordinary review, so the plan can go up as its own pull request, the way trip&rsquo;s
+        did.
+      </>
+    ),
   },
   {
-    name: "work-project",
-    body: "Implement a project while keeping its plan and status current. The plan is the intent; the repository is the evidence.",
+    title: "Come back and build it",
+    invoke: "/projector:work-project session-switcher",
+    body: (
+      <>
+        A later session starts from the file, not from the earlier conversation. The agent moves
+        the status to <Code>in-progress</Code> in the implementation branch, builds the work, and
+        appends what implementation settled to the plan instead of rewriting the sections that
+        were reviewed.
+      </>
+    ),
   },
   {
-    name: "finish-project",
-    body: "Verify the acceptance criteria, record whether the work shipped, was abandoned, or was superseded, and mark it completed in the same change.",
-  },
-  {
-    name: "start-review-loop",
-    body: "Review each exact pushed SHA locally and publish verified findings as labeled reviews. A pull request stays in draft until its head is clean.",
-  },
-  {
-    name: "start-fix-loop",
-    body: "Watch for review findings, verify and fix each one, then reply with the commit, push, and resolve the thread.",
-  },
-  {
-    name: "gh-stack",
-    body: "Create, push, rebase, and navigate stacks of dependent pull requests with the gh-stack extension when work crosses a reviewability boundary.",
+    title: "Finish it",
+    invoke: "/projector:finish-project session-switcher",
+    body: (
+      <>
+        The agent checks each acceptance criterion in the plan against the repository, records
+        whether the work shipped, was abandoned, or was superseded, and runs{" "}
+        <Code>project done</Code> in the change that completes it.
+      </>
+    ),
   },
 ];
-
-function Host({ name, note, invoke }: { name: string; note: string; invoke: string }) {
-  return (
-    <div className="rounded-2xl border border-line bg-surface-2/60 p-6">
-      <div className="flex items-baseline justify-between gap-4">
-        <h3 className="text-lg font-semibold tracking-tight text-fg">{name}</h3>
-        <a
-          href="#install"
-          className="inline-flex items-center gap-1 text-sm text-muted transition-colors hover:text-fg"
-        >
-          Install
-          <ArrowRightIcon className="h-3.5 w-3.5" />
-        </a>
-      </div>
-      <p className="mt-1 text-sm text-muted">{note}</p>
-      <pre className="mt-5 overflow-x-auto rounded-lg border border-line bg-surface px-4 py-3 font-mono text-[13px] text-fg">
-        {invoke}
-      </pre>
-    </div>
-  );
-}
 
 export function Agents() {
   return (
     <Section
       id="agents"
-      eyebrow="Agent workflows"
-      title={
+      title="Use with Claude Code or Codex"
+      lead={
         <>
-          Skills your agents <em className="text-accent">already know.</em>
+          Projector&rsquo;s plugin adds skills to Claude Code and Codex. A skill is a written
+          procedure the agent follows, and each one works through the same <Code>project</Code>{" "}
+          command you use, so what the agent saves is a file you can open and edit. No MCP server is
+          involved.
         </>
       }
-      lead="Projector packages one canonical skill tree for Claude Code and Codex. Skills express the workflow; the CLI supplies the mechanics. No MCP server required."
     >
-      <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {skills.map((skill) => (
-          <li key={skill.name} className="rounded-2xl border border-line bg-surface p-6">
-            <h3 className="font-mono text-sm font-medium text-fg">
-              <span className="text-accent">/</span>
-              {skill.name}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-muted">{skill.body}</p>
+      <ol className="grid gap-8 lg:grid-cols-3">
+        {steps.map((step, index) => (
+          <li key={step.title} className="min-w-0">
+            <div className="flex items-baseline gap-3">
+              <span className="font-mono text-sm text-accent">{index + 1}</span>
+              <h3 className="text-lg font-semibold tracking-tight text-fg">{step.title}</h3>
+            </div>
+            <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-surface px-4 py-3 font-mono text-[13px] text-fg">
+              {step.invoke}
+            </pre>
+            <p className="mt-4 text-[15px] leading-relaxed text-muted">{step.body}</p>
           </li>
         ))}
-      </ul>
-
-      <div className="mt-16">
-        <h3 className="text-xl font-semibold tracking-tight text-fg">
-          Equal targets, one source tree
-        </h3>
-        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted">
-          Both plugin manifests point at the same <Code>skills/</Code> directory. A host loads the
-          same instructions without a generated copy or a host-specific fork, so a fix lands in
-          both places at once.
-        </p>
-        <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <Host
-            name="Claude Code"
-            note="Skills are namespaced by the plugin."
-            invoke="/projector:plan-project plan a safer deploy workflow"
-          />
-          <Host
-            name="Codex"
-            note="Skills are invoked directly by name."
-            invoke="$plan-project plan a safer deploy workflow"
-          />
-        </div>
-      </div>
+      </ol>
+      <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
+        In Codex the same skills are <Code>$plan-project</Code>, <Code>$work-project</Code>, and{" "}
+        <Code>$finish-project</Code>. The plugin also carries the two review skills described next,
+        and <Code>gh-stack</Code>, for splitting a large change into a chain of dependent pull
+        requests.{" "}
+        <a
+          href={DOCS.plugins}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-0.5 text-fg transition-colors hover:text-accent"
+        >
+          Plugin guide
+          <ArrowUpRightIcon className="h-3.5 w-3.5" />
+        </a>
+      </p>
     </Section>
   );
 }

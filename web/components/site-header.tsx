@@ -3,10 +3,10 @@ import { GitHubIcon } from "./icons";
 import { Logo } from "./logo";
 
 const nav = [
-  { href: "#how-it-works", label: "How it works" },
-  { href: "#cli", label: "CLI" },
+  { href: "#create", label: "How it works" },
+  { href: "#example", label: "Example" },
   { href: "#agents", label: "Agents" },
-  { href: "#review", label: "Review loops" },
+  { href: "#reviews", label: "Reviews" },
 ];
 
 export function SiteHeader() {
@@ -41,13 +41,13 @@ export function SiteHeader() {
             aria-label="Projector on GitHub"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg"
           >
             <GitHubIcon className="h-5 w-5" />
           </a>
           <a
             href="#install"
-            className="rounded-full bg-fg px-4 py-2 text-sm font-medium text-bg transition-colors hover:bg-accent hover:text-accent-fg"
+            className="rounded-md bg-fg px-4 py-2 text-sm font-medium text-bg transition-colors hover:bg-accent hover:text-accent-fg"
           >
             Install
           </a>
