@@ -53,24 +53,26 @@ export function Config() {
           <figcaption className="border-b border-line px-4 py-2 font-mono text-xs text-faint">
             keys Projector reads today
           </figcaption>
-          <table className="w-full text-left text-sm">
-            <thead className="font-mono text-xs uppercase tracking-[0.12em] text-faint">
-              <tr className="border-b border-line">
-                <th className="px-4 py-2.5 font-medium">Key</th>
-                <th className="px-4 py-2.5 font-medium">Default</th>
-                <th className="px-4 py-2.5 font-medium">Read by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map(([key, fallback, reader]) => (
-                <tr key={key} className="border-b border-line last:border-b-0">
-                  <td className="px-4 py-2.5 font-mono text-[13px] text-fg">{key}</td>
-                  <td className="px-4 py-2.5 text-muted">{fallback}</td>
-                  <td className="px-4 py-2.5 font-mono text-[13px] text-muted">{reader}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="font-mono text-xs uppercase tracking-[0.12em] text-faint">
+                <tr className="border-b border-line">
+                  <th className="px-4 py-2.5 font-medium">Key</th>
+                  <th className="px-4 py-2.5 font-medium">Default</th>
+                  <th className="px-4 py-2.5 font-medium">Read by</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {keys.map(([key, fallback, reader]) => (
+                  <tr key={key} className="border-b border-line last:border-b-0">
+                    <td className="px-4 py-2.5 font-mono text-[13px] text-fg">{key}</td>
+                    <td className="px-4 py-2.5 text-muted">{fallback}</td>
+                    <td className="px-4 py-2.5 font-mono text-[13px] text-muted">{reader}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </figure>
       </div>
 
