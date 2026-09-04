@@ -173,13 +173,47 @@ For every new head:
    preparing or cleaning up a review.
 3. Confirm the scratch worktree's `HEAD` equals GitHub's recorded SHA.
 4. Only then post a concise start comment naming the short SHA, carrying the
-   same signature line as a review body.
+   same signature line as a review body and a start marker, and keep the
+   comment id the call returns:
+
+   ```
+   <!-- projector-start v=1 sha=<full-sha> -->
+   ```
+
+   ```sh
+   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id
+   ```
+
 5. Inspect both the new range and the pull-request-wide integration diff. Read
    the code and documentation the change depends on.
 6. Run focused tests and reproductions proportional to risk. Verify every
    prospective finding against the exact code.
-7. Re-fetch the head before publishing. If it moved, revalidate findings and
-   review the replacement SHA separately.
+7. Re-fetch the head before publishing. If it moved, the review in progress is
+   of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
+   comment as described next instead of repeating step 4, and revalidate every
+   prospective finding against the new head.
+
+### One start comment per review
+
+A start comment belongs to the review it opens, not to the SHA it first named.
+When the head moves before that review is published — step 7 catches it, or
+the watcher reports `NEW HEAD` while inspection is still running — do not post
+a second start comment. Edit the existing one so it names the new short SHA,
+says the head moved from the old one, and says the review is being updated for
+the new changes, and set its marker's `sha=` to the new full SHA:
+
+```sh
+gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
+```
+
+`-F` reads the body from the file; `-f` would post the literal path. Re-read
+the comment afterwards and confirm it names the new SHA.
+
+A published review closes out its start comment, so a head pushed after that
+opens a new review and gets a start comment of its own. Find an open start
+comment on GitHub rather than in memory, so a session resuming mid-review edits
+it instead of posting a second one: the newest comment carrying the start
+marker is open while no Projector review on the pull request is newer than it.
 
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
