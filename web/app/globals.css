@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f6f4ee;
+  --surface: #fdfcf8;
+  --surface-2: #eeebe2;
+  --fg: #17150f;
+  --muted: #5f5b50;
+  --faint: #8f8b7f;
+  --line: rgb(23 21 15 / 0.1);
+  --line-strong: rgb(23 21 15 / 0.2);
+  --accent: #d4580f;
+  --accent-fg: #fff7f0;
+  --accent-soft: rgb(212 88 15 / 0.1);
+  --beam: rgb(255 170 80 / 0.5);
+  --term-bg: #1a1813;
+  --term-fg: #ebe6d8;
+  --term-muted: #8d877a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #100f0c;
+    --surface: #171510;
+    --surface-2: #1e1c16;
+    --fg: #ece8dd;
+    --muted: #a5a094;
+    --faint: #6e6a5f;
+    --line: rgb(236 232 221 / 0.1);
+    --line-strong: rgb(236 232 221 / 0.2);
+    --accent: #f27c2e;
+    --accent-fg: #1a0c03;
+    --accent-soft: rgb(242 124 46 / 0.14);
+    --beam: rgb(242 124 46 / 0.3);
+    --term-bg: #0a0907;
+    --term-fg: #ebe6d8;
+    --term-muted: #7e7a6e;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-term-bg: var(--term-bg);
+  --color-term-fg: var(--term-fg);
+  --color-term-muted: var(--term-muted);
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-instrument-serif), ui-serif, Georgia, serif;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.paper {
+  background-image: radial-gradient(var(--line-strong) 0.8px, transparent 0.8px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.8), transparent 90%);
+}
+
+.beam {
+  background: radial-gradient(closest-side, var(--beam), transparent);
+  filter: blur(48px);
+}
+
+/* Shiki emits both palettes; pick one from the color scheme. */
+.shiki {
+  background-color: transparent !important;
+}
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+}
+@media (prefers-color-scheme: dark) {
+  .shiki,
+  .shiki span {
+    color: var(--shiki-dark);
+  }
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: blink 1.1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cursor {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
