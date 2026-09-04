@@ -91,8 +91,8 @@ export function Model() {
         </>
       }
     >
-      <div className="grid gap-12 lg:grid-cols-[1fr_18rem] lg:gap-16">
-        <div className="space-y-10">
+      <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-16">
+        <div className="min-w-0 space-y-10">
           <Rail
             label="status"
             sub="the lifecycle"
@@ -102,7 +102,7 @@ export function Model() {
           />
           <Rail label="priority" sub="the schedule" items={priorities} columns="lg:grid-cols-3" />
         </div>
-        <aside className="lg:pt-9">
+        <aside className="min-w-0 lg:pt-9">
           <CodeBlock lang="yaml" title="a draft that is the current focus" code={frontmatter} />
           <p className="mt-4 text-sm leading-relaxed text-muted">
             Priority is required unless the status is <Code>completed</Code>. Finished work needs

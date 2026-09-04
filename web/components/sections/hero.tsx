@@ -32,8 +32,8 @@ export function Hero() {
         className="beam pointer-events-none absolute -top-40 right-[-8%] h-[38rem] w-[38rem]"
         aria-hidden="true"
       />
-      <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 pb-24 pt-20 lg:grid-cols-[1fr_1.15fr] lg:pb-32 lg:pt-28">
-        <div>
+      <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 pb-24 pt-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:pb-32 lg:pt-28">
+        <div className="min-w-0">
           <ul className="flex flex-wrap gap-2">
             {chips.map((chip) => (
               <li
@@ -81,7 +81,7 @@ export function Hero() {
             </a>
           </div>
         </div>
-        <Terminal title="~/src/payments-service" lines={lines} />
+        <Terminal title="~/src/payments-service" lines={lines} className="min-w-0" />
       </div>
     </section>
   );
