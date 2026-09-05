@@ -43,9 +43,27 @@ remove_legacy_links() {
   done < <(legacy_links_for "$host")
 }
 
+# The interpreter an existing pipx venv was created with. pipx builds the
+# package under its default Python to learn the package name, and some
+# versions recreate the venv with it, so a default older than
+# `python_requires` fails the reinstall even though the venv already holds a
+# Python that satisfies it. The venv's own pyvenv.cfg names that Python, and
+# any Python new enough for this package writes the `executable` line.
+venv_python() {
+  local venvs
+  venvs="$(pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null)" || return 1
+  [ -f "$venvs/projector-cli/pyvenv.cfg" ] || return 1
+  awk -F' = ' '$1 == "executable" { print $2 }' "$venvs/projector-cli/pyvenv.cfg" | grep .
+}
+
 install_cli() {
   if command -v pipx >/dev/null 2>&1; then
-    pipx install --force "$REPO"
+    local python
+    if python="$(venv_python)"; then
+      PIPX_DEFAULT_PYTHON="$python" pipx install --force "$REPO"
+    else
+      pipx install --force "$REPO"
+    fi
   else
     python3 -m pip install --user --upgrade "$REPO"
   fi

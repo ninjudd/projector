@@ -76,6 +76,11 @@ themselves, so it holds whether or not anyone remembered to bump a version.
 command installed from this checkout: `project upgrade cli` is
 `./install.sh cli`, and `project upgrade status` is `./install.sh status`.
 
+A reinstall keeps the Python the existing venv was created with. Left to
+itself, `pipx` builds under its default interpreter, which on some machines is
+older than Projector's 3.11 floor and fails the reinstall even though the venv
+already holds a Python that works.
+
 ## Upgrade from agent-config
 
 The old installer linked whole configuration and skill directories into each

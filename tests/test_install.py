@@ -32,6 +32,16 @@ class InstallTests(unittest.TestCase):
                 "exit 0\n"
             )
             path.chmod(0o755)
+        # pipx is asked where its venvs live and is handed an interpreter when
+        # one of them already holds this package; the fake reports both.
+        (self.fake_bin / "pipx").write_text(
+            "#!/bin/sh\n"
+            "printf '%s %s\\n' pipx \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+            "[ -n \"${PIPX_DEFAULT_PYTHON:-}\" ] && "
+            "printf 'PIPX_DEFAULT_PYTHON=%s\\n' \"$PIPX_DEFAULT_PYTHON\" >> \"$PROJECTOR_TEST_LOG\"\n"
+            "case \"$1\" in environment) printf '%s\\n' \"${PROJECTOR_TEST_VENVS:-}\" ;; esac\n"
+            "exit 0\n"
+        )
         self.environment = {
             **os.environ,
             "PATH": f"{self.fake_bin}:{os.environ['PATH']}",
@@ -108,7 +118,27 @@ class InstallTests(unittest.TestCase):
         result = self.install("cli")
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(f"pipx install --force {ROOT}\n", self.log.read_text())
+        log = self.log.read_text().splitlines()
+        self.assertEqual(f"pipx install --force {ROOT}", log[-1])
+        # No venv yet, so pipx picks the interpreter as it always has.
+        self.assertNotIn("PIPX_DEFAULT_PYTHON", self.log.read_text())
+
+    def test_cli_reinstall_keeps_the_interpreter_the_venv_was_made_with(self) -> None:
+        venv = self.user_root / "venvs" / "projector-cli"
+        venv.mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text(
+            "home = /opt/py/bin\n"
+            "version = 3.12.4\n"
+            "executable = /opt/py/bin/python3.12\n"
+        )
+        self.environment["PROJECTOR_TEST_VENVS"] = str(venv.parent)
+
+        result = self.install("cli")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text().splitlines()
+        self.assertEqual(f"pipx install --force {ROOT}", log[-2])
+        self.assertEqual("PIPX_DEFAULT_PYTHON=/opt/py/bin/python3.12", log[-1])
 
     def fake_project(self, package_dir: str | None) -> None:
         """A `project` on PATH ahead of any real one.
