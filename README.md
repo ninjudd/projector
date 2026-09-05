@@ -19,6 +19,13 @@ pipx install git+https://github.com/ninjudd/projector.git
 project --help
 ```
 
+`pipx` installs a copy, so new commits do not reach the command until it is
+reinstalled. Reinstall it from the same source with one command:
+
+```sh
+project upgrade
+```
+
 The framework is Projector; the command it installs is `project`. The
 repository, the `projector-cli` distribution, the Python package, and the
 `projector@projector` host plugin all keep the longer name.

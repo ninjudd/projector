@@ -6,10 +6,14 @@ import importlib.metadata as metadata
 import json
 import os
 import shlex
+import shutil
+import site
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .config import ConfigError
 from .config import load as load_config
@@ -26,6 +30,9 @@ from .core import (
 )
 
 
+DISTRIBUTION = "projector-cli"
+
+
 def distribution_version() -> str:
     """The version of the installed distribution, not of this source tree.
 
@@ -35,9 +42,85 @@ def distribution_version() -> str:
     """
 
     try:
-        return metadata.version("projector-cli")
+        return metadata.version(DISTRIBUTION)
     except metadata.PackageNotFoundError:
         return "unknown"
+
+
+class InstallSource(NamedTuple):
+    """Where the installed command came from, spelled as an installer takes it."""
+
+    spec: str
+    editable: bool = False
+
+
+def install_source() -> InstallSource:
+    """Read the source pip recorded beside the distribution it installed.
+
+    `direct_url.json` names the checkout or repository URL an install came
+    from, whichever front end drove it. That record, not this checkout, is
+    what an upgrade must reinstall from: a command installed from GitHub
+    should fetch GitHub again even when it happens to run inside a clone.
+    """
+
+    try:
+        distribution = metadata.distribution(DISTRIBUTION)
+    except metadata.PackageNotFoundError as error:
+        raise EnvironmentError(
+            "cannot upgrade: project is not an installed distribution"
+        ) from error
+    text = distribution.read_text("direct_url.json")
+    if text is None:
+        raise EnvironmentError(
+            "cannot upgrade: the installed command does not record where it came from"
+        )
+    record = json.loads(text)
+    url = record["url"]
+    if "vcs_info" in record:
+        spec = f"{record['vcs_info']['vcs']}+{url}"
+        revision = record["vcs_info"].get("requested_revision")
+        return InstallSource(f"{spec}@{revision}" if revision else spec)
+    if "dir_info" in record:
+        path = Path(url2pathname(urlparse(url).path))
+        if not path.is_dir():
+            raise EnvironmentError(f"cannot upgrade: install source no longer exists: {path}")
+        return InstallSource(str(path), editable=bool(record["dir_info"].get("editable")))
+    # An sdist or wheel fetched from a URL, which is its own spec.
+    return InstallSource(url)
+
+
+def installer(spec: str) -> list[str]:
+    """The command that reinstalls this distribution from `spec`.
+
+    A pipx venv keeps pipx's metadata file at its root and borrows pip from
+    pipx's shared venv rather than holding one, so only pipx can reinstall
+    into it -- and only pipx keeps its own record of the installed version
+    current. Any other environment is pip's, run from the interpreter this
+    command runs under so the reinstall lands where the command lives.
+    """
+
+    if Path(sys.prefix, "pipx_metadata.json").is_file():
+        pipx = shutil.which("pipx")
+        if pipx is None:
+            raise EnvironmentError("cannot upgrade: pipx installed this command but is not on PATH")
+        return [pipx, "install", "--force", spec]
+    command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
+    if Path(__file__).resolve().is_relative_to(Path(site.getusersitepackages()).resolve()):
+        command.append("--user")
+    return [*command, spec]
+
+
+def run_upgrade() -> int:
+    source = install_source()
+    if source.editable:
+        print(f"editable install tracks {source.spec}; nothing to reinstall")
+        return 0
+    command = installer(source.spec)
+    print(f"+ {shlex.join(command)}", file=sys.stderr)
+    # The installer rewrites this package under the running interpreter.
+    # Everything this process still needs is imported already, so nothing
+    # below reaches for a file the reinstall is in the middle of replacing.
+    return subprocess.run(command, check=False).returncode
 
 
 class PackageDir(argparse.Action):
@@ -133,6 +216,8 @@ def parser() -> argparse.ArgumentParser:
         "paths", help="print the files that contribute, lowest precedence first"
     )
     add_output(config_paths)
+
+    subcommands.add_parser("upgrade", help="reinstall the command from its source")
     return result
 
 
@@ -260,6 +345,8 @@ def configured_projects_dir(root: Path) -> Optional[Path]:
 def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "config":
         return run_config(arguments)
+    if arguments.command == "upgrade":
+        return run_upgrade()
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

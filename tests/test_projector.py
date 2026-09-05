@@ -3,7 +3,10 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import shlex
+import site
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -741,6 +744,174 @@ class SelfReportingTests(unittest.TestCase):
             metadata, "version", side_effect=metadata.PackageNotFoundError
         ):
             self.assertEqual("unknown", distribution_version())
+
+
+class UpgradeTests(unittest.TestCase):
+    """`upgrade` reinstalls the command from the source pip recorded for it.
+
+    Nothing here touches a real environment: the distribution record, the
+    interpreter prefix, and PATH all point into a temporary directory, and the
+    only installer that runs is a shell script that logs its arguments.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        # A space, so the path round-trips through the file:// URL pip writes.
+        self.checkout = self.root / "my checkout"
+        self.checkout.mkdir()
+        # Not a repository: upgrading the command must not need one.
+        self.elsewhere = self.root / "elsewhere"
+        self.elsewhere.mkdir()
+        self.prefix = self.root / "venv"
+        self.prefix.mkdir()
+        self.patch(mock.patch.object(sys, "prefix", str(self.prefix)))
+
+    def patch(self, patcher: object) -> object:
+        started = patcher.start()
+        self.addCleanup(patcher.stop)
+        return started
+
+    def installed_from(self, record: dict[str, object] | None) -> mock.Mock:
+        distribution = mock.Mock()
+        distribution.read_text.return_value = None if record is None else json.dumps(record)
+        return self.patch(mock.patch.object(metadata, "distribution", return_value=distribution))
+
+    def checkout_record(self, *, editable: bool = False) -> dict[str, object]:
+        return {
+            "url": self.checkout.as_uri(),
+            "dir_info": {"editable": True} if editable else {},
+        }
+
+    def pipx_venv(self) -> None:
+        (self.prefix / "pipx_metadata.json").write_text("{}\n")
+
+    def fake_pipx(self, exit_code: int = 0) -> Path:
+        """A `pipx` on PATH -- the only one -- that records how it was called."""
+
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        log = self.root / "pipx.log"
+        pipx = bin_dir / "pipx"
+        pipx.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{log}"\nexit {exit_code}\n')
+        pipx.chmod(0o755)
+        self.patch(mock.patch.dict(os.environ, {"PATH": str(bin_dir)}))
+        return log
+
+    def invoke(self) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        previous = Path.cwd()
+        os.chdir(self.elsewhere)
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(["upgrade"])
+        finally:
+            os.chdir(previous)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_a_pipx_install_is_reinstalled_from_its_checkout_by_pipx(self) -> None:
+        distribution = self.installed_from(self.checkout_record())
+        self.pipx_venv()
+        log = self.fake_pipx(exit_code=3)
+
+        code, stdout, stderr = self.invoke()
+
+        # One argument per line, so a path with a space arrives as one argument.
+        self.assertEqual(["install", "--force", str(self.checkout)], log.read_text().splitlines())
+        # The installer's status is the answer, and the command it ran is shown.
+        self.assertEqual(3, code)
+        self.assertEqual("", stdout)
+        self.assertIn(shlex.join(["install", "--force", str(self.checkout)]), stderr)
+        # Every lookup -- `--version` makes one too -- asks for the distribution
+        # setup.cfg installs; a wrong name here would report every command as
+        # not installed and exit 69 while the suite stayed green.
+        configuration = configparser.ConfigParser()
+        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+        self.assertEqual(
+            {configuration["metadata"]["name"]},
+            {call.args[0] for call in distribution.call_args_list},
+        )
+
+    def test_a_git_install_is_fetched_again_at_the_revision_it_asked_for(self) -> None:
+        url = "https://github.com/ninjudd/projector.git"
+        for revision, spec in ((None, f"git+{url}"), ("main", f"git+{url}@main")):
+            with self.subTest(revision=revision):
+                info: dict[str, object] = {"vcs": "git", "commit_id": "0" * 40}
+                if revision:
+                    info["requested_revision"] = revision
+                self.installed_from({"url": url, "vcs_info": info})
+
+                self.assertEqual(cli.InstallSource(spec), cli.install_source())
+
+    def test_outside_pipx_the_running_interpreter_reinstalls_with_pip(self) -> None:
+        self.installed_from(self.checkout_record())
+        run = self.patch(mock.patch.object(cli.subprocess, "run", return_value=mock.Mock(returncode=0)))
+
+        code, _, _ = self.invoke()
+
+        self.assertEqual(0, code)
+        run.assert_called_once_with(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", str(self.checkout)],
+            check=False,
+        )
+
+    def test_a_user_site_install_stays_in_user_site(self) -> None:
+        self.installed_from(self.checkout_record())
+        run = self.patch(mock.patch.object(cli.subprocess, "run", return_value=mock.Mock(returncode=0)))
+        # Pretend the package's own parent directory is the user site.
+        user_site = Path(cli.__file__).resolve().parents[1]
+        self.patch(mock.patch.object(site, "getusersitepackages", return_value=str(user_site)))
+
+        self.invoke()
+
+        self.assertIn("--user", run.call_args.args[0])
+
+    def test_an_editable_install_is_left_alone(self) -> None:
+        self.installed_from(self.checkout_record(editable=True))
+        run = self.patch(mock.patch.object(cli.subprocess, "run"))
+
+        code, stdout, _ = self.invoke()
+
+        self.assertEqual(0, code)
+        run.assert_not_called()
+        self.assertIn(str(self.checkout), stdout)
+        self.assertIn("editable", stdout)
+
+    def test_an_uninstalled_command_has_nothing_to_upgrade(self) -> None:
+        self.patch(mock.patch.object(metadata, "distribution", side_effect=metadata.PackageNotFoundError))
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn("not an installed distribution", stderr)
+
+    def test_a_command_with_no_recorded_source_says_so(self) -> None:
+        self.installed_from(None)
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn("does not record where it came from", stderr)
+
+    def test_a_vanished_checkout_is_named(self) -> None:
+        gone = self.root / "gone"
+        self.installed_from({"url": gone.as_uri(), "dir_info": {}})
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn(str(gone), stderr)
+
+    def test_a_pipx_install_needs_pipx_on_path(self) -> None:
+        self.installed_from(self.checkout_record())
+        self.pipx_venv()
+        self.patch(mock.patch.dict(os.environ, {"PATH": str(self.root / "empty")}))
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn("pipx", stderr)
 
 
 if __name__ == "__main__":

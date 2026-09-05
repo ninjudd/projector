@@ -232,6 +232,35 @@ authenticated, because a file naming a different account would scope a loop to
 pull requests it cannot push to and then go quiet, which both loops read as
 nothing outstanding.
 
+## Upgrade the command
+
+`pipx` and `pip` install a copy of the source, so a checkout that moves on, or
+a repository that gains commits, leaves the installed command behind.
+Reinstall it from wherever it was installed from:
+
+```sh
+project upgrade
+```
+
+The command reads the source pip recorded at install time and hands it back to
+the installer that owns the environment: `pipx install --force <source>` for a
+`pipx` install, and `pip install --upgrade --force-reinstall <source>` for
+anything else, run by the interpreter the command runs under. A command
+installed from a checkout is rebuilt from that checkout as it stands, whatever
+branch is checked out. One installed from a Git URL fetches that repository
+again, at the revision the install asked for. `upgrade` prints the command it
+runs on stderr, then the installer's own output, and exits with the installer's
+status.
+
+An editable install already tracks its checkout, so `upgrade` reports that and
+exits 0 without reinstalling. It exits 69 when the command is not an installed
+distribution, when the record of its source is missing or names a directory
+that no longer exists, or when `pipx` installed the command but is no longer on
+`PATH`.
+
+`upgrade` needs no repository, and it has no `--json` mode because the
+installer owns the output.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
@@ -266,5 +295,5 @@ Projector uses these exit codes:
 | `65` | Project data is invalid or a mutation is unsafe. |
 | `66` | The requested project or the projects directory does not exist. |
 | `67` | The requested project is ambiguous. |
-| `69` | Git or the interactive editor environment is unavailable. |
+| `69` | Git, the interactive editor, or the installer is unavailable. |
 | `78` | A `.projector.toml` file is not valid TOML. |
