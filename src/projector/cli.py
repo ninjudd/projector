@@ -6,12 +6,10 @@ import importlib.metadata as metadata
 import json
 import os
 import shlex
-import shutil
-import site
 import subprocess
 import sys
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
@@ -47,20 +45,13 @@ def distribution_version() -> str:
         return "unknown"
 
 
-class InstallSource(NamedTuple):
-    """Where the installed command came from, spelled as an installer takes it."""
+def checkout() -> Path:
+    """The checkout this command was installed from.
 
-    spec: str
-    editable: bool = False
-
-
-def install_source() -> InstallSource:
-    """Read the source pip recorded beside the distribution it installed.
-
-    `direct_url.json` names the checkout or repository URL an install came
-    from, whichever front end drove it. That record, not this checkout, is
-    what an upgrade must reinstall from: a command installed from GitHub
-    should fetch GitHub again even when it happens to run inside a clone.
+    pip records the source of every install in `direct_url.json`, so the
+    command can find its own installer without being told where the checkout
+    is. A command installed from a Git URL has no checkout, and therefore no
+    `install.sh` to hand off to.
     """
 
     try:
@@ -75,49 +66,32 @@ def install_source() -> InstallSource:
             "cannot upgrade: the installed command does not record where it came from"
         )
     record = json.loads(text)
-    url = record["url"]
-    if "vcs_info" in record:
-        spec = f"{record['vcs_info']['vcs']}+{url}"
-        revision = record["vcs_info"].get("requested_revision")
-        return InstallSource(f"{spec}@{revision}" if revision else spec)
-    if "dir_info" in record:
-        path = Path(url2pathname(urlparse(url).path))
-        if not path.is_dir():
-            raise EnvironmentError(f"cannot upgrade: install source no longer exists: {path}")
-        return InstallSource(str(path), editable=bool(record["dir_info"].get("editable")))
-    # An sdist or wheel fetched from a URL, which is its own spec.
-    return InstallSource(url)
+    if "dir_info" not in record:
+        raise EnvironmentError(
+            f"cannot upgrade: install.sh needs a checkout, and project was installed "
+            f"from {record['url']}"
+        )
+    path = Path(url2pathname(urlparse(record["url"]).path))
+    if not path.is_dir():
+        raise EnvironmentError(f"cannot upgrade: install source no longer exists: {path}")
+    return path
 
 
-def installer(spec: str) -> list[str]:
-    """The command that reinstalls this distribution from `spec`.
+def run_upgrade(targets: list[str]) -> int:
+    """Run the checkout's `install.sh` from anywhere.
 
-    A pipx venv keeps pipx's metadata file at its root and borrows pip from
-    pipx's shared venv rather than holding one, so only pipx can reinstall
-    into it -- and only pipx keeps its own record of the installed version
-    current. Any other environment is pip's, run from the interpreter this
-    command runs under so the reinstall lands where the command lives.
+    Installation belongs to the installer, which already knows how to place
+    the CLI and each host plugin from this checkout. `project upgrade all`
+    is `./install.sh all` with the same targets, output, and exit status, so
+    nothing here decides what an upgrade is.
     """
 
-    if Path(sys.prefix, "pipx_metadata.json").is_file():
-        pipx = shutil.which("pipx")
-        if pipx is None:
-            raise EnvironmentError("cannot upgrade: pipx installed this command but is not on PATH")
-        return [pipx, "install", "--force", spec]
-    command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
-    if Path(__file__).resolve().is_relative_to(Path(site.getusersitepackages()).resolve()):
-        command.append("--user")
-    return [*command, spec]
-
-
-def run_upgrade() -> int:
-    source = install_source()
-    if source.editable:
-        print(f"editable install tracks {source.spec}; nothing to reinstall")
-        return 0
-    command = installer(source.spec)
+    script = checkout() / "install.sh"
+    if not script.is_file():
+        raise EnvironmentError(f"cannot upgrade: {script} does not exist")
+    command = [str(script), *targets]
     print(f"+ {shlex.join(command)}", file=sys.stderr)
-    # The installer rewrites this package under the running interpreter.
+    # `install.sh cli` rewrites this package under the running interpreter.
     # Everything this process still needs is imported already, so nothing
     # below reaches for a file the reinstall is in the middle of replacing.
     return subprocess.run(command, check=False).returncode
@@ -217,7 +191,12 @@ def parser() -> argparse.ArgumentParser:
     )
     add_output(config_paths)
 
-    subcommands.add_parser("upgrade", help="reinstall the command from its source")
+    upgrade = subcommands.add_parser("upgrade", help="run the checkout's install.sh from anywhere")
+    upgrade.add_argument(
+        "target",
+        nargs="*",
+        help="install.sh target: all (its default), cli, claude, codex, or status",
+    )
     return result
 
 
@@ -346,7 +325,7 @@ def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "config":
         return run_config(arguments)
     if arguments.command == "upgrade":
-        return run_upgrade()
+        return run_upgrade(arguments.target)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

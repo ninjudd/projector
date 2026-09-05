@@ -232,34 +232,31 @@ authenticated, because a file naming a different account would scope a loop to
 pull requests it cannot push to and then go quiet, which both loops read as
 nothing outstanding.
 
-## Upgrade the command
+## Upgrade from the checkout
 
-`pipx` and `pip` install a copy of the source, so a checkout that moves on, or
-a repository that gains commits, leaves the installed command behind.
-Reinstall it from wherever it was installed from:
+`pipx` installs a copy of the source, so a checkout that moves on leaves the
+installed command and plugins behind. `upgrade` runs the checkout's
+`install.sh` from any directory, with the same targets:
 
 ```sh
-project upgrade
+project upgrade          # ./install.sh, which defaults to all
+project upgrade cli      # ./install.sh cli
+project upgrade status   # ./install.sh status
 ```
 
-The command reads the source pip recorded at install time and hands it back to
-the installer that owns the environment: `pipx install --force <source>` for a
-`pipx` install, and `pip install --upgrade --force-reinstall <source>` for
-anything else, run by the interpreter the command runs under. A command
-installed from a checkout is rebuilt from that checkout as it stands, whatever
-branch is checked out. One installed from a Git URL fetches that repository
-again, at the revision the install asked for. `upgrade` prints the command it
-runs on stderr, then the installer's own output, and exits with the installer's
-status.
+The command finds the checkout in the source pip recorded at install time, so
+it needs neither a repository nor a working directory inside one. It prints the
+command it runs on stderr, then the installer's own output, and exits with the
+installer's status. Targets are the installer's to validate: an unknown one is
+its usage error, exit 64. See [the plugin guide](plugins.md) for what each
+target does.
 
-An editable install already tracks its checkout, so `upgrade` reports that and
-exits 0 without reinstalling. It exits 69 when the command is not an installed
-distribution, when the record of its source is missing or names a directory
-that no longer exists, or when `pipx` installed the command but is no longer on
-`PATH`.
+A command installed from a Git URL rather than a checkout has no `install.sh`
+to run, so `upgrade` exits 69 and names the URL. It also exits 69 when the
+command is not an installed distribution, when the record of its source is
+missing, or when the checkout or its `install.sh` no longer exists.
 
-`upgrade` needs no repository, and it has no `--json` mode because the
-installer owns the output.
+`upgrade` has no `--json` mode because the installer owns the output.
 
 ## Consume JSON
 

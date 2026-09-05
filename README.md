@@ -19,13 +19,6 @@ pipx install git+https://github.com/ninjudd/projector.git
 project --help
 ```
 
-`pipx` installs a copy, so new commits do not reach the command until it is
-reinstalled. Reinstall it from the same source with one command:
-
-```sh
-project upgrade
-```
-
 The framework is Projector; the command it installs is `project`. The
 repository, the `projector-cli` distribution, the Python package, and the
 `projector@projector` host plugin all keep the longer name.
@@ -59,6 +52,10 @@ git clone https://github.com/ninjudd/projector.git
 cd projector
 ./install.sh all
 ```
+
+`pipx` installs a copy, so pulling new commits does not update the command.
+`project upgrade` runs that same installer from any directory:
+`project upgrade all` is `./install.sh all`.
 
 The installer removes only legacy symlinks that point from the host's old
 agent-config locations into this checkout. It does not replace configuration

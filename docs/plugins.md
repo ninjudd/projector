@@ -72,9 +72,9 @@ pulling new commits does not update the command. Ask which one you have:
 lives, and tells you to run `./install.sh cli`. The comparison is of the files
 themselves, so it holds whether or not anyone remembered to bump a version.
 
-`project upgrade` is the same reinstall from any directory. It reads the source
-the command was installed from, which for an install from this checkout is this
-checkout, and hands it back to `pipx`.
+`project upgrade <target>` runs this installer from any directory, for a
+command installed from this checkout: `project upgrade cli` is
+`./install.sh cli`, and `project upgrade status` is `./install.sh status`.
 
 ## Upgrade from agent-config
 
