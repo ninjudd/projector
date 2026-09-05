@@ -1,16 +1,17 @@
 import type { ReactNode } from "react";
 import { CommandList } from "@/components/command";
+import { ArrowUpRightIcon } from "@/components/icons";
 import { Code } from "@/components/inline-code";
 import { Section } from "@/components/section";
-import { INSTALL } from "@/lib/links";
+import { DOCS, INSTALL } from "@/lib/links";
 
 const rows: { title: string; body: ReactNode; commands: string[] }[] = [
   {
     title: "The CLI",
     body: (
       <>
-        Requires Python 3.11 or newer and has no runtime dependencies. <Code>pipx</Code> gives
-        you an isolated <Code>project</Code> executable.
+        Requires Python 3.11 or newer and nothing else. <Code>pipx</Code> gives you an isolated{" "}
+        <Code>project</Code> command.
       </>
     ),
     commands: [INSTALL.pipx, "project --help"],
@@ -19,8 +20,8 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
     title: "Claude Code",
     body: (
       <>
-        Adds the repository as a marketplace and installs the plugin at user scope. Invoke a
-        skill as <Code>/projector:&lt;skill&gt;</Code>.
+        Adds the repository as a plugin marketplace and installs the plugin for your user. Skills
+        are invoked as <Code>/projector:&lt;skill&gt;</Code>.
       </>
     ),
     commands: INSTALL.claude,
@@ -29,42 +30,41 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
     title: "Codex",
     body: (
       <>
-        The same repository and the same skill tree. Invoke a skill as{" "}
+        The same repository, installed as a Codex plugin. Skills are invoked as{" "}
         <Code>$&lt;skill&gt;</Code>.
       </>
     ),
     commands: INSTALL.codex,
   },
-  {
-    title: "From a clone",
-    body: (
-      <>
-        <Code>./install.sh all</Code> installs the CLI and both plugins from the checkout.{" "}
-        <Code>./install.sh status</Code> compares the installed command against the files in the
-        checkout, so it reports a stale command even when nobody bumped a version.
-      </>
-    ),
-    commands: INSTALL.checkout,
-  },
 ];
+
+function DocLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-0.5 text-fg transition-colors hover:text-accent"
+    >
+      {children}
+      <ArrowUpRightIcon className="h-3.5 w-3.5" />
+    </a>
+  );
+}
 
 export function Install() {
   return (
     <Section
       id="install"
-      eyebrow="Install"
-      title={
-        <>
-          Two commands <em className="text-accent">per host.</em>
-        </>
-      }
-      lead="Install the CLI once, then add the plugin to whichever coding agents you use. The core workflows call the local command and need nothing else."
+      title="Install"
+      lead="Install the CLI first. Then add the plugin for the coding agents you use."
+      size="tight"
     >
-      <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface-2/60">
+      <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
         {rows.map((row) => (
           <div
             key={row.title}
-            className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:gap-12 lg:p-8"
+            className="grid gap-5 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:gap-12"
           >
             <div>
               <h3 className="text-lg font-semibold tracking-tight text-fg">{row.title}</h3>
@@ -74,6 +74,12 @@ export function Install() {
           </div>
         ))}
       </div>
+      <p className="mt-6 max-w-2xl text-sm leading-relaxed text-muted">
+        Installing from a clone, and checking whether an installed command is stale, are covered in
+        the <DocLink href={DOCS.plugins}>plugin guide</DocLink>. Settings, such as a different
+        projects directory, live in <Code>.projector.toml</Code> files and are described in the{" "}
+        <DocLink href={DOCS.cli}>CLI reference</DocLink>.
+      </p>
     </Section>
   );
 }

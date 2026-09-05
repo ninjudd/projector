@@ -35,15 +35,15 @@ export function SiteFooter() {
           ) : null}
         </div>
         <div className="flex flex-col gap-3">
-          <h3 className="font-mono text-xs uppercase tracking-[0.14em] text-faint">
-            Documentation
-          </h3>
+          <h3 className="text-sm font-medium text-fg">Documentation</h3>
+          <FooterLink href={DOCS.convention}>Project convention</FooterLink>
           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
-          <FooterLink href={DOCS.convention}>Project convention</FooterLink>
+          <FooterLink href={DOCS.reviewLoop}>Review loop</FooterLink>
+          <FooterLink href={DOCS.fixLoop}>Fix loop</FooterLink>
         </div>
         <div className="flex flex-col gap-3">
-          <h3 className="font-mono text-xs uppercase tracking-[0.14em] text-faint">Project</h3>
+          <h3 className="text-sm font-medium text-fg">Project</h3>
           <FooterLink href={GITHUB}>GitHub</FooterLink>
           <FooterLink href={DOCS.issues}>Issues</FooterLink>
           <FooterLink href={DOCS.license}>MIT license</FooterLink>
