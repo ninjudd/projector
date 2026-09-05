@@ -60,6 +60,14 @@ do not install the CLI, so install it separately before running a project
 workflow. `all` installs each host CLI it finds, skips a missing host, and exits
 69 only when neither Claude Code nor Codex is installed.
 
+The same command upgrades what it installed. A marketplace a host already has
+is refreshed from wherever it points, this checkout or the GitHub repository,
+rather than added again. An installed plugin is updated rather than installed
+again, because a host asked to install a plugin it already has leaves it as it
+is; the update is what moves it. Claude Code applies the update on its next
+start. A plugin moves only when its manifest version does, because a host
+caches a plugin by that version.
+
 `pipx` installs a copy of the source rather than a link to your checkout, so
 pulling new commits does not update the command. Ask which one you have:
 
@@ -71,6 +79,20 @@ pulling new commits does not update the command. Ask which one you have:
 `cli-stale` reports one that differs, or one too old to say where its source
 lives, and tells you to run `./install.sh cli`. The comparison is of the files
 themselves, so it holds whether or not anyone remembered to bump a version.
+
+`marketplace` names each host's source for the `projector` marketplace, which
+is where an upgrade refreshes from. `plugin-current` reports an installed
+plugin at the checkout's manifest version, `plugin-stale` one at another
+version, and `plugin-absent` a host with none.
+
+`project upgrade <target>` runs this installer from any directory, for a
+command installed from this checkout: `project upgrade cli` is
+`./install.sh cli`, and `project upgrade status` is `./install.sh status`.
+
+A reinstall keeps the Python the existing venv was created with. Left to
+itself, `pipx` builds under its default interpreter, which on some machines is
+older than Projector's 3.11 floor and fails the reinstall even though the venv
+already holds a Python that works.
 
 ## Upgrade from agent-config
 
@@ -129,9 +151,10 @@ claude plugin tag . --push
 The tag is `projector--v<version>`, and the command validates that
 `plugin.json` and the enclosing marketplace entry agree before creating it.
 
-Update an installed copy with each host's own command. Claude Code needs a
-restart to apply the update, and Codex refreshes a Git marketplace snapshot
-before it can see the new version:
+Update an installed copy with each host's own command, or run `./install.sh
+all` from a checkout, which runs these for every host it finds. Claude Code
+needs a restart to apply the update, and Codex refreshes a Git marketplace
+snapshot before it can see the new version:
 
 ```sh
 claude plugin update projector@projector

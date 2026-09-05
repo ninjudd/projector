@@ -3,6 +3,7 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -741,6 +742,156 @@ class SelfReportingTests(unittest.TestCase):
             metadata, "version", side_effect=metadata.PackageNotFoundError
         ):
             self.assertEqual("unknown", distribution_version())
+
+
+class UpgradeTests(unittest.TestCase):
+    """`upgrade` runs `install.sh` from the checkout the command came from.
+
+    Nothing here touches a real environment: the distribution record points
+    at a temporary checkout whose `install.sh` is a shell script that logs
+    its arguments, and the command runs from a directory that is not a
+    repository.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        # A space, so the path round-trips through the file:// URL pip writes.
+        self.checkout = self.root / "my checkout"
+        self.checkout.mkdir()
+        self.log = self.root / "install.log"
+        # Not a repository: upgrading the command must not need one.
+        self.elsewhere = self.root / "elsewhere"
+        self.elsewhere.mkdir()
+
+    def patch(self, patcher: object) -> object:
+        started = patcher.start()
+        self.addCleanup(patcher.stop)
+        return started
+
+    def installed_from(self, record: dict[str, object] | None) -> mock.Mock:
+        distribution = mock.Mock()
+        distribution.read_text.return_value = None if record is None else json.dumps(record)
+        return self.patch(mock.patch.object(metadata, "distribution", return_value=distribution))
+
+    def checkout_record(self, *, editable: bool = False) -> dict[str, object]:
+        return {
+            "url": self.checkout.as_uri(),
+            "dir_info": {"editable": True} if editable else {},
+        }
+
+    def fake_installer(self, exit_code: int = 0) -> None:
+        """An `install.sh` that records its argument count and arguments."""
+
+        script = self.checkout / "install.sh"
+        script.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$#" "$@" > "{self.log}"\nexit {exit_code}\n'
+        )
+        script.chmod(0o755)
+
+    def invoke(self, *targets: str) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        previous = Path.cwd()
+        os.chdir(self.elsewhere)
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(["upgrade", *targets])
+        finally:
+            os.chdir(previous)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_a_target_is_forwarded_to_the_checkout_installer(self) -> None:
+        distribution = self.installed_from(self.checkout_record())
+        self.fake_installer(exit_code=3)
+
+        code, stdout, stderr = self.invoke("all")
+
+        self.assertEqual(["1", "all"], self.log.read_text().splitlines())
+        # The installer's status is the answer, and the command it ran is shown.
+        self.assertEqual(3, code)
+        self.assertEqual("", stdout)
+        self.assertIn(shlex.join([str(self.checkout / "install.sh"), "all"]), stderr)
+        # Every lookup -- `--version` makes one too -- asks for the distribution
+        # setup.cfg installs; a wrong name here would report every command as
+        # not installed and exit 69 while the suite stayed green.
+        configuration = configparser.ConfigParser()
+        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+        self.assertEqual(
+            {configuration["metadata"]["name"]},
+            {call.args[0] for call in distribution.call_args_list},
+        )
+
+    def test_no_target_leaves_the_default_to_the_installer(self) -> None:
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+
+        code, _, _ = self.invoke()
+
+        self.assertEqual(0, code)
+        self.assertEqual(["0"], self.log.read_text().splitlines())
+
+    def test_targets_are_not_validated_here(self) -> None:
+        # install.sh owns its target list and its usage error, so a target
+        # added there works without a CLI change.
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+
+        self.invoke("status")
+
+        self.assertEqual(["1", "status"], self.log.read_text().splitlines())
+
+    def test_an_editable_install_is_a_checkout_like_any_other(self) -> None:
+        self.installed_from(self.checkout_record(editable=True))
+        self.fake_installer()
+
+        code, _, _ = self.invoke("cli")
+
+        self.assertEqual(0, code)
+        self.assertEqual(["1", "cli"], self.log.read_text().splitlines())
+
+    def test_a_git_install_has_no_checkout_to_run(self) -> None:
+        url = "https://github.com/ninjudd/projector.git"
+        self.installed_from({"url": url, "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
+
+        code, _, stderr = self.invoke("all")
+
+        self.assertEqual(69, code)
+        self.assertIn(url, stderr)
+        self.assertIn("install.sh", stderr)
+
+    def test_an_uninstalled_command_has_nothing_to_upgrade(self) -> None:
+        self.patch(mock.patch.object(metadata, "distribution", side_effect=metadata.PackageNotFoundError))
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn("not an installed distribution", stderr)
+
+    def test_a_command_with_no_recorded_source_says_so(self) -> None:
+        self.installed_from(None)
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn("does not record where it came from", stderr)
+
+    def test_a_vanished_checkout_is_named(self) -> None:
+        gone = self.root / "gone"
+        self.installed_from({"url": gone.as_uri(), "dir_info": {}})
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn(str(gone), stderr)
+
+    def test_a_checkout_without_the_installer_is_named(self) -> None:
+        self.installed_from(self.checkout_record())
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(69, code)
+        self.assertIn(str(self.checkout / "install.sh"), stderr)
 
 
 if __name__ == "__main__":

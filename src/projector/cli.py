@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .config import ConfigError
 from .config import load as load_config
@@ -26,6 +28,9 @@ from .core import (
 )
 
 
+DISTRIBUTION = "projector-cli"
+
+
 def distribution_version() -> str:
     """The version of the installed distribution, not of this source tree.
 
@@ -35,9 +40,61 @@ def distribution_version() -> str:
     """
 
     try:
-        return metadata.version("projector-cli")
+        return metadata.version(DISTRIBUTION)
     except metadata.PackageNotFoundError:
         return "unknown"
+
+
+def checkout() -> Path:
+    """The checkout this command was installed from.
+
+    pip records the source of every install in `direct_url.json`, so the
+    command can find its own installer without being told where the checkout
+    is. A command installed from a Git URL has no checkout, and therefore no
+    `install.sh` to hand off to.
+    """
+
+    try:
+        distribution = metadata.distribution(DISTRIBUTION)
+    except metadata.PackageNotFoundError as error:
+        raise EnvironmentError(
+            "cannot upgrade: project is not an installed distribution"
+        ) from error
+    text = distribution.read_text("direct_url.json")
+    if text is None:
+        raise EnvironmentError(
+            "cannot upgrade: the installed command does not record where it came from"
+        )
+    record = json.loads(text)
+    if "dir_info" not in record:
+        raise EnvironmentError(
+            f"cannot upgrade: install.sh needs a checkout, and project was installed "
+            f"from {record['url']}"
+        )
+    path = Path(url2pathname(urlparse(record["url"]).path))
+    if not path.is_dir():
+        raise EnvironmentError(f"cannot upgrade: install source no longer exists: {path}")
+    return path
+
+
+def run_upgrade(targets: list[str]) -> int:
+    """Run the checkout's `install.sh` from anywhere.
+
+    Installation belongs to the installer, which already knows how to place
+    the CLI and each host plugin from this checkout. `project upgrade all`
+    is `./install.sh all` with the same targets, output, and exit status, so
+    nothing here decides what an upgrade is.
+    """
+
+    script = checkout() / "install.sh"
+    if not script.is_file():
+        raise EnvironmentError(f"cannot upgrade: {script} does not exist")
+    command = [str(script), *targets]
+    print(f"+ {shlex.join(command)}", file=sys.stderr)
+    # `install.sh cli` rewrites this package under the running interpreter.
+    # Everything this process still needs is imported already, so nothing
+    # below reaches for a file the reinstall is in the middle of replacing.
+    return subprocess.run(command, check=False).returncode
 
 
 class PackageDir(argparse.Action):
@@ -133,6 +190,13 @@ def parser() -> argparse.ArgumentParser:
         "paths", help="print the files that contribute, lowest precedence first"
     )
     add_output(config_paths)
+
+    upgrade = subcommands.add_parser("upgrade", help="run the checkout's install.sh from anywhere")
+    upgrade.add_argument(
+        "target",
+        nargs="*",
+        help="install.sh target: all (its default), cli, claude, codex, or status",
+    )
     return result
 
 
@@ -260,6 +324,8 @@ def configured_projects_dir(root: Path) -> Optional[Path]:
 def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "config":
         return run_config(arguments)
+    if arguments.command == "upgrade":
+        return run_upgrade(arguments.target)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
