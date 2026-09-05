@@ -64,7 +64,7 @@ export function Create() {
             <Code>project create</Code> makes the directory and the plan. <Code>project status</Code>{" "}
             changes one frontmatter field, <Code>project done</Code> marks the project completed,
             and <Code>project list</Code> groups what exists by priority. Add <Code>--json</Code> to
-            any command for scripts and agents.
+            any of them for scripts and agents.
           </p>
           <p>
             Because the plan is a file in the repository, it comes with every clone, along with its
