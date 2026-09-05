@@ -106,6 +106,8 @@ project status <project> draft|ready|in-progress|completed
 project priority <project> now|next|later
 project done <project>
 project check [--json]
+project config get <key> [--default <value>] [--json]
+project upgrade [all|cli|claude|codex|status]
 ```
 
 Use `--json` when an agent or script consumes output. Every JSON response has

@@ -33,9 +33,10 @@ repository knows where the `project` command comes from.
 If projects already exist but the convention file is missing, `init` adds only
 that file. It refuses to replace an existing convention file.
 
-Every command except `init` and `check` requires that directory. When it is
-missing, Projector names the path it looked for and exits 66 instead of
-reporting an empty repository:
+Every command that reads or writes a project requires that directory. `init`
+creates it, `check` reports its absence, and `config` and `upgrade` do not
+look for it. When it is missing, Projector names the path it looked for and
+exits 66 instead of reporting an empty repository:
 
 ```console
 $ project list
