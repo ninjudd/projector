@@ -42,8 +42,8 @@ export default function Image() {
             Project plans that live in Git.
           </div>
           <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
-            One permanent home per project, one CLI for people and coding
-            agents, review loops that carry a pull request to a clean head.
+            Each plan is a Markdown file under docs/projects/. Developers and
+            coding agents update it with the same CLI.
           </div>
         </div>
         <div
