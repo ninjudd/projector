@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -32,6 +33,20 @@ class InstallTests(unittest.TestCase):
                 "exit 0\n"
             )
             path.chmod(0o755)
+        # Each host is asked what it has before anything is installed, and
+        # answers from state files a test writes; no file means nothing yet.
+        self.state = self.user_root / "host-state"
+        self.state.mkdir()
+        for command, executable in (("claude", "host-a"), ("codex", "host-b")):
+            (self.fake_bin / executable).write_text(
+                "#!/bin/sh\n"
+                f"printf '%s %s\\n' '{command}' \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+                'case "$*" in\n'
+                f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
+                f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
+                "esac\n"
+                "exit 0\n"
+            )
         # pipx is asked where its venvs live and is handed an interpreter when
         # one of them already holds this package; the fake reports both.
         (self.fake_bin / "pipx").write_text(
@@ -50,6 +65,7 @@ class InstallTests(unittest.TestCase):
             "PROJECTOR_CLAUDE_DIR": str(self.claude),
             "PROJECTOR_CODEX_DIR": str(self.codex),
             "PROJECTOR_TEST_LOG": str(self.log),
+            "PROJECTOR_TEST_STATE": str(self.state),
             "PROJECTOR_CLAUDE_COMMAND": str(self.fake_bin / "host-a"),
             "PROJECTOR_CODEX_COMMAND": str(self.fake_bin / "host-b"),
         }
@@ -95,6 +111,73 @@ class InstallTests(unittest.TestCase):
         self.assertIn("claude plugin install projector@projector --scope user", log)
         self.assertIn(f"codex plugin marketplace add {ROOT}", log)
         self.assertIn("codex plugin add projector@projector", log)
+
+    def host_has(self, host: str, *, marketplace: str, version: str) -> None:
+        """Make the fake host report the marketplace and an installed plugin.
+
+        `marketplace` is `directory`, `github`, or `git`, which is the field
+        install.sh reads to decide whether there is a snapshot to refresh.
+        """
+
+        if host == "claude":
+            markets = [{"name": "projector", "source": marketplace, "path": str(ROOT)}]
+            plugins = [{"id": "projector@projector", "version": version}]
+        else:
+            markets = {"marketplaces": [{"name": "projector", "marketplaceSource": {
+                "sourceType": marketplace, "source": str(ROOT)}}]}
+            plugins = {"installed": [{"pluginId": "projector@projector", "version": version}]}
+        (self.state / f"{host}-marketplaces.json").write_text(json.dumps(markets))
+        (self.state / f"{host}-plugins.json").write_text(json.dumps(plugins))
+
+    def test_host_installs_update_what_is_already_installed(self) -> None:
+        self.host_has("claude", marketplace="directory", version="0.2.0")
+        self.host_has("codex", marketplace="git", version="0.2.0")
+
+        claude = self.install("claude")
+        codex = self.install("codex")
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        log = self.log.read_text()
+        self.assertIn("claude plugin marketplace update projector\n", log)
+        self.assertIn("claude plugin update projector@projector\n", log)
+        self.assertNotIn("marketplace add", log)
+        self.assertNotIn("plugin install", log)
+        self.assertIn("codex plugin marketplace upgrade projector\n", log)
+        self.assertIn("codex plugin add projector@projector\n", log)
+
+    def test_codex_refreshes_only_a_git_marketplace(self) -> None:
+        # A local marketplace is read live; asking Codex to upgrade it is an
+        # error rather than a no-op.
+        self.host_has("codex", marketplace="local", version="0.2.0")
+
+        result = self.install("codex")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("marketplace upgrade", log)
+        self.assertNotIn("marketplace add", log)
+        self.assertIn("codex plugin add projector@projector\n", log)
+
+    def test_status_compares_installed_plugins_with_the_checkout(self) -> None:
+        expected = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
+        self.host_has("claude", marketplace="directory", version="0.2.0")
+        self.host_has("codex", marketplace="git", version=expected)
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"claude installed 0.2.0, checkout {expected}", result.stdout)
+        self.assertIn("plugin-stale", result.stdout)
+        self.assertIn(f"plugin-current codex {expected}", result.stdout)
+        self.assertIn(f"marketplace    codex git {ROOT}", result.stdout)
+
+    def test_status_reports_a_host_with_no_plugin(self) -> None:
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("plugin-absent  claude", result.stdout)
+        self.assertIn("plugin-absent  codex", result.stdout)
 
     def test_all_skips_one_missing_host_and_installs_the_other(self) -> None:
         self.environment["PROJECTOR_CLAUDE_COMMAND"] = "missing-claude"

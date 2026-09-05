@@ -53,9 +53,10 @@ cd projector
 ./install.sh all
 ```
 
-`pipx` installs a copy, so pulling new commits does not update the command.
-`project upgrade` runs that same installer from any directory:
-`project upgrade all` is `./install.sh all`.
+`pipx` installs a copy and each host caches the plugin, so pulling new
+commits updates neither. Running the installer again upgrades both, and
+`project upgrade` runs it from any directory: `project upgrade all` is
+`./install.sh all`.
 
 The installer removes only legacy symlinks that point from the host's old
 agent-config locations into this checkout. It does not replace configuration
