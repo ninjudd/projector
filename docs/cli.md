@@ -33,9 +33,10 @@ repository knows where the `project` command comes from.
 If projects already exist but the convention file is missing, `init` adds only
 that file. It refuses to replace an existing convention file.
 
-Every command except `init` and `check` requires that directory. When it is
-missing, Projector names the path it looked for and exits 66 instead of
-reporting an empty repository:
+Every command that reads or writes a project requires that directory. `init`
+creates it, `check` reports its absence, and `config` and `upgrade` do not
+look for it. When it is missing, Projector names the path it looked for and
+exits 66 instead of reporting an empty repository:
 
 ```console
 $ project list
@@ -232,6 +233,32 @@ authenticated, because a file naming a different account would scope a loop to
 pull requests it cannot push to and then go quiet, which both loops read as
 nothing outstanding.
 
+## Upgrade from the checkout
+
+`pipx` installs a copy of the source, so a checkout that moves on leaves the
+installed command and plugins behind. `upgrade` runs the checkout's
+`install.sh` from any directory, with the same targets:
+
+```sh
+project upgrade          # ./install.sh, which defaults to all
+project upgrade cli      # ./install.sh cli
+project upgrade status   # ./install.sh status
+```
+
+The command finds the checkout in the source pip recorded at install time, so
+it needs neither a repository nor a working directory inside one. It prints the
+command it runs on stderr, then the installer's own output, and exits with the
+installer's status. Targets are the installer's to validate: an unknown one is
+its usage error, exit 64. See [the plugin guide](plugins.md) for what each
+target does.
+
+A command installed from a Git URL rather than a checkout has no `install.sh`
+to run, so `upgrade` exits 69 and names the URL. It also exits 69 when the
+command is not an installed distribution, when the record of its source is
+missing, or when the checkout or its `install.sh` no longer exists.
+
+`upgrade` has no `--json` mode because the installer owns the output.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
@@ -266,5 +293,5 @@ Projector uses these exit codes:
 | `65` | Project data is invalid or a mutation is unsafe. |
 | `66` | The requested project or the projects directory does not exist. |
 | `67` | The requested project is ambiguous. |
-| `69` | Git or the interactive editor environment is unavailable. |
+| `69` | Git, the interactive editor, or the installer is unavailable. |
 | `78` | A `.projector.toml` file is not valid TOML. |

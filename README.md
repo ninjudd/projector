@@ -53,6 +53,11 @@ cd projector
 ./install.sh all
 ```
 
+`pipx` installs a copy and each host caches the plugin, so pulling new
+commits updates neither. Running the installer again upgrades both, and
+`project upgrade` runs it from any directory: `project upgrade all` is
+`./install.sh all`.
+
 The installer removes only legacy symlinks that point from the host's old
 agent-config locations into this checkout. It does not replace configuration
 directories or touch user-owned files. Run `./install.sh status` before an
@@ -102,6 +107,8 @@ project status <project> draft|ready|in-progress|completed
 project priority <project> now|next|later
 project done <project>
 project check [--json]
+project config get <key> [--default <value>] [--json]
+project upgrade [all|cli|claude|codex|status]
 ```
 
 Use `--json` when an agent or script consumes output. Every JSON response has
