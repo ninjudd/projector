@@ -4,6 +4,7 @@ import configparser
 import json
 import os
 import shlex
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -476,6 +477,11 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("https://github.com/ninjudd/projector", convention)
         self.assertEqual(self.block() + "\n", (self.root / "AGENTS.md").read_text())
         self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+        # One mode for all three: the README's 0644 under the umask, not the
+        # owner-only mode a temporary file is born with.
+        modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
+        self.assertEqual(1, len(modes), modes)
+        self.assertTrue(modes.pop() & stat.S_IRGRP)
 
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 

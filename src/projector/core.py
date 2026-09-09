@@ -362,12 +362,19 @@ class ProjectStore:
         """
 
         target = path.resolve()
+        if not target.exists():
+            # A new file gets the mode the README gets, 0644 under the umask.
+            # `mkstemp` would leave it at the temporary's owner-only 0600, which
+            # Git never records and another uid cannot read.
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+            return
         descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
                 stream.write(content)
-            if target.exists():
-                os.chmod(temporary, stat.S_IMODE(target.stat().st_mode))
+            os.chmod(temporary, stat.S_IMODE(target.stat().st_mode))
             os.replace(temporary, target)
         finally:
             if os.path.exists(temporary):
