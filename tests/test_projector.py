@@ -703,8 +703,8 @@ class MutationTests(RepositoryTestCase):
     def test_a_dangling_claude_md_link_is_written_through(self) -> None:
         claude = self.root / "CLAUDE.md"
         claude.unlink()
+        # The target's directory does not exist either; init creates it.
         claude.symlink_to("notes/claude.md")
-        (self.root / "notes").mkdir()
 
         code, _, stderr = self.invoke("check")
         self.assertEqual(0, code)

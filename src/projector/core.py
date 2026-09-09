@@ -363,6 +363,10 @@ class ProjectStore:
 
         target = path.resolve()
         if not target.exists():
+            # A dangling link may point into a directory that does not exist
+            # yet; callers have already confined the target to the repository,
+            # so create the directories the way `init` does for the README.
+            target.parent.mkdir(parents=True, exist_ok=True)
             # A new file gets the mode the README gets, 0644 under the umask.
             # `mkstemp` would leave it at the temporary's owner-only 0600, which
             # Git never records and another uid cannot read.
