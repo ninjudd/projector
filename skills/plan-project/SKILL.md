@@ -61,6 +61,9 @@ project check
 git diff --check
 ```
 
+Resolve any warning `project check` prints; `project init` refreshes a stale
+Projector section in `AGENTS.md` without touching the repository's own text.
+
 Confirm that the status makes an honest readiness claim, the priority matches
 the user's real scheduling intent, the acceptance criteria are observable, and
 every open question has an owner or deliberate deferral. Leave the plan changes

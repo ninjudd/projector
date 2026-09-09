@@ -79,8 +79,12 @@ project check
 ```
 
 This creates the convention at `docs/projects/README.md` and the project plan
-at `docs/projects/cool-new-feature/readme.md`. A project can contain supporting
-documents and nested projects:
+at `docs/projects/cool-new-feature/readme.md`. It also writes Projector's
+conventions into a marked section of `AGENTS.md`, with a one-line `CLAUDE.md`
+that imports it so Claude Code reads the same file, and every agent session in
+the repository reads them whether or not a Projector skill is loaded. Run
+`init` again to refresh that section when `check` says it is outdated. A
+project can contain supporting documents and nested projects:
 
 ```text
 docs/projects/cool-new-feature/

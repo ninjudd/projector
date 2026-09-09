@@ -46,6 +46,9 @@ project check
 git diff --check
 ```
 
+Resolve any warning `project check` prints; `project init` refreshes a stale
+Projector section in `AGENTS.md` without touching the repository's own text.
+
 Compare the result against the plan's acceptance criteria. If required work
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
