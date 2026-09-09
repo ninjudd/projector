@@ -50,9 +50,13 @@ created CLAUDE.md
 
 Run `init` again whenever `check` says the section is outdated. Each file is
 reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`
-left a file alone on purpose and says why on stderr: the section is newer than
-this command's template, so upgrade the command instead, or the path is a
-symlink to a file outside the repository, which `init` never writes.
+left a file alone on purpose and says why on stderr, for one of three reasons:
+the section is newer than this command's template, so upgrade the command
+instead; the path is a symlink to a file outside the repository, which `init`
+never writes; or the markers in `AGENTS.md` do not delimit exactly one section,
+for example a begin marker with no end marker. In that last case `init` still
+writes the other files, then exits 65 and names the repair, and prints no JSON
+document in `--json` mode.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
