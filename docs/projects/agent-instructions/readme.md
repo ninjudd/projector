@@ -45,7 +45,12 @@ The markers are HTML comments, so GitHub renders nothing for them:
 
 The integer in the opening marker is the template version. It changes only
 when the block's text changes, never when the CLI releases for another reason.
-A file holds at most one block.
+A file holds at most one block. Claude Code strips block-level HTML comments
+before it injects instruction content, so the markers cost no context. Codex
+stops adding instruction content once the combined size reaches
+`project_doc_max_bytes`, 32 KiB by default, and the block is appended last, so
+a repository with a very long `AGENTS.md` should know the block is the part
+that falls off; `check` does not measure this.
 
 Codex reads root `AGENTS.md` natively. Claude Code reads only `CLAUDE.md`, so
 the repository also needs a root `CLAUDE.md` containing the line `@AGENTS.md`,
@@ -174,7 +179,7 @@ told what to do without a failing gate:
 | --- | --- | --- |
 | `instructions-missing` | `AGENTS.md` is absent or has no block | run `project init` |
 | `instructions-outdated` | marker version is older than the template | run `project init` |
-| `instructions-ahead` | marker version is newer than the template | upgrade the `project` command |
+| `instructions-ahead` | marker version is newer than the template | run `project upgrade`, or reinstall the CLI |
 | `instructions-edited` | same version, content differs from the rendered template | run `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | begin marker without end marker, or more than one block | repair the markers by hand |
 | `claude-import-missing` | `CLAUDE.md` is absent or does not import `AGENTS.md` as section 3 defines it, and does not resolve to the same file as `AGENTS.md` | run `project init` |
@@ -269,9 +274,9 @@ Verified in a temporary Git repository unless stated otherwise:
 - `check --json` carries `"severity"` on every issue and `"valid": true` when
   only warnings are present; a real error still exits 65.
 - Changing the template text without bumping its version fails the test suite.
-- In this repository, `project check` is clean, `CLAUDE.md` exists, and a new
-  Claude Code session answers a question about the documentation style with
-  the Google register.
+- In this repository, `project check` is clean, `CLAUDE.md` exists, and
+  `/context` in a new Claude Code session lists `CLAUDE.md` under Memory
+  files.
 - In a repository adopted this way, a Codex session sees the block without any
   plugin installed, because it reads `AGENTS.md` natively.
 - The full validation gate in `AGENTS.md` passes.
