@@ -166,9 +166,3 @@ def imports_agents(text: str) -> bool:
             fence = None
     prose = CODE_SPAN.sub(" ", "\n".join(kept))
     return IMPORT.search(prose) is not None
-
-
-def with_import(text: str) -> str:
-    """`text` with the `@AGENTS.md` import appended after a blank line."""
-
-    return _appended(text, IMPORT_LINE)

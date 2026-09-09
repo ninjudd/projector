@@ -118,12 +118,6 @@ class ImportTests(unittest.TestCase):
         self.assertFalse(instructions.imports_agents("```\n@AGENTS.md\n"))
         self.assertTrue(instructions.imports_agents("@AGENTS.md\n```\nignored\n"))
 
-    def test_with_import_appends_after_one_blank_line(self) -> None:
-        self.assertEqual("@AGENTS.md\n", instructions.with_import(""))
-        self.assertEqual("# Claude\n\n@AGENTS.md\n", instructions.with_import("# Claude"))
-        self.assertEqual("# Claude\n\n@AGENTS.md\n", instructions.with_import("# Claude\n\n"))
-        self.assertEqual("# Claude\r\n\r\n@AGENTS.md\r\n", instructions.with_import("# Claude\r\n"))
-
 
 if __name__ == "__main__":
     unittest.main()

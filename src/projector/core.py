@@ -398,13 +398,15 @@ class ProjectStore:
     def _init_instructions(self) -> tuple[list[FileAction], Optional[str]]:
         """Bring `AGENTS.md` and `CLAUDE.md` up to date, one block wherever possible.
 
-        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. When one of
-        the two is absent it becomes a symlink to the other, so one file serves
-        both hosts and the block is written once. A `CLAUDE.md` that links to
-        or imports `AGENTS.md` already reads the block through it. Only when the
-        two are genuinely distinct files, each with its own content and no
-        import between them, does each get the block; appending an import would
-        change everything Claude Code reads, not only Projector's part.
+        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. An absent
+        `CLAUDE.md` becomes the one-line import `@AGENTS.md`, the portable form
+        the host documents: a symlink would check out as a plain file wherever
+        Git lacks symlink support. A `CLAUDE.md` that already links to or
+        imports `AGENTS.md` reads the block through it and is left alone. Only
+        when the two are genuinely distinct files, each with its own content
+        and no import between them, does each get the block; appending an
+        import would change everything Claude Code reads, not only Projector's
+        part.
         """
 
         agents = self.root / "AGENTS.md"
@@ -422,28 +424,12 @@ class ProjectStore:
                 )
                 return FileAction(path.name, "kept")
 
-        agents_outside = self._outside(agents)
-        claude_outside = self._outside(claude)
-        claude_first = (
-            not agents.exists()
-            and not agents.is_symlink()
-            and claude.exists()
-            and not claude_outside
-            and not instructions.imports_agents(self._read_text(claude))
-        )
-
-        if agents_outside:
+        if self._outside(agents):
             files.append(FileAction("AGENTS.md", "kept", self._leaves_repository(agents)))
-        elif claude_first and self._link(agents, claude):
-            # A repository that adopted CLAUDE.md first: AGENTS.md becomes a
-            # link to it, and the block lands once in the shared file below.
-            files.append(FileAction("AGENTS.md", "created"))
-            files.append(write(claude))
-            return files, "\n".join(failures) or None
         else:
             files.append(write(agents))
 
-        if claude_outside:
+        if self._outside(claude):
             files.append(FileAction("CLAUDE.md", "kept", self._leaves_repository(claude)))
         elif self._same_file(agents, claude):
             files.append(FileAction("CLAUDE.md", "unchanged"))
@@ -452,28 +438,13 @@ class ProjectStore:
             # at, as the AGENTS.md path already does, rather than refuse.
             files.append(write(claude))
         elif not claude.exists():
-            if self._link(claude, agents):
-                files.append(FileAction("CLAUDE.md", "created"))
-            else:
-                # No symlinks here (Windows without Developer Mode): the import
-                # is the documented alternative and reads the same file.
-                self._write_through(claude, instructions.IMPORT_LINE + "\n")
-                files.append(FileAction("CLAUDE.md", "created"))
+            self._write_through(claude, instructions.IMPORT_LINE + "\n")
+            files.append(FileAction("CLAUDE.md", "created"))
         elif instructions.imports_agents(self._read_text(claude)):
             files.append(FileAction("CLAUDE.md", "unchanged"))
         else:
             files.append(write(claude))
         return files, "\n".join(failures) or None
-
-    @staticmethod
-    def _link(link: Path, target: Path) -> bool:
-        """Make `link` a relative symlink to `target`; False where symlinks fail."""
-
-        try:
-            os.symlink(target.name, link)
-        except OSError:
-            return False
-        return True
 
     def _write_block(self, path: Path) -> FileAction:
         rendered = self._rendered_block()

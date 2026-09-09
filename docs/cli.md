@@ -41,16 +41,18 @@ created CLAUDE.md
   file or creates the file with only that section, and refreshes the section
   when it falls behind the template this command ships. Everything outside the
   markers is yours and is never changed.
-- `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
-  `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
-  creates the link when `CLAUDE.md` is absent, or a file containing
-  `@AGENTS.md` where symlinks are unavailable. A `CLAUDE.md` that already
-  links to or imports `AGENTS.md`, on its own line or inline in a sentence, is
-  left alone; a mention inside backticks or a code block is not an import. A
-  repository with only a `CLAUDE.md` gets `AGENTS.md` as a link to it instead.
-  When the two are genuinely distinct files, each with its own content and no
-  import between them, each gets the section, because an import would change
-  everything Claude Code reads rather than only Projector's part.
+- `CLAUDE.md` imports `AGENTS.md` with the one line `@AGENTS.md`, because
+  Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`, and the import
+  is the portable way to make them one file: a committed symlink checks out as
+  a plain text file wherever Git lacks symlink support, which is Git for
+  Windows' default. `init` creates that file when `CLAUDE.md` is absent. A
+  `CLAUDE.md` that already links to or imports `AGENTS.md`, on its own line or
+  inline in a sentence, is left alone; a mention inside backticks or a code
+  block is not an import. When the two are genuinely distinct files, each with
+  its own content and no import between them, each gets the section, because
+  appending an import would change everything Claude Code reads rather than
+  only Projector's part. A repository with only a `CLAUDE.md` is that case:
+  `AGENTS.md` is created with the section and `CLAUDE.md` gains it too.
 
 Run `init` again whenever `check` says the section is outdated. Each file is
 reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`

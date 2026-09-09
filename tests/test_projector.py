@@ -47,7 +47,7 @@ class RepositoryTestCase(unittest.TestCase):
         # A fully adopted repository, so `check` is quiet by default and each
         # instruction scenario removes or alters exactly what it tests.
         (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
-        os.symlink("AGENTS.md", self.root / "CLAUDE.md")
+        (self.root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
         # Every command now reads layered configuration, and the user layer
         # lives at $HOME/.projector.toml. Point HOME at an empty directory so
         # a real one on the machine running the tests cannot reach them.
@@ -477,8 +477,8 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("https://github.com/ninjudd/projector", convention)
         self.assertEqual(self.block() + "\n", (self.root / "AGENTS.md").read_text())
         claude = self.root / "CLAUDE.md"
-        self.assertTrue(claude.is_symlink())
-        self.assertEqual("AGENTS.md", os.readlink(claude))
+        self.assertFalse(claude.is_symlink())
+        self.assertEqual("@AGENTS.md\n", claude.read_text())
         # One mode for all three: the README's 0644 under the umask, not the
         # owner-only mode a temporary file is born with.
         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
@@ -544,7 +544,7 @@ class MutationTests(RepositoryTestCase):
             "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\n", stdout
         )
 
-    def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
+    def test_a_claude_first_repository_gets_the_block_in_both_files(self) -> None:
         agents = self.root / "AGENTS.md"
         claude = self.root / "CLAUDE.md"
         claude.unlink()
@@ -557,8 +557,12 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(
             "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\n", stdout
         )
-        self.assertTrue(agents.is_symlink())
-        self.assertEqual("CLAUDE.md", os.readlink(agents))
+        # No symlink is ever created: it would check out as a plain file where
+        # Git lacks symlink support. Codex has no import syntax, so AGENTS.md
+        # is a regular file with the block, and the distinct CLAUDE.md keeps
+        # its own content plus the block.
+        self.assertFalse(agents.is_symlink())
+        self.assertEqual(self.block() + "\n", agents.read_text())
         self.assertFalse(claude.is_symlink())
         self.assertEqual("# Claude rules\n\n" + self.block() + "\n", claude.read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -643,7 +647,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual("created docs/projects/README.md\nkept AGENTS.md\ncreated CLAUDE.md\n", stdout)
         self.assertIn("markers are malformed", stderr)
         self.assertEqual(broken, agents.read_text())
-        self.assertTrue((self.root / "CLAUDE.md").is_symlink())
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
     def test_check_recognizes_an_import_the_way_claude_code_does(self) -> None:
         claude = self.root / "CLAUDE.md"
