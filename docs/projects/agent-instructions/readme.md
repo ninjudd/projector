@@ -444,3 +444,41 @@ Details settled during implementation, none of which changes the design:
 - The CLI version moves to 0.4.0 for the new `init` and `check` behavior, and
   the plugin version to 0.2.3 for the three skill sentences, following the
   release guide in `docs/plugins.md`.
+
+## 12. Later corrections
+
+Sections 1 through 11 record the project as designed and first implemented.
+One rule changed before the implementation merged, in the same pull request,
+and is listed here rather than rewritten above.
+
+- **`CLAUDE.md` is a symlink to `AGENTS.md`, not an import file, and two
+  distinct files each get the block.** Sections 2, 3, 4, 8, and 9 describe a
+  `CLAUDE.md` created with the single line `@AGENTS.md`, an import appended to
+  an existing `CLAUDE.md` that lacks one, and a `claude-import-missing` code.
+  Reviewing the result in a real repository showed the import file as a second
+  file whose only content pointed at the first, and showed the append rule
+  changing everything Claude Code reads in a repository that kept `CLAUDE.md`
+  and `AGENTS.md` deliberately different, not only Projector's part.
+
+  `init` now creates an absent `CLAUDE.md` as a relative symlink to
+  `AGENTS.md`, falling back to the `@AGENTS.md` file only where the platform
+  cannot make a symlink. The mirror case holds too: a repository that has only
+  a `CLAUDE.md`, with no import of `AGENTS.md`, gets `AGENTS.md` as a link to
+  it, so Codex reads the same file Claude Code does. A `CLAUDE.md` that links
+  to or imports `AGENTS.md`, `@AGENTS.md` alone included, is left as it is.
+  Only when both files exist as distinct regular files with no import between
+  them does `init` put the block into each, and `check` then holds each to the
+  same template. The `claude-import-missing` code is gone: an absent
+  `CLAUDE.md` is `instructions-missing` for that path, and a distinct
+  `CLAUDE.md` gets the same six codes as `AGENTS.md`. The section 9 decision
+  "One import line in `CLAUDE.md`, nothing more" is superseded by this one; the
+  same-file rule and the repository bound stand unchanged.
+
+  Verified in this repository: with `CLAUDE.md` a symlink, a fresh
+  non-interactive Claude Code session again reports the "Projector conventions"
+  section in its loaded instructions. Tests:
+  `test_init_adopts_an_empty_repository_and_is_idempotent` (the link),
+  `test_a_claude_first_repository_links_agents_md_to_claude_md` (the mirror),
+  `test_distinct_instruction_files_each_get_the_block_and_keep_their_bytes`,
+  and `test_check_recognizes_an_import_the_way_claude_code_does` (the
+  `@AGENTS.md`-only file left alone).

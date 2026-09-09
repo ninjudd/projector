@@ -47,7 +47,7 @@ class RepositoryTestCase(unittest.TestCase):
         # A fully adopted repository, so `check` is quiet by default and each
         # instruction scenario removes or alters exactly what it tests.
         (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
-        (self.root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+        os.symlink("AGENTS.md", self.root / "CLAUDE.md")
         # Every command now reads layered configuration, and the user layer
         # lives at $HOME/.projector.toml. Point HOME at an empty directory so
         # a real one on the machine running the tests cannot reach them.
@@ -476,7 +476,9 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("lowercase `readme.md`", convention)
         self.assertIn("https://github.com/ninjudd/projector", convention)
         self.assertEqual(self.block() + "\n", (self.root / "AGENTS.md").read_text())
-        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+        claude = self.root / "CLAUDE.md"
+        self.assertTrue(claude.is_symlink())
+        self.assertEqual("AGENTS.md", os.readlink(claude))
         # One mode for all three: the README's 0644 under the umask, not the
         # owner-only mode a temporary file is born with.
         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
@@ -506,9 +508,10 @@ class MutationTests(RepositoryTestCase):
         )
         self.assertTrue((self.projects / "alpha" / "readme.md").exists())
 
-    def test_init_appends_to_existing_instruction_files_and_keeps_their_bytes(self) -> None:
+    def test_distinct_instruction_files_each_get_the_block_and_keep_their_bytes(self) -> None:
         agents = self.root / "AGENTS.md"
         claude = self.root / "CLAUDE.md"
+        claude.unlink()
         agents.write_bytes(b"# House rules\r\n\r\nBe kind.  \r\n")
         claude.write_bytes(b"# Claude\n\nUse plan mode.")
 
@@ -522,8 +525,47 @@ class MutationTests(RepositoryTestCase):
         self.assertTrue(written.startswith(b"# House rules\r\n\r\nBe kind.  \r\n\r\n<!-- projector:begin"))
         self.assertIn(b"## Projector conventions\r\n", written)
         self.assertTrue(written.endswith(b"<!-- projector:end -->\r\n"))
-        self.assertEqual(b"# Claude\n\nUse plan mode.\n\n@AGENTS.md\n", claude.read_bytes())
+        # Two genuinely distinct files each carry the block; an import would
+        # have made Claude Code read all of AGENTS.md, not only Projector's part.
+        self.assertEqual(
+            b"# Claude\n\nUse plan mode.\n\n" + self.block().encode() + b"\n", claude.read_bytes()
+        )
+        self.assertFalse(claude.is_symlink())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        claude.write_text(claude.read_text().replace("second person", "third person"))
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertIn("warning: CLAUDE.md: ", stderr)
+        self.assertIn("[instructions-edited]", stderr)
+        self.assertNotIn("AGENTS.md:", stderr)
+        code, stdout, _ = self.invoke("init")
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\n", stdout
+        )
+
+    def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
+        agents = self.root / "AGENTS.md"
+        claude = self.root / "CLAUDE.md"
+        claude.unlink()
+        agents.unlink()
+        claude.write_text("# Claude rules\n")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\n", stdout
+        )
+        self.assertTrue(agents.is_symlink())
+        self.assertEqual("CLAUDE.md", os.readlink(agents))
+        self.assertFalse(claude.is_symlink())
+        self.assertEqual("# Claude rules\n\n" + self.block() + "\n", claude.read_text())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+        code, stdout, _ = self.invoke("init")
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n", stdout
+        )
 
     def test_init_restores_an_edited_block_that_check_warned_about(self) -> None:
         agents = self.root / "AGENTS.md"
@@ -594,14 +636,14 @@ class MutationTests(RepositoryTestCase):
         code, _, stderr = self.invoke("check")
         self.assertEqual(0, code)
         self.assertIn("[instructions-malformed]", stderr)
-        self.assertIn("[claude-import-missing]", stderr)
+        self.assertIn("warning: CLAUDE.md: is absent", stderr)
 
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(65, code)
         self.assertEqual("created docs/projects/README.md\nkept AGENTS.md\ncreated CLAUDE.md\n", stdout)
         self.assertIn("markers are malformed", stderr)
         self.assertEqual(broken, agents.read_text())
-        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+        self.assertTrue((self.root / "CLAUDE.md").is_symlink())
 
     def test_check_recognizes_an_import_the_way_claude_code_does(self) -> None:
         claude = self.root / "CLAUDE.md"
@@ -610,9 +652,10 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("check")
         self.assertEqual(0, code)
         self.assertEqual("Project plans are valid.\n", stdout)
-        self.assertIn("[claude-import-missing]", stderr)
+        self.assertIn("warning: CLAUDE.md: is absent", stderr)
+        self.assertIn("[instructions-missing]", stderr)
 
-        for text in ("Read @AGENTS.md before making changes.\n", "See @./AGENTS.md\n"):
+        for text in ("@AGENTS.md\n", "Read @AGENTS.md before making changes.\n", "See @./AGENTS.md\n"):
             claude.write_text(text)
             self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"), text)
             code, stdout, _ = self.invoke("init")
@@ -622,11 +665,11 @@ class MutationTests(RepositoryTestCase):
         for text in ("Mentions `@AGENTS.md` only in code.\n", "```\n@AGENTS.md\n```\n"):
             claude.write_text(text)
             _, _, stderr = self.invoke("check")
-            self.assertIn("[claude-import-missing]", stderr, text)
+            self.assertIn("warning: CLAUDE.md: has no Projector section", stderr, text)
 
         code, stdout, _ = self.invoke("init")
         self.assertIn("updated CLAUDE.md\n", stdout)
-        self.assertEqual("```\n@AGENTS.md\n```\n\n@AGENTS.md\n", claude.read_text())
+        self.assertEqual("```\n@AGENTS.md\n```\n\n" + self.block() + "\n", claude.read_text())
 
     def test_a_symlink_in_either_direction_gets_one_block_and_no_import(self) -> None:
         agents = self.root / "AGENTS.md"
@@ -661,8 +704,7 @@ class MutationTests(RepositoryTestCase):
         with tempfile.TemporaryDirectory() as elsewhere:
             shared = Path(elsewhere) / "shared.md"
             shared.write_text("# Personal instructions\n")
-            cases = (("CLAUDE.md", "claude-import-missing"), ("AGENTS.md", "instructions-missing"))
-            for name, silenced in cases:
+            for name, other in (("CLAUDE.md", "AGENTS.md"), ("AGENTS.md", "CLAUDE.md")):
                 (self.root / "AGENTS.md").unlink(missing_ok=True)
                 (self.root / "CLAUDE.md").unlink(missing_ok=True)
                 (self.root / name).symlink_to(shared)
@@ -670,6 +712,7 @@ class MutationTests(RepositoryTestCase):
                 code, stdout, stderr = self.invoke("init")
                 self.assertEqual(0, code)
                 self.assertIn(f"kept {name}\n", stdout)
+                self.assertIn(f"created {other}\n", stdout)
                 self.assertIn("leaves the repository", stderr)
                 self.assertEqual("# Personal instructions\n", shared.read_text())
 
@@ -677,7 +720,7 @@ class MutationTests(RepositoryTestCase):
                 self.assertEqual(0, code)
                 self.assertIn(f"warning: {name}: resolves outside the repository", stderr)
                 self.assertIn("[instructions-external]", stderr)
-                self.assertNotIn(silenced, stderr)
+                self.assertNotIn("instructions-missing", stderr)
 
     def test_the_block_names_a_configured_projects_dir(self) -> None:
         (self.root / ".projector.toml").write_text('[projects]\ndir = "plans"\n')
@@ -712,8 +755,8 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code)
         self.assertTrue(payload["valid"])
         self.assertEqual(
-            [("claude-import-missing", "warning")],
-            [(issue["code"], issue["severity"]) for issue in payload["issues"]],
+            [("instructions-missing", "CLAUDE.md", "warning")],
+            [(issue["code"], issue["path"], issue["severity"]) for issue in payload["issues"]],
         )
 
         self.plan("bad", "waiting")

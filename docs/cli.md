@@ -41,19 +41,23 @@ created CLAUDE.md
   file or creates the file with only that section, and refreshes the section
   when it falls behind the template this command ships. Everything outside the
   markers is yours and is never changed.
-- `CLAUDE.md` imports `AGENTS.md` with one `@AGENTS.md` line, because Claude
-  Code reads `CLAUDE.md` and Codex reads `AGENTS.md`. `init` creates the file
-  or appends the line. A file that already imports `AGENTS.md`, on its own
-  line or inline in a sentence, is left alone; a mention inside backticks or a
-  code block is not an import. A `CLAUDE.md` that is a symlink to `AGENTS.md`,
-  or the reverse, needs no import and gets none.
+- `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
+  `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
+  creates the link when `CLAUDE.md` is absent, or a file containing
+  `@AGENTS.md` where symlinks are unavailable. A `CLAUDE.md` that already
+  links to or imports `AGENTS.md`, on its own line or inline in a sentence, is
+  left alone; a mention inside backticks or a code block is not an import. A
+  repository with only a `CLAUDE.md` gets `AGENTS.md` as a link to it instead.
+  When the two are genuinely distinct files, each with its own content and no
+  import between them, each gets the section, because an import would change
+  everything Claude Code reads rather than only Projector's part.
 
 Run `init` again whenever `check` says the section is outdated. Each file is
 reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`
 left a file alone on purpose and says why on stderr, for one of three reasons:
 the section is newer than this command's template, so upgrade the command
 instead; the path is a symlink to a file outside the repository, which `init`
-never writes; or the markers in `AGENTS.md` do not delimit exactly one section,
+never writes; or the markers in the file do not delimit exactly one section,
 for example a begin marker with no end marker. In that last case `init` still
 writes the other files, then exits 65 and names the repair, and prints no JSON
 document in `--json` mode.
@@ -170,8 +174,8 @@ Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
 filesystems. Those are errors: any one of them exits 65.
 
-`check` also reports the state of the Projector section in `AGENTS.md` and the
-import in `CLAUDE.md`. Those are warnings: they print to stderr with a
+`check` also reports the state of the Projector section in `AGENTS.md` and in
+`CLAUDE.md`. Those are warnings: they print to stderr with a
 `warning:` prefix and name the fix, and they never change the exit code, so a
 collaborator on an older CLI is told what to do without a failing gate.
 
@@ -181,15 +185,18 @@ warning: AGENTS.md: Projector section is version 1; this command ships version 2
 Project plans are valid.
 ```
 
+Each code names the file it is about. `CLAUDE.md` is checked only when it is
+a distinct file that neither links to nor imports `AGENTS.md`; a link or an
+import reads the section through `AGENTS.md` and needs nothing of its own.
+
 | Code | Condition | Fix |
 | --- | --- | --- |
-| `instructions-missing` | `AGENTS.md` is absent or has no Projector section | `project init` |
+| `instructions-missing` | the file is absent or has no Projector section | `project init` |
 | `instructions-outdated` | the section is older than this command's template | `project init` |
 | `instructions-ahead` | the section is newer than this command's template | `project upgrade`, or reinstall the CLI |
 | `instructions-edited` | the section was edited by hand | `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | a begin marker without an end marker, or a second pair | repair the markers by hand |
-| `claude-import-missing` | `CLAUDE.md` is absent or does not import `AGENTS.md` | `project init` |
-| `instructions-external` | `AGENTS.md` or `CLAUDE.md` is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
+| `instructions-external` | the file is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
 
 A path that resolves outside the repository reports only
 `instructions-external`; `init` never writes there, so it is the one warning
@@ -280,7 +287,7 @@ These are the keys Projector reads today:
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
-| `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and the `CLAUDE.md` import |
+| `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 

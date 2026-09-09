@@ -392,61 +392,105 @@ class ProjectStore:
         )
 
     def _init_instructions(self) -> tuple[list[FileAction], Optional[str]]:
+        """Bring `AGENTS.md` and `CLAUDE.md` up to date, one block wherever possible.
+
+        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. When one of
+        the two is absent it becomes a symlink to the other, so one file serves
+        both hosts and the block is written once. A `CLAUDE.md` that links to
+        or imports `AGENTS.md` already reads the block through it. Only when the
+        two are genuinely distinct files, each with its own content and no
+        import between them, does each get the block; appending an import would
+        change everything Claude Code reads, not only Projector's part.
+        """
+
         agents = self.root / "AGENTS.md"
         claude = self.root / "CLAUDE.md"
         files: list[FileAction] = []
-        failure: Optional[str] = None
+        failures: list[str] = []
 
-        if self._outside(agents):
-            files.append(FileAction("AGENTS.md", "kept", self._leaves_repository(agents)))
-        else:
+        def write(path: Path) -> FileAction:
             try:
-                files.append(self._write_block(agents))
+                return self._write_block(path)
             except instructions.MalformedBlock as error:
-                failure = (
-                    f"AGENTS.md: Projector section markers are malformed: {error}"
+                failures.append(
+                    f"{path.name}: Projector section markers are malformed: {error}"
                     " (repair the markers by hand)"
                 )
-                files.append(FileAction("AGENTS.md", "kept"))
+                return FileAction(path.name, "kept")
 
-        if self._outside(claude):
+        agents_outside = self._outside(agents)
+        claude_outside = self._outside(claude)
+        claude_first = (
+            not agents.exists()
+            and not agents.is_symlink()
+            and claude.exists()
+            and not claude_outside
+            and not instructions.imports_agents(self._read_text(claude))
+        )
+
+        if agents_outside:
+            files.append(FileAction("AGENTS.md", "kept", self._leaves_repository(agents)))
+        elif claude_first and self._link(agents, claude):
+            # A repository that adopted CLAUDE.md first: AGENTS.md becomes a
+            # link to it, and the block lands once in the shared file below.
+            files.append(FileAction("AGENTS.md", "created"))
+            files.append(write(claude))
+            return files, "\n".join(failures) or None
+        else:
+            files.append(write(agents))
+
+        if claude_outside:
             files.append(FileAction("CLAUDE.md", "kept", self._leaves_repository(claude)))
         elif self._same_file(agents, claude):
-            # One file serves both hosts already; an import line would be a
-            # self-import for Claude Code and literal text for Codex.
             files.append(FileAction("CLAUDE.md", "unchanged"))
+        elif claude.is_symlink() and not claude.exists():
+            files.append(
+                FileAction("CLAUDE.md", "kept", "CLAUDE.md: dangling link; not written")
+            )
         elif not claude.exists():
-            self._write_through(claude, instructions.IMPORT_LINE + "\n")
-            files.append(FileAction("CLAUDE.md", "created"))
-        else:
-            text = self._read_text(claude)
-            if instructions.imports_agents(text):
-                files.append(FileAction("CLAUDE.md", "unchanged"))
+            if self._link(claude, agents):
+                files.append(FileAction("CLAUDE.md", "created"))
             else:
-                self._write_through(claude, instructions.with_import(text))
-                files.append(FileAction("CLAUDE.md", "updated"))
-        return files, failure
+                # No symlinks here (Windows without Developer Mode): the import
+                # is the documented alternative and reads the same file.
+                self._write_through(claude, instructions.IMPORT_LINE + "\n")
+                files.append(FileAction("CLAUDE.md", "created"))
+        elif instructions.imports_agents(self._read_text(claude)):
+            files.append(FileAction("CLAUDE.md", "unchanged"))
+        else:
+            files.append(write(claude))
+        return files, "\n".join(failures) or None
 
-    def _write_block(self, agents: Path) -> FileAction:
+    @staticmethod
+    def _link(link: Path, target: Path) -> bool:
+        """Make `link` a relative symlink to `target`; False where symlinks fail."""
+
+        try:
+            os.symlink(target.name, link)
+        except OSError:
+            return False
+        return True
+
+    def _write_block(self, path: Path) -> FileAction:
         rendered = self._rendered_block()
-        if not agents.exists():
-            self._write_through(agents, rendered + "\n")
-            return FileAction("AGENTS.md", "created")
-        text = self._read_text(agents)
+        if not path.exists():
+            self._write_through(path, rendered + "\n")
+            return FileAction(path.name, "created")
+        text = self._read_text(path)
         block = instructions.find_block(text)
         shipped = instructions.template_version()
         if block is not None:
             if block.version > shipped:
                 return FileAction(
-                    "AGENTS.md",
+                    path.name,
                     "kept",
-                    f"AGENTS.md: Projector section is version {block.version}; this command"
+                    f"{path.name}: Projector section is version {block.version}; this command"
                     f" ships version {shipped} (run 'project upgrade', or reinstall the CLI)",
                 )
             if block.version == shipped and instructions.block_matches(block, rendered):
-                return FileAction("AGENTS.md", "unchanged")
-        self._write_through(agents, instructions.with_block(text, rendered))
-        return FileAction("AGENTS.md", "updated")
+                return FileAction(path.name, "unchanged")
+        self._write_through(path, instructions.with_block(text, rendered))
+        return FileAction(path.name, "updated")
 
     def instruction_issues(self) -> list[Issue]:
         """Warnings about the Projector section and the `CLAUDE.md` import.
@@ -459,61 +503,70 @@ class ProjectStore:
         claude = self.root / "CLAUDE.md"
         issues: list[Issue] = []
 
-        def warn(path: Path, code: str, message: str) -> None:
-            issues.append(Issue(code, path.name, message, "warning"))
+        if self._outside(agents):
+            issues.append(self._external_issue(agents))
+        else:
+            issues.extend(self._block_issues(agents))
+
+        if self._outside(claude):
+            issues.append(self._external_issue(claude))
+        elif self._same_file(agents, claude):
+            pass
+        elif not claude.exists():
+            issues.append(
+                Issue(
+                    "instructions-missing",
+                    "CLAUDE.md",
+                    "is absent, and Claude Code reads CLAUDE.md rather than AGENTS.md (run"
+                    " 'project init' to link it)",
+                    "warning",
+                )
+            )
+        elif not instructions.imports_agents(self._read_text(claude)):
+            issues.extend(self._block_issues(claude))
+        return issues
+
+    def _external_issue(self, path: Path) -> Issue:
+        return Issue("instructions-external", path.name, self._external_message(path), "warning")
+
+    def _block_issues(self, path: Path) -> list[Issue]:
+        """Warnings about the Projector section in one instruction file."""
+
+        def warn(code: str, message: str) -> list[Issue]:
+            return [Issue(code, path.name, message, "warning")]
 
         shipped = instructions.template_version()
         missing = "has no Projector section (run 'project init' to add it)"
-        if self._outside(agents):
-            warn(agents, "instructions-external", self._external_message(agents))
-        elif not agents.exists():
-            warn(agents, "instructions-missing", missing)
-        else:
-            try:
-                block = instructions.find_block(self._read_text(agents))
-            except instructions.MalformedBlock as error:
-                warn(
-                    agents,
-                    "instructions-malformed",
-                    f"Projector section markers are malformed: {error} (repair the markers by hand)",
-                )
-            else:
-                if block is None:
-                    warn(agents, "instructions-missing", missing)
-                elif block.version < shipped:
-                    warn(
-                        agents,
-                        "instructions-outdated",
-                        f"Projector section is version {block.version}; this command ships"
-                        f" version {shipped} (run 'project init' to refresh it; your own"
-                        " content is not changed)",
-                    )
-                elif block.version > shipped:
-                    warn(
-                        agents,
-                        "instructions-ahead",
-                        f"Projector section is version {block.version}; this command ships"
-                        f" version {shipped} (run 'project upgrade', or reinstall the CLI)",
-                    )
-                elif not instructions.block_matches(block, self._rendered_block()):
-                    warn(
-                        agents,
-                        "instructions-edited",
-                        f"Projector section differs from the version {shipped} template (run"
-                        " 'project init' to restore it, or change the template in Projector)",
-                    )
-
-        if self._outside(claude):
-            warn(claude, "instructions-external", self._external_message(claude))
-        elif self._same_file(agents, claude):
-            pass
-        elif not claude.exists() or not instructions.imports_agents(self._read_text(claude)):
-            warn(
-                claude,
-                "claude-import-missing",
-                "does not import AGENTS.md (run 'project init' to add the import)",
+        if not path.exists():
+            return warn("instructions-missing", missing)
+        try:
+            block = instructions.find_block(self._read_text(path))
+        except instructions.MalformedBlock as error:
+            return warn(
+                "instructions-malformed",
+                f"Projector section markers are malformed: {error} (repair the markers by hand)",
             )
-        return issues
+        if block is None:
+            return warn("instructions-missing", missing)
+        if block.version < shipped:
+            return warn(
+                "instructions-outdated",
+                f"Projector section is version {block.version}; this command ships version"
+                f" {shipped} (run 'project init' to refresh it; your own content is not changed)",
+            )
+        if block.version > shipped:
+            return warn(
+                "instructions-ahead",
+                f"Projector section is version {block.version}; this command ships version"
+                f" {shipped} (run 'project upgrade', or reinstall the CLI)",
+            )
+        if not instructions.block_matches(block, self._rendered_block()):
+            return warn(
+                "instructions-edited",
+                f"Projector section differs from the version {shipped} template (run 'project"
+                " init' to restore it, or change the template in Projector)",
+            )
+        return []
 
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:
