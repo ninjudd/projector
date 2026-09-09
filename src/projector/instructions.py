@@ -1,11 +1,12 @@
 """The Projector section of a repository's agent instructions.
 
 A repository that adopts Projector carries one block Projector owns in its root
-`AGENTS.md`, between two HTML-comment markers, and a `CLAUDE.md` that imports
-that file, because Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`.
-Everything outside the markers belongs to the repository. `init` writes and
-refreshes the block; `check` reports when it has drifted from the template
-this package ships. Both render the template through `render`, so they compare
+`AGENTS.md`, between two HTML-comment markers, and reaches the same block from
+`CLAUDE.md`, because Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`:
+`CLAUDE.md` is a link to or an import of `AGENTS.md`, or, when the two are
+distinct files, carries its own copy of the block. Everything outside the
+markers belongs to the repository. `init` writes and refreshes the block;
+`check` reports when it has drifted from the template this package ships. Both render the template through `render`, so they compare
 the same string.
 
 The template's first line is its own begin marker, and the integer in that

@@ -700,6 +700,24 @@ class MutationTests(RepositoryTestCase):
                 stdout,
             )
 
+    def test_a_dangling_claude_md_link_is_written_through(self) -> None:
+        claude = self.root / "CLAUDE.md"
+        claude.unlink()
+        claude.symlink_to("notes/claude.md")
+        (self.root / "notes").mkdir()
+
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertIn("warning: CLAUDE.md: is a dangling link to notes/claude.md", stderr)
+        self.assertIn("[instructions-missing]", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("created CLAUDE.md\n", stdout)
+        self.assertTrue(claude.is_symlink())
+        self.assertEqual(self.block() + "\n", (self.root / "notes" / "claude.md").read_text())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
     def test_a_link_leaving_the_repository_is_never_written(self) -> None:
         with tempfile.TemporaryDirectory() as elsewhere:
             shared = Path(elsewhere) / "shared.md"

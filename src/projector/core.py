@@ -444,9 +444,9 @@ class ProjectStore:
         elif self._same_file(agents, claude):
             files.append(FileAction("CLAUDE.md", "unchanged"))
         elif claude.is_symlink() and not claude.exists():
-            files.append(
-                FileAction("CLAUDE.md", "kept", "CLAUDE.md: dangling link; not written")
-            )
+            # A dangling link inside the repository: write the file it points
+            # at, as the AGENTS.md path already does, rather than refuse.
+            files.append(write(claude))
         elif not claude.exists():
             if self._link(claude, agents):
                 files.append(FileAction("CLAUDE.md", "created"))
@@ -493,7 +493,7 @@ class ProjectStore:
         return FileAction(path.name, "updated")
 
     def instruction_issues(self) -> list[Issue]:
-        """Warnings about the Projector section and the `CLAUDE.md` import.
+        """Warnings about the Projector section in `AGENTS.md` and `CLAUDE.md`.
 
         Every issue here is a warning: a collaborator on an older CLI is told
         what to do without a failing gate, and `init` never downgrades a block.
@@ -512,13 +512,23 @@ class ProjectStore:
             issues.append(self._external_issue(claude))
         elif self._same_file(agents, claude):
             pass
+        elif claude.is_symlink() and not claude.exists():
+            issues.append(
+                Issue(
+                    "instructions-missing",
+                    "CLAUDE.md",
+                    f"is a dangling link to {os.readlink(claude)} (run 'project init' to write"
+                    " the file it points at, or repair the link)",
+                    "warning",
+                )
+            )
         elif not claude.exists():
             issues.append(
                 Issue(
                     "instructions-missing",
                     "CLAUDE.md",
                     "is absent, and Claude Code reads CLAUDE.md rather than AGENTS.md (run"
-                    " 'project init' to link it)",
+                    " 'project init' to create it)",
                     "warning",
                 )
             )
