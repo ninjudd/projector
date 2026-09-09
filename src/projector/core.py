@@ -398,15 +398,20 @@ class ProjectStore:
     def _init_instructions(self) -> tuple[list[FileAction], Optional[str]]:
         """Bring `AGENTS.md` and `CLAUDE.md` up to date, one block wherever possible.
 
-        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. An absent
-        `CLAUDE.md` becomes the one-line import `@AGENTS.md`, the portable form
-        the host documents: a symlink would check out as a plain file wherever
-        Git lacks symlink support. A `CLAUDE.md` that already links to or
-        imports `AGENTS.md` reads the block through it and is left alone. Only
-        when the two are genuinely distinct files, each with its own content
-        and no import between them, does each get the block; appending an
-        import would change everything Claude Code reads, not only Projector's
-        part.
+        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. When one of
+        the two is absent it becomes a symlink to the other, so one file serves
+        both hosts and the block is written once; where the platform cannot
+        make a symlink, `CLAUDE.md` gets the one-line import `@AGENTS.md`
+        instead. A `CLAUDE.md` that links to or imports `AGENTS.md` already
+        reads the block through it and is left alone. Only when the two are
+        genuinely distinct files, each with its own content and no import
+        between them, does each get the block; appending an import would change
+        everything Claude Code reads, not only Projector's part.
+
+        A committed symlink is checked out as a plain file holding the link
+        text wherever Git lacks symlink support. Such a file is recognized and
+        left alone rather than filled with a block that a commit would record
+        as the link's target.
         """
 
         agents = self.root / "AGENTS.md"
@@ -424,12 +429,31 @@ class ProjectStore:
                 )
                 return FileAction(path.name, "kept")
 
-        if self._outside(agents):
+        agents_outside = self._outside(agents)
+        claude_outside = self._outside(claude)
+        claude_first = (
+            not agents.exists()
+            and not agents.is_symlink()
+            and claude.exists()
+            and not claude_outside
+            and not self._unlinked(claude, agents)
+            and not instructions.imports_agents(self._read_text(claude))
+        )
+
+        if agents_outside:
             files.append(FileAction("AGENTS.md", "kept", self._leaves_repository(agents)))
+        elif self._unlinked(agents, claude):
+            files.append(FileAction("AGENTS.md", "kept", self._unlinked_note(agents)))
+        elif claude_first and self._link(agents, claude):
+            # A repository that adopted CLAUDE.md first: AGENTS.md becomes a
+            # link to it, and the block lands once in the shared file below.
+            files.append(FileAction("AGENTS.md", "created"))
+            files.append(write(claude))
+            return files, "\n".join(failures) or None
         else:
             files.append(write(agents))
 
-        if self._outside(claude):
+        if claude_outside:
             files.append(FileAction("CLAUDE.md", "kept", self._leaves_repository(claude)))
         elif self._same_file(agents, claude):
             files.append(FileAction("CLAUDE.md", "unchanged"))
@@ -438,13 +462,55 @@ class ProjectStore:
             # at, as the AGENTS.md path already does, rather than refuse.
             files.append(write(claude))
         elif not claude.exists():
-            self._write_through(claude, instructions.IMPORT_LINE + "\n")
+            if not self._link(claude, agents):
+                # No symlinks here (Windows without Developer Mode): the import
+                # is the documented alternative and reads the same file.
+                self._write_through(claude, instructions.IMPORT_LINE + "\n")
             files.append(FileAction("CLAUDE.md", "created"))
+        elif self._unlinked(claude, agents):
+            files.append(FileAction("CLAUDE.md", "kept", self._unlinked_note(claude)))
         elif instructions.imports_agents(self._read_text(claude)):
             files.append(FileAction("CLAUDE.md", "unchanged"))
         else:
             files.append(write(claude))
         return files, "\n".join(failures) or None
+
+    @staticmethod
+    def _link(link: Path, target: Path) -> bool:
+        """Make `link` a relative symlink to `target`; False where symlinks fail."""
+
+        try:
+            os.symlink(target.name, link)
+        except OSError:
+            return False
+        return True
+
+    def _unlinked(self, path: Path, target: Path) -> bool:
+        """Whether `path` is a symlink to `target` checked out as a plain file.
+
+        With `core.symlinks` false, Git writes a link as a small regular file
+        whose whole content is the link text. Claude Code then reads the word
+        `AGENTS.md` as the repository's instructions, and a block appended to
+        that file would be committed as the link's target.
+        """
+
+        if path.is_symlink() or not path.is_file():
+            return False
+        try:
+            if path.stat().st_size > 64:
+                return False
+            text = self._read_text(path).strip()
+        except (OSError, UnicodeDecodeError):
+            return False
+        return text in (target.name, f"./{target.name}")
+
+    @staticmethod
+    def _unlinked_note(path: Path) -> str:
+        return (
+            f"{path.name}: is a symlink checked out as a plain file (enable Developer Mode or"
+            " run as an administrator, set core.symlinks=true, and check the repository out"
+            " again); not written"
+        )
 
     def _write_block(self, path: Path) -> FileAction:
         rendered = self._rendered_block()
@@ -480,6 +546,8 @@ class ProjectStore:
 
         if self._outside(agents):
             issues.append(self._external_issue(agents))
+        elif self._unlinked(agents, claude):
+            issues.append(self._unlinked_issue(agents))
         else:
             issues.extend(self._block_issues(agents))
 
@@ -487,6 +555,8 @@ class ProjectStore:
             issues.append(self._external_issue(claude))
         elif self._same_file(agents, claude):
             pass
+        elif self._unlinked(claude, agents):
+            issues.append(self._unlinked_issue(claude))
         elif claude.is_symlink() and not claude.exists():
             issues.append(
                 Issue(
@@ -503,7 +573,7 @@ class ProjectStore:
                     "instructions-missing",
                     "CLAUDE.md",
                     "is absent, and Claude Code reads CLAUDE.md rather than AGENTS.md (run"
-                    " 'project init' to create it)",
+                    " 'project init' to link it)",
                     "warning",
                 )
             )
@@ -513,6 +583,17 @@ class ProjectStore:
 
     def _external_issue(self, path: Path) -> Issue:
         return Issue("instructions-external", path.name, self._external_message(path), "warning")
+
+    @staticmethod
+    def _unlinked_issue(path: Path) -> Issue:
+        return Issue(
+            "instructions-unlinked",
+            path.name,
+            "is a symlink checked out as a plain file, so this host reads only the link"
+            " text (enable Developer Mode or run as an administrator, set"
+            " core.symlinks=true, and check the repository out again)",
+            "warning",
+        )
 
     def _block_issues(self, path: Path) -> list[Issue]:
         """Warnings about the Projector section in one instruction file."""
