@@ -94,8 +94,13 @@ of failing. It then manages two more files at the repository root:
    with a begin marker and no end marker, or with two blocks, is reported as
    malformed and not touched.
 2. `CLAUDE.md`. When the file is absent, `init` creates it containing
-   `@AGENTS.md`. When the file exists and no line equals `@AGENTS.md`, `init`
-   appends one blank line and that line.
+   `@AGENTS.md`. When the file exists and does not already import
+   `AGENTS.md`, `init` appends one blank line and `@AGENTS.md`. A file imports
+   `AGENTS.md` when an `@AGENTS.md` or `@./AGENTS.md` token appears anywhere
+   outside a Markdown code span or fenced code block, which is the test Claude
+   Code's own import parser applies, so `init` and `check` never disagree with
+   the host about whether the import exists. A mention inside backticks is
+   literal text to the host and to Projector alike.
 
 `init` resolves both paths with symlinks followed and writes to the file a
 link points at, never to the link itself, so a linked `AGENTS.md` or
@@ -164,7 +169,7 @@ told what to do without a failing gate:
 | `instructions-ahead` | marker version is newer than the template | upgrade the `project` command |
 | `instructions-edited` | same version, content differs from the rendered template | run `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | begin marker without end marker, or more than one block | repair the markers by hand |
-| `claude-import-missing` | `CLAUDE.md` is absent or has no `@AGENTS.md` line, and does not resolve to the same file as `AGENTS.md` | run `project init` |
+| `claude-import-missing` | `CLAUDE.md` is absent or does not import `AGENTS.md` as section 3 defines it, and does not resolve to the same file as `AGENTS.md` | run `project init` |
 
 `instructions-missing` fires in every repository that adopted Projector before
 this change. That is the intended nudge, and one `project init` clears it.
@@ -240,6 +245,10 @@ Verified in a temporary Git repository unless stated otherwise:
   `init` exit nonzero without touching `AGENTS.md`, after writing the other
   files.
 - Deleting `CLAUDE.md` makes `check` warn `claude-import-missing`.
+- A `CLAUDE.md` that reads `Read @AGENTS.md before making changes.` or uses
+  `@./AGENTS.md` gets no second import from `init` and no warning from
+  `check`; one that mentions `@AGENTS.md` only inside backticks or a fenced
+  block gets the import appended and warns until it does.
 - With `CLAUDE.md` a symlink to `AGENTS.md`, and separately with `AGENTS.md` a
   symlink to `CLAUDE.md`, `init` writes the block once into the shared file,
   both paths are still links afterwards, no `@AGENTS.md` line is written,
@@ -290,6 +299,12 @@ Verified in a temporary Git repository unless stated otherwise:
   repositories that serve more than one agent. Projector never writes
   instructions into `CLAUDE.md` directly, so a repository that keeps its own
   `CLAUDE.md` content is not disturbed.
+- **Recognize an import where Claude Code does.** The host accepts `@path`
+  anywhere outside code spans and fences, inline in a sentence included, and
+  resolves `@./AGENTS.md` the same as `@AGENTS.md`. An exact-line test would
+  make `init` append a second import to a file the host already reads, and
+  whether the host dedupes a file imported twice is undocumented. Matching
+  the host's rule costs a small parser and removes the disagreement.
 - **Opt-out through configuration.** `instructions.enabled = false` is the
   documented way to keep Projector out of a repository's instruction files;
   deleting the block and living with a warning is not.
