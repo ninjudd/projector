@@ -114,6 +114,17 @@ existing `_atomic_write` cannot be reused as it stands: `os.replace` on a
 symlink swaps the link for a regular file while `path.stat()` follows the link
 and passes the signature check.
 
+The write is bounded by the repository. When a path resolves to a file outside
+the repository root, `init` writes nothing there, reports the path as `kept`,
+and says on stderr that the link leaves the repository. A personal `CLAUDE.md`
+linked from a dotfiles checkout or `~/.claude/` is the ordinary case, and
+appending `@AGENTS.md` to it would put a relative import into every repository
+that shares the file, most of which have no `AGENTS.md` for it to find. An
+`AGENTS.md` linked out of the repository would put the block where no reviewer
+of this repository sees it, against the reason section 1 gives for keeping the
+text in the repository at all. `check` reports such a path as
+`instructions-external` and evaluates no other instruction code for it.
+
 When the two paths resolve to one file, in either direction, `init` writes the
 block once into that file and writes no import line. Claude Code and Codex
 already read the same text, and an `@AGENTS.md` line would be a self-import
@@ -183,9 +194,13 @@ told what to do without a failing gate:
 | `instructions-edited` | same version, content differs from the rendered template | run `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | begin marker without end marker, or more than one block | repair the markers by hand |
 | `claude-import-missing` | `CLAUDE.md` is absent or does not import `AGENTS.md` as section 3 defines it, and does not resolve to the same file as `AGENTS.md` | run `project init` |
+| `instructions-external` | `AGENTS.md` or `CLAUDE.md` resolves to a file outside the repository root | replace the link with a file in the repository, or set `instructions.enabled = false` |
 
 `instructions-missing` fires in every repository that adopted Projector before
 this change. That is the intended nudge, and one `project init` clears it.
+`instructions-external` is the one warning `init` cannot clear, because
+clearing it means writing outside the repository; the path reports only that
+code, so a linked-out `CLAUDE.md` is not also `claude-import-missing`.
 
 ## 5. One source for the text
 
@@ -208,7 +223,7 @@ adopted repository, and the validation gate in `AGENTS.md` already runs it.
   manages three files, document the `files` list and the new `unchanged`
   action in "Consume JSON", and add the `instructions.enabled` key to "Read
   configuration". Extend "Validate
-  projects" with severities, the six warning codes, and the exit-code rule.
+  projects" with severities, the seven warning codes, and the exit-code rule.
 - `README.md`: "Adopt Projector in a repository" names `AGENTS.md` and
   `CLAUDE.md` among the files `init` writes and says why.
 - `docs/plugins.md`: one paragraph saying that skills load only when invoked
@@ -226,8 +241,8 @@ adopted repository, and the validation gate in `AGENTS.md` already runs it.
 2. Make `init` idempotent over the projects README, then add the `AGENTS.md`
    and `CLAUDE.md` steps and the `files` output. Update the existing `init`
    tests, which assert the old refusal, and add the cases in section 8.
-3. Add `severity` to `Issue`, the warning output path, and the six instruction
-   checks. Add the `instructions.enabled` opt-out to both commands.
+3. Add `severity` to `Issue`, the warning output path, and the seven
+   instruction checks. Add the `instructions.enabled` opt-out to both commands.
 4. Update the documentation and the three skills.
 5. Run `project init` in this repository, remove the superseded `AGENTS.md`
    section, and confirm `project check` prints nothing but
@@ -259,6 +274,13 @@ Verified in a temporary Git repository unless stated otherwise:
   `init` exit nonzero without touching `AGENTS.md`, after writing the other
   files.
 - Deleting `CLAUDE.md` makes `check` warn `claude-import-missing`.
+- With `CLAUDE.md` a symlink to a file outside the repository, `init` writes
+  the block into `AGENTS.md`, reports `CLAUDE.md` as `kept`, leaves the linked
+  file byte-identical, and `check` warns `instructions-external` for
+  `CLAUDE.md` and not `claude-import-missing`. With `AGENTS.md` linked outside
+  the repository, `init` writes no block anywhere and reports `AGENTS.md` as
+  `kept`, and `check` warns `instructions-external` for it and not
+  `instructions-missing`.
 - A `CLAUDE.md` that reads `Read @AGENTS.md before making changes.` or uses
   `@./AGENTS.md` gets no second import from `init` and no warning from
   `check`; one that mentions `@AGENTS.md` only inside backticks or a fenced
@@ -319,6 +341,12 @@ Verified in a temporary Git repository unless stated otherwise:
   make `init` append a second import to a file the host already reads, and
   whether the host dedupes a file imported twice is undocumented. Matching
   the host's rule costs a small parser and removes the disagreement.
+- **Never write outside the repository.** Following a link is what keeps a
+  linked file a link, but a link can leave the repository, and a write there
+  changes files this repository does not own or review and can leak a relative
+  import into every other repository sharing the target. The bound is the
+  repository root, the same boundary the portability rule in `AGENTS.md` and
+  the rejection of a committed home path already draw.
 - **Opt-out through configuration.** `instructions.enabled = false` is the
   documented way to keep Projector out of a repository's instruction files;
   deleting the block and living with a warning is not.
