@@ -6,8 +6,8 @@ A repository that adopts Projector carries one block Projector owns in its root
 `CLAUDE.md` is a link to or an import of `AGENTS.md`, or, when the two are
 distinct files, carries its own copy of the block. Everything outside the
 markers belongs to the repository. `init` writes and refreshes the block;
-`check` reports when it has drifted from the template this package ships. Both render the template through `render`, so they compare
-the same string.
+`check` reports when it has drifted from the template this package ships. Both
+render the template through `render`, so they compare the same string.
 
 The template's first line is its own begin marker, and the integer in that
 marker is the template version. It changes only when the text changes, so a
