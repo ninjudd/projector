@@ -448,8 +448,7 @@ Details settled during implementation, none of which changes the design:
 ## 12. Later corrections
 
 Sections 1 through 11 record the project as designed and first implemented.
-One rule changed before the implementation merged, in the same pull request,
-and is listed here rather than rewritten above.
+Later corrections are listed here in order rather than rewritten above.
 
 - **`init` never appends an import to a `CLAUDE.md`; two distinct files each
   get the block.** Sections 3, 4, 8, and 9 describe an import appended to an
@@ -489,19 +488,21 @@ and is listed here rather than rewritten above.
   `@AGENTS.md`-only file left alone).
 
 - **`CLAUDE.md` is a symlink after all, with the plain-file checkout
-  handled.** The rejection in the previous bullet was the implementer's call
-  on a review finding, not the owner's; the owner had asked for the link and
-  reaffirmed it after #50 merged. `init` again creates an absent `CLAUDE.md`
-  as a relative symlink to `AGENTS.md`, writes the one-line import only where
-  the platform cannot make a link, and gives a repository that has only a
-  `CLAUDE.md` an `AGENTS.md` linked to it. The finding is answered inside that
-  decision rather than by reversing it: a link checked out as a plain file, a
-  regular file whose whole content is the other file's name, is recognized in
-  either direction; `check` reports it as `instructions-unlinked`, a seventh
-  code, naming `core.symlinks=true` as the fix; and `init` reports it `kept`
-  rather than appending a block a commit would record as the link's target.
-  `docs/cli.md` states the requirement beside the adoption steps. Existing
-  links, imports, and distinct files are handled as the previous bullet says.
-  Tests: `test_init_adopts_an_empty_repository_and_is_idempotent` (the link),
+  handled.** One file serves both hosts, and the checkout problem the
+  previous bullet describes is detected rather than avoided. `init` creates an
+  absent `CLAUDE.md` as a relative symlink to `AGENTS.md`, writes the one-line
+  import only where the platform cannot make a link, and gives a repository
+  that has only a `CLAUDE.md` an `AGENTS.md` linked to it, or, where no link
+  can be made, a regular `AGENTS.md` with the block beside a `CLAUDE.md` that
+  gains it. A link checked out as a plain file, a regular file whose whole
+  content is the other file's name, is recognized in either direction:
+  `check` reports it as `instructions-unlinked`, a seventh code, and `init`
+  reports it `kept` rather than appending a block a commit would record as the
+  link's target. The fix both name is to enable Developer Mode or run as an
+  administrator, set `core.symlinks=true`, and check the repository out again,
+  because Git on Windows can create a symlink only with that privilege.
+  `docs/cli.md` states the same beside the adoption steps. Existing links,
+  imports, and distinct files are handled as the previous bullet says. Tests:
+  `test_init_adopts_an_empty_repository_and_is_idempotent` (the link),
   `test_a_claude_first_repository_links_agents_md_to_claude_md` (the mirror),
   and `test_a_link_checked_out_as_a_plain_file_is_left_alone`.
