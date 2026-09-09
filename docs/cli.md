@@ -20,18 +20,49 @@ project --version
 
 ## Adopt a repository
 
-Run `init` once to create `docs/projects/README.md`:
+Run `init` from anywhere inside a Git repository:
 
-```sh
-project init
+```console
+$ project init
+created docs/projects/README.md
+created AGENTS.md
+created CLAUDE.md
 ```
 
-The file states the convention, links to the Projector repository, and shows
-how to install the CLI, so a reader who meets `docs/projects/` in another
-repository knows where the `project` command comes from.
+`init` manages three files and reports what it did to each:
 
-If projects already exist but the convention file is missing, `init` adds only
-that file. It refuses to replace an existing convention file.
+- `docs/projects/README.md` states the convention, links to the Projector
+  repository, and shows how to install the CLI, so a reader who meets
+  `docs/projects/` in another repository knows where the `project` command
+  comes from. `init` creates it once and never rewrites it.
+- `AGENTS.md` carries a section Projector generates between two HTML-comment
+  markers: where plans live, how to use `project`, and the writing style for
+  documentation and GitHub prose. `init` appends the section to an existing
+  file or creates the file with only that section, and refreshes the section
+  when it falls behind the template this command ships. Everything outside the
+  markers is yours and is never changed.
+- `CLAUDE.md` imports `AGENTS.md` with one `@AGENTS.md` line, because Claude
+  Code reads `CLAUDE.md` and Codex reads `AGENTS.md`. `init` creates the file
+  or appends the line. A file that already imports `AGENTS.md`, on its own
+  line or inline in a sentence, is left alone; a mention inside backticks or a
+  code block is not an import. A `CLAUDE.md` that is a symlink to `AGENTS.md`,
+  or the reverse, needs no import and gets none.
+
+Run `init` again whenever `check` says the section is outdated. Each file is
+reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`
+left a file alone on purpose and says why on stderr: the section is newer than
+this command's template, so upgrade the command instead, or the path is a
+symlink to a file outside the repository, which `init` never writes.
+
+To keep Projector out of your instruction files, set in `.projector.toml`:
+
+```toml
+[instructions]
+enabled = false
+```
+
+With that key false, `init` manages only the projects README and `check` says
+nothing about `AGENTS.md` or `CLAUDE.md`.
 
 Every command that reads or writes a project requires that directory. `init`
 creates it, `check` reports its absence, and `config` and `upgrade` do not
@@ -133,7 +164,32 @@ missing priorities, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
-filesystems.
+filesystems. Those are errors: any one of them exits 65.
+
+`check` also reports the state of the Projector section in `AGENTS.md` and the
+import in `CLAUDE.md`. Those are warnings: they print to stderr with a
+`warning:` prefix and name the fix, and they never change the exit code, so a
+collaborator on an older CLI is told what to do without a failing gate.
+
+```console
+$ project check
+warning: AGENTS.md: Projector section is version 1; this command ships version 2 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+Project plans are valid.
+```
+
+| Code | Condition | Fix |
+| --- | --- | --- |
+| `instructions-missing` | `AGENTS.md` is absent or has no Projector section | `project init` |
+| `instructions-outdated` | the section is older than this command's template | `project init` |
+| `instructions-ahead` | the section is newer than this command's template | `project upgrade`, or reinstall the CLI |
+| `instructions-edited` | the section was edited by hand | `project init` to restore it, or change the template in Projector |
+| `instructions-malformed` | a begin marker without an end marker, or a second pair | repair the markers by hand |
+| `claude-import-missing` | `CLAUDE.md` is absent or does not import `AGENTS.md` | `project init` |
+| `instructions-external` | `AGENTS.md` or `CLAUDE.md` is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
+
+A path that resolves outside the repository reports only
+`instructions-external`; `init` never writes there, so it is the one warning
+`init` cannot clear.
 
 ## Read configuration
 
@@ -220,6 +276,7 @@ These are the keys Projector reads today:
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
+| `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and the `CLAUDE.md` import |
 | `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 
@@ -264,6 +321,25 @@ missing, or when the checkout or its `install.sh` no longer exists.
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
 `priority`, `done`, or `check`. Responses use stdout only for JSON and include
 `"schema_version": 2`.
+
+`init --json` keeps the `action` and `path` of the projects README at the top
+level, as it always has, and adds `files` with every file it manages:
+
+```json
+{
+  "action": "unchanged",
+  "files": [
+    {"action": "unchanged", "path": "docs/projects/README.md"},
+    {"action": "updated", "path": "AGENTS.md"},
+    {"action": "created", "path": "CLAUDE.md"}
+  ],
+  "path": "docs/projects/README.md",
+  "schema_version": 2
+}
+```
+
+`check --json` reports `"valid": true` when no issue is an error; each issue
+carries `"severity": "error"` or `"severity": "warning"`.
 
 For example:
 

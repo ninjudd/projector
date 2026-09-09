@@ -14,7 +14,7 @@ from unittest import mock
 
 import importlib.metadata as metadata
 
-from projector import cli
+from projector import cli, instructions
 from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectStore
 
@@ -43,6 +43,10 @@ class RepositoryTestCase(unittest.TestCase):
         self.projects = self.root / "docs" / "projects"
         self.projects.mkdir(parents=True)
         (self.projects / "README.md").write_text("# Projects\n", encoding="utf-8")
+        # A fully adopted repository, so `check` is quiet by default and each
+        # instruction scenario removes or alters exactly what it tests.
+        (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
+        (self.root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
         # Every command now reads layered configuration, and the user layer
         # lives at $HOME/.projector.toml. Point HOME at an empty directory so
         # a real one on the machine running the tests cannot reach them.
@@ -54,6 +58,10 @@ class RepositoryTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    @staticmethod
+    def block(projects_dir: str = "docs/projects") -> str:
+        return instructions.render(projects_dir)
 
     def plan(
         self,
@@ -446,7 +454,12 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(69, code)
         self.assertIn("interactive terminal", stderr)
 
-    def test_init_adopts_an_empty_repository_and_refuses_existing_content(self) -> None:
+    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md")
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {name: (self.root / name).read_bytes() for name in self.ADOPTED}
+
+    def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
         self.temporary.cleanup()
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -454,14 +467,26 @@ class MutationTests(RepositoryTestCase):
 
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
-        self.assertEqual("docs/projects/README.md\n", stdout)
-        convention = (self.root / stdout.strip()).read_text()
+        self.assertEqual(
+            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\n", stdout
+        )
+        self.assertEqual("", stderr)
+        convention = (self.root / "docs" / "projects" / "README.md").read_text()
         self.assertIn("lowercase `readme.md`", convention)
         self.assertIn("https://github.com/ninjudd/projector", convention)
+        self.assertEqual(self.block() + "\n", (self.root / "AGENTS.md").read_text())
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
 
-        code, _, stderr = self.invoke("init")
-        self.assertEqual(65, code)
-        self.assertIn("already exists", stderr)
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        before = self.snapshot()
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n",
+            stdout,
+        )
+        self.assertEqual(before, self.snapshot())
 
     def test_init_adds_a_missing_convention_file_to_an_existing_tree(self) -> None:
         self.plan("alpha")
@@ -470,8 +495,246 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
 
         self.assertEqual(0, code, stderr)
-        self.assertEqual("docs/projects/README.md\n", stdout)
+        self.assertEqual(
+            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n", stdout
+        )
         self.assertTrue((self.projects / "alpha" / "readme.md").exists())
+
+    def test_init_appends_to_existing_instruction_files_and_keeps_their_bytes(self) -> None:
+        agents = self.root / "AGENTS.md"
+        claude = self.root / "CLAUDE.md"
+        agents.write_bytes(b"# House rules\r\n\r\nBe kind.  \r\n")
+        claude.write_bytes(b"# Claude\n\nUse plan mode.")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\n", stdout
+        )
+        written = agents.read_bytes()
+        self.assertTrue(written.startswith(b"# House rules\r\n\r\nBe kind.  \r\n\r\n<!-- projector:begin"))
+        self.assertIn(b"## Projector conventions\r\n", written)
+        self.assertTrue(written.endswith(b"<!-- projector:end -->\r\n"))
+        self.assertEqual(b"# Claude\n\nUse plan mode.\n\n@AGENTS.md\n", claude.read_bytes())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+    def test_init_restores_an_edited_block_that_check_warned_about(self) -> None:
+        agents = self.root / "AGENTS.md"
+        agents.write_text(agents.read_text().replace("second person", "third person"))
+
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        self.assertIn("warning: AGENTS.md: ", stderr)
+        self.assertIn("[instructions-edited]", stderr)
+        self.assertIn("project init", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\n", stdout
+        )
+        self.assertEqual(self.block() + "\n", agents.read_text())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+    def test_init_keeps_a_newer_block_and_check_says_to_upgrade(self) -> None:
+        agents = self.root / "AGENTS.md"
+        shipped = instructions.template_version()
+        agents.write_text(
+            agents.read_text().replace(f"projector:begin {shipped}", f"projector:begin {shipped + 98}")
+        )
+        before = agents.read_bytes()
+
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertIn("[instructions-ahead]", stderr)
+        self.assertIn("project upgrade", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code)
+        self.assertEqual(
+            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\n", stdout
+        )
+        self.assertIn(f"version {shipped + 98}", stderr)
+        self.assertEqual(before, agents.read_bytes())
+
+    def test_init_refreshes_an_outdated_block(self) -> None:
+        agents = self.root / "AGENTS.md"
+        shipped = instructions.template_version()
+        agents.write_text(
+            agents.read_text()
+            .replace(f"projector:begin {shipped}", "projector:begin 0")
+            .replace("second person", "an older register")
+        )
+
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertIn("[instructions-outdated]", stderr)
+        self.assertIn("project init", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated AGENTS.md\n", stdout)
+        self.assertEqual(self.block() + "\n", agents.read_text())
+
+    def test_init_reports_malformed_markers_after_writing_the_other_files(self) -> None:
+        agents = self.root / "AGENTS.md"
+        broken = agents.read_text().replace("<!-- projector:end -->", "")
+        agents.write_text(broken)
+        (self.root / "CLAUDE.md").unlink()
+        (self.projects / "README.md").unlink()
+
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertIn("[instructions-malformed]", stderr)
+        self.assertIn("[claude-import-missing]", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(65, code)
+        self.assertEqual("created docs/projects/README.md\nkept AGENTS.md\ncreated CLAUDE.md\n", stdout)
+        self.assertIn("markers are malformed", stderr)
+        self.assertEqual(broken, agents.read_text())
+        self.assertEqual("@AGENTS.md\n", (self.root / "CLAUDE.md").read_text())
+
+    def test_check_recognizes_an_import_the_way_claude_code_does(self) -> None:
+        claude = self.root / "CLAUDE.md"
+        claude.unlink()
+
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        self.assertIn("[claude-import-missing]", stderr)
+
+        for text in ("Read @AGENTS.md before making changes.\n", "See @./AGENTS.md\n"):
+            claude.write_text(text)
+            self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"), text)
+            code, stdout, _ = self.invoke("init")
+            self.assertIn("unchanged CLAUDE.md\n", stdout, text)
+            self.assertEqual(text, claude.read_text())
+
+        for text in ("Mentions `@AGENTS.md` only in code.\n", "```\n@AGENTS.md\n```\n"):
+            claude.write_text(text)
+            _, _, stderr = self.invoke("check")
+            self.assertIn("[claude-import-missing]", stderr, text)
+
+        code, stdout, _ = self.invoke("init")
+        self.assertIn("updated CLAUDE.md\n", stdout)
+        self.assertEqual("```\n@AGENTS.md\n```\n\n@AGENTS.md\n", claude.read_text())
+
+    def test_a_symlink_in_either_direction_gets_one_block_and_no_import(self) -> None:
+        agents = self.root / "AGENTS.md"
+        claude = self.root / "CLAUDE.md"
+        for link, target in ((claude, agents), (agents, claude)):
+            agents.unlink(missing_ok=True)
+            claude.unlink(missing_ok=True)
+            target.write_text("# Shared instructions\n")
+            link.symlink_to(target.name)
+
+            code, stdout, stderr = self.invoke("init")
+
+            self.assertEqual(0, code, stderr)
+            self.assertEqual(
+                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\n",
+                stdout,
+                link.name,
+            )
+            self.assertTrue(link.is_symlink(), link.name)
+            self.assertTrue(target.is_file() and not target.is_symlink(), target.name)
+            text = target.read_text()
+            self.assertEqual("# Shared instructions\n\n" + self.block() + "\n", text)
+            self.assertNotIn("@AGENTS.md", text)
+            self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+            code, stdout, _ = self.invoke("init")
+            self.assertEqual(
+                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n",
+                stdout,
+            )
+
+    def test_a_link_leaving_the_repository_is_never_written(self) -> None:
+        with tempfile.TemporaryDirectory() as elsewhere:
+            shared = Path(elsewhere) / "shared.md"
+            shared.write_text("# Personal instructions\n")
+            cases = (("CLAUDE.md", "claude-import-missing"), ("AGENTS.md", "instructions-missing"))
+            for name, silenced in cases:
+                (self.root / "AGENTS.md").unlink(missing_ok=True)
+                (self.root / "CLAUDE.md").unlink(missing_ok=True)
+                (self.root / name).symlink_to(shared)
+
+                code, stdout, stderr = self.invoke("init")
+                self.assertEqual(0, code)
+                self.assertIn(f"kept {name}\n", stdout)
+                self.assertIn("leaves the repository", stderr)
+                self.assertEqual("# Personal instructions\n", shared.read_text())
+
+                code, _, stderr = self.invoke("check")
+                self.assertEqual(0, code)
+                self.assertIn(f"warning: {name}: resolves outside the repository", stderr)
+                self.assertIn("[instructions-external]", stderr)
+                self.assertNotIn(silenced, stderr)
+
+    def test_the_block_names_a_configured_projects_dir(self) -> None:
+        (self.root / ".projector.toml").write_text('[projects]\ndir = "plans"\n')
+        (self.root / "AGENTS.md").unlink()
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\n", stdout)
+        self.assertIn("`plans/README.md`", (self.root / "AGENTS.md").read_text())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+    def test_instructions_can_be_disabled_in_configuration(self) -> None:
+        (self.root / ".projector.toml").write_text("[instructions]\nenabled = false\n")
+        (self.root / "AGENTS.md").unlink()
+        (self.root / "CLAUDE.md").unlink()
+
+        self.assertEqual((0, "unchanged docs/projects/README.md\n", ""), self.invoke("init"))
+        self.assertFalse((self.root / "AGENTS.md").exists())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        (self.root / ".projector.toml").write_text('[instructions]\nenabled = "no"\n')
+        code, _, stderr = self.invoke("check")
+        self.assertEqual(78, code)
+        self.assertIn("instructions.enabled must be true or false", stderr)
+
+    def test_check_json_carries_severity_and_warnings_do_not_fail(self) -> None:
+        (self.root / "CLAUDE.md").unlink()
+
+        code, stdout, _ = self.invoke("check", "--json")
+        payload = json.loads(stdout)
+        self.assertEqual(0, code)
+        self.assertTrue(payload["valid"])
+        self.assertEqual(
+            [("claude-import-missing", "warning")],
+            [(issue["code"], issue["severity"]) for issue in payload["issues"]],
+        )
+
+        self.plan("bad", "waiting")
+        code, stdout, _ = self.invoke("check", "--json")
+        payload = json.loads(stdout)
+        self.assertEqual(65, code)
+        self.assertFalse(payload["valid"])
+        self.assertEqual({"error", "warning"}, {issue["severity"] for issue in payload["issues"]})
+
+    def test_init_json_keeps_action_and_path_and_adds_files(self) -> None:
+        (self.root / "CLAUDE.md").unlink()
+
+        code, stdout, stderr = self.invoke("init", "--json")
+        payload = json.loads(stdout)
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(2, payload["schema_version"])
+        self.assertEqual("unchanged", payload["action"])
+        self.assertEqual("docs/projects/README.md", payload["path"])
+        self.assertEqual(
+            [
+                {"path": "docs/projects/README.md", "action": "unchanged"},
+                {"path": "AGENTS.md", "action": "unchanged"},
+                {"path": "CLAUDE.md", "action": "created"},
+            ],
+            payload["files"],
+        )
 
 
 class ValidationTests(RepositoryTestCase):
