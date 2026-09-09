@@ -507,8 +507,9 @@ class ProjectStore:
     @staticmethod
     def _unlinked_note(path: Path) -> str:
         return (
-            f"{path.name}: is a symlink checked out as a plain file (set core.symlinks=true"
-            " and check the repository out again); not written"
+            f"{path.name}: is a symlink checked out as a plain file (enable Developer Mode or"
+            " run as an administrator, set core.symlinks=true, and check the repository out"
+            " again); not written"
         )
 
     def _write_block(self, path: Path) -> FileAction:
@@ -589,7 +590,8 @@ class ProjectStore:
             "instructions-unlinked",
             path.name,
             "is a symlink checked out as a plain file, so this host reads only the link"
-            " text (set core.symlinks=true and check the repository out again)",
+            " text (enable Developer Mode or run as an administrator, set"
+            " core.symlinks=true, and check the repository out again)",
             "warning",
         )
 

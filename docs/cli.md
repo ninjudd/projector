@@ -45,7 +45,9 @@ created CLAUDE.md
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
   `@AGENTS.md` where the platform cannot make a symlink. A repository with
-  only a `CLAUDE.md` gets `AGENTS.md` as a link to it instead. A `CLAUDE.md`
+  only a `CLAUDE.md` gets `AGENTS.md` as a link to it instead, or, where no
+  link can be made, a regular `AGENTS.md` with the section while `CLAUDE.md`
+  gains the section too, since Codex has no import syntax. A `CLAUDE.md`
   that already links to or imports `AGENTS.md`, on its own line or inline in a
   sentence, is left alone; a mention inside backticks or a code block is not
   an import. When the two are genuinely distinct files, each with its own
@@ -57,7 +59,10 @@ wherever `core.symlinks` is false, which is Git for Windows' default without
 Developer Mode. On such a checkout the host reads only the word `AGENTS.md`,
 so `check` reports the file as `instructions-unlinked` and `init` leaves it
 alone rather than appending a section that a commit would record as the link's
-target. Set `core.symlinks=true` and check the repository out again.
+target. Git can create a symlink on Windows only with the privilege that
+Developer Mode grants and administrators hold, so enable Developer Mode or run
+as an administrator, set `core.symlinks=true`, and check the repository out
+again.
 
 Run `init` again whenever `check` says the section is outdated. Each file is
 reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`
@@ -205,7 +210,7 @@ import reads the section through `AGENTS.md` and needs nothing of its own.
 | `instructions-edited` | the section was edited by hand | `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | a begin marker without an end marker, or a second pair | repair the markers by hand |
 | `instructions-external` | the file is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
-| `instructions-unlinked` | the file is a symlink checked out as a plain file holding the link text | set `core.symlinks=true` and check the repository out again |
+| `instructions-unlinked` | the file is a symlink checked out as a plain file holding the link text | enable Developer Mode or run as an administrator, set `core.symlinks=true`, and check the repository out again |
 
 A path that resolves outside the repository reports only
 `instructions-external`; `init` never writes there, so it is the one warning
