@@ -286,10 +286,10 @@ Verified in a temporary Git repository unless stated otherwise:
   `check`; one that mentions `@AGENTS.md` only inside backticks or a fenced
   block gets the import appended and warns until it does.
 - With `CLAUDE.md` a symlink to `AGENTS.md`, and separately with `AGENTS.md` a
-  symlink to `CLAUDE.md`, `init` writes the block once into the shared file,
-  both paths are still links afterwards, no `@AGENTS.md` line is written,
-  `check` produces no warning, and a second `init` reports both paths
-  `unchanged`.
+  symlink to `CLAUDE.md`, `init` writes the block once into the shared file;
+  afterwards the link is still a link, its target is still a regular file, the
+  block appears once in that file, no `@AGENTS.md` line is written, `check`
+  produces no warning, and a second `init` reports both paths `unchanged`.
 - Setting `projects.dir` renders that path inside the block; setting
   `instructions.enabled = false` makes `init` manage only the README and
   `check` report no instruction issue.
