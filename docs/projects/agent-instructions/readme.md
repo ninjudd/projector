@@ -487,3 +487,21 @@ and is listed here rather than rewritten above.
   `test_a_dangling_claude_md_link_is_written_through`, and
   `test_check_recognizes_an_import_the_way_claude_code_does` (the
   `@AGENTS.md`-only file left alone).
+
+- **`CLAUDE.md` is a symlink after all, with the plain-file checkout
+  handled.** The rejection in the previous bullet was the implementer's call
+  on a review finding, not the owner's; the owner had asked for the link and
+  reaffirmed it after #50 merged. `init` again creates an absent `CLAUDE.md`
+  as a relative symlink to `AGENTS.md`, writes the one-line import only where
+  the platform cannot make a link, and gives a repository that has only a
+  `CLAUDE.md` an `AGENTS.md` linked to it. The finding is answered inside that
+  decision rather than by reversing it: a link checked out as a plain file, a
+  regular file whose whole content is the other file's name, is recognized in
+  either direction; `check` reports it as `instructions-unlinked`, a seventh
+  code, naming `core.symlinks=true` as the fix; and `init` reports it `kept`
+  rather than appending a block a commit would record as the link's target.
+  `docs/cli.md` states the requirement beside the adoption steps. Existing
+  links, imports, and distinct files are handled as the previous bullet says.
+  Tests: `test_init_adopts_an_empty_repository_and_is_idempotent` (the link),
+  `test_a_claude_first_repository_links_agents_md_to_claude_md` (the mirror),
+  and `test_a_link_checked_out_as_a_plain_file_is_left_alone`.
