@@ -95,8 +95,24 @@ of failing. It then manages two more files at the repository root:
    malformed and not touched.
 2. `CLAUDE.md`. When the file is absent, `init` creates it containing
    `@AGENTS.md`. When the file exists and no line equals `@AGENTS.md`, `init`
-   appends one blank line and that line. A `CLAUDE.md` that is a symlink to
-   `AGENTS.md` already satisfies the requirement and is left alone.
+   appends one blank line and that line.
+
+`init` resolves both paths with symlinks followed and writes to the file a
+link points at, never to the link itself, so a linked `AGENTS.md` or
+`CLAUDE.md` stays a link rather than becoming a copy of its target. The
+existing `_atomic_write` cannot be reused as it stands: `os.replace` on a
+symlink swaps the link for a regular file while `path.stat()` follows the link
+and passes the signature check.
+
+When the two paths resolve to one file, in either direction, `init` writes the
+block once into that file and writes no import line. Claude Code and Codex
+already read the same text, and an `@AGENTS.md` line would be a self-import
+for one host and a literal line in what the other reads. The pair is reported
+under `AGENTS.md` with the block's action and under `CLAUDE.md` as
+`unchanged`. `check` treats a same-file pair as satisfying
+`claude-import-missing`. A `CLAUDE.md` that is a symlink to `AGENTS.md` is one
+instance of this rule; a repository that adopted `CLAUDE.md` first and linked
+`AGENTS.md` to it later is the other.
 
 Bytes outside the block are preserved exactly, including line endings and
 trailing whitespace. Each written file ends with one newline.
@@ -148,7 +164,7 @@ told what to do without a failing gate:
 | `instructions-ahead` | marker version is newer than the template | upgrade the `project` command |
 | `instructions-edited` | same version, content differs from the rendered template | run `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | begin marker without end marker, or more than one block | repair the markers by hand |
-| `claude-import-missing` | `CLAUDE.md` is absent or has no `@AGENTS.md` line and is not a symlink to `AGENTS.md` | run `project init` |
+| `claude-import-missing` | `CLAUDE.md` is absent or has no `@AGENTS.md` line, and does not resolve to the same file as `AGENTS.md` | run `project init` |
 
 `instructions-missing` fires in every repository that adopted Projector before
 this change. That is the intended nudge, and one `project init` clears it.
@@ -223,8 +239,12 @@ Verified in a temporary Git repository unless stated otherwise:
 - Deleting the end marker makes `check` warn `instructions-malformed` and
   `init` exit nonzero without touching `AGENTS.md`, after writing the other
   files.
-- Deleting `CLAUDE.md` makes `check` warn `claude-import-missing`; a
-  `CLAUDE.md` symlinked to `AGENTS.md` produces no warning.
+- Deleting `CLAUDE.md` makes `check` warn `claude-import-missing`.
+- With `CLAUDE.md` a symlink to `AGENTS.md`, and separately with `AGENTS.md` a
+  symlink to `CLAUDE.md`, `init` writes the block once into the shared file,
+  both paths are still links afterwards, no `@AGENTS.md` line is written,
+  `check` produces no warning, and a second `init` reports both paths
+  `unchanged`.
 - Setting `projects.dir` renders that path inside the block; setting
   `instructions.enabled = false` makes `init` manage only the README and
   `check` report no instruction issue.
