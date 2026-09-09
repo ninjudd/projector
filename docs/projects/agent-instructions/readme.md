@@ -370,8 +370,9 @@ does not arise, because `init` writes both files.
 
 **Outcome:** Shipped, in
 [#50](https://github.com/ninjudd/projector/pull/50), which follows the plan
-merged as [#49](https://github.com/ninjudd/projector/pull/49). The template is `src/projector/templates/agents-block.md` at version 1, the block
-logic is `src/projector/instructions.py`, and `init` and `check` in
+merged as [#49](https://github.com/ninjudd/projector/pull/49). The template is
+`src/projector/templates/agents-block.md` at version 1, the block logic is
+`src/projector/instructions.py`, and `init` and `check` in
 `src/projector/core.py` and `src/projector/cli.py` behave as sections 3 and 4
 specify. This repository adopted the block: `AGENTS.md` carries it in place of
 the former "Write current documentation" section, and `CLAUDE.md` imports it.
