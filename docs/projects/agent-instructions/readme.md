@@ -123,11 +123,16 @@ Bytes outside the block are preserved exactly, including line endings and
 trailing whitespace. Each written file ends with one newline.
 
 Human output prints one line per file, `<action> <path>`, with actions
-`created`, `updated`, `unchanged`, or `kept`. JSON output lists the same:
+`created`, `updated`, `unchanged`, or `kept`. JSON output keeps the top-level
+`action` and `path` that `init` has always reported for the projects README,
+so a consumer written against the current shape keeps working, and adds
+`files` beside them:
 
 ```json
 {
   "schema_version": 2,
+  "action": "unchanged",
+  "path": "docs/projects/README.md",
   "files": [
     {"path": "docs/projects/README.md", "action": "unchanged"},
     {"path": "AGENTS.md", "action": "updated"},
@@ -135,6 +140,9 @@ Human output prints one line per file, `<action> <path>`, with actions
   ]
 }
 ```
+
+`unchanged` is a new value for the top-level `action`; before this change an
+existing README was an error rather than a result.
 
 `init` exits 0 after any run in which it wrote what it safely could, including
 a run that kept a newer block. A malformed block is a `ProjectorError` and
@@ -192,8 +200,9 @@ adopted repository, and the validation gate in `AGENTS.md` already runs it.
 ## 6. Documentation and skills
 
 - `docs/cli.md`: rewrite "Adopt a repository" for an idempotent `init` that
-  manages three files, document the `files` JSON shape, and add the
-  `instructions.enabled` key to "Read configuration". Extend "Validate
+  manages three files, document the `files` list and the new `unchanged`
+  action in "Consume JSON", and add the `instructions.enabled` key to "Read
+  configuration". Extend "Validate
   projects" with severities, the six warning codes, and the exit-code rule.
 - `README.md`: "Adopt Projector in a repository" names `AGENTS.md` and
   `CLAUDE.md` among the files `init` writes and says why.
@@ -308,6 +317,14 @@ Verified in a temporary Git repository unless stated otherwise:
 - **Opt-out through configuration.** `instructions.enabled = false` is the
   documented way to keep Projector out of a repository's instruction files;
   deleting the block and living with a warning is not.
+- **Extend `init --json` under schema version 2 instead of replacing it.**
+  `init` shares one `{"action", "path"}` shape with `create`, `status`,
+  `priority`, and `done`, and `json_text` stamps every command with the one
+  version `docs/cli.md` tells consumers to check. Replacing the shape would
+  hand a consumer reading `.path` a `null` with no version change to warn it;
+  bumping the version to 3 would break consumers of every command for one
+  command's addition. Keeping `action` and `path` for the README and adding
+  `files` beside them is additive, so the version stays at 2.
 
 ## 10. Open questions
 
