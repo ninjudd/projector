@@ -41,28 +41,39 @@ created CLAUDE.md
   file or creates the file with only that section, and refreshes the section
   when it falls behind the template this command ships. Everything outside the
   markers is yours and is never changed.
-- `CLAUDE.md` imports `AGENTS.md` with the one line `@AGENTS.md`, because
-  Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`, and the import
-  is the portable way to make them one file: a committed symlink checks out as
-  a plain text file wherever Git lacks symlink support, which is Git for
-  Windows' default. `init` creates that file when `CLAUDE.md` is absent. A
-  `CLAUDE.md` that already links to or imports `AGENTS.md`, on its own line or
-  inline in a sentence, is left alone; a mention inside backticks or a code
-  block is not an import. When the two are genuinely distinct files, each with
-  its own content and no import between them, each gets the section, because
-  appending an import would change everything Claude Code reads rather than
-  only Projector's part. A repository with only a `CLAUDE.md` is that case:
-  `AGENTS.md` is created with the section and `CLAUDE.md` gains it too.
+- `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
+  `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
+  creates the link when `CLAUDE.md` is absent, or a file containing the import
+  `@AGENTS.md` where the platform cannot make a symlink. A repository with
+  only a `CLAUDE.md` gets `AGENTS.md` as a link to it instead, or, where no
+  link can be made, a regular `AGENTS.md` with the section while `CLAUDE.md`
+  gains the section too, since Codex has no import syntax. A `CLAUDE.md`
+  that already links to or imports `AGENTS.md`, on its own line or inline in a
+  sentence, is left alone; a mention inside backticks or a code block is not
+  an import. When the two are genuinely distinct files, each with its own
+  content and no import between them, each gets the section, because an import
+  would change everything Claude Code reads rather than only Projector's part.
+
+Git checks a committed symlink out as a small plain file holding the link text
+wherever `core.symlinks` is false, which is Git for Windows' default without
+Developer Mode. On such a checkout the host reads only the word `AGENTS.md`,
+so `check` reports the file as `instructions-unlinked` and `init` leaves it
+alone rather than appending a section that a commit would record as the link's
+target. Git can create a symlink on Windows only with the privilege that
+Developer Mode grants and administrators hold, so enable Developer Mode or run
+as an administrator, set `core.symlinks=true`, and check the repository out
+again.
 
 Run `init` again whenever `check` says the section is outdated. Each file is
 reported as `created`, `updated`, `unchanged`, or `kept`. `kept` means `init`
-left a file alone on purpose and says why on stderr, for one of three reasons:
+left a file alone on purpose and says why on stderr, for one of four reasons:
 the section is newer than this command's template, so upgrade the command
 instead; the path is a symlink to a file outside the repository, which `init`
-never writes; or the markers in the file do not delimit exactly one section,
-for example a begin marker with no end marker. In that last case `init` still
-writes the other files, then exits 65 and names the repair, and prints no JSON
-document in `--json` mode.
+never writes; the file is a symlink checked out as a plain file, as above; or
+the markers in the file do not delimit exactly one section, for example a
+begin marker with no end marker. In that last case `init` still writes the
+other files, then exits 65 and names the repair, and prints no JSON document
+in `--json` mode.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
@@ -199,6 +210,7 @@ import reads the section through `AGENTS.md` and needs nothing of its own.
 | `instructions-edited` | the section was edited by hand | `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | a begin marker without an end marker, or a second pair | repair the markers by hand |
 | `instructions-external` | the file is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
+| `instructions-unlinked` | the file is a symlink checked out as a plain file holding the link text | enable Developer Mode or run as an administrator, set `core.symlinks=true`, and check the repository out again |
 
 A path that resolves outside the repository reports only
 `instructions-external`; `init` never writes there, so it is the one warning
