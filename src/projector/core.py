@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Iterable, Optional
 from urllib.parse import unquote, urlsplit
 
+from . import instructions
+
 
 STATUSES = ("draft", "ready", "in-progress", "completed")
 PRIORITIES = ("now", "next", "later")
@@ -77,6 +79,27 @@ class Issue:
     code: str
     path: str
     message: str
+    severity: str = "error"
+
+
+@dataclass(frozen=True)
+class FileAction:
+    """What `init` did to one file: created, updated, unchanged, or kept.
+
+    `kept` means the file was deliberately left alone, and `note` says why.
+    """
+
+    path: str
+    action: str
+    note: Optional[str] = None
+
+
+class InitError(ProjectorError):
+    """`init` handled every file it could, and one could not be brought up to date."""
+
+    def __init__(self, message: str, files: list[FileAction]) -> None:
+        super().__init__(message)
+        self.files = files
 
 
 def discover_git_root(start: Path) -> Path:
@@ -237,16 +260,31 @@ class ProjectStore:
             return self._project_from_path(candidates[0])
         raise ProjectNotFound(f"project not found: {name}")
 
-    def init(self) -> Path:
+    def init(self, instructions_enabled: bool = True) -> list[FileAction]:
+        """Adopt the convention, or bring an adopted repository up to date.
+
+        Safe to run again. The projects README is authored content: created
+        once and never rewritten. The Projector section in `AGENTS.md` and the
+        import in `CLAUDE.md` are generated content: created when absent and
+        refreshed when they fall behind the template this package ships.
+        """
+
         target = self.projects_dir / "README.md"
         if target.exists():
-            raise ProjectorError(f"project convention already exists: {target}")
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
-        template = resources.files("projector").joinpath(
-            "templates/project-readme.md"
-        ).read_text(encoding="utf-8")
-        self._create_exclusive(target, template)
-        return target
+            files = [FileAction(self._relative(target), "unchanged")]
+        else:
+            self.projects_dir.mkdir(parents=True, exist_ok=True)
+            template = resources.files("projector").joinpath(
+                "templates/project-readme.md"
+            ).read_text(encoding="utf-8")
+            self._create_exclusive(target, template)
+            files = [FileAction(self._relative(target), "created")]
+        if instructions_enabled:
+            more, failure = self._init_instructions()
+            files.extend(more)
+            if failure is not None:
+                raise InitError(failure, files)
+        return files
 
     def create(
         self,
@@ -295,6 +333,225 @@ class ProjectStore:
             raise ProjectorError(f"refusing to overwrite: {path}") from error
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(content)
+
+    # Agent instructions: the Projector section in AGENTS.md and the CLAUDE.md
+    # import. Both hosts read the repository root, whatever the projects
+    # directory is, so these paths hang off `self.root`.
+
+    def _rendered_block(self) -> str:
+        return instructions.render(self._relative(self.projects_dir))
+
+    def _outside(self, path: Path) -> bool:
+        """Whether `path` exists as a link that leads out of the repository."""
+
+        if not (path.exists() or path.is_symlink()):
+            return False
+        return not path.resolve().is_relative_to(self.root)
+
+    @staticmethod
+    def _same_file(first: Path, second: Path) -> bool:
+        return first.exists() and second.exists() and first.resolve() == second.resolve()
+
+    @staticmethod
+    def _write_through(path: Path, content: str) -> None:
+        """Write `content` to the file `path` names, following any symlink.
+
+        Swapping a temporary file in at `path` itself would turn a link into a
+        regular file, so the swap happens at the resolved target: the link stays
+        a link and the file it points at gets the content.
+        """
+
+        target = path.resolve()
+        if not target.exists():
+            # A dangling link may point into a directory that does not exist
+            # yet; callers have already confined the target to the repository,
+            # so create the directories the way `init` does for the README.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # A new file gets the mode the README gets, 0644 under the umask.
+            # `mkstemp` would leave it at the temporary's owner-only 0600, which
+            # Git never records and another uid cannot read.
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+            return
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+            os.chmod(temporary, stat.S_IMODE(target.stat().st_mode))
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    @staticmethod
+    def _leaves_repository(path: Path) -> str:
+        return f"{path.name}: link leaves the repository ({path.resolve()}); not written"
+
+    @staticmethod
+    def _external_message(path: Path) -> str:
+        return (
+            f"resolves outside the repository to {path.resolve()} (replace the link"
+            " with a file in the repository, or set instructions.enabled = false)"
+        )
+
+    def _init_instructions(self) -> tuple[list[FileAction], Optional[str]]:
+        """Bring `AGENTS.md` and `CLAUDE.md` up to date, one block wherever possible.
+
+        Codex reads `AGENTS.md` and Claude Code reads `CLAUDE.md`. An absent
+        `CLAUDE.md` becomes the one-line import `@AGENTS.md`, the portable form
+        the host documents: a symlink would check out as a plain file wherever
+        Git lacks symlink support. A `CLAUDE.md` that already links to or
+        imports `AGENTS.md` reads the block through it and is left alone. Only
+        when the two are genuinely distinct files, each with its own content
+        and no import between them, does each get the block; appending an
+        import would change everything Claude Code reads, not only Projector's
+        part.
+        """
+
+        agents = self.root / "AGENTS.md"
+        claude = self.root / "CLAUDE.md"
+        files: list[FileAction] = []
+        failures: list[str] = []
+
+        def write(path: Path) -> FileAction:
+            try:
+                return self._write_block(path)
+            except instructions.MalformedBlock as error:
+                failures.append(
+                    f"{path.name}: Projector section markers are malformed: {error}"
+                    " (repair the markers by hand)"
+                )
+                return FileAction(path.name, "kept")
+
+        if self._outside(agents):
+            files.append(FileAction("AGENTS.md", "kept", self._leaves_repository(agents)))
+        else:
+            files.append(write(agents))
+
+        if self._outside(claude):
+            files.append(FileAction("CLAUDE.md", "kept", self._leaves_repository(claude)))
+        elif self._same_file(agents, claude):
+            files.append(FileAction("CLAUDE.md", "unchanged"))
+        elif claude.is_symlink() and not claude.exists():
+            # A dangling link inside the repository: write the file it points
+            # at, as the AGENTS.md path already does, rather than refuse.
+            files.append(write(claude))
+        elif not claude.exists():
+            self._write_through(claude, instructions.IMPORT_LINE + "\n")
+            files.append(FileAction("CLAUDE.md", "created"))
+        elif instructions.imports_agents(self._read_text(claude)):
+            files.append(FileAction("CLAUDE.md", "unchanged"))
+        else:
+            files.append(write(claude))
+        return files, "\n".join(failures) or None
+
+    def _write_block(self, path: Path) -> FileAction:
+        rendered = self._rendered_block()
+        if not path.exists():
+            self._write_through(path, rendered + "\n")
+            return FileAction(path.name, "created")
+        text = self._read_text(path)
+        block = instructions.find_block(text)
+        shipped = instructions.template_version()
+        if block is not None:
+            if block.version > shipped:
+                return FileAction(
+                    path.name,
+                    "kept",
+                    f"{path.name}: Projector section is version {block.version}; this command"
+                    f" ships version {shipped} (run 'project upgrade', or reinstall the CLI)",
+                )
+            if block.version == shipped and instructions.block_matches(block, rendered):
+                return FileAction(path.name, "unchanged")
+        self._write_through(path, instructions.with_block(text, rendered))
+        return FileAction(path.name, "updated")
+
+    def instruction_issues(self) -> list[Issue]:
+        """Warnings about the Projector section in `AGENTS.md` and `CLAUDE.md`.
+
+        Every issue here is a warning: a collaborator on an older CLI is told
+        what to do without a failing gate, and `init` never downgrades a block.
+        """
+
+        agents = self.root / "AGENTS.md"
+        claude = self.root / "CLAUDE.md"
+        issues: list[Issue] = []
+
+        if self._outside(agents):
+            issues.append(self._external_issue(agents))
+        else:
+            issues.extend(self._block_issues(agents))
+
+        if self._outside(claude):
+            issues.append(self._external_issue(claude))
+        elif self._same_file(agents, claude):
+            pass
+        elif claude.is_symlink() and not claude.exists():
+            issues.append(
+                Issue(
+                    "instructions-missing",
+                    "CLAUDE.md",
+                    f"is a dangling link to {os.readlink(claude)} (run 'project init' to write"
+                    " the file it points at, or repair the link)",
+                    "warning",
+                )
+            )
+        elif not claude.exists():
+            issues.append(
+                Issue(
+                    "instructions-missing",
+                    "CLAUDE.md",
+                    "is absent, and Claude Code reads CLAUDE.md rather than AGENTS.md (run"
+                    " 'project init' to create it)",
+                    "warning",
+                )
+            )
+        elif not instructions.imports_agents(self._read_text(claude)):
+            issues.extend(self._block_issues(claude))
+        return issues
+
+    def _external_issue(self, path: Path) -> Issue:
+        return Issue("instructions-external", path.name, self._external_message(path), "warning")
+
+    def _block_issues(self, path: Path) -> list[Issue]:
+        """Warnings about the Projector section in one instruction file."""
+
+        def warn(code: str, message: str) -> list[Issue]:
+            return [Issue(code, path.name, message, "warning")]
+
+        shipped = instructions.template_version()
+        missing = "has no Projector section (run 'project init' to add it)"
+        if not path.exists():
+            return warn("instructions-missing", missing)
+        try:
+            block = instructions.find_block(self._read_text(path))
+        except instructions.MalformedBlock as error:
+            return warn(
+                "instructions-malformed",
+                f"Projector section markers are malformed: {error} (repair the markers by hand)",
+            )
+        if block is None:
+            return warn("instructions-missing", missing)
+        if block.version < shipped:
+            return warn(
+                "instructions-outdated",
+                f"Projector section is version {block.version}; this command ships version"
+                f" {shipped} (run 'project init' to refresh it; your own content is not changed)",
+            )
+        if block.version > shipped:
+            return warn(
+                "instructions-ahead",
+                f"Projector section is version {block.version}; this command ships version"
+                f" {shipped} (run 'project upgrade', or reinstall the CLI)",
+            )
+        if not instructions.block_matches(block, self._rendered_block()):
+            return warn(
+                "instructions-edited",
+                f"Projector section differs from the version {shipped} template (run 'project"
+                " init' to restore it, or change the template in Projector)",
+            )
+        return []
 
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:
@@ -425,7 +682,13 @@ class ProjectStore:
                     )
         return matches
 
-    def check(self) -> list[Issue]:
+    def check(self, instructions_enabled: bool = True) -> list[Issue]:
+        issues = self._plan_issues()
+        if instructions_enabled:
+            issues.extend(self.instruction_issues())
+        return issues
+
+    def _plan_issues(self) -> list[Issue]:
         issues: list[Issue] = []
         if not self.projects_dir.exists():
             return [Issue("missing-projects-dir", self._relative(self.projects_dir), "directory does not exist")]

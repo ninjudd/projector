@@ -19,6 +19,8 @@ from .core import (
     PRIORITIES,
     STATUSES,
     EnvironmentError,
+    FileAction,
+    InitError,
     ProjectorError,
     ProjectStore,
     discover_git_root,
@@ -310,6 +312,46 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def emit_files(files: list[FileAction], json_output: bool) -> None:
+    """Report what `init` did, one line per file, or one JSON document.
+
+    The top-level `action` and `path` still describe the projects README, as
+    they did before `init` managed more than that file, so a consumer written
+    against the earlier shape keeps working; `files` lists everything.
+    """
+
+    for entry in files:
+        if entry.note:
+            print(f"project: {entry.note}", file=sys.stderr)
+    if json_output:
+        readme = files[0]
+        print(
+            json_text(
+                {
+                    "action": readme.action,
+                    "path": readme.path,
+                    "files": [{"path": entry.path, "action": entry.action} for entry in files],
+                }
+            )
+        )
+    else:
+        for entry in files:
+            print(f"{entry.action} {entry.path}")
+
+
+def instructions_enabled(root: Path) -> bool:
+    """`instructions.enabled` from configuration; unset means enabled."""
+
+    value = load_config(root).get("instructions.enabled")
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f"instructions.enabled must be true or false, not {type(value).__name__}"
+        )
+    return value
+
+
 def configured_projects_dir(root: Path) -> Optional[Path]:
     """`projects.dir` from configuration, when the flag did not supply one."""
 
@@ -338,7 +380,14 @@ def run(arguments: argparse.Namespace) -> int:
     command = arguments.command
 
     if command == "init":
-        emit_path(store, store.init(), arguments.json_output, "created")
+        try:
+            files = store.init(instructions_enabled(root))
+        except InitError as error:
+            # Say what was written before saying what could not be.
+            if not arguments.json_output:
+                emit_files(error.files, False)
+            raise
+        emit_files(files, arguments.json_output)
     elif command == "list":
         projects = store.projects()
         if arguments.status:
@@ -382,15 +431,19 @@ def run(arguments: argparse.Namespace) -> int:
         if command == "done":
             print("Record whether the project shipped, was abandoned, or was superseded.", file=sys.stderr)
     elif command == "check":
-        issues = store.check()
+        issues = store.check(instructions_enabled(root))
+        # Warnings print but never fail the gate; `valid` and the exit code
+        # follow errors alone.
+        errors = [issue for issue in issues if issue.severity == "error"]
         if arguments.json_output:
-            print(json_text({"valid": not issues, "issues": [issue.__dict__ for issue in issues]}))
-        elif issues:
-            for issue in issues:
-                print(f"{issue.path}: {issue.message} [{issue.code}]", file=sys.stderr)
+            print(json_text({"valid": not errors, "issues": [issue.__dict__ for issue in issues]}))
         else:
-            print("Project plans are valid.")
-        return 0 if not issues else 65
+            for issue in issues:
+                prefix = "warning: " if issue.severity == "warning" else ""
+                print(f"{prefix}{issue.path}: {issue.message} [{issue.code}]", file=sys.stderr)
+            if not errors:
+                print("Project plans are valid.")
+        return 0 if not errors else 65
     return 0
 
 

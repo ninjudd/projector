@@ -43,6 +43,9 @@ project check
 git diff --check
 ```
 
+Resolve any warning `project check` prints; `project init` refreshes a stale
+Projector section in `AGENTS.md` without touching the repository's own text.
+
 Confirm that the plan names the outcome, every acceptance criterion has
 evidence or an explicit non-delivery disposition, and no separate closeout
 change remains. Follow the repository's handoff rules and never merge unless

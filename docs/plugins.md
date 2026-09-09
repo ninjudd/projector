@@ -46,6 +46,18 @@ $plan-project plan a safer deploy workflow
 The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
 install-surface metadata; it does not wrap or rewrite skill instructions.
 
+## Reach every session through the repository
+
+A skill's instructions load only while the skill is invoked, and neither host
+loads a plugin's own `CLAUDE.md` or `AGENTS.md` into other repositories. So the
+plugin is not how Projector's conventions reach a session that never invokes a
+skill. `project init` is: it writes a marked section into the repository's
+`AGENTS.md`, which Codex reads directly, and a one-line `CLAUDE.md` that
+imports it, which Claude Code reads. The text lives in the repository, so every
+collaborator gets it whether or not they installed the plugin, and `project
+check` warns when it drifts from the template the CLI ships. See
+[the CLI guide](cli.md#adopt-a-repository).
+
 ## Install from a checkout
 
 Run the installer to add the local checkout as both marketplaces and install

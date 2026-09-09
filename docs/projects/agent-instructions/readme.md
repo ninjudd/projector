@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -365,3 +365,125 @@ None block implementation. Whether the Codex version installed today runs
 plugin-local hooks is unverified and does not matter to this design. What
 Claude Code does with a `@` import whose target is missing is undocumented and
 does not arise, because `init` writes both files.
+
+## 11. Completion record
+
+**Outcome:** Shipped, in
+[#50](https://github.com/ninjudd/projector/pull/50), which follows the plan
+merged as [#49](https://github.com/ninjudd/projector/pull/49). The template is
+`src/projector/templates/agents-block.md` at version 1, the block logic is
+`src/projector/instructions.py`, and `init` and `check` in
+`src/projector/core.py` and `src/projector/cli.py` behave as sections 3 and 4
+specify. This repository adopted the block: `AGENTS.md` carries it in place of
+the former "Write current documentation" section, and `CLAUDE.md` imports it.
+
+Evidence for section 8, criterion by criterion. The tests are in
+`tests/test_projector.py` unless named otherwise, and every one runs in a
+temporary Git repository:
+
+- Empty repository, three files, clean `check`, byte-identical second run:
+  `test_init_adopts_an_empty_repository_and_is_idempotent`.
+- Pre-existing `AGENTS.md` and `CLAUDE.md` keep every byte, CRLF included:
+  `test_init_appends_to_existing_instruction_files_and_keeps_their_bytes`.
+- Edited block warns `instructions-edited` at exit 0 and `init` restores it:
+  `test_init_restores_an_edited_block_that_check_warned_about`.
+- Newer block warns `instructions-ahead`, `init` reports `kept`, file
+  byte-identical: `test_init_keeps_a_newer_block_and_check_says_to_upgrade`.
+- Older block warns `instructions-outdated` and `init` replaces it:
+  `test_init_refreshes_an_outdated_block`.
+- Missing end marker warns `instructions-malformed`; `init` exits 65 with
+  `AGENTS.md` untouched after writing the other files:
+  `test_init_reports_malformed_markers_after_writing_the_other_files`.
+- Missing `CLAUDE.md` warns `claude-import-missing`; inline and `./` imports
+  count, backticked and fenced mentions do not:
+  `test_check_recognizes_an_import_the_way_claude_code_does` and
+  `tests/test_instructions.py` `ImportTests`.
+- Symlink in either direction: one block in the shared file, the link still a
+  link, no import line, clean `check`, unchanged second run:
+  `test_a_symlink_in_either_direction_gets_one_block_and_no_import`.
+- Link leaving the repository: nothing written, `kept`,
+  `instructions-external` alone:
+  `test_a_link_leaving_the_repository_is_never_written`.
+- `projects.dir` renders into the block:
+  `test_the_block_names_a_configured_projects_dir`; `instructions.enabled =
+  false` silences both commands:
+  `test_instructions_can_be_disabled_in_configuration`.
+- `check --json` carries `severity`, `valid` follows errors, a real error
+  still exits 65: `test_check_json_carries_severity_and_warnings_do_not_fail`;
+  `init --json` shape: `test_init_json_keeps_action_and_path_and_adds_files`.
+- Template text change without a version bump fails the suite:
+  `tests/test_instructions.py`,
+  `test_the_template_text_is_pinned_to_its_version`.
+- This repository: `project check` prints only `Project plans are valid.`,
+  `CLAUDE.md` exists, and a fresh non-interactive Claude Code session started
+  here (`claude -p`) answered that its loaded instruction context contains the
+  "Projector conventions" section and the Google style rule. `/context` in an
+  interactive session is the same check by hand.
+- A fresh Codex session started here (`codex exec`, read-only sandbox) answered
+  the same, with no Projector plugin involved in reading `AGENTS.md`.
+- The full gate: 117 tests pass, `project check` is clean, both
+  `claude plugin validate` runs pass, `git diff --check` is clean.
+
+Details settled during implementation, none of which changes the design:
+
+- The import token ends at whitespace or sentence punctuation, and a dot counts
+  only when whitespace or the end of the file follows it, so `Read @AGENTS.md.`
+  imports and `@AGENTS.md.bak` does not.
+- In a CRLF file the block takes the file's line endings, and `check` compares
+  the block with line endings normalized, so a Windows checkout is not reported
+  as edited.
+- When `AGENTS.md` is a link out of the repository and `CLAUDE.md` is absent,
+  `init` still creates `CLAUDE.md` with the import; the section 3 bound applies
+  to the path being written, and `CLAUDE.md` is inside the repository.
+- `init` prints its per-file lines before the malformed-markers error in human
+  mode, and only the error in JSON mode, so a script never reads a partial
+  document.
+- The `instructions-outdated` message ends "your own content is not changed",
+  because `run 'project init'` on a long-adopted repository can read as
+  re-initialization.
+- The CLI version moves to 0.4.0 for the new `init` and `check` behavior, and
+  the plugin version to 0.2.3 for the three skill sentences, following the
+  release guide in `docs/plugins.md`.
+
+## 12. Later corrections
+
+Sections 1 through 11 record the project as designed and first implemented.
+One rule changed before the implementation merged, in the same pull request,
+and is listed here rather than rewritten above.
+
+- **`init` never appends an import to a `CLAUDE.md`; two distinct files each
+  get the block.** Sections 3, 4, 8, and 9 describe an import appended to an
+  existing `CLAUDE.md` that lacks one, and a `claude-import-missing` code.
+  Reviewing the result in a real repository showed that rule changing
+  everything Claude Code reads in a repository that kept `CLAUDE.md` and
+  `AGENTS.md` deliberately different, not only Projector's part. Now a
+  `CLAUDE.md` that links to or imports `AGENTS.md`, `@AGENTS.md` alone
+  included, is left as it is, and only when both files exist as distinct
+  regular files with no import between them does `init` put the block into
+  each, with `check` holding each to the same template. A repository that has
+  only a `CLAUDE.md` is that case: `AGENTS.md` is created with the block, and
+  the distinct `CLAUDE.md` gains it too, because Codex has no import syntax to
+  read `CLAUDE.md` through. The `claude-import-missing` code is gone: an absent
+  `CLAUDE.md` is `instructions-missing` for that path, and a distinct
+  `CLAUDE.md` gets the same six codes as `AGENTS.md`. The section 9 decision
+  "One import line in `CLAUDE.md`, nothing more" is superseded to that extent;
+  the same-file rule and the repository bound stand unchanged.
+
+  A symlink was tried as the default for an absent `CLAUDE.md` and rejected.
+  It is the right shape on a machine that can make one and the wrong shape in
+  a repository, because a committed symlink is checked out as a small plain
+  file containing the link text wherever `core.symlinks` is false, which is
+  Git for Windows' default without Developer Mode. There Claude Code's project
+  instructions would be the nine bytes `AGENTS.md`, `check` would report the
+  section missing, and `init` would append the block into that plain file,
+  which a commit would record as a symlink whose link text is the whole block.
+  The one-line `@AGENTS.md` import is what Claude Code's own documentation
+  recommends for that platform, so it stays the default, and an existing link
+  in either direction is honored by the same-file rule.
+
+  Tests: `test_init_adopts_an_empty_repository_and_is_idempotent` (the import
+  file), `test_a_claude_first_repository_gets_the_block_in_both_files`,
+  `test_distinct_instruction_files_each_get_the_block_and_keep_their_bytes`,
+  `test_a_dangling_claude_md_link_is_written_through`, and
+  `test_check_recognizes_an_import_the_way_claude_code_does` (the
+  `@AGENTS.md`-only file left alone).
