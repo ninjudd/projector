@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -344,11 +344,12 @@ section 3.5 of the method by path: verify the claim by the four steps, and
 decline a finding by naming the guard with the quoted code that shows it.
 
 The same skill gains one rule about the `Suggestions` list: it is not a
-body-only finding. The fix loop leaves it to the author and acts on an item
-only when the user asks. A `REVIEW` event whose body carries a clean verdict
-and a `Suggestions` list is therefore no work for the loop, and a push made
-to act on a suggestion is the user's choice, never the loop's. Nothing else
-in that skill changes.
+body-only finding, and no item on it is outstanding work. The fix loop weighs
+each item itself, taking it when the improvement is worth a push and the
+review cycle that follows and leaving it otherwise. A `REVIEW` event whose
+body carries a clean verdict and a `Suggestions` list is a clean head either
+way, and an item the loop leaves needs no reply. Nothing else in that skill
+changes.
 
 ## 5. Host neutrality
 
@@ -376,8 +377,9 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
   are listed in the body, and the clean-head rule counts only P1 and P2, so a
   review that posts no thread is clean whatever its `Suggestions` list holds.
 - `skills/start-fix-loop/SKILL.md`: the verify step cites the protocol, and a
-  new sentence in "Establish the loop", beside the rule for body-only
-  findings, says a `Suggestions` list is left to the author.
+  new paragraph in "Establish the loop", beside the rule for body-only
+  findings, says a `Suggestions` list is weighed item by item at the loop's
+  discretion and never counts as outstanding work.
 - `tests/test_packaging.py`: a test asserting that
   `skills/start-review-loop/method.md` exists and that both loop skills cite
   it, so a rename fails the gate instead of leaving a dangling reference.
@@ -409,7 +411,8 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
   only P1 and P2 findings are threads and that only they decide whether a
   head is clean.
 - `skills/start-fix-loop/SKILL.md` cites the protocol by path and says a
-  `Suggestions` list is not a body-only finding.
+  `Suggestions` list is not a body-only finding and is weighed at the loop's
+  discretion.
 - `method.md` and the text section 6 adds to either skill name no
   host-specific tool and no path on the reviewer's machine. Names relative
   to the repository, such as `AGENTS.md` and `docs/`, and Projector's own
@@ -448,13 +451,14 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
 - **No cap on findings.** A fixed maximum with the remainder withheld was
   rejected because a withheld verified defect is a defect nobody fixes. The
   shipping rules and the P3 body list carry the precision instead.
-- **P3 lives in the body, and the fix loop leaves it there.** A suggestion
-  posted as a thread puts the pull request in draft and makes the author
-  resolve a nitpick before a reader sees the head as clean. Letting the fix
-  loop act on the list instead was rejected because every suggestion would
-  then become a push, a new head, and a new review cycle on a pull request
-  already marked ready, which is the cost the body list exists to avoid. The
-  list is for a person to read; an item becomes work when the user says so.
+- **P3 lives in the body, and the fix loop weighs it.** A suggestion posted
+  as a thread puts the pull request in draft and makes the author resolve a
+  nitpick before a reader sees the head as clean. Whether to act on a body
+  item is the fix loop's judgment, made item by item against the cost of a
+  push and the review cycle that follows. Acting on every item was rejected
+  because it turns each suggestion into a cycle on a pull request already
+  marked ready, and acting only when the user asks was rejected because it
+  makes a person relay improvements the loop can see for itself.
 - **Priorities are defined by introduction and impact,** not by pass. A pass
   says where to look; a priority says what happens if nobody acts.
 - **The second look starts from the claim alone.** A verifier that reads the
@@ -475,3 +479,52 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
 
 None block implementation. Whether a host runs the passes in parallel
 affects wall-clock time and nothing in this plan.
+
+## 11. Implementation state
+
+Every file in section 6 exists on the implementation branch: `method.md`
+carries sections 3.1 through 3.7, the review skill points its inspection
+steps at it and defines `covered=`, `findings=`, the priorities, and the
+finding shape, the fix skill cites the protocol and leaves a `Suggestions`
+list to the author, the packaging test guards the file, and `README.md`
+names it. The full gate passes, and the packaging test fails when
+`method.md` is removed.
+
+The last criterion in section 8, a review the loop publishes under the
+method, was observed on the pull request that carries this implementation.
+The review loop inspected its first head, `95a6616`, by the method at that
+head and said so in a disclosure: the body opened with an intent paragraph,
+printed `1 finding threads: 0 resolved, 1 open` and `Covered 6 of 6 changed
+files; 0 generated files skipped.`, carried `covered=6/6` in its marker,
+listed one P3 item under `Suggestions`, and posted its one P2 finding with a
+headline line, a behavior sentence, and a `Fix:` line.
+
+## 12. Completion record
+
+Shipped. Every file in section 6 exists, and every criterion in section 8
+has evidence:
+
+- `method.md` holds the intent step, the file-kind table, the six passes,
+  the outward-following step, the four-step protocol with the second-look
+  rule, the shipping rules and priorities, and the body order and finding
+  shape, as sections 1 through 7 of that file.
+- The review skill cites `method.md` from "Review an exact head", documents
+  `covered=` and the `findings=` count, shows the finding shape, and scopes
+  the inline-thread, clean-head, and approval-verification rules to P1 and
+  P2 threads.
+- The fix skill cites the protocol by its relative path and weighs a
+  `Suggestions` list item by item.
+- Neither `method.md` nor the added skill text names a host-specific tool or
+  a path on the reviewer's machine.
+- `test_review_loops_share_one_review_method` fails with `method.md` moved
+  aside and passes with it in place.
+- The full gate passes: 120 tests, valid plans, both plugin validations,
+  and a clean whitespace check.
+- The review under the method is the one section 11 describes.
+- The plugin version moves from 0.2.3 to 0.2.4 in both manifests, so a host
+  that caches the plugin by version installs the new skill text on its next
+  update.
+
+Section 4's rule for a `Suggestions` list changed during implementation,
+from acting only when the user asks to weighing each item at the loop's
+discretion; sections 4, 6, 8, and 9 carry the current rule.
