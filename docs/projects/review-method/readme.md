@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -490,9 +490,38 @@ list to the author, the packaging test guards the file, and `README.md`
 names it. The full gate passes, and the packaging test fails when
 `method.md` is removed.
 
-One criterion in section 8 is still open: a review the loop publishes under
-the method, showing the intent paragraph, the census and coverage lines, the
-`covered=` field, and the three-part finding shape. The project completes
-when the first such review is observed, on the pull request that carries
-this implementation if the review loop reads the branch's skill, otherwise on
-the first pull request reviewed after it merges.
+The last criterion in section 8, a review the loop publishes under the
+method, was observed on the pull request that carries this implementation.
+The review loop inspected its first head, `95a6616`, by the method at that
+head and said so in a disclosure: the body opened with an intent paragraph,
+printed `1 finding threads: 0 resolved, 1 open` and `Covered 6 of 6 changed
+files; 0 generated files skipped.`, carried `covered=6/6` in its marker,
+listed one P3 item under `Suggestions`, and posted its one P2 finding with a
+headline line, a behavior sentence, and a `Fix:` line.
+
+## 12. Completion record
+
+Shipped. Every file in section 6 exists, and every criterion in section 8
+has evidence:
+
+- `method.md` holds the intent step, the file-kind table, the six passes,
+  the outward-following step, the four-step protocol with the second-look
+  rule, the shipping rules and priorities, and the body order and finding
+  shape, as sections 1 through 7 of that file.
+- The review skill cites `method.md` from "Review an exact head", documents
+  `covered=` and the `findings=` count, shows the finding shape, and scopes
+  the inline-thread, clean-head, and approval-verification rules to P1 and
+  P2 threads.
+- The fix skill cites the protocol by its relative path and weighs a
+  `Suggestions` list item by item.
+- Neither `method.md` nor the added skill text names a host-specific tool or
+  a path on the reviewer's machine.
+- `test_review_loops_share_one_review_method` fails with `method.md` moved
+  aside and passes with it in place.
+- The full gate passes: 120 tests, valid plans, both plugin validations,
+  and a clean whitespace check.
+- The review under the method is the one section 11 describes.
+
+Section 4's rule for a `Suggestions` list changed during implementation,
+from acting only when the user asks to weighing each item at the loop's
+discretion; sections 4, 6, 8, and 9 carry the current rule.
