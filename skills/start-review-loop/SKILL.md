@@ -323,11 +323,11 @@ The visible text of a thread's first comment has three parts, the shape
 ### Outstanding findings
 
 A finding is outstanding while its thread is unresolved, and a head is
-**clean** only when no finding thread is outstanding and this review opens
-none. This query is the thread half of that test, and it pages so that a pull
-request with more than a hundred threads is still read to the end. Run it by
-thread state, not by author, and match the marker to separate Projector
-findings from ordinary review conversation:
+**clean** only when no finding thread is outstanding and this review opens no
+P1 or P2 thread. This query is the thread half of that test, and it pages so
+that a pull request with more than a hundred threads is still read to the end.
+Run it by thread state, not by author, and match the marker to separate
+Projector findings from ordinary review conversation:
 
 ```sh
 gh api graphql --paginate -f query='
@@ -433,12 +433,12 @@ verdict as one.
 Record a SHA as reviewed, paired with the published review's id, only after that
 review is published and, on a clean self-review, the pull request is ready.
 Verify the input as well as the outputs: before an `approved` verdict, the
-outstanding-findings query returned nothing and the review carries no finding;
-after publishing, re-read the review body and the pull request's `isDraft`,
-and only then delete the start comment, so the pull request is never left with
-neither. Never resolve the author's findings, claim a newer SHA was reviewed,
-or merge. Resolving is the author's act, which is why your verification alone
-never closes a finding.
+outstanding-findings query returned nothing and the review opens no P1 or P2
+thread; after publishing, re-read the review body and the pull request's
+`isDraft`, and only then delete the start comment, so the pull request is
+never left with neither. Never resolve the author's findings, claim a newer
+SHA was reviewed, or merge. Resolving is the author's act, which is why your
+verification alone never closes a finding.
 
 ## Gate readiness claims in plans
 
