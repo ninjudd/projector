@@ -91,6 +91,11 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
 of a body-only finding in a pull-request-level comment because there is no
 thread to reply to or resolve.
 
+A `Suggestions` list in a Projector review body is not a body-only finding.
+Leave it to the author, and act on an item only when the user asks. A clean
+verdict above such a list is a clean head, and a push made to act on a
+suggestion is the user's choice, never this loop's.
+
 A `DRAFT` line is not itself a finding. It says the head has not been signed
 off, so look for the work in that pull request's threads and review bodies. A
 draft with no outstanding finding is waiting on the review loop to re-review,
@@ -101,8 +106,11 @@ not on a code change.
 Handle findings in posting order, batching only related findings that touch the
 same code:
 
-1. Verify the claim against the exact pushed head and surrounding code. Decline
-   a false finding with evidence rather than changing correct behavior.
+1. Verify the claim against the exact pushed head and surrounding code by the
+   four-step protocol in `../start-review-loop/method.md` § 5: quote the
+   lines, walk the execution, write the triggering sequence, and look for
+   what already stops it. Decline a false finding by naming that guard with
+   the quoted code that shows it, rather than changing correct behavior.
 2. Reproduce a valid defect with a failing test, error, or measurement.
 3. Implement the narrow fix in the branch that owns the code. Read the lines
    around an insertion anchor before editing so an attribute, decorator, or

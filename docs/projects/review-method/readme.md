@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -475,3 +475,20 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
 
 None block implementation. Whether a host runs the passes in parallel
 affects wall-clock time and nothing in this plan.
+
+## 11. Implementation state
+
+Every file in section 6 exists on the implementation branch: `method.md`
+carries sections 3.1 through 3.7, the review skill points its inspection
+steps at it and defines `covered=`, `findings=`, the priorities, and the
+finding shape, the fix skill cites the protocol and leaves a `Suggestions`
+list to the author, the packaging test guards the file, and `README.md`
+names it. The full gate passes, and the packaging test fails when
+`method.md` is removed.
+
+One criterion in section 8 is still open: a review the loop publishes under
+the method, showing the intent paragraph, the census and coverage lines, the
+`covered=` field, and the three-part finding shape. The project completes
+when the first such review is observed, on the pull request that carries
+this implementation if the review loop reads the branch's skill, otherwise on
+the first pull request reviewed after it merges.

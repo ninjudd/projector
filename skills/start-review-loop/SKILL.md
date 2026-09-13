@@ -185,10 +185,13 @@ For every new head:
      --jq '"\(.id) \(.created_at)"'
    ```
 
-5. Inspect both the new range and the pull-request-wide integration diff. Read
-   the code and documentation the change depends on.
-6. Run focused tests and reproductions proportional to risk. Verify every
-   prospective finding against the exact code.
+5. Inspect the head by the method in `method.md`, next to this file: state
+   the change's intent, sort the changed files, run the passes, follow every
+   changed definition to the code that depends on it, and verify each
+   candidate finding by the four-step protocol before it becomes a thread.
+   Cover both the new range and the pull-request-wide integration diff.
+6. Run focused tests and reproductions proportional to risk. A candidate the
+   protocol cannot verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
    of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
    comment as described next instead of repeating step 4, and revalidate every
@@ -244,7 +247,7 @@ this skill — nothing in GitHub enforces them.
 ```
 🔭 **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> -->
+<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
 
 State the model and effort **actually running this review** — the model
@@ -271,20 +274,51 @@ The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
 marker's `verdict=`. `approved` means no finding thread on the pull request is
 open — a thread outlives the head it was filed on, so findings from earlier
 heads count until resolved; `changes-requested` means at least one is open.
-Under the verdict line, print the census the verdict rests on — `6 finding
-threads: 4 resolved, 2 open` — counting the threads this review opens among the
-open, so a changes-requested review on a fresh head never prints `0 open` above
-its own findings. `approved` requires that last number to be zero, and printing
-it lets a reader see the verdict was earned.
+Print the census the verdict rests on — `6 finding threads: 4 resolved, 2
+open` — counting the threads this review opens among the open, so a
+changes-requested review on a fresh head never prints `0 open` above its own
+findings. `approved` requires that last number to be zero, and printing it
+lets a reader see the verdict was earned.
+
+`findings=` is the number of P1 and P2 threads this review opens. P3 items
+are listed in the body rather than posted as threads, and are not counted.
+`covered=` is how many of the changed files a pass or the reviewer read, over
+how many files the head changed; the body's coverage line prints the same two
+numbers.
+
+The body follows the order `method.md` § 7 gives: the signature line and
+marker, the intent paragraph, the census, the coverage line, any disclosures,
+a `Suggestions` list of P3 items when there are any, and on a clean head what
+was checked.
 
 **Every inline finding opens with a marker:**
 
 ```
-<!-- projector-finding v=1 priority=<P1|P2|P3> sha=<full-sha> -->
+<!-- projector-finding v=1 priority=<P1|P2> sha=<full-sha> -->
 ```
 
-Keep the visible finding text as it always was: priority, impact, and the
-verified code path or reproduction.
+Priority says what happens if nobody acts, and only the first two are
+threads:
+
+- **P1.** A defect the change introduces or worsens, with concrete impact on
+  users, data, money, availability, or security. A thread; blocks.
+- **P2.** A defect the change introduces with bounded impact, or a violation
+  of a rule the repository wrote down. A thread; blocks.
+- **P3.** A change the code is correct without: a simplification, dead code,
+  a gap between a written rule and practice, a defect already present at the
+  base. One line in the body's `Suggestions` list; never a thread, never
+  blocks.
+
+The visible text of a thread's first comment has three parts, the shape
+`method.md` § 7 shows with an example:
+
+```
+**P1 · <what goes wrong and what it costs, in about a dozen words>**
+
+<one or two sentences of concrete behavior that name the symbol>
+
+**Fix:** <one sentence>
+```
 
 ### Outstanding findings
 
@@ -320,10 +354,12 @@ as a new finding.
 
 ## Publish one review
 
-Findings always go out as inline threads in **one** review, each carrying the
-finding marker, and every review body carries the signature and verdict line.
-Do not drip-feed findings or use ordinary issue comments for them. What differs
-between the modes is only the review state and what marks the outcome.
+P1 and P2 findings always go out as inline threads in **one** review, each
+carrying the finding marker, and every review body carries the signature and
+verdict line. P3 items are not threads: list them in the body under a
+`Suggestions` heading, as `method.md` § 7 describes. Do not drip-feed findings
+or use ordinary issue comments for them. What differs between the modes is
+only the review state and what marks the outcome.
 
 GitHub anchors an inline comment only to a file within the first 3,000 files
 of the diff, taken in path order; a thread on any later file fails with `422
@@ -360,10 +396,12 @@ tracked-set filter does not prevent this, because both loops can legitimately
 own the pull request.
 
 A head is *clean* only when the outstanding-findings query above returns
-nothing **and this review posts no finding**. Run the query now, before
-choosing a branch. Both tests are one-way: an open thread makes the head not
-clean whatever inspection found, and a new finding makes it not clean whatever
-the query returned. The first matters most on a fix-cycle head, which arrives
+nothing **and this review posts no P1 or P2 thread**. A `Suggestions` list in
+the body does not count against it: a review whose only output is that list
+is clean. Run the query now, before choosing a branch. Both tests are one-way:
+an open thread makes the head not clean whatever inspection found, and a new
+thread makes it not clean whatever the query returned. The first matters most
+on a fix-cycle head, which arrives
 with its threads exactly as the author left them: the reviewer never resolves
 threads — only the author does — so a head you inspected and found nothing
 wrong in is still not clean while a finding thread is open. The watcher applies
