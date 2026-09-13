@@ -30,10 +30,13 @@ depends on.
   whatever its license or provenance.
 - Describe how code fails, not which library or framework call is involved,
   so one method serves every language a repository contains.
-- Name no host-specific tool and no path on the reviewer's machine, such as a
-  home directory or a scratch directory. Repository-relative names the
-  method reads, such as `AGENTS.md` and `docs/`, are fine. The text says what
-  to read and check; the host decides how.
+- In `method.md` and in the edits section 6 introduces, name no
+  host-specific tool and no path on the reviewer's machine, such as a home
+  directory or a scratch directory. Names relative to the repository under
+  review, such as `AGENTS.md` and `docs/`, are fine, and so are Projector's
+  own configuration files, `.projector.toml` and `~/.projector.toml`, which
+  are Projector's contract rather than a host's layout. The text says what to
+  read and check; the host decides how.
 - Keep every rule in `skills/start-review-loop/SKILL.md` about identity,
   exact heads, start comments, markers, verdicts, and draft state unchanged
   except where section 6 names an edit. This project changes how a head is
@@ -354,8 +357,9 @@ host runs subagents, the passes in section 3.3 may run in parallel and the
 second look in section 3.5 may go to a fresh agent. The text describes what
 to read and check and never names a host's tool, a permission model, or a
 path on the reviewer's machine. Names relative to the repository under
-review, such as `AGENTS.md`, `docs/`, and `.projector.toml`, are what the
-method reads and are allowed.
+review, such as `AGENTS.md` and `docs/`, are what the method reads and are
+allowed, as are Projector's own configuration files, `.projector.toml` and
+`~/.projector.toml`.
 
 ## 6. Files
 
@@ -406,9 +410,11 @@ method reads and are allowed.
   head is clean.
 - `skills/start-fix-loop/SKILL.md` cites the protocol by path and says a
   `Suggestions` list is not a body-only finding.
-- Neither skill names a host-specific tool or a path on the reviewer's
-  machine. Repository-relative names, such as `AGENTS.md`, `docs/`, and
-  `.projector.toml`, are allowed.
+- `method.md` and the text section 6 adds to either skill name no
+  host-specific tool and no path on the reviewer's machine. Names relative
+  to the repository, such as `AGENTS.md` and `docs/`, and Projector's own
+  configuration files, `.projector.toml` and `~/.projector.toml`, are
+  allowed.
 - The packaging test fails when `method.md` is removed and passes on the
   branch.
 - The full validation gate in `AGENTS.md` passes from the repository root.
