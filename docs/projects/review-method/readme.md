@@ -30,8 +30,10 @@ depends on.
   whatever its license or provenance.
 - Describe how code fails, not which library or framework call is involved,
   so one method serves every language a repository contains.
-- Name no host tool and no path outside the skill directory. The text says
-  what to read and check; the host decides how.
+- Name no host-specific tool and no path on the reviewer's machine, such as a
+  home directory or a scratch directory. Repository-relative names the
+  method reads, such as `AGENTS.md` and `docs/`, are fine. The text says what
+  to read and check; the host decides how.
 - Keep every rule in `skills/start-review-loop/SKILL.md` about identity,
   exact heads, start comments, markers, verdicts, and draft state unchanged
   except where section 6 names an edit. This project changes how a head is
@@ -343,7 +345,9 @@ The method is a sequence one agent performs in one conversation. Where the
 host runs subagents, the passes in section 3.3 may run in parallel and the
 second look in section 3.5 may go to a fresh agent. The text describes what
 to read and check and never names a host's tool, a permission model, or a
-path outside `skills/start-review-loop/`.
+path on the reviewer's machine. Names relative to the repository under
+review, such as `AGENTS.md`, `docs/`, and `.projector.toml`, are what the
+method reads and are allowed.
 
 ## 6. Files
 
@@ -384,7 +388,9 @@ path outside `skills/start-review-loop/`.
   head", documents `covered=` in the review marker, and shows the three-part
   finding shape.
 - `skills/start-fix-loop/SKILL.md` cites the protocol by path.
-- Neither skill names a host tool or a path outside `skills/`.
+- Neither skill names a host-specific tool or a path on the reviewer's
+  machine. Repository-relative names, such as `AGENTS.md`, `docs/`, and
+  `.projector.toml`, are allowed.
 - The packaging test fails when `method.md` is removed and passes on the
   branch.
 - The full validation gate in `AGENTS.md` passes from the repository root.
