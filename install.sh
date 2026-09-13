@@ -244,7 +244,10 @@ report_checkout() {
   elif ! GIT_TERMINAL_PROMPT=0 git -C "$REPO" fetch --quiet "$remote" 2>/dev/null; then
     note=" (could not fetch $remote; compared against its last fetch)"
   fi
-  behind="$(git -C "$REPO" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)"
+  if ! behind="$(git -C "$REPO" rev-list --count "HEAD..$upstream" 2>/dev/null)"; then
+    printf '%-14s %s\n' "repo-untracked" "$branch tracks $upstream, which no longer exists$note"
+    return 0
+  fi
   if [ "$behind" -eq 0 ]; then
     printf '%-14s %s\n' "repo-current" "$branch matches $upstream$note"
     return 0

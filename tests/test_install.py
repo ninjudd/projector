@@ -216,6 +216,29 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("repo-untracked detached HEAD has no upstream", result.stdout)
 
+    def test_a_pruned_upstream_is_named_rather_than_read_as_current(self) -> None:
+        # A feature branch whose remote counterpart was deleted after merge:
+        # the clone still tracks it, and a pruning fetch removes the ref in
+        # the middle of the check, so the count has nothing to run against.
+        checkout, seed = self.clone_with_remote()
+        self.git(seed, "checkout", "--quiet", "-b", "feat")
+        (seed / "feat.txt").write_text("merged and gone\n")
+        self.git(seed, "add", "-A")
+        self.git(seed, "commit", "--quiet", "-m", "Feature")
+        self.git(seed, "push", "--quiet", "-u", "origin", "feat")
+        self.git(checkout, "fetch", "--quiet", "origin")
+        self.git(checkout, "checkout", "--quiet", "feat")
+        self.git(seed, "push", "--quiet", "origin", "--delete", "feat")
+        self.git(checkout, "config", "fetch.prune", "true")
+
+        result = self.installer_in(checkout, "status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "repo-untracked feat tracks origin/feat, which no longer exists", result.stdout
+        )
+        self.assertNotIn("repo-current", result.stdout)
+
     def test_host_installs_remove_only_exact_legacy_links(self) -> None:
         self.claude.mkdir()
         self.codex.mkdir()
