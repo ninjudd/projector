@@ -68,6 +68,10 @@ class InstallTests(unittest.TestCase):
             "PROJECTOR_TEST_STATE": str(self.state),
             "PROJECTOR_CLAUDE_COMMAND": str(self.fake_bin / "host-a"),
             "PROJECTOR_CODEX_COMMAND": str(self.fake_bin / "host-b"),
+            # The installer fetches the checkout's upstream before it says
+            # whether the checkout is behind; this repository's upstream is
+            # GitHub, which a unit test must not reach for.
+            "PROJECTOR_OFFLINE": "1",
         }
 
     def tearDown(self) -> None:
@@ -82,6 +86,135 @@ class InstallTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def installer_in(
+        self, checkout: Path, target: str, *, offline: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the copy of install.sh inside `checkout`, so its REPO is that clone.
+
+        The clone's remote is a bare repository on disk, so fetching it is
+        safe; `offline` keeps the switch the other tests set.
+        """
+
+        environment = dict(self.environment)
+        if not offline:
+            del environment["PROJECTOR_OFFLINE"]
+        return subprocess.run(
+            [str(checkout / "install.sh"), target],
+            cwd=checkout,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def git(self, repo: Path, *arguments: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+             "-C", str(repo), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def clone_with_remote(self) -> tuple[Path, Path]:
+        """A clone of a bare remote holding the installer, and a second clone
+        through which a test moves that remote ahead."""
+
+        # The branch is `trunk` rather than `main` so that a pre-push hook
+        # guarding the real default branch names on every remote, which
+        # this repository's instructions ask contributors to keep, does not
+        # refuse the fixture's own pushes.
+        remote = self.user_root / "remote.git"
+        subprocess.run(
+            ["git", "init", "--quiet", "--bare", "--initial-branch=trunk", str(remote)],
+            check=True, capture_output=True,
+        )
+        seed = self.user_root / "seed"
+        self.git(self.user_root, "clone", "--quiet", str(remote), str(seed))
+        shutil.copy(ROOT / "install.sh", seed / "install.sh")
+        (seed / ".claude-plugin").mkdir()
+        shutil.copy(ROOT / ".claude-plugin" / "plugin.json", seed / ".claude-plugin" / "plugin.json")
+        self.git(seed, "add", "-A")
+        self.git(seed, "commit", "--quiet", "-m", "Seed")
+        self.git(seed, "push", "--quiet", "-u", "origin", "trunk")
+        checkout = self.user_root / "checkout"
+        self.git(self.user_root, "clone", "--quiet", str(remote), str(checkout))
+        return checkout, seed
+
+    def advance(self, seed: Path, count: int) -> None:
+        for index in range(count):
+            (seed / f"change-{index}.txt").write_text("moved on\n")
+            self.git(seed, "add", "-A")
+            self.git(seed, "commit", "--quiet", "-m", f"Change {index}")
+        self.git(seed, "push", "--quiet", "origin", "trunk")
+
+    def test_status_says_how_far_behind_its_upstream_the_checkout_is(self) -> None:
+        checkout, seed = self.clone_with_remote()
+        self.advance(seed, 2)
+
+        result = self.installer_in(checkout, "status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("repo-behind    ⚠️  trunk is 2 commits behind origin/trunk", result.stdout)
+        self.assertIn(f"run git pull in {checkout}", result.stdout)
+        # Captured output is not a terminal, so the row carries no color.
+        self.assertNotIn("\033[", result.stdout)
+
+    def test_status_reports_a_checkout_matching_its_upstream(self) -> None:
+        checkout, _ = self.clone_with_remote()
+
+        result = self.installer_in(checkout, "status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("repo-current   trunk matches origin/trunk\n", result.stdout)
+        self.assertNotIn("⚠️", result.stdout)
+
+    def test_install_ends_by_saying_the_checkout_is_behind(self) -> None:
+        checkout, seed = self.clone_with_remote()
+        self.advance(seed, 1)
+
+        result = self.installer_in(checkout, "cli")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"pipx install --force {checkout}", self.log.read_text())
+        self.assertIn("trunk is 1 commit behind origin/trunk", result.stdout.splitlines()[-1])
+
+    def test_an_unreachable_remote_compares_against_the_last_fetch(self) -> None:
+        checkout, seed = self.clone_with_remote()
+        self.advance(seed, 1)
+        self.git(checkout, "remote", "set-url", "origin", str(self.user_root / "gone.git"))
+
+        result = self.installer_in(checkout, "status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "repo-current   trunk matches origin/trunk "
+            "(could not fetch origin; compared against its last fetch)",
+            result.stdout,
+        )
+
+    def test_offline_skips_the_fetch_and_says_so(self) -> None:
+        checkout, seed = self.clone_with_remote()
+        self.advance(seed, 1)
+
+        result = self.installer_in(checkout, "status", offline=True)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "repo-current   trunk matches origin/trunk "
+            "(offline; compared against the last fetch of origin)",
+            result.stdout,
+        )
+
+    def test_a_detached_checkout_has_nothing_to_compare_against(self) -> None:
+        checkout, _ = self.clone_with_remote()
+        self.git(checkout, "checkout", "--quiet", "--detach")
+
+        result = self.installer_in(checkout, "status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("repo-untracked detached HEAD has no upstream", result.stdout)
 
     def test_host_installs_remove_only_exact_legacy_links(self) -> None:
         self.claude.mkdir()
