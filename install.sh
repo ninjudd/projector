@@ -226,7 +226,9 @@ warn_row() {
 # so a checkout nobody pulled installs an old command beside a current plugin
 # and the two version numbers then look like a bug. Fetch the checkout's
 # upstream and say how far behind it is. PROJECTOR_OFFLINE=1 skips the fetch
-# and compares against the last one.
+# and compares against the last one. The fetch gives up after fifteen seconds
+# of a stalled HTTP transfer, so a bad network delays the row rather than
+# hanging the installer on it.
 report_checkout() {
   local branch upstream remote behind commits hint note=""
   git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
@@ -241,7 +243,8 @@ report_checkout() {
   remote="${upstream%%/*}"
   if [ -n "${PROJECTOR_OFFLINE:-}" ]; then
     note=" (offline; compared against the last fetch of $remote)"
-  elif ! GIT_TERMINAL_PROMPT=0 git -C "$REPO" fetch --quiet "$remote" 2>/dev/null; then
+  elif ! GIT_TERMINAL_PROMPT=0 git -C "$REPO" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 \
+      fetch --quiet "$remote" 2>/dev/null; then
     note=" (could not fetch $remote; compared against its last fetch)"
   fi
   if ! behind="$(git -C "$REPO" rev-list --count "HEAD..$upstream" 2>/dev/null)"; then

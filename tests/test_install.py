@@ -121,10 +121,9 @@ class InstallTests(unittest.TestCase):
         """A clone of a bare remote holding the installer, and a second clone
         through which a test moves that remote ahead."""
 
-        # The branch is `trunk` rather than `main` so that a pre-push hook
-        # guarding the real default branch names on every remote, which
-        # this repository's instructions ask contributors to keep, does not
-        # refuse the fixture's own pushes.
+        # The branch is `trunk` rather than `main`, so that a hook on a
+        # developer's machine that guards the default branch names on every
+        # remote does not refuse the fixture's own pushes.
         remote = self.user_root / "remote.git"
         subprocess.run(
             ["git", "init", "--quiet", "--bare", "--initial-branch=trunk", str(remote)],

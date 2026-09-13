@@ -330,11 +330,12 @@ project upgrade status   # ./install.sh status
 The command finds the checkout in the source pip recorded at install time, so
 it needs neither a repository nor a working directory inside one. It prints the
 command it runs on stderr, then the installer's own output, and exits with the
-installer's status. The installer's last line says whether that checkout is
-behind its upstream; a `repo-behind` row means the command it just built is
-older than main, so pull and run `upgrade` again. Targets are the installer's
-to validate: an unknown one is its usage error, exit 64. See
-[the plugin guide](plugins.md) for what each target does.
+installer's status. The install targets end with a row saying whether that
+checkout is behind its upstream, and `status` opens with it; a `repo-behind`
+row means the command just built is older than main, so pull and run
+`upgrade` again. Targets are the installer's to validate: an unknown one is
+its usage error, exit 64. See [the plugin guide](plugins.md) for what each
+target does.
 
 A command installed from a Git URL rather than a checkout has no `install.sh`
 to run, so `upgrade` exits 69 and names the URL. It also exits 69 when the
