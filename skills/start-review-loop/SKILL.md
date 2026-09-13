@@ -409,11 +409,11 @@ the thread test from its side: `RESPONDED` fires only when every thread is
 resolved. `NEW HEAD` cannot, because a push says nothing about threads, so on
 every head the check is yours.
 
-**Findings open, self-review:** submit a `COMMENT` review, verdict
+**Threads open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
 --undo`.
 
-**Findings open, cross-author:** submit a `REQUEST_CHANGES` review, verdict
+**Threads open, cross-author:** submit a `REQUEST_CHANGES` review, verdict
 `changes-requested`. Leave draft state alone.
 
 **Clean head, self-review:** submit a `COMMENT` review naming the exact SHA and

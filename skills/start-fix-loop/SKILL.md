@@ -91,10 +91,11 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
 of a body-only finding in a pull-request-level comment because there is no
 thread to reply to or resolve.
 
-A `Suggestions` list in a Projector review body is not a body-only finding.
-Leave it to the author, and act on an item only when the user asks. A clean
-verdict above such a list is a clean head, and a push made to act on a
-suggestion is the user's choice, never this loop's.
+A `Suggestions` list in a Projector review body is not a body-only finding,
+and no item on it is outstanding work. Weigh each item yourself: take it when
+the improvement is worth a push and the review cycle that follows, and leave
+it when it is not. A clean verdict above such a list is a clean head either
+way, and an item you leave needs no reply.
 
 A `DRAFT` line is not itself a finding. It says the head has not been signed
 off, so look for the work in that pull request's threads and review bodies. A

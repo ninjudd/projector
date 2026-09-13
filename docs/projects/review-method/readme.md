@@ -344,11 +344,12 @@ section 3.5 of the method by path: verify the claim by the four steps, and
 decline a finding by naming the guard with the quoted code that shows it.
 
 The same skill gains one rule about the `Suggestions` list: it is not a
-body-only finding. The fix loop leaves it to the author and acts on an item
-only when the user asks. A `REVIEW` event whose body carries a clean verdict
-and a `Suggestions` list is therefore no work for the loop, and a push made
-to act on a suggestion is the user's choice, never the loop's. Nothing else
-in that skill changes.
+body-only finding, and no item on it is outstanding work. The fix loop weighs
+each item itself, taking it when the improvement is worth a push and the
+review cycle that follows and leaving it otherwise. A `REVIEW` event whose
+body carries a clean verdict and a `Suggestions` list is a clean head either
+way, and an item the loop leaves needs no reply. Nothing else in that skill
+changes.
 
 ## 5. Host neutrality
 
@@ -376,8 +377,9 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
   are listed in the body, and the clean-head rule counts only P1 and P2, so a
   review that posts no thread is clean whatever its `Suggestions` list holds.
 - `skills/start-fix-loop/SKILL.md`: the verify step cites the protocol, and a
-  new sentence in "Establish the loop", beside the rule for body-only
-  findings, says a `Suggestions` list is left to the author.
+  new paragraph in "Establish the loop", beside the rule for body-only
+  findings, says a `Suggestions` list is weighed item by item at the loop's
+  discretion and never counts as outstanding work.
 - `tests/test_packaging.py`: a test asserting that
   `skills/start-review-loop/method.md` exists and that both loop skills cite
   it, so a rename fails the gate instead of leaving a dangling reference.
@@ -409,7 +411,8 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
   only P1 and P2 findings are threads and that only they decide whether a
   head is clean.
 - `skills/start-fix-loop/SKILL.md` cites the protocol by path and says a
-  `Suggestions` list is not a body-only finding.
+  `Suggestions` list is not a body-only finding and is weighed at the loop's
+  discretion.
 - `method.md` and the text section 6 adds to either skill name no
   host-specific tool and no path on the reviewer's machine. Names relative
   to the repository, such as `AGENTS.md` and `docs/`, and Projector's own
@@ -448,13 +451,14 @@ allowed, as are Projector's own configuration files, `.projector.toml` and
 - **No cap on findings.** A fixed maximum with the remainder withheld was
   rejected because a withheld verified defect is a defect nobody fixes. The
   shipping rules and the P3 body list carry the precision instead.
-- **P3 lives in the body, and the fix loop leaves it there.** A suggestion
-  posted as a thread puts the pull request in draft and makes the author
-  resolve a nitpick before a reader sees the head as clean. Letting the fix
-  loop act on the list instead was rejected because every suggestion would
-  then become a push, a new head, and a new review cycle on a pull request
-  already marked ready, which is the cost the body list exists to avoid. The
-  list is for a person to read; an item becomes work when the user says so.
+- **P3 lives in the body, and the fix loop weighs it.** A suggestion posted
+  as a thread puts the pull request in draft and makes the author resolve a
+  nitpick before a reader sees the head as clean. Whether to act on a body
+  item is the fix loop's judgment, made item by item against the cost of a
+  push and the review cycle that follows. Acting on every item was rejected
+  because it turns each suggestion into a cycle on a pull request already
+  marked ready, and acting only when the user asks was rejected because it
+  makes a person relay improvements the loop can see for itself.
 - **Priorities are defined by introduction and impact,** not by pass. A pass
   says where to look; a priority says what happens if nobody acts.
 - **The second look starts from the claim alone.** A verifier that reads the
