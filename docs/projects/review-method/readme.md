@@ -521,6 +521,9 @@ has evidence:
 - The full gate passes: 120 tests, valid plans, both plugin validations,
   and a clean whitespace check.
 - The review under the method is the one section 11 describes.
+- The plugin version moves from 0.2.3 to 0.2.4 in both manifests, so a host
+  that caches the plugin by version installs the new skill text on its next
+  update.
 
 Section 4's rule for a `Suggestions` list changed during implementation,
 from acting only when the user asks to weighing each item at the loop's
