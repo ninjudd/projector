@@ -301,9 +301,11 @@ requires, reads in this order:
    `path:line` and the change.
 6. On a clean head, what was checked, as the skill already requires.
 
-The review marker gains `covered=<read>/<changed>` after `seconds=`. The
-version stays `v=1`: no watcher parses the review marker, and the collision
-check matches `projector-review .* sha=`, so an added field breaks nothing.
+The review marker gains `covered=<read>/<changed>` after `seconds=`. Its
+`findings=` count is the number of P1 and P2 threads this review opens; P3
+items in the body are not findings and are not counted. The version stays
+`v=1`: no watcher parses the review marker, and the collision check matches
+`projector-review .* sha=`, so an added field breaks nothing.
 
 Each finding thread's first comment, after its marker, has three parts:
 
@@ -337,7 +339,13 @@ does.
 `skills/start-fix-loop/SKILL.md` step 1 under "Verify and fix findings" cites
 section 3.5 of the method by path: verify the claim by the four steps, and
 decline a finding by naming the guard with the quoted code that shows it.
-Nothing else in that skill changes.
+
+The same skill gains one rule about the `Suggestions` list: it is not a
+body-only finding. The fix loop leaves it to the author and acts on an item
+only when the user asks. A `REVIEW` event whose body carries a clean verdict
+and a `Suggestions` list is therefore no work for the loop, and a push made
+to act on a suggestion is the user's choice, never the loop's. Nothing else
+in that skill changes.
 
 ## 5. Host neutrality
 
@@ -355,10 +363,17 @@ method reads and are allowed.
   instructions to the reviewer.
 - `skills/start-review-loop/SKILL.md`: steps 5 and 6 under "Review an exact
   head" become a pointer to `method.md` with a one-sentence summary. "Label
-  every review and finding" gains the `covered=` field, the body order in
-  section 3.7, the three-part finding shape, and the priority definitions in
-  section 3.6, replacing its current sentence about visible finding text.
-- `skills/start-fix-loop/SKILL.md`: the verify step cites the protocol.
+  every review and finding" gains the `covered=` field, the definition of
+  `findings=` as the count of P1 and P2 threads, the body order in section
+  3.7, the three-part finding shape, and the priority definitions in section
+  3.6, replacing its current sentence about visible finding text. "Publish
+  one review" changes in two places: the sentence that every finding goes out
+  as an inline thread now says every P1 and P2 finding does and that P3 items
+  are listed in the body, and the clean-head rule counts only P1 and P2, so a
+  review that posts no thread is clean whatever its `Suggestions` list holds.
+- `skills/start-fix-loop/SKILL.md`: the verify step cites the protocol, and a
+  new sentence in "Establish the loop", beside the rule for body-only
+  findings, says a `Suggestions` list is left to the author.
 - `tests/test_packaging.py`: a test asserting that
   `skills/start-review-loop/method.md` exists and that both loop skills cite
   it, so a rename fails the gate instead of leaving a dangling reference.
@@ -385,9 +400,12 @@ method reads and are allowed.
   with the second-look rule; the shipping rules and P1, P2, P3 definitions;
   and the body order and finding shape.
 - `skills/start-review-loop/SKILL.md` cites `method.md` from "Review an exact
-  head", documents `covered=` in the review marker, and shows the three-part
-  finding shape.
-- `skills/start-fix-loop/SKILL.md` cites the protocol by path.
+  head", documents `covered=` and the `findings=` count in the review marker,
+  shows the three-part finding shape, and states in "Publish one review" that
+  only P1 and P2 findings are threads and that only they decide whether a
+  head is clean.
+- `skills/start-fix-loop/SKILL.md` cites the protocol by path and says a
+  `Suggestions` list is not a body-only finding.
 - Neither skill names a host-specific tool or a path on the reviewer's
   machine. Repository-relative names, such as `AGENTS.md`, `docs/`, and
   `.projector.toml`, are allowed.
@@ -424,10 +442,13 @@ method reads and are allowed.
 - **No cap on findings.** A fixed maximum with the remainder withheld was
   rejected because a withheld verified defect is a defect nobody fixes. The
   shipping rules and the P3 body list carry the precision instead.
-- **P3 lives in the body.** A suggestion posted as a thread puts the pull
-  request in draft and makes the author resolve a nitpick before a reader sees
-  the head as clean. The fix loop already handles body-only findings, so
-  nothing new is needed on that side.
+- **P3 lives in the body, and the fix loop leaves it there.** A suggestion
+  posted as a thread puts the pull request in draft and makes the author
+  resolve a nitpick before a reader sees the head as clean. Letting the fix
+  loop act on the list instead was rejected because every suggestion would
+  then become a push, a new head, and a new review cycle on a pull request
+  already marked ready, which is the cost the body list exists to avoid. The
+  list is for a person to read; an item becomes work when the user says so.
 - **Priorities are defined by introduction and impact,** not by pass. A pass
   says where to look; a priority says what happens if nobody acts.
 - **The second look starts from the claim alone.** A verifier that reads the
@@ -446,7 +467,5 @@ method reads and are allowed.
 
 ## 10. Open questions
 
-None block implementation. Whether P3 items should ever become threads, for
-instance when an author asks for them, is deferred until a few reviews under
-the method show whether the body list gets acted on. Whether a host runs the
-passes in parallel affects wall-clock time and nothing in this plan.
+None block implementation. Whether a host runs the passes in parallel
+affects wall-clock time and nothing in this plan.
