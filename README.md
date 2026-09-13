@@ -65,8 +65,10 @@ upgrade to inspect those paths.
 
 The plugin provides `plan-project`, `work-project`, `finish-project`,
 `start-review-loop`, and `start-fix-loop`. Claude invokes a plugin skill as
-`/projector:<skill>`; Codex invokes it as `$<skill>`. The core workflows use
-the local CLI and do not require MCP.
+`/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop
+inspects each head by the method in `skills/start-review-loop/method.md`,
+and the fix loop verifies findings by the same protocol. The core workflows
+use the local CLI and do not require MCP.
 
 ## Adopt Projector in a repository
 
