@@ -97,6 +97,19 @@ is where an upgrade refreshes from. `plugin-current` reports an installed
 plugin at the checkout's manifest version, `plugin-stale` one at another
 version, and `plugin-absent` a host with none.
 
+The first row is about the checkout itself. The installer fetches the current
+branch's upstream and prints `repo-current` when the checkout matches it,
+`repo-behind` with the commit count and a `git pull` hint when it does not,
+and `repo-untracked` when a detached `HEAD` or a branch without an upstream
+leaves nothing to compare against. `repo-behind` carries a ⚠️ marker and
+prints in bold yellow on a terminal, because the command is built from the
+checkout while a GitHub marketplace serves the plugin, so a checkout nobody
+pulled installs an old command beside a current plugin and the two version
+numbers look like a bug. Every install target prints the same row last. Set
+`PROJECTOR_OFFLINE=1` to skip the fetch and compare against the last one; a
+fetch that fails does the same and says so in the row. Set `NO_COLOR` to keep
+the row plain.
+
 `project upgrade <target>` runs this installer from any directory, for a
 command installed from this checkout: `project upgrade cli` is
 `./install.sh cli`, and `project upgrade status` is `./install.sh status`.
