@@ -64,8 +64,8 @@ implementation gives the review nothing to find:
   twice is a finding the review will file.
 
 Each has a place the plan already has: reuse and replacement among the
-decisions, cost among the constraints, and the proof of both beside the
-acceptance criteria.
+decisions, cost among the constraints, and the correctness proof and the cost
+measurement beside the acceptance criteria.
 
 Number sections and append new sections without renumbering existing ones.
 Write paths and identifiers exactly. Keep durable decisions in the plan rather
@@ -86,7 +86,7 @@ Projector section in `AGENTS.md` without touching the repository's own text.
 
 Confirm that the status makes an honest readiness claim, the priority matches
 the user's real scheduling intent, the acceptance criteria are observable, the
-plan says what it reuses, replaces, and measures, and every open question has
-an owner or deliberate deferral. Leave the plan changes
-visible for ordinary Git review; do not commit, push, or open a pull request
-unless the user or repository workflow asks for those actions.
+plan says what it reuses, replaces, and measures or why cost does not matter,
+and every open question has an owner or deliberate deferral. Leave the plan
+changes visible for ordinary Git review; do not commit, push, or open a pull
+request unless the user or repository workflow asks for those actions.

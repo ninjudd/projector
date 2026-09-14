@@ -34,16 +34,17 @@ nearly every change:
   an input is missing, when the call repeats, when the operation fails or is
   cancelled, and at zero, empty, and maximum. Write the test that pins the
   answer while the reasoning is fresh.
-- **Performance.** Know how often the code you touch runs before you add
-  work to it. Measure the paths the plan named as hot, and put no new read,
-  allocation, or request inside a loop or a per-request path the plan did
-  not budget for.
-- **Reuse.** Search the repository before writing a helper, and use the one
-  you find. When you write the same shape a second time, extract it then,
-  not later. When the change replaces something, delete the old path, move
-  every caller, and search for the old name afterwards so nothing still
-  refers to what is gone. Leave no stub, no commented-out block, and no
-  compatibility wrapper the plan did not ask for.
+- **Performance**, the Cost pass. Know how often the code you touch runs
+  before you add work to it. Measure the paths the plan named as hot, and
+  put no new read, allocation, or request inside a loop or a per-request
+  path the plan did not budget for.
+- **Reuse**, the Simplicity pass. Search the repository before writing a
+  helper, and use the one you find. When you write the same shape a second
+  time, extract it then, not later. When the change replaces something,
+  delete the old path, move every caller, and search for the old name
+  afterwards so nothing still refers to what is gone. Leave no stub, no
+  commented-out block, and no compatibility wrapper the plan did not ask
+  for.
 
 Update the project plan in the same change whenever implementation settles a
 decision, changes scope, reveals a new constraint, or completes an acceptance
