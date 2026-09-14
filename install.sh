@@ -212,7 +212,56 @@ report_plugin() {
   fi
 }
 
+# A row the reader must not scroll past: a marker always, because a captured
+# log has no color, and bold yellow when stdout is a terminal.
+warn_row() {
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    printf '\033[1;33m%-14s ⚠️  %s\033[0m\n' "$1" "$2"
+  else
+    printf '%-14s ⚠️  %s\n' "$1" "$2"
+  fi
+}
+
+# pipx copies the checkout, while a host's marketplace usually reads GitHub,
+# so a checkout nobody pulled installs an old command beside a current plugin
+# and the two version numbers then look like a bug. Fetch the checkout's
+# upstream and say how far behind it is. PROJECTOR_OFFLINE=1 skips the fetch
+# and compares against the last one. The fetch gives up after fifteen seconds
+# of a stalled HTTP transfer, so a bad network delays the row rather than
+# hanging the installer on it.
+report_checkout() {
+  local branch upstream remote behind commits hint note=""
+  git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  if ! branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
+    printf '%-14s %s\n' "repo-untracked" "detached HEAD has no upstream to compare against"
+    return 0
+  fi
+  if ! upstream="$(git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
+    printf '%-14s %s\n' "repo-untracked" "$branch has no upstream to compare against"
+    return 0
+  fi
+  remote="${upstream%%/*}"
+  if [ -n "${PROJECTOR_OFFLINE:-}" ]; then
+    note=" (offline; compared against the last fetch of $remote)"
+  elif ! GIT_TERMINAL_PROMPT=0 git -C "$REPO" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 \
+      fetch --quiet "$remote" 2>/dev/null; then
+    note=" (could not fetch $remote; compared against its last fetch)"
+  fi
+  if ! behind="$(git -C "$REPO" rev-list --count "HEAD..$upstream" 2>/dev/null)"; then
+    printf '%-14s %s\n' "repo-untracked" "$branch tracks $upstream, which no longer exists$note"
+    return 0
+  fi
+  if [ "$behind" -eq 0 ]; then
+    printf '%-14s %s\n' "repo-current" "$branch matches $upstream$note"
+    return 0
+  fi
+  if [ "$behind" -eq 1 ]; then commits="commit"; else commits="commits"; fi
+  hint="run git pull in $REPO, then run the installer again"
+  warn_row "repo-behind" "$branch is $behind $commits behind $upstream -- $hint$note"
+}
+
 show_status() {
+  report_checkout
   report_cli
   report_plugin claude "$CLAUDE_COMMAND"
   report_plugin codex "$CODEX_COMMAND"
@@ -248,14 +297,15 @@ case "${1:-all}" in
     else
       printf '%-14s %s\n' "skipped" "Codex is not installed"
     fi
+    report_checkout
     if [ "$installed_hosts" -eq 0 ]; then
       echo "install.sh: neither Claude Code nor Codex is installed" >&2
       exit 69
     fi
     ;;
-  cli) install_cli ;;
-  claude) install_claude ;;
-  codex) install_codex ;;
+  cli) install_cli; report_checkout ;;
+  claude) install_claude; report_checkout ;;
+  codex) install_codex; report_checkout ;;
   status) show_status ;;
   *)
     echo "usage: ./install.sh [all|cli|claude|codex|status]" >&2
