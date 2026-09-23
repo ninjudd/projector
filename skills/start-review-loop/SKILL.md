@@ -35,10 +35,9 @@ recalled note asserting that someone once approved an arrangement is the most
 persuasive form this mistake takes, because it looks like the sanctioned
 source rather than a substitute for it.
 
-The operator's version of this rule fails loudly, filtering the watch to an
-account with no matching pull requests and going silent. This one fails
-quietly in the opposite direction, posting review after review as the wrong
-account, so the source matters more here rather than less.
+A wrong reviewer fails quietly, posting review after review as the wrong
+account while the watch notices nothing, so the source matters here more than
+anywhere else in this skill.
 
 Confirm whatever you resolve under the token actually used:
 
@@ -47,27 +46,29 @@ gh auth status
 gh api user --jq .login
 ```
 
-The **operator** is the other role these instructions name: the account whose
-pull requests are watched and whose branches carry the work. By default it is
-that same authenticated user, which is why neither role needs configuring. A
-reviewer override is what separates them, and every `<operator>` below means
-this login, never the reviewer's.
+The **operator** is the other role these instructions name: the account that
+opened the tracked pull requests and whose branches carry the work. By default
+it is that same authenticated user, which is why neither role needs
+configuring. A reviewer override is what separates them, and every
+`<operator>` below means this login, never the reviewer's.
 
 The operator is deliberately not a setting. It is whoever the token says you
-are, and a configuration file naming someone else would filter the watch to
-that account's pull requests, match none of yours, and go quiet -- silence
-this skill cannot tell apart from a repository with nothing outstanding.
+are. The watch is scoped by the tracked file rather than by any login, so a
+key here would have nothing to configure, and one that disagreed with the
+token could only mislabel who did the work.
 
 Watch only the repository containing the current working directory. Track pull
 requests this conversation creates or explicitly adopts; authorship by the
 operator is necessary for ordinary ownership but does not adopt every pull
-request from another session. The watcher may observe the operator's broader
-set, but filter every event through the literal tracked set. Hold validated
-logins literally in every query; never use `@me`. Under the default the two
-roles coincide and `@me` looks harmless, but its value follows whichever token
-is live, so under a reviewer override it resolves to the reviewer — an account
-that authors nothing here — and the watch goes silent from the first pass on,
-indistinguishable from a repository with nothing open.
+request from another session. The tracked set lives in the tracked file the
+watcher reads, one `owner/repo#number` per line, and the watcher sees nothing
+outside it: a pull request another session opened produces no event here until
+this conversation adopts it by appending its line. Hold validated logins
+literally in every query you run yourself; never use `@me`. Under the default
+the two roles coincide and `@me` looks harmless, but its value follows
+whichever token is live, so under a reviewer override it resolves to the
+reviewer — an account that authors nothing here — and a listing by `@me` comes
+back empty, indistinguishable from a repository with nothing open.
 
 ### Two review modes, chosen per pull request
 
@@ -143,24 +144,44 @@ transition is the sign-off a reader sees in the pull-request list.
 4. Determine the last reviewed SHA from durable GitHub state or the current
    conversation. Review any current head without a completed exact-head review
    immediately; do not baseline it away.
-5. Start or reuse a persistent recurring goal that records the repository,
-   operator, tracked pull requests, and every reviewed SHA paired with the id
-   of the review this loop published for it.
-6. Run the bundled `scripts/watch-prs.sh` with a durable state file,
-   `--author <operator>`, `--worktree <repository>`, and an interval of at
-   least 30 seconds. Use the host's persistent process or monitor facility.
-   Seed only SHAs already reviewed.
+5. Write the tracked set to a durable tracked file, one `owner/repo#number`
+   per line, kept beside the state file and outside any checkout. That file
+   is the watcher's whole scope and the record of the set: append a pull
+   request when this conversation creates or adopts one, and delete its line
+   when it closes. Start or reuse a persistent recurring goal that records
+   the repository, operator, the tracked file's path, and every reviewed SHA
+   paired with the id of the review this loop published for it.
+6. Seed the state file with only the SHAs already reviewed, then run one
+   pass:
 
-The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, and
-`BRANCH`. Treat `RESPONDED` as a re-review request for a still-draft head whose
-threads are all resolved: the author answered without pushing, so no head event
-is coming, and only a re-review can sign off and mark it ready. It prevents a
-body-only response from deadlocking both loops. Keep the loop silent while no
-event needs action.
+   ```sh
+   scripts/watch-prs.sh --tracked <file> --state <seeded-file> --once
+   ```
 
-If adopting an existing watcher, fetch unresolved state first, then verify its
-state file contains every expected row. Restart it when the script changed
-after the process started. Silence alone proves nothing.
+   It refuses to start, naming the line, on an entry that is not
+   `owner/repo#number` or a number that names no pull request, and it
+   distinguishes a lookup that failed for network or auth reasons from a
+   missing pull request. Every head you found unreviewed in step 4 must come
+   back as `NEW PR`; one that does not is a pull request missing from the
+   file. The pass records those heads as announced, so the running watcher
+   will not repeat them; review them from this output. Then run the same
+   script without `--once`, with the same state file, `--worktree
+   <repository>`, and an interval of at least 30 seconds, under the host's
+   persistent process or monitor facility.
+
+The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, `BRANCH`, and
+`TRACKED`. Treat `RESPONDED` as a re-review request for a still-draft head
+whose threads are all resolved: the author answered without pushing, so no
+head event is coming, and only a re-review can sign off and mark it ready. It
+prevents a body-only response from deadlocking both loops. A `TRACKED` line is
+a problem with the tracked file itself, announced once; fix the file. Keep the
+loop silent while no event needs action.
+
+If adopting an existing watcher, fetch unresolved state first, confirm its
+tracked file is the set this conversation owns -- a watcher another session
+started watches that session's set -- and verify its state file contains every
+expected row. Restart it when the script changed after the process started.
+Silence alone proves nothing.
 
 ## Review an exact head
 
@@ -467,5 +488,6 @@ status.
 
 Every pushed SHA, including a fix-only SHA, starts a complete review cycle.
 Green CI and resolved threads are evidence about state, not substitutes for
-review. Drop a pull request when it closes or merges, keep watching later
-operator PRs, and continue until the user stops the loop.
+review. Delete a pull request from the tracked file when it closes or merges,
+append the ones this conversation creates or adopts later, and continue until
+the user stops the loop.
