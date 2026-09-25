@@ -38,10 +38,11 @@ and its generated code.
 | Scripts and tooling | Correctness, simplicity, exposure, written rules |
 | Source code | Every pass |
 
-Run the written-rules pass only when the repository has rules to cite:
-`AGENTS.md`, `CLAUDE.md`, a contributing guide, a pull request template, or
-style documents under `docs/`. The review runs the union of passes across
-the kinds present.
+The written-rules pass always has one document to cite: `../guidelines.md`,
+the code guidelines every Projector skill shares. Add the repository's own
+rule documents when it has them: `AGENTS.md`, `CLAUDE.md`, a contributing
+guide, a pull request template, or style documents under `docs/`. The review
+runs the union of passes across the kinds present.
 
 ## 3. Run the passes
 
@@ -168,14 +169,18 @@ describes. Do not guess either way.
 
 ### Written rules
 
-Does the change follow what the repository wrote down?
+Does the change follow what was written down, in Projector's code guidelines
+and in the repository's own rule documents?
 
-Read the parts of the repository's rule documents that bear on the changed
-files, then read the diff against them. A finding here names the document and
-the section it enforces, or it is a preference and does not ship. When the
-rule is one the repository's own merged commits keep breaking, report the
-gap between the document and the practice as a P3 rather than as this
-change's fault.
+Read `../guidelines.md` first. It applies in every repository, and its
+sections are the rules this pass enforces on comments and on whatever it adds
+later; the repository's own documents outrank it where the two disagree. Then
+read the parts of the repository's rule documents that bear on the changed
+files, and read the diff against both. A finding here names the document and
+the section it enforces, `guidelines.md § 1` or the repository document and
+heading, or it is a preference and does not ship. When the rule is one the
+repository's own merged commits keep breaking, report the gap between the
+document and the practice as a P3 rather than as this change's fault.
 
 ## 4. Follow the change outward
 

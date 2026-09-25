@@ -210,7 +210,10 @@ For every new head:
    the change's intent, sort the changed files, run the passes, follow every
    changed definition to the code that depends on it, and verify each
    candidate finding by the four-step protocol before it becomes a thread.
-   Cover both the new range and the pull-request-wide integration diff.
+   The written-rules pass reads the head against `../guidelines.md`, the code
+   guidelines every Projector skill shares, before the repository's own rule
+   documents. Cover both the new range and the pull-request-wide integration
+   diff.
 6. Run focused tests and reproductions proportional to risk. A candidate the
    protocol cannot verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
