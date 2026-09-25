@@ -327,7 +327,8 @@ threads:
 - **P1.** A defect the change introduces or worsens, with concrete impact on
   users, data, money, availability, or security. A thread; blocks.
 - **P2.** A defect the change introduces with bounded impact, or a violation
-  of a rule the repository wrote down. A thread; blocks.
+  of a rule the repository wrote down or of a section of `../guidelines.md`.
+  A thread; blocks.
 - **P3.** A change the code is correct without: a simplification, dead code,
   a gap between a written rule and practice, a defect already present at the
   base. One line in the body's `Suggestions` list; never a thread, never

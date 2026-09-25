@@ -102,8 +102,7 @@ class PackagingTests(unittest.TestCase):
 
         # The same three skills write to, review against, and fix to one
         # guidelines file, so a rule cannot be enforced by one and unknown to
-        # another. The method cites it for its written-rules pass, and each
-        # skill names it so a reader of any one of them finds the rules.
+        # another.
         self.assertTrue(guidelines.is_file())
         self.assertIn("## 1. Comments", guidelines.read_text())
         self.assertNotIn("ninjudd", guidelines.read_text())

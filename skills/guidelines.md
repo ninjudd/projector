@@ -28,8 +28,9 @@ the code it protects.
 
 Never use a comment to narrate what the code beneath it plainly does, to
 excuse complexity the change could have removed, or to assert that a decision
-is correct rather than say why it was made. A review flags each of those under
-the written-rules pass and cites this section; the fix is to delete the
-comment, or to simplify the code until nothing is left to explain. A comment
-that misstates what the code does is a correctness finding, because a
-maintainer who trusts it changes the wrong thing.
+is correct rather than say why it was made. A review flags each of those as a
+violation of a written rule, a P2 thread under the written-rules pass citing
+this section; the fix is to delete the comment, or to simplify the code until
+nothing is left to explain. A comment that misstates what the code does is a
+correctness finding, because a maintainer who trusts it changes the wrong
+thing.

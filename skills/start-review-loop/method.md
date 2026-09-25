@@ -254,9 +254,10 @@ Apply these rules to the verified set, in this order:
   ship.
 
 Then assign a priority, as `SKILL.md` defines them: P1 and P2 are defects the
-change introduces, and they post as threads and block; P3 is a change the
-code is correct without, and it goes in the review body under a
-`Suggestions` heading, never as a thread.
+change introduces and violations of a written rule, a section of
+`../guidelines.md` included, and they post as threads and block; P3 is a
+change the code is correct without and no written rule requires, and it goes
+in the review body under a `Suggestions` heading, never as a thread.
 
 There is no cap on the number of findings. The rules above are the filter,
 and every thread is one the author must resolve, so post nothing you would
