@@ -262,31 +262,153 @@ class InstallTests(unittest.TestCase):
         self.assertEqual('{"user": true}\n', settings.read_text())
         self.assertTrue(unrelated.is_symlink())
         log = self.log.read_text()
-        self.assertIn(f"claude plugin marketplace add {ROOT} --scope user", log)
+        # The source is this checkout's own origin, whatever it is on the
+        # machine running the tests; the fixture tests below pin exact ones.
+        self.assertRegex(log, r"claude plugin marketplace add \S+ --scope user\n")
         self.assertIn("claude plugin install projector@projector --scope user", log)
-        self.assertIn(f"codex plugin marketplace add {ROOT}", log)
+        self.assertRegex(log, r"codex plugin marketplace add \S+\n")
         self.assertIn("codex plugin add projector@projector", log)
 
-    def host_has(self, host: str, *, marketplace: str, version: str) -> None:
+    def host_has(
+        self, host: str, *, marketplace: str, version: str, source: str | None = None
+    ) -> None:
         """Make the fake host report the marketplace and an installed plugin.
 
-        `marketplace` is `directory`, `github`, or `git`, which is the field
-        install.sh reads to decide whether there is a snapshot to refresh.
+        `marketplace` is the source kind each host lists: `directory` or
+        `github` for Claude Code, `local` or `git` for Codex. install.sh reads
+        it to decide whether the marketplace reads a checkout, which it moves,
+        or a remote, which it refreshes. `source` is the path or repository the
+        marketplace reads, this checkout by default.
         """
 
+        source = source or str(ROOT)
         if host == "claude":
-            markets = [{"name": "projector", "source": marketplace, "path": str(ROOT)}]
+            record = {"name": "projector", "source": marketplace}
+            record["repo" if marketplace == "github" else "path"] = source
+            markets = [record]
             plugins = [{"id": "projector@projector", "version": version}]
         else:
             markets = {"marketplaces": [{"name": "projector", "marketplaceSource": {
-                "sourceType": marketplace, "source": str(ROOT)}}]}
+                "sourceType": marketplace, "source": source}}]}
             plugins = {"installed": [{"pluginId": "projector@projector", "version": version}]}
         (self.state / f"{host}-marketplaces.json").write_text(json.dumps(markets))
         (self.state / f"{host}-plugins.json").write_text(json.dumps(plugins))
 
+    def checkout_with_origin(self, url: str | None) -> Path:
+        """A clone whose `origin` is `url`, or that has no `origin` at all.
+
+        The installer reads the marketplace source off that remote, so this is
+        how a test pins one without depending on the origin of the checkout
+        running the tests.
+        """
+
+        checkout, _ = self.clone_with_remote()
+        if url is None:
+            self.git(checkout, "remote", "remove", "origin")
+        else:
+            self.git(checkout, "remote", "set-url", "origin", url)
+        return checkout
+
+    def test_hosts_install_the_plugin_from_the_checkouts_github_origin(self) -> None:
+        for url in ("git@github.com:acme/projector.git", "https://github.com/acme/projector",
+                    "ssh://git@github.com/acme/projector.git"):
+            with self.subTest(origin=url):
+                self.log.write_text("")
+                checkout = self.checkout_with_origin(url)
+
+                claude = self.installer_in(checkout, "claude", offline=True)
+                codex = self.installer_in(checkout, "codex", offline=True)
+
+                self.assertEqual(0, claude.returncode, claude.stderr)
+                self.assertEqual(0, codex.returncode, codex.stderr)
+                log = self.log.read_text()
+                self.assertIn("claude plugin marketplace add acme/projector --scope user\n", log)
+                self.assertIn("codex plugin marketplace add https://github.com/acme/projector.git\n", log)
+                self.assertNotIn(str(checkout), log.replace(f"pipx install --force {checkout}", ""))
+                shutil.rmtree(checkout)
+                shutil.rmtree(self.user_root / "seed")
+                shutil.rmtree(self.user_root / "remote.git")
+
+    def test_a_remote_that_is_not_github_is_handed_to_both_hosts_as_it_is(self) -> None:
+        checkout = self.checkout_with_origin("https://git.example.com/acme/projector.git")
+
+        claude = self.installer_in(checkout, "claude", offline=True)
+        codex = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        log = self.log.read_text()
+        self.assertIn(
+            "claude plugin marketplace add https://git.example.com/acme/projector.git --scope user\n", log
+        )
+        self.assertIn("codex plugin marketplace add https://git.example.com/acme/projector.git\n", log)
+
+    def test_a_checkout_without_an_origin_installs_from_itself(self) -> None:
+        checkout = self.checkout_with_origin(None)
+
+        claude = self.installer_in(checkout, "claude", offline=True)
+        codex = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        log = self.log.read_text()
+        self.assertIn(f"claude plugin marketplace add {checkout} --scope user\n", log)
+        self.assertIn(f"codex plugin marketplace add {checkout}\n", log)
+
+    def test_a_marketplace_reading_a_checkout_is_moved_to_the_repository(self) -> None:
+        checkout = self.checkout_with_origin("https://github.com/acme/projector.git")
+        self.host_has("claude", marketplace="directory", version="0.2.0", source=str(checkout))
+        self.host_has("codex", marketplace="local", version="0.2.0", source=str(checkout))
+
+        claude = self.installer_in(checkout, "claude", offline=True)
+        codex = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        log = self.log.read_text()
+        self.assertLess(
+            log.index("claude plugin marketplace remove projector\n"),
+            log.index("claude plugin marketplace add acme/projector --scope user\n"),
+        )
+        self.assertIn("claude plugin update projector@projector\n", log)
+        self.assertLess(
+            log.index("codex plugin marketplace remove projector\n"),
+            log.index("codex plugin marketplace add https://github.com/acme/projector.git\n"),
+        )
+        self.assertIn("codex plugin add projector@projector\n", log)
+        self.assertNotIn("marketplace update", log)
+        self.assertNotIn("marketplace upgrade", log)
+        self.assertIn(f"moved          claude marketplace {checkout} -> acme/projector", claude.stdout)
+        self.assertIn(
+            f"moved          codex marketplace {checkout} -> https://github.com/acme/projector.git",
+            codex.stdout,
+        )
+
+    def test_a_local_marketplace_stays_when_there_is_nowhere_to_move_it(self) -> None:
+        # Codex reads a local marketplace live, and asking it to upgrade one is
+        # an error rather than a no-op; with no origin to move to, it is left
+        # exactly as it is.
+        checkout = self.checkout_with_origin(None)
+        self.host_has("claude", marketplace="directory", version="0.2.0", source=str(checkout))
+        self.host_has("codex", marketplace="local", version="0.2.0", source=str(checkout))
+
+        claude = self.installer_in(checkout, "claude", offline=True)
+        codex = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        log = self.log.read_text()
+        self.assertIn("claude plugin marketplace update projector\n", log)
+        self.assertNotIn("marketplace remove", log)
+        self.assertNotIn("marketplace add", log)
+        self.assertNotIn("marketplace upgrade", log)
+        self.assertIn("codex plugin add projector@projector\n", log)
+        self.assertNotIn("moved", claude.stdout + codex.stdout)
+
     def test_host_installs_update_what_is_already_installed(self) -> None:
-        self.host_has("claude", marketplace="directory", version="0.2.0")
-        self.host_has("codex", marketplace="git", version="0.2.0")
+        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
+        self.host_has("codex", marketplace="git", version="0.2.0",
+                      source="https://github.com/acme/projector.git")
 
         claude = self.install("claude")
         codex = self.install("codex")
@@ -301,19 +423,6 @@ class InstallTests(unittest.TestCase):
         self.assertIn("codex plugin marketplace upgrade projector\n", log)
         self.assertIn("codex plugin add projector@projector\n", log)
 
-    def test_codex_refreshes_only_a_git_marketplace(self) -> None:
-        # A local marketplace is read live; asking Codex to upgrade it is an
-        # error rather than a no-op.
-        self.host_has("codex", marketplace="local", version="0.2.0")
-
-        result = self.install("codex")
-
-        self.assertEqual(0, result.returncode, result.stderr)
-        log = self.log.read_text()
-        self.assertNotIn("marketplace upgrade", log)
-        self.assertNotIn("marketplace add", log)
-        self.assertIn("codex plugin add projector@projector\n", log)
-
     def test_status_compares_installed_plugins_with_the_checkout(self) -> None:
         expected = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
         self.host_has("claude", marketplace="directory", version="0.2.0")
@@ -326,6 +435,23 @@ class InstallTests(unittest.TestCase):
         self.assertIn("plugin-stale", result.stdout)
         self.assertIn(f"plugin-current codex {expected}", result.stdout)
         self.assertIn(f"marketplace    codex git {ROOT}", result.stdout)
+
+    def test_status_flags_a_marketplace_that_reads_a_checkout(self) -> None:
+        checkout = self.checkout_with_origin("https://github.com/acme/projector.git")
+        self.host_has("claude", marketplace="directory", version="0.2.0", source=str(checkout))
+        self.host_has("codex", marketplace="git", version="0.2.0",
+                      source="https://github.com/acme/projector.git")
+
+        result = self.installer_in(checkout, "status", offline=True)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"marketplace    claude directory {checkout}", result.stdout)
+        self.assertIn(
+            "marketplace-local ⚠️  claude installs from a checkout and goes stale with it "
+            "-- run ./install.sh claude to move it to acme/projector",
+            result.stdout,
+        )
+        self.assertEqual(1, result.stdout.count("marketplace-local"))
 
     def test_status_reports_a_host_with_no_plugin(self) -> None:
         result = self.install("status")
