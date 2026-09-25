@@ -144,10 +144,15 @@ fetch_pr() {
     --jq "$PR_JQ" 2>"$STATE.err"
 }
 
-# The message GraphQL returns for a number that names no pull request. Any
-# other failure — network, proxy, rate limit, token — is a blip to retry.
+# The messages GraphQL returns for a number that names no pull request and
+# for a slug that names no repository. Both mean the line is wrong as written,
+# and a misspelled slug fails on every pass exactly as a bad number does, so
+# it is refused and announced the same way. Any other failure — network,
+# proxy, rate limit, token — is a blip to retry.
 not_found() {
-  case "$1" in *"Could not resolve to a PullRequest"*) return 0 ;; esac
+  case "$1" in
+    *"Could not resolve to a PullRequest"*|*"Could not resolve to a Repository"*) return 0 ;;
+  esac
   return 1
 }
 
@@ -193,9 +198,9 @@ while read -r slug n; do
   if ! fetch_pr "$slug" "$n" >/dev/null; then
     err=$(cat "$STATE.err" 2>/dev/null)
     if not_found "$err"; then
-      echo "watch-threads.sh: $slug#$n: no such pull request" >&2
+      echo "watch-threads.sh: $slug#$n: no such repository or pull request" >&2
     else
-      echo "watch-threads.sh: $slug#$n: could not verify — network or auth error, not a missing pull request: ${err%%$'\n'*}" >&2
+      echo "watch-threads.sh: $slug#$n: could not verify — network or auth error, not a missing repository or pull request: ${err%%$'\n'*}" >&2
     fi
     exit 2
   fi
@@ -237,7 +242,7 @@ EOF
     if ! pr=$(fetch_pr "$slug" "$n") || [ -z "$pr" ]; then
       err=$(cat "$STATE.err" 2>/dev/null)
       if not_found "$err"; then
-        announce_once "TRACKED $slug#$n: no such pull request — ignored; fix the tracked file"
+        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; fix the tracked file"
         continue
       fi
       carried=$(awk -v s="$slug" -v p="$n" '$2==s && $3==p' "$STATE" 2>/dev/null || true)

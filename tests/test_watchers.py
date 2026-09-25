@@ -53,6 +53,11 @@ while [ $# -gt 0 ]; do
 done
 case "$mode" in
   graphql)
+    if [ ! -d "$FAKE_GH_DIR/$owner/$repo" ]; then
+      printf '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository with the name '"'"'%s/%s'"'"'."}]}' "$owner" "$repo"
+      echo "gh: Could not resolve to a Repository with the name '$owner/$repo'." >&2
+      exit 1
+    fi
     f="$FAKE_GH_DIR/$owner/$repo/$num.json"
     if [ ! -f "$f" ]; then
       printf '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of %s."}]}' "$num"
@@ -309,7 +314,18 @@ class WatchThreadsTests(WatcherCase):
         result = self.run_watcher(THREADS)
 
         self.assertEqual(2, result.returncode)
-        self.assertIn("acme/app#7: no such pull request", result.stderr)
+        self.assertIn("acme/app#7: no such repository or pull request", result.stderr)
+        self.assertEqual("", result.stdout)
+
+    def test_refuses_a_misspelled_repository_as_missing_rather_than_unreachable(self) -> None:
+        self.pull_request(1)
+        self.track("acme/app#1", "acme/ap#1")
+
+        result = self.run_watcher(THREADS)
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("acme/ap#1: no such repository or pull request", result.stderr)
+        self.assertNotIn("could not verify", result.stderr)
         self.assertEqual("", result.stdout)
 
     def test_refuses_to_start_when_github_cannot_be_reached(self) -> None:
@@ -319,8 +335,8 @@ class WatchThreadsTests(WatcherCase):
         result = self.run_watcher(THREADS, down_after=0)
 
         self.assertEqual(2, result.returncode)
-        self.assertIn("could not verify — network or auth error, not a missing pull request", result.stderr)
-        self.assertNotIn("no such pull request", result.stderr)
+        self.assertIn("could not verify — network or auth error, not a missing repository or pull request", result.stderr)
+        self.assertNotIn("no such", result.stderr)
 
     def test_refuses_the_repository_and_author_flags(self) -> None:
         for flag in ("--repos", "--author"):
@@ -450,6 +466,8 @@ class WatchPrsTests(WatcherCase):
         malformed = self.run_watcher(PRS)
         self.track("acme/app#1", "acme/app#7")
         missing = self.run_watcher(PRS)
+        self.track("acme/app#1", "acme/ap#1")
+        misspelled = self.run_watcher(PRS)
         self.track("acme/app#1")
         unreachable = self.run_watcher(PRS, down_after=0)
         author = self.run_watcher(PRS, "--author", "someone")
@@ -457,7 +475,10 @@ class WatchPrsTests(WatcherCase):
         self.assertEqual(2, malformed.returncode)
         self.assertIn(f"{self.tracked}:2 is not owner/repo#number: acme/app 2", malformed.stderr)
         self.assertEqual(2, missing.returncode)
-        self.assertIn("acme/app#7: no such pull request", missing.stderr)
+        self.assertIn("acme/app#7: no such repository or pull request", missing.stderr)
+        self.assertEqual(2, misspelled.returncode)
+        self.assertIn("acme/ap#1: no such repository or pull request", misspelled.stderr)
+        self.assertNotIn("could not verify", misspelled.stderr)
         self.assertEqual(2, unreachable.returncode)
         self.assertIn("could not verify — network or auth error", unreachable.stderr)
         self.assertEqual(2, author.returncode)
