@@ -14,9 +14,16 @@ the outcome.
 2. Enumerate every acceptance criterion and identify the strongest available
    evidence for it: tests, runtime behavior, generated artifacts, or current
    external state.
-3. Run the repository's complete validation gate. Treat missing or indirect
+3. Prove the three things the review loop checks, whether or not a criterion
+   names them. Correctness: the tests or observations that pin each promised
+   behavior exist and pass. Performance: the measurement the plan named was
+   taken and is recorded, or the plan said cost does not matter and the
+   change added no work to a hot path. Reuse: logic the plan said to build
+   once exists once, nothing the change replaced is still present or
+   referenced, and no stub, dead branch, or compatibility wrapper remains.
+4. Run the repository's complete validation gate. Treat missing or indirect
    evidence as incomplete rather than assuming intent proves delivery.
-4. Inspect nested projects. Their independent statuses do not automatically
+5. Inspect nested projects. Their independent statuses do not automatically
    block the parent, but unresolved work that belongs to the parent's promised
    outcome does.
 
@@ -47,6 +54,7 @@ Resolve any warning `project check` prints; `project init` refreshes a stale
 Projector section in `AGENTS.md` without touching the repository's own text.
 
 Confirm that the plan names the outcome, every acceptance criterion has
-evidence or an explicit non-delivery disposition, and no separate closeout
-change remains. Follow the repository's handoff rules and never merge unless
-the user explicitly owns that action.
+evidence or an explicit non-delivery disposition, the code the change
+replaced is gone, and no separate closeout change remains. Follow the
+repository's handoff rules and never merge unless the user explicitly owns
+that action.

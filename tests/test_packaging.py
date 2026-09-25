@@ -84,15 +84,17 @@ class PackagingTests(unittest.TestCase):
     def test_review_loops_share_one_review_method(self) -> None:
         method = ROOT / "skills" / "start-review-loop" / "method.md"
         review = (ROOT / "skills" / "start-review-loop" / "SKILL.md").read_text()
-        fix = (ROOT / "skills" / "start-fix-loop" / "SKILL.md").read_text()
 
-        # Both loops read one method file: the review loop to inspect a head,
-        # the fix loop to verify or decline what that inspection posted. A
-        # rename or removal must fail here rather than leave either skill
-        # pointing at a file the plugin no longer ships.
+        # Three skills read one method file: the review loop to inspect a
+        # head, the fix loop to verify or decline what that inspection
+        # posted, and work-project to apply the same passes before a review
+        # runs. A rename or removal must fail here rather than leave any of
+        # them pointing at a file the plugin no longer ships.
         self.assertTrue(method.is_file())
         self.assertIn("`method.md`", review)
-        self.assertIn("`../start-review-loop/method.md`", fix)
+        for name in ("start-fix-loop", "work-project"):
+            text = (ROOT / "skills" / name / "SKILL.md").read_text()
+            self.assertIn("`../start-review-loop/method.md`", text, name)
         self.assertNotIn("ninjudd", method.read_text())
 
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:

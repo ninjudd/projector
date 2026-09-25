@@ -47,6 +47,26 @@ acceptance evidence, implementation sequence, decisions with rejected
 alternatives, and genuinely open questions. Add supporting files only when
 they hold real content that would make the entry point unwieldy.
 
+Settle three things the review loop checks on every head, so the
+implementation gives the review nothing to find:
+
+- **Correctness.** Name the behavior that must hold, the inputs and states
+  that could break it, and the test or observation that will prove it. A
+  criterion nobody can observe is a hope, not evidence.
+- **Performance.** Name the paths where cost matters, the load they carry,
+  and how the change will be measured against it, or say that cost does not
+  matter here and why. A plan silent on cost leaves the implementer and the
+  reviewer to guess which paths are hot.
+- **Reuse.** Name the existing code the change extends rather than
+  duplicates, the logic more than one part of the change needs so it is
+  built once before those parts, and for anything the change replaces, what
+  is removed and every caller that moves to the replacement. Logic written
+  twice is a finding the review will file.
+
+Each has a place the plan already has: reuse and replacement among the
+decisions, cost among the constraints, and the correctness proof and the cost
+measurement beside the acceptance criteria.
+
 Number sections and append new sections without renumbering existing ones.
 Write paths and identifiers exactly. Keep durable decisions in the plan rather
 than relying on chat history.
@@ -65,7 +85,8 @@ Resolve any warning `project check` prints; `project init` refreshes a stale
 Projector section in `AGENTS.md` without touching the repository's own text.
 
 Confirm that the status makes an honest readiness claim, the priority matches
-the user's real scheduling intent, the acceptance criteria are observable, and
-every open question has an owner or deliberate deferral. Leave the plan changes
-visible for ordinary Git review; do not commit, push, or open a pull request
-unless the user or repository workflow asks for those actions.
+the user's real scheduling intent, the acceptance criteria are observable, the
+plan says what it reuses, replaces, and measures or why cost does not matter,
+and every open question has an owner or deliberate deferral. Leave the plan
+changes visible for ordinary Git review; do not commit, push, or open a pull
+request unless the user or repository workflow asks for those actions.
