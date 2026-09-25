@@ -1,125 +1,164 @@
 #!/usr/bin/env bash
-# watch-prs.sh — emit one line per reviewable event across one or more GitHub
-# repositories, and stay silent otherwise. Intended to run under Claude Code's
-# `Monitor` with `persistent: true`, where each stdout line becomes one
-# notification.
+# watch-prs.sh — emit one line per reviewable event on the pull requests a
+# review loop tracks, and stay silent otherwise. Intended to run under Claude
+# Code's `Monitor`, where each stdout line becomes one notification.
 #
-#   NEW PR     a pull request opened that the state file has not seen
+#   NEW PR     a tracked pull request the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
 #   RESPONDED  every thread resolved and the head unchanged on a pull request
 #              still waiting for one: a draft (self-review, where the verdict
 #              never moves) or one at CHANGES_REQUESTED (cross-author, where
-#              draft state is never touched). The author answered without pushing, so
-#              no head event is coming. Once per head, and never alongside
-#              NEW PR or NEW HEAD, which already say to review that head.
-#   CLOSED     a tracked pull request left the open set
+#              draft state is never touched). The author answered without
+#              pushing, so no head event is coming. Once per head, and never
+#              alongside NEW PR or NEW HEAD, which already say to review that
+#              head.
+#   CLOSED     a tracked pull request is no longer open
 #   BRANCH     the watched worktree changed branch
+#   TRACKED    a problem with the tracked file: a line that is not
+#              owner/repo#number, or a number that names no pull request.
+#              Announced once each, so a mistake in the file is heard rather
+#              than mistaken for a quiet repository
 #
 # Usage:
-#   watch-prs.sh --repos owner/a[,owner/b...] --state <path>
-#                [--author login[,login...]] [--interval 60] [--worktree <dir>]
+#   watch-prs.sh --tracked <file> --state <path>
+#                [--interval 60] [--worktree <dir>] [--once]
 #
-# --author narrows the watch to pull requests those logins authored, which is
-# how the review loop keeps to the operator's own on a shared repository. Pass
-# logins literally, never `@me`: `@me` is resolved against whichever token is
-# live when the query runs, and under the review loop's GH_TOKEN that is the
-# reviewing account, which authors nothing — the watch would then be silent
-# from the first pass on, indistinguishable from a repository with nothing
-# open. Without the flag every open pull request is watched. Filtering at the
-# source matters most here, because this watcher's events are pushes: on a
-# shared repository every push by anyone is one, none of them is the loop's to
-# review, and every line here is a Monitor notification counting toward the
-# limit that stops a watcher. watch-threads.sh takes the same flag, for the
-# same reason, on the one event of its own that fires without review activity.
+# --tracked names the file holding the tracked set: one `owner/repo#number`
+# per line, with blank lines and lines starting with `#` ignored. The file is
+# the whole scope of the watch. Nothing is listed and nothing is discovered, so
+# a push to a pull request absent from it produces no event, and every event
+# that does arrive is the loop's to review. That matters most here, because
+# this watcher's events are pushes: on a shared repository every push by
+# anyone is one, and every line is a Monitor notification counting toward the
+# limit that stops a watcher. The file is re-read every cycle: the loop adds a
+# pull request it opened or adopted by appending a line and drops a merged one
+# by deleting its line, without a restart. Every line is checked before the
+# watch starts, because a bad one would otherwise be a watch that starts
+# cleanly and never mentions the pull request it was meant for; a bad line
+# that appears later is announced once.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
-# an empty file means every watched pull request reports as new, which is the
-# right default when the loop is establishing itself. The state file belongs
-# to one scope: narrowing --author against an existing one reports the pull
-# requests that left the watch as CLOSED once, so start a fresh file when the
-# scope changes.
+# an empty file means every tracked pull request reports as new, which is the
+# right default when the loop is establishing itself. A row for a pull request
+# no longer in the tracked file is dropped without a word, since the loop
+# removed it on purpose; CLOSED is for the other direction, a listed pull
+# request that left the open set.
 #
-# Tracks up to 200 open pull requests per repository — per author, when
-# --author is given, since each login is listed separately. That is a
-# documented property rather than an accident: past the limit a tracked pull
-# request would be missing from the answer and read as closed.
+# --once makes a single pass and exits, which is how the loop checks, before
+# arming the watch, that the file names the pull requests it meant to track.
 
 set -uo pipefail
 
-REPOS=""; STATE=""; INTERVAL=60; WORKTREE=""; AUTHORS=""
+TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repos)    REPOS="${2:-}"; shift 2 ;;
+    --tracked)  TRACKED="${2:-}"; shift 2 ;;
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
-    --author)   AUTHORS="${2:-}"; shift 2 ;;
+    --once)     ONCE=1; shift ;;
     *) echo "watch-prs.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-[ -n "$REPOS" ] || { echo "watch-prs.sh: --repos is required" >&2; exit 2; }
+[ -n "$TRACKED" ] || { echo "watch-prs.sh: --tracked is required" >&2; exit 2; }
 [ -n "$STATE" ] || { echo "watch-prs.sh: --state is required" >&2; exit 2; }
 touch "$STATE" 2>/dev/null || { echo "watch-prs.sh: cannot write state file: $STATE" >&2; exit 2; }
 
-REPO_LIST=$(printf '%s' "$REPOS" | tr ',' ' ')
-AUTHOR_LIST=$(printf '%s' "$AUTHORS" | tr ',' ' ')
+# The skill's own floor: never poll GitHub harder than every 30 seconds.
+[ "$INTERVAL" -lt 30 ] 2>/dev/null && INTERVAL=30
 
-# A login that does not exist is not an error to `gh pr list --author`: it is
-# an empty answer, exit 0, on every pass — a mistyped operator login would give
-# a watch that starts cleanly and never says anything. Refuse it once, here,
-# where the message is read. A real login that authors nothing is the same
-# silence, and only the establishment count in the skill catches that.
-#
-# Say which failure it was. `gh api` exits non-zero for a network failure, a
-# proxy, a rate limit or a bad token exactly as it does for a 404, and the
-# skill tells its reader that establishment is the moment a wrong login
-# announces itself — so "no such login" on a network blip sends them off to
-# re-resolve a login that was right all along. Only a 404 is a missing login;
-# everything else is the lookup failing, which still refuses to start, since
-# nothing should run on an unverified login, but under its own name.
-for a in $AUTHOR_LIST; do
-  case "$a" in
-    @*)    echo "watch-prs.sh: --author takes a literal login, not $a" >&2; exit 2 ;;
-    app/*) probe="apps/${a#app/}" ;;   # `gh pr list --author app/dependabot`
-    *)     probe="users/$a" ;;         # a user, or a bot as `dependabot[bot]`
+# Print the tracked set as one "owner/repo number" pair per line, and every
+# problem with the file to stderr, one per line. Returns 1 when the file
+# cannot be read and 2 when a line is malformed; the well-formed lines are
+# still printed in that case, so a running watch can keep to them.
+ENTRY_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$'
+parse_tracked() {
+  local line lineno=0 rc=0
+  [ -r "$TRACKED" ] || { echo "$TRACKED: cannot read the tracked file" >&2; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    case "$line" in ""|\#*) continue ;; esac
+    if [[ $line =~ $ENTRY_RE ]]; then
+      printf '%s %s\n' "${line%#*}" "${line##*#}"
+    else
+      echo "$TRACKED:$lineno is not owner/repo#number: $line" >&2
+      rc=2
+    fi
+  done < "$TRACKED"
+  return $rc
+}
+
+# One row per pull request: state, draft flag, review decision, head SHA,
+# head ref, and how many threads are unresolved. The last three fields are
+# what RESPONDED needs, and both signals are needed because the two review
+# modes record the wait in different places and neither covers the other.
+# Draft state carries a self-review: GitHub allows only a COMMENT review on
+# your own pull request, so reviewDecision never leaves NONE. reviewDecision
+# carries a cross-author review, where REQUEST_CHANGES works and draft state
+# is untouched — the skill forbids drafting another author's pull request.
+PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+  pullRequest(number:$n){
+    state isDraft reviewDecision headRefOid headRefName
+    reviewThreads(first:100){ nodes{ isResolved } } } } }'
+PR_JQ='.data.repository.pullRequest
+  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length)"'
+
+# stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
+# can be told apart from a pull request that does not exist.
+fetch_pr() {
+  gh api graphql -f query="$PR_QUERY" -f o="${1%%/*}" -f r="${1##*/}" -F n="$2" \
+    --jq "$PR_JQ" 2>"$STATE.err"
+}
+
+# The messages GraphQL returns for a number that names no pull request and
+# for a slug that names no repository. Both mean the line is wrong as written,
+# and a misspelled slug fails on every pass exactly as a bad number does, so
+# it is refused and announced the same way. Any other failure — network,
+# proxy, rate limit, token — is a blip to retry.
+not_found() {
+  case "$1" in
+    *"Could not resolve to a PullRequest"*|*"Could not resolve to a Repository"*) return 0 ;;
   esac
-  if ! err=$(gh api "$probe" 2>&1 >/dev/null); then
-    case "$err" in
-      *"HTTP 404"*) echo "watch-prs.sh: --author $a: no such GitHub login" >&2 ;;
-      *) echo "watch-prs.sh: --author $a: could not verify login — network or auth error, not a missing login: ${err%%$'\n'*}" >&2 ;;
-    esac
+  return 1
+}
+
+# Every line here is a notification, and a problem with the tracked file
+# persists until someone edits it, so each distinct message is said once.
+WARNED=""
+announce_once() {
+  case "$WARNED" in *"$1"*) return ;; esac
+  echo "$1"
+  WARNED="$WARNED$1
+"
+}
+
+# Refuse a file that cannot be watched as written. A malformed line, or a
+# number that names no pull request, would otherwise give a watch that starts
+# cleanly and never mentions the pull request it was meant for. Say which
+# failure it was: `gh` exits non-zero for a network failure, a rate limit or a
+# bad token exactly as it does for a missing pull request, and reporting "no
+# such pull request" for a blip sends the reader off to fix a number that was
+# right all along. Either way nothing runs on an unverified set.
+entries=$(parse_tracked) || exit 2
+while read -r slug n; do
+  [ -n "${slug:-}" ] || continue
+  if ! fetch_pr "$slug" "$n" >/dev/null; then
+    err=$(cat "$STATE.err" 2>/dev/null)
+    if not_found "$err"; then
+      echo "watch-prs.sh: $slug#$n: no such repository or pull request" >&2
+    else
+      echo "watch-prs.sh: $slug#$n: could not verify — network or auth error, not a missing repository or pull request: ${err%%$'\n'*}" >&2
+    fi
     exit 2
   fi
-done
-
-# One "<number> <sha> <ref>" line per open pull request in $1, restricted to
-# $AUTHOR_LIST when that is set. Listed once per author rather than filtered
-# client-side, so --limit bounds each author's pull requests rather than the
-# repository's: on a repository with more than 200 open, a client-side filter
-# over the first 200 would drop the operator's own past the cut, and those
-# would read as closed. Any listing failing fails the whole call, so the
-# caller carries the repository's rows forward instead of reading a partial
-# answer as "everything else closed".
-list_prs() {
-  local repo="$1" a chunk out=""
-  if [ -z "$AUTHOR_LIST" ]; then
-    gh pr list --repo "$repo" --state open --limit 200 \
-      --json number,headRefOid,headRefName \
-      --jq '.[] | "\(.number) \(.headRefOid) \(.headRefName)"' 2>/dev/null
-    return
-  fi
-  for a in $AUTHOR_LIST; do
-    chunk=$(gh pr list --repo "$repo" --author "$a" --state open --limit 200 \
-              --json number,headRefOid,headRefName \
-              --jq '.[] | "\(.number) \(.headRefOid) \(.headRefName)"' 2>/dev/null) || return 1
-    [ -n "$chunk" ] && out="$out$chunk
-"
-  done
-  printf '%s' "$out"
-}
+done <<EOF
+$entries
+EOF
 
 prev_branch=""
 [ -n "$WORKTREE" ] && prev_branch=$(git -C "$WORKTREE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -127,133 +166,109 @@ prev_branch=""
 while true; do
   new_state=""
 
-  for repo in $REPO_LIST; do
-    # A failed query must never look like "everything closed". On error, carry
-    # this repo's rows forward untouched and try again next cycle — otherwise a
-    # network blip reports every tracked pull request as closed.
-    # --limit is not optional in list_prs. `gh pr list` defaults to 30, and a
-    # tracked pull request beyond that page is simply absent from the answer —
-    # which the closure check below cannot tell apart from closed, so it would
-    # retire a live pull request and never mention it again. Same failure as
-    # the nested-guard bug, reached through a different door.
-    if ! out=$(list_prs "$repo"); then
-      carried=$(grep "^$repo " "$STATE" 2>/dev/null || true)
-      [ -n "$carried" ] && new_state="$new_state$carried
+  # Re-read the tracked set. A malformed line is announced once and the
+  # well-formed ones are watched; a file that cannot be read, or that has
+  # nothing well-formed left in it, keeps the set from the previous cycle,
+  # since a watch that goes blank because of a typo is the failure this file
+  # exists to prevent.
+  problems=$(parse_tracked 2>&1 >"$STATE.entries")
+  if [ -n "$problems" ]; then
+    while IFS= read -r problem; do
+      [ -n "$problem" ] && announce_once "TRACKED $problem"
+    done <<EOF
+$problems
+EOF
+  fi
+  if [ -s "$STATE.entries" ] || [ -z "$problems" ]; then
+    entries=$(cat "$STATE.entries")
+  fi
+
+  while read -r slug n; do
+    [ -n "${slug:-}" ] || continue
+
+    known=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $3}' "$STATE" 2>/dev/null)
+    kref=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $4}' "$STATE" 2>/dev/null)
+    # Field 5 is the SHA a RESPONDED line was last emitted for, or "-".
+    # Comparing it against the current head is what makes that fire once per
+    # head: a re-review that requests changes again does not re-announce, and
+    # a new push resets it because the row's SHA changed.
+    flag=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $5}' "$STATE" 2>/dev/null)
+    [ -n "$flag" ] || flag="-"
+
+    # A failed query must never look like "closed". On any failure this pull
+    # request's row is carried forward untouched and tried again next cycle;
+    # otherwise a network blip would retire a live pull request and never
+    # mention it again.
+    if ! row=$(fetch_pr "$slug" "$n") || [ -z "$row" ]; then
+      err=$(cat "$STATE.err" 2>/dev/null)
+      if not_found "$err"; then
+        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; fix the tracked file"
+        continue
+      fi
+      [ -n "$known" ] && new_state="$new_state$slug $n $known $kref $flag
 "
       continue
     fi
-
-    # A push is not the only thing this loop can be waiting on. A draft pull
-    # request with every thread resolved is waiting on *us*: the author
-    # answered, and a fix that produced no push — a body correction, a reply, a
-    # declined finding — creates no new head for the check above to notice.
-    # Nothing else will ever arrive, so watching heads alone deadlocks, and the
-    # pull request stays a draft forever because only a re-review marks it
-    # ready.
-    #
-    # Both signals are needed, because the two review modes record the wait
-    # in different places and neither covers the other.
-    #
-    # Draft state carries a self-review: GitHub allows only a COMMENT review on
-    # your own pull request, so reviewDecision never leaves NONE and a filter on
-    # CHANGES_REQUESTED alone would match nothing, on every pass, forever.
-    #
-    # reviewDecision carries a cross-author review, where REQUEST_CHANGES works
-    # and draft state is untouched — the skill forbids drafting another author's
-    # pull request. A filter on draft state alone would match nothing there, so
-    # a cross-author pull request whose author answered every thread without
-    # pushing would sit at CHANGES_REQUESTED forever: no head event is coming
-    # and no draft flag will ever clear. That is this event's whole purpose,
-    # under the one mode the skill keeps first-class for human reviewers.
-    #
-    # Asked once per repository; on failure every pull request's flag is simply
-    # carried forward by the row rebuild below, and it retries next cycle.
-    owner="${repo%%/*}"; name="${repo##*/}"
-    # Paginated to match the 200 the header promises: GraphQL caps `first` at
-    # 100 per page, so a single page would cover fewer pull requests than the
-    # `gh pr list --limit 200` above and the two halves would disagree.
-    # `orderBy` is pinned so the traversal is stable rather than arbitrary.
-    responded=$(gh api graphql --paginate -f query='
-      query($o:String!,$r:String!,$endCursor:String){ repository(owner:$o,name:$r){
-        pullRequests(states:OPEN, first:100, after:$endCursor,
-                     orderBy:{field:CREATED_AT, direction:ASC}){
-          pageInfo{ hasNextPage endCursor }
-          nodes{
-            number isDraft reviewDecision
-            reviewThreads(first:100){ nodes{ isResolved } } } } } }' \
-      -f o="$owner" -f r="$name" \
-      --jq '.data.repository.pullRequests.nodes[]
-            | select(.isDraft == true or .reviewDecision == "CHANGES_REQUESTED")
-            | select([.reviewThreads.nodes[] | select(.isResolved == false)] | length == 0)
-            | "\(.number) \(if .reviewDecision == "CHANGES_REQUESTED"
-                             then "changes-requested" else "draft" end)"' \
-      2>/dev/null || echo "__QUERYFAILED__")
-
-    while read -r num sha ref; do
-      [ -n "$num" ] || continue
-      known=$(awk -v r="$repo" -v n="$num" '$1==r && $2==n {print $3}' "$STATE" 2>/dev/null)
-      # Field 5 is the SHA a RESPONDED line was last emitted for, or "-".
-      # Comparing it against the current head is what makes this fire once per
-      # head: a re-review that requests changes again does not re-announce,
-      # and a new push resets it because the row's SHA changed.
-      flag=$(awk -v r="$repo" -v n="$num" '$1==r && $2==n {print $5}' "$STATE" 2>/dev/null)
-      [ -n "$flag" ] || flag="-"
-      if [ -z "$known" ]; then
-        echo "NEW PR $repo#$num ($ref) head=${sha:0:7} — unreviewed, needs an exact-head review"
-        # Announcing a head counts as having announced it, so the RESPONDED
-        # test below suppresses a follow-up for it. Without this the head-
-        # unchanged guard only defers the duplicate by one cycle: the row
-        # rebuild writes this SHA into the state, so next cycle the guard
-        # passes and RESPONDED fires about a head whose first review is
-        # probably still running.
-        flag="$sha"
-      elif [ "$known" != "$sha" ]; then
-        echo "NEW HEAD $repo#$num ($ref): ${known:0:7} -> ${sha:0:7} — needs an exact-head review"
-        flag="$sha"
-      fi
-      # Only when the head is known and unchanged — that is, when neither of
-      # the two events above fired for this pull request. RESPONDED exists for
-      # the case where nothing was pushed, so emitting it beside NEW HEAD or
-      # NEW PR would double the most frequent event in order to catch a rarer
-      # one, and every line here is a Monitor notification that counts toward
-      # the limit that stops a watcher.
-      if [ "$responded" != "__QUERYFAILED__" ] && [ -n "$known" ] && [ "$known" = "$sha" ]; then
-        # Which signal matched decides the wording, and they call for opposite
-        # actions: a clean re-review marks a self-reviewed draft ready, while
-        # on a cross-author changes request marking it ready is
-        # forbidden -- a clean re-review there is a COMMENT recommending a human
-        # approval. One message cannot say both.
-        rstate=$(printf '%s\n' "$responded" | awk -v n="$num" '$1==n {print $2; exit}')
-        if [ -n "$rstate" ]; then
-          if [ "$flag" != "$sha" ]; then
-            if [ "$rstate" = "changes-requested" ]; then
-              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — changes requested with every thread resolved; re-review this head, and a clean one is a COMMENT, never an approval"
-            else
-              echo "RESPONDED $repo#$num ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
-            fi
-            flag="$sha"
-          fi
-        else
-          flag="-"
-        fi
-      fi
-      new_state="$new_state$repo $num $sha $ref $flag
-"
-    done <<EOF
-$out
+    read -r pstate pdraft pdecision sha ref unresolved <<EOF
+$row
 EOF
 
-    # Closure detection is deliberately NOT nested inside a "did we get any
-    # open pull requests" check. Closing the last open one is precisely the
-    # case that produces an empty list, and guarding this on a non-empty list
-    # swallows it silently.
-    while read -r krepo knum ksha kref kflag; do
-      [ "${krepo:-}" = "$repo" ] || continue
-      if ! printf '%s\n' "$out" | grep -q "^$knum "; then
-        echo "CLOSED $repo#$knum (${kref:-?}) — no longer open, dropping from the tracked set"
+    if [ "$pstate" != "OPEN" ]; then
+      [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; drop it from the tracked file"
+      continue
+    fi
+
+    if [ -z "$known" ]; then
+      echo "NEW PR $slug#$n ($ref) head=${sha:0:7} — unreviewed, needs an exact-head review"
+      # Announcing a head counts as having announced it, so the RESPONDED test
+      # below suppresses a follow-up for it. Without this the head-unchanged
+      # guard only defers the duplicate by one cycle: the row rebuild writes
+      # this SHA into the state, so next cycle the guard passes and RESPONDED
+      # fires about a head whose first review is probably still running.
+      flag="$sha"
+    elif [ "$known" != "$sha" ]; then
+      echo "NEW HEAD $slug#$n ($ref): ${known:0:7} -> ${sha:0:7} — needs an exact-head review"
+      flag="$sha"
+    fi
+
+    # Only when the head is known and unchanged — that is, when neither of
+    # the two events above fired. RESPONDED exists for the case where nothing
+    # was pushed: a draft, or a pull request at CHANGES_REQUESTED, with every
+    # thread resolved is waiting on *us*. The author answered, and a fix that
+    # produced no push — a body correction, a reply, a declined finding —
+    # creates no new head to notice. Nothing else will ever arrive, so
+    # watching heads alone deadlocks. Which signal matched decides the
+    # wording, and they call for opposite actions: a clean re-review marks a
+    # self-reviewed draft ready, while on a cross-author changes request
+    # marking it ready is forbidden and a clean re-review is a COMMENT
+    # recommending a human approval.
+    if [ -n "$known" ] && [ "$known" = "$sha" ]; then
+      rstate=""
+      if [ "$unresolved" = "0" ]; then
+        if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
+          rstate="changes-requested"
+        elif [ "$pdraft" = "true" ]; then
+          rstate="draft"
+        fi
       fi
-    done < "$STATE"
-  done
+      if [ -n "$rstate" ]; then
+        if [ "$flag" != "$sha" ]; then
+          if [ "$rstate" = "changes-requested" ]; then
+            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested with every thread resolved; re-review this head, and a clean one is a COMMENT, never an approval"
+          else
+            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
+          fi
+          flag="$sha"
+        fi
+      else
+        flag="-"
+      fi
+    fi
+    new_state="$new_state$slug $n $sha $ref $flag
+"
+  done <<EOF
+$entries
+EOF
 
   printf '%s' "$new_state" | grep -v '^[[:space:]]*$' > "$STATE.tmp" 2>/dev/null
   mv "$STATE.tmp" "$STATE" 2>/dev/null
@@ -266,5 +281,6 @@ EOF
     fi
   fi
 
+  [ "$ONCE" = 1 ] && exit 0
   sleep "$INTERVAL"
 done

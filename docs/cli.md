@@ -309,11 +309,13 @@ These are the keys Projector reads today:
 `false` rather than a question to ask. It never applies to a review of your own
 pull request, where GitHub refuses the verdict regardless.
 
-The operator -- the account whose pull requests are watched and whose branches
-carry fixes -- is deliberately not a key. It follows whichever token is
-authenticated, because a file naming a different account would scope a loop to
-pull requests it cannot push to and then go quiet, which both loops read as
-nothing outstanding.
+The operator -- the account whose branches carry fixes and whose token pushes
+them -- is deliberately not a key. It follows whichever token is authenticated,
+because both loops act through that token and a file naming a different
+account could only disagree with it. Which pull requests a loop watches is not
+an identity question either: each watcher reads its tracked set from a file of
+`owner/repo#number` lines that the conversation maintains, and sees nothing
+outside it.
 
 ## Upgrade from the checkout
 

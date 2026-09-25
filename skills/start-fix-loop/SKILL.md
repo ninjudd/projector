@@ -21,14 +21,14 @@ instructions. Confirm it with `gh auth status` and `gh api user --jq .login`
 under the token used for pushes.
 
 The operator is deliberately not a `.projector.toml` setting, though other
-Projector behavior is. A file naming a different account would scope this loop
-to pull requests it cannot push to, and the symptom is an empty watch -- which
-this skill reads as nothing outstanding. Ownership follows the token, not a
+Projector behavior is. Every fix is pushed and every reply posted through the
+operator's token, so a file naming a different account could only disagree
+with the identity actually doing the work. Ownership follows the token, not a
 file that can disagree with it.
 
 A review loop may run under a different reviewer identity. If the ambient
-identity is not the operator, do not derive scope from it and do not push
-through it. Hold the validated operator login literally; never use `@me`.
+identity is not the operator, do not push through it. Hold the validated
+operator login literally; never use `@me`.
 
 Findings arrive from two kinds of reviewer and both are answered the same way.
 A **cross-author** reviewer — a teammate, Codex, Bugbot, or a review loop run by
@@ -38,11 +38,14 @@ requests, records its outcome in the review body's verdict line and in draft
 state instead. Read both signals; never treat an unmoved `reviewDecision` as
 evidence that nothing is outstanding.
 
-Default scope is not every operator pull request. Build the tracked set from
-pull requests created by this conversation plus any pull request the user
-explicitly assigns. A newly opened pull request joins only when this
-conversation created or adopted it. Never modify a teammate's branch merely
-because the watcher can see its findings.
+The tracked set is not every operator pull request. Build it from pull
+requests created by this conversation plus any pull request the user
+explicitly assigns, and write it to the tracked file the watcher reads, one
+`owner/repo#number` per line. That file is the watcher's whole scope: it
+lists nothing and discovers nothing, so a pull request outside the file
+produces no event however loud its threads are, and a newly opened pull
+request joins only when this conversation appends it because it created or
+adopted it. Never list a pull request you would not push to.
 
 ## Establish the loop
 
@@ -55,25 +58,41 @@ because the watcher can see its findings.
    every finding already waiting when the loop starts remains outstanding.
 3. Verify the operator can push each tracked branch. Do not test with an empty
    commit or direct push.
-4. Record the tracked `owner/repo#number` set in a persistent recurring goal.
-5. Run the bundled `scripts/watch-threads.sh` with a durable state file, the
-   repository, `--author <operator>`, an interval of at least 30 seconds, and a
-   finite renotification interval. Use the host's persistent process or monitor
-   facility.
-6. Filter every emitted event against the literal tracked set. Narrowing the
-   watcher by author is not that filter and does not replace it: the operator
-   authors pull requests this conversation never adopted. It removes the noise
-   the tracked-set filter cannot, because `DRAFT` fires on a pull request
-   merely being a draft rather than on review activity, and it re-announces on
-   the renotification interval — so without `--author` every colleague's
-   work-in-progress arrives every cycle, and a watcher producing too many
-   events is stopped, which reads to this skill as nothing outstanding.
-   Visibility is not authorization either way.
+4. Write the tracked set to a durable tracked file, one `owner/repo#number`
+   per line, kept beside the state file and outside any checkout. That file
+   is the record of the set. Append a pull request when this conversation
+   creates or adopts one, delete its line when it closes or merges, and
+   record the file's path in a persistent recurring goal so a later turn
+   edits the same file. The watcher re-reads it every cycle, so neither
+   change needs a restart.
+5. Run one pass first:
+
+   ```sh
+   scripts/watch-threads.sh --tracked <file> --state <state-file> --once
+   ```
+
+   It refuses to start, naming the line, on an entry that is not
+   `owner/repo#number` or a number that names no pull request, and it
+   distinguishes a lookup that failed for network or auth reasons from a
+   missing pull request. Compare its output with the unresolved threads,
+   verdicts, and body-only reviews you fetched in step 2: a finding missing
+   from the output is a pull request missing from the file, and an empty
+   output over outstanding work is a file that lists the wrong set. The pass
+   records what it announced, so the running watcher repeats those findings
+   only at the renotification interval; work from this output.
+6. Run the same script without `--once`, with the same state file, an
+   interval of at least 30 seconds, and a finite renotification interval,
+   under the host's persistent process or monitor facility. Every event it
+   emits names a pull request from the tracked file, so act on each one. A
+   `TRACKED` line is a problem with the file itself, announced once, and the
+   fix is to the file rather than to a pull request.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts, and
-body-only reviews directly. Verify the watcher's state file contains every
-expected unresolved row. Restart the watcher when its script changed after it
-started; a live process cannot prove which file version it loaded.
+body-only reviews directly. Confirm its tracked file is the set this
+conversation owns -- a watcher another session started watches that session's
+set -- and verify its state file contains every expected unresolved row.
+Restart the watcher when its script changed after it started; a live process
+cannot prove which file version it loaded.
 
 The watcher is level-triggered:
 
@@ -85,6 +104,7 @@ The watcher is level-triggered:
   sign-off on the current head.
 - `REVIEW` reports a review body that has no inline thread, the shape every
   `COMMENT` review posts.
+- `TRACKED` reports a line in the tracked file the watcher cannot use, once.
 
 Read review bodies and compare them with the thread set. A Projector review
 body carries a verdict line; read it rather than inferring the outcome. Dispose
@@ -200,16 +220,18 @@ justified: the red test you drafted around is passing, so the draft reads as
 stale state left over from a fixed problem. It is not. It is a standing
 request for review that has not been answered yet.
 
-Drop closed or merged pull requests from the tracked set. An empty set is idle,
-not an instruction to stop; remain ready for pull requests this conversation
-creates or adopts later. Stop the loop only when the user asks, a required user
-decision blocks one finding, validation cannot be restored, or every remaining
-finding on a pull request is deliberately declined.
+Delete closed or merged pull requests from the tracked file. An empty file is
+idle, not an instruction to stop; remain ready to append pull requests this
+conversation creates or adopts later. Stop the loop only when the user asks, a
+required user decision blocks one finding, validation cannot be restored, or
+every remaining finding on a pull request is deliberately declined.
 
 ## Never
 
 - Never merge.
 - Never push through the reviewer identity or to an unowned branch.
+- Never list a pull request in the tracked file that this conversation did not
+  create and the user did not assign.
 - Never discard or overwrite uncommitted work to switch branches.
 - Never claim a watcher, review, or clean state without checking live evidence.
 - Never invoke an external reviewer unless the user names it, and never
