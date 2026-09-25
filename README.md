@@ -65,12 +65,12 @@ agent-config locations into this checkout. It does not replace configuration
 directories or touch user-owned files. Run `./install.sh status` before an
 upgrade to inspect those paths.
 
-The plugin provides `plan-project`, `work-project`, `finish-project`,
+The plugin provides `plan-project`, `implement-project`, `finish-project`,
 `start-review-loop`, and `start-fix-loop`. Claude invokes a plugin skill as
 `/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop
 inspects each head by the method in `skills/start-review-loop/method.md`,
 and the fix loop verifies findings by the same protocol. All three of
-`work-project`, the review loop, and the fix loop share the code guidelines
+`implement-project`, the review loop, and the fix loop share the code guidelines
 in `skills/guidelines.md`, so the rules one writes to are the rules the others
 review and fix against. The core workflows use the local CLI and do not
 require MCP.

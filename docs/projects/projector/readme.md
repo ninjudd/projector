@@ -244,9 +244,9 @@ Projector adds three project workflow skills:
   records decisions and open questions, and assigns `later`, `next`, or `now`
   from the user's intent. It does not claim readiness merely because a plan
   exists.
-- `work-project` resolves a project through the CLI, reads its full context,
-  makes it `now` when work truly begins, implements a coherent slice, and keeps
-  the plan current in the same pull request.
+- `implement-project` resolves a project through the CLI, reads its full
+  context, makes it `now` when work truly begins, implements a coherent
+  slice, and keeps the plan current in the same pull request.
 - `finish-project` verifies acceptance criteria, records the outcome, changes
   the project to `done` in the implementation pull request that completes it,
   and confirms that no follow-up closeout pull request is being deferred.

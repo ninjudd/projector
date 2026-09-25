@@ -1,11 +1,11 @@
 # Code guidelines
 
-These rules apply to code any Projector skill writes or judges. `work-project`
-writes to them, the review method's written-rules pass reads a head against
-them, and the fix loop fixes to them and verifies findings that cite them. One
-file carries them so the three skills cannot drift apart: a rule the
-implementer skipped is the rule the reviewer flags, and the fix answers the
-same text the finding cited.
+These rules apply to code any Projector skill writes or judges.
+`implement-project` writes to them, the review method's written-rules pass
+reads a head against them, and the fix loop fixes to them and verifies
+findings that cite them. One file carries them so the three skills cannot
+drift apart: a rule the implementer skipped is the rule the reviewer flags,
+and the fix answers the same text the finding cited.
 
 A repository's own rule documents outrank these where the two disagree,
 because a loop takes its policy from the repository it works in. Cite a rule
