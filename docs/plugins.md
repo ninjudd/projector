@@ -105,7 +105,7 @@ lives, and tells you to run `./install.sh cli`. The comparison is of the files
 themselves, so it holds whether or not anyone remembered to bump a version.
 
 `marketplace` names each host's source for the `projector` marketplace, which
-is where an upgrade refreshes from. `marketplace-local` follows it, with a ⚠️
+is where an upgrade refreshes from. `from-checkout` follows it, with a ⚠️
 marker, when that source is a local path and the checkout names a repository
 to move it to: the plugin goes stale with the checkout until `./install.sh
 <host>` moves it. `plugin-current` reports an installed plugin at the

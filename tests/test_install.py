@@ -447,11 +447,11 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(f"marketplace    claude directory {checkout}", result.stdout)
         self.assertIn(
-            "marketplace-local ⚠️  claude installs from a checkout and goes stale with it "
+            "from-checkout  ⚠️  claude installs from a checkout and goes stale with it "
             "-- run ./install.sh claude to move it to acme/projector",
             result.stdout,
         )
-        self.assertEqual(1, result.stdout.count("marketplace-local"))
+        self.assertEqual(1, result.stdout.count("from-checkout"))
 
     def test_status_reports_a_host_with_no_plugin(self) -> None:
         result = self.install("status")

@@ -274,7 +274,7 @@ report_plugin() {
   if [ -n "$marketplace" ]; then
     printf '%-14s %s\n' "marketplace" "$host $marketplace"
     if marketplace_is_local "$marketplace" && [ "$(plugin_source "$host")" != "$REPO" ]; then
-      warn_row "marketplace-local" "$host installs from a checkout and goes stale with it -- run ./install.sh $host to move it to $(plugin_source "$host")"
+      warn_row "from-checkout" "$host installs from a checkout and goes stale with it -- run ./install.sh $host to move it to $(plugin_source "$host")"
     fi
   fi
   installed="$(host_plugin_version "$host")"
