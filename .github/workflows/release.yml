@@ -40,7 +40,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git commit --quiet -am "Release $version"
-          git push --quiet origin "$branch"
+          # The branch belongs to this workflow; a rerun after a run that pushed it
+          # but could not open the pull request replaces it.
+          git push --quiet --force origin "$branch"
           cat > "$RUNNER_TEMP/body.md" <<EOF
           Raises Projector's version to $version in \`setup.cfg\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes.
 
