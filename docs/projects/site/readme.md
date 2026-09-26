@@ -186,3 +186,22 @@ archive stamps every file with the ref's newest commit.
 - **Host elsewhere with `site build`.** Any static host that answers a
   missing path with `404.html` can serve `project site build --out DIR`;
   no host-specific packaging was added.
+
+## 9. Set the site up with `project init --site`
+
+Setting a repository up took three steps a person or agent ran by hand: a
+`gh api` call to turn on Pages with the Actions source, a second one to make
+a private repository's site private, and `project site workflow --write`.
+The second was easy to miss, and missing it publishes a private repository's
+README, plans and diffs. `project init --site` runs all three.
+
+- **Opt in with a flag.** Plain `init` works offline and needs no admin
+  rights, so it never contacts GitHub; `--site` does.
+- **Make the site safe before writing the workflow.** When GitHub refuses to
+  make a private repository's site private, `init` exits 65 without writing
+  the workflow, so nothing can be merged that would deploy the repository's
+  content publicly. The action's `--check-visibility` stays as the deploy's
+  own guard.
+- **Stay idempotent.** An existing Pages site is switched to the Actions
+  source rather than refused, and a rerun reports the site and the workflow
+  as `unchanged`, as `init` reports its other files.

@@ -139,7 +139,16 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
 
-    add_output(subcommands.add_parser("init", help="adopt the project convention"))
+    init = subcommands.add_parser("init", help="adopt the project convention")
+    init.add_argument(
+        "--site",
+        action="store_true",
+        help="also set up the Projector site: a GitHub Pages site and the workflow that deploys it",
+    )
+    init.add_argument(
+        "--action-ref", default="v0", help="with --site, the projector tag or commit the workflow runs"
+    )
+    add_output(init)
 
     listing = subcommands.add_parser("list", help="list projects")
     listing.add_argument("--status", choices=STATUSES)
@@ -391,7 +400,7 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def emit_files(files: list[FileAction], json_output: bool) -> None:
+def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None) -> None:
     """Report what `init` did, one line per file, or one JSON document.
 
     The top-level `action` and `path` still describe the projects README, as
@@ -410,6 +419,7 @@ def emit_files(files: list[FileAction], json_output: bool) -> None:
                     "action": readme.action,
                     "path": readme.path,
                     "files": [{"path": entry.path, "action": entry.action} for entry in files],
+                    **({"site": pages} if pages is not None else {}),
                 }
             )
         )
@@ -605,20 +615,56 @@ def run_site(arguments: argparse.Namespace) -> int:
         print(f"{url}prs/{arguments.pr}/" if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
-        projects_dir = configured_projects_dir(root)
-        text = walkthrough.workflow_text(
-            arguments.action_ref,
-            arguments.branch or walkthrough.default_branch(),
-            projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
-        )
+        text = site_workflow_text(root, arguments.action_ref, arguments.branch)
         if not arguments.write:
             print(text, end="")
             return 0
-        path = root / WORKFLOW_PATH
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")
+        write_site_workflow(root, text)
+        print(f"wrote {root / WORKFLOW_PATH}; commit it to the default branch, where GitHub runs dispatched workflows")
     return 0
+
+
+def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+    projects_dir = configured_projects_dir(root)
+    return walkthrough.workflow_text(
+        action_ref,
+        branch or walkthrough.default_branch(root=root),
+        projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
+    )
+
+
+def write_site_workflow(root: Path, text: str) -> FileAction:
+    path = root / WORKFLOW_PATH
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return FileAction(WORKFLOW_PATH, "unchanged")
+    action = "updated" if path.exists() else "created"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return FileAction(
+        WORKFLOW_PATH,
+        action,
+        f"commit {WORKFLOW_PATH} to the default branch through a pull request; GitHub runs the site "
+        "workflow only from there",
+    )
+
+
+def init_site(root: Path, action_ref: str) -> tuple[dict, FileAction]:
+    """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
+
+    The workflow is written only once the Pages site is safe to deploy to, so
+    a private repository whose site cannot be made private gets no workflow.
+    """
+    repo = site_repo(root)
+    if not repo:
+        raise walkthrough.SpecError("--site needs a GitHub remote named origin to set up Pages on")
+    pages = walkthrough.enable_pages(repo)
+    return pages, write_site_workflow(root, site_workflow_text(root, action_ref))
+
+
+def emit_site(pages: dict) -> None:
+    print(f"{pages['pages']} GitHub Pages site {pages['url']}")
+    if pages["visibility"] == "updated":
+        print("updated GitHub Pages visibility: private")
 
 
 def run(arguments: argparse.Namespace) -> int:
@@ -644,12 +690,21 @@ def run(arguments: argparse.Namespace) -> int:
     if command == "init":
         try:
             files = store.init(instructions_enabled(root))
+            pages = None
+            if arguments.site:
+                try:
+                    pages, workflow = init_site(root, arguments.action_ref)
+                except ProjectorError as error:
+                    raise InitError(str(error), files) from error
+                files.append(workflow)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:
                 emit_files(error.files, False)
             raise
-        emit_files(files, arguments.json_output)
+        emit_files(files, arguments.json_output, pages)
+        if pages is not None and not arguments.json_output:
+            emit_site(pages)
     elif command == "list":
         projects = store.projects()
         if arguments.status:

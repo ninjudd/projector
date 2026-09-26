@@ -159,25 +159,22 @@ update a walkthrough later, fetch it with
 `git fetch origin refs/projector/walkthroughs` and start from it rather than
 from a fresh `init`.
 
-Setting a repository up is once, with admin rights. Enable Pages with the
-GitHub Actions source, then add the workflow to the default branch through a
-pull request, because GitHub runs dispatched workflows only from there:
+Setting a repository up is once, with admin rights, and only when the user
+asks for it. From a checkout whose `origin` is the repository, run:
 
 ```sh
-gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
-project site workflow --write
+project init --site
 ```
+
+It enables Pages with the GitHub Actions source, makes a private
+repository's site private, and writes `.github/workflows/projector-site.yml`.
+When GitHub refuses to make a private repository's site private, it stops
+before writing the workflow; report that, and offer `project site serve` or
+an Artifact instead. Then add the workflow to the default branch through a
+pull request, because GitHub runs dispatched workflows only from there.
 
 The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 `--action-ref` to pin an exact release tag or a full commit SHA instead.
-
-A private repository's Pages site is public unless the account has private
-Pages (GitHub Enterprise Cloud). For a private repository, make the site
-private first and stop if GitHub refuses:
-
-```sh
-gh api -X PUT repos/OWNER/NAME/pages -F public=false
-```
 
 ## Update the page when the pull request moves
 

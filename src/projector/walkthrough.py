@@ -245,6 +245,41 @@ def require_private_site(repo: str) -> None:
         raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
 
 
+def enable_pages(repo: str) -> dict:
+    """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
+
+    Returns what changed: `pages` is created, updated, or unchanged, and
+    `visibility` is updated when a private repository's public site was made
+    private. Raises when a private repository's site cannot be made private,
+    because the site would publish the repository's README, plans and diffs.
+    """
+    raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is None:
+        gh("api", "-X", "POST", f"repos/{repo}/pages", "-f", "build_type=workflow")
+        action = "created"
+    elif json.loads(raw).get("build_type") != "workflow":
+        gh("api", "-X", "PUT", f"repos/{repo}/pages", "-f", "build_type=workflow")
+        action = "updated"
+    else:
+        action = "unchanged"
+    pages = json.loads(gh("api", f"repos/{repo}/pages")) if action != "unchanged" else json.loads(raw)
+    visibility = "unchanged"
+    if exposure(repo, pages):
+        refusal = (f"{repo} is private but GitHub will not make its Pages site private, which needs private "
+                   "Pages (GitHub Enterprise Cloud); make the repository public, or serve the site with "
+                   "`project site serve` instead")
+        try:
+            gh("api", "-X", "PUT", f"repos/{repo}/pages", "-F", "public=false")
+        except SpecError as exc:
+            raise SpecError(f"{refusal}: {exc}") from exc
+        pages = json.loads(gh("api", f"repos/{repo}/pages"))
+        if exposure(repo, pages):
+            raise SpecError(refusal)
+        visibility = "updated"
+    return {"pages": action, "visibility": visibility, "url": pages.get("html_url", ""),
+            "public": pages.get("public", True)}
+
+
 def hosting(repo: str) -> tuple[str | None, str]:
     """Return the repository's walkthroughs site URL, or None and why it is not set up.
 
@@ -552,10 +587,11 @@ def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | Non
     return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
 
 
-def default_branch(remote: str = "origin") -> str:
+def default_branch(remote: str = "origin", root: Path | None = None) -> str:
     """The remote's default branch as the checkout recorded it, or main."""
+    within = ["-C", str(root)] if root is not None else []
     try:
-        head = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+        head = git(*within, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
     except SpecError:
         return "main"
     return head.split("/", 1)[1] if "/" in head else head

@@ -102,6 +102,36 @@ validation failure.
 An adopted repository with no projects yet is not an error. `list` prints
 nothing and exits 0.
 
+### Set up the site
+
+Pass `--site` to set up the [Projector site](#build-the-projector-site) as
+well. It needs admin rights on the GitHub repository that `origin` names,
+and `gh` signed in:
+
+```console
+$ project init --site
+unchanged docs/projects/README.md
+unchanged AGENTS.md
+unchanged CLAUDE.md
+created .github/workflows/projector-site.yml
+created GitHub Pages site https://owner.github.io/example/
+```
+
+After the files above, `init --site` turns on GitHub Pages with GitHub
+Actions as its source, or switches an existing Pages site to that source,
+and reports the site as `created`, `updated`, or `unchanged`. When the
+repository is private and its site is public, it makes the site private and
+prints `updated GitHub Pages visibility: private`. If GitHub refuses, as it
+does without private Pages (GitHub Enterprise Cloud), `init` exits 65 without
+writing the workflow, because the site would publish the repository's
+README, plans, and diffs; `project site serve` still serves it locally.
+Last, it writes the same workflow file as `site workflow --write` and
+reports it like any other file, reminding you on stderr to merge it to the
+default branch through a pull request. `--action-ref` pins the
+Projector tag or commit the workflow runs, `v0` by default. In `--json` mode
+the document gains a `site` object with `pages`, `visibility`, `url`, and
+`public`. `init` without `--site` never contacts GitHub.
+
 ## Browse projects
 
 Run `list` to group projects by priority without creating an index. Each row
