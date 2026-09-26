@@ -145,17 +145,19 @@ that does not build. It then commits the spec and that diff to
 `walkthroughs/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
 starts the workflow. Pass `--diff` with the file you produced for a pull
-request too large for GitHub's compare API. Because the diff is stored, the
-site deploy asks GitHub for nothing: it checks each spec against its stored
-diff and writes each page's data beside it, and the page loads that data
-when it opens. The deploy reports and skips any spec that still fails, or
-that names another repository, so one bad spec costs one walkthrough rather
-than the deployment. The site lists every walkthrough at its root,
-serves each pull request's newest head at `/<number>/`, and links the older
-heads from each page. The spec on the ref is the durable copy: to update a
-walkthrough later, fetch it with
-`git fetch origin refs/projector/walkthroughs` and start from it rather
-than from a fresh `init`.
+request too large for GitHub's compare API. It must be the diff from the
+spec's `pr.base` to its `pr.head`, as "Build the page" produces it, because
+every later deploy serves the stored diff as it is. Because the diff is
+stored, the site deploy asks GitHub for nothing: it checks each spec against
+its stored diff and writes each page's data beside it, and the page loads
+that data when it opens. The deploy reports and skips any spec that still
+fails, or that names another repository, so one bad spec costs one
+walkthrough rather than the deployment. The site lists every walkthrough at
+its root, serves each pull request's newest head at `/<number>/`, and links
+the older heads from each page. The spec on the ref is the durable copy: to
+update a walkthrough later, fetch it with
+`git fetch origin refs/projector/walkthroughs` and start from it rather than
+from a fresh `init`.
 
 Setting a repository up is once, with admin rights. Enable Pages with the
 GitHub Actions source, then add the workflow to the default branch through a
