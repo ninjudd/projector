@@ -252,12 +252,49 @@ For every new head, in that pull request's subagent:
    guidelines every Projector skill shares, before the repository's own rule
    documents. Cover both the new range and the pull-request-wide integration
    diff.
-6. Run focused tests and reproductions proportional to risk. A candidate the
-   protocol cannot verify is dropped, never posted.
+6. Run focused tests and reproductions proportional to risk, when the head's
+   authors are trusted as the next section defines. A candidate the protocol
+   cannot verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
    of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
    comment as described next instead of repeating step 4, and revalidate every
    prospective finding against the new head.
+
+### Run a head's code only when its authors are trusted
+
+Running a test, a reproducer, a build, the repository's validation gate, or
+any script from the head executes code the head's authors wrote, on this
+machine, with the reviewer's GitHub token and credentials in reach. A
+malicious test runs as surely as a malicious build step. Reading the code
+runs nothing, so a review can always read; it runs the head's code only when
+every author of the pull request is trusted.
+
+The authors are the pull request's author and every commit's author:
+
+```sh
+gh pr view <number> --repo <owner>/<repo> --json author,commits \
+  --jq '[.author.login] + [.commits[].authors[].login] | unique | .[]'
+```
+
+A login is trusted when it is the operator, or when the repository grants it
+`admin`, `maintain`, or `write`:
+
+```sh
+gh api repos/<owner>/<repo>/collaborators/<login>/permission --jq .permission
+```
+
+A commit author with no GitHub login, a bot, and a login whose lookup fails
+are all untrusted, because none of them shows who wrote the code.
+
+When any author is untrusted, review the head by reading it. The four-step
+protocol in `method.md` verifies findings without running anything. Before
+you run anything from the head, ask the user through the main loop, naming
+the author who is not trusted and the exact command you want to run, and run
+it only on a yes. A yes covers the head it was given for; a new head asks
+again unless the user said the answer covers the pull request. Publish
+without waiting for the answer when reading was enough, and say in the
+review's disclosures that the head was reviewed without running its code and
+why.
 
 ### One start comment per review
 
