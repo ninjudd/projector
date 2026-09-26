@@ -517,6 +517,237 @@ class RouteTests(SiteRepoCase):
             self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
 
 
+class FakeGitHub:
+    """The slice of the GitHub API `init` uses to set up the site, for one repository."""
+
+    def __init__(self, private: bool = False, pages: dict | None = None, private_pages: bool = True,
+                 admin: bool = True, homepage: str = "") -> None:
+        self.private, self.pages, self.private_pages = private, pages, private_pages
+        self.admin, self.homepage = admin, homepage
+        self.calls: list[tuple[str, ...]] = []
+
+    def lookup(self, *args: str) -> str | None:
+        self.calls.append(args)
+        endpoint = args[1]
+        if endpoint == "repos/owner/example/pages":
+            return None if self.pages is None else json.dumps(self.pages)
+        if endpoint == "repos/owner/example":
+            return "true\n" if self.private else "false\n"
+        raise walkthrough.SpecError(f"unexpected lookup {args}")
+
+    def gh(self, *args: str) -> str:
+        self.calls.append(args)
+        if args == ("api", "repos/owner/example/pages"):
+            return json.dumps(self.pages)
+        if args == ("api", "repos/owner/example"):
+            return json.dumps({"private": self.private, "homepage": self.homepage or None,
+                               "permissions": {"admin": self.admin, "push": True, "pull": True}})
+        if not self.admin:
+            raise walkthrough.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
+        if args == ("api", "-X", "DELETE", "repos/owner/example/pages"):
+            self.pages = None
+            return ""
+        method, endpoint, _, field = args[2], args[3], args[4], args[5]
+        if (method, endpoint) == ("POST", "repos/owner/example/pages"):
+            self.pages = {"build_type": "workflow", "public": True,
+                          "html_url": "https://owner.github.io/example/"}
+        elif (method, endpoint, field) == ("PUT", "repos/owner/example/pages", "build_type=workflow"):
+            self.pages["build_type"] = "workflow"
+        elif (method, endpoint, field) == ("PUT", "repos/owner/example/pages", "public=false"):
+            if not self.private_pages:
+                raise walkthrough.SpecError("gh api failed: HTTP 422 private Pages are not available")
+            self.pages["public"] = False
+        elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
+            self.homepage = field.removeprefix("homepage=")
+        else:
+            raise walkthrough.SpecError(f"unexpected call {args}")
+        return "{}"
+
+    def writes(self) -> list[tuple[str, ...]]:
+        return [call[2:] for call in self.calls if "-X" in call]
+
+
+SITE_READY = {"build_type": "workflow", "public": True, "html_url": "https://owner.github.io/example/"}
+
+
+class InitSiteTests(SiteRepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.origin("https://github.com/owner/example.git")
+
+    def origin(self, url: str) -> None:
+        subprocess.run(["git", "-C", str(self.repo), "remote", "remove", "origin"], capture_output=True)
+        subprocess.run(["git", "-C", str(self.repo), "remote", "add", "origin", url], check=True)
+
+    def init(self, github: FakeGitHub, *extra: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(walkthrough, "gh_lookup", side_effect=github.lookup), \
+             mock.patch.object(walkthrough, "gh", side_effect=github.gh), \
+             mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
+             redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["--root", str(self.repo), "init", *extra])
+        return code, out.getvalue(), err.getvalue()
+
+    def workflow(self) -> Path:
+        return self.repo / walkthrough.WORKFLOW_PATH
+
+    def test_sets_up_the_site_by_default_then_changes_nothing_on_a_rerun(self) -> None:
+        github = FakeGitHub()
+
+        code, out, err = self.init(github)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([("POST", "repos/owner/example/pages", "-f", "build_type=workflow"),
+                          ("PATCH", "repos/owner/example", "-f", "homepage=https://owner.github.io/example/")],
+                         github.writes())
+        self.assertIn(f"created {walkthrough.WORKFLOW_PATH}\n", out)
+        self.assertIn("created GitHub Pages site https://owner.github.io/example/\n", out)
+        self.assertIn("updated repository website https://owner.github.io/example/\n", out)
+        self.assertIn("through a pull request", err)
+        self.assertEqual(walkthrough.workflow_text("v0", "main"), self.workflow().read_text())
+
+        github.calls.clear()
+        code, out, _ = self.init(github, "--json")
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.writes())
+        report = json.loads(out)
+        self.assertIn({"path": walkthrough.WORKFLOW_PATH, "action": "unchanged"}, report["files"])
+        self.assertEqual({"pages": "unchanged", "visibility": "unchanged", "url": "https://owner.github.io/example/",
+                          "public": True, "website": "unchanged"}, report["site"])
+
+    def test_no_site_or_the_config_key_leaves_github_alone_and_site_overrides_the_key(self) -> None:
+        github = FakeGitHub()
+
+        self.assertEqual(0, self.init(github, "--no-site")[0])
+        (self.repo / ".projector.toml").write_text("[site]\nenabled = false\n")
+        self.assertEqual(0, self.init(github)[0])
+
+        self.assertEqual([], github.calls)
+        self.assertFalse(self.workflow().exists())
+        self.assertEqual(0, self.init(github, "--site")[0])
+        self.assertTrue(self.workflow().exists())
+
+    def test_a_repository_not_on_github_is_adopted_quietly(self) -> None:
+        github = FakeGitHub()
+        self.origin("https://gitlab.com/owner/example.git")
+
+        code, out, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual("", err, "a repository not on GitHub has no site to miss")
+        self.assertIn("created AGENTS.md", out)
+        self.assertEqual([], github.calls)
+        self.assertFalse(self.workflow().exists())
+        self.assertEqual(65, self.init(github, "--site")[0], "--site requires the site")
+
+    def test_keeps_a_repositorys_own_branch_site_unless_site_asks_to_replace_it(self) -> None:
+        github = FakeGitHub(pages=dict(SITE_READY, build_type="legacy"), homepage="https://docs.example.com")
+
+        code, _, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.writes())
+        self.assertIn("already serves its own GitHub Pages site from a branch; pass --site", err)
+        self.assertFalse(self.workflow().exists())
+
+        code, out, _ = self.init(github, "--site", "--action-ref", "v0.5.5")
+
+        self.assertEqual(0, code)
+        self.assertEqual([("PUT", "repos/owner/example/pages", "-f", "build_type=workflow")], github.writes())
+        self.assertIn("updated GitHub Pages site", out)
+        self.assertIn("uses: ninjudd/projector/actions/site@v0.5.5", self.workflow().read_text())
+
+    def test_keeps_a_site_another_workflow_deploys_unless_site_asks_to_add_one(self) -> None:
+        github = FakeGitHub(pages=SITE_READY)
+        docs = self.repo / ".github/workflows/docs.yml"
+        docs.parent.mkdir(parents=True)
+        docs.write_text("jobs:\n  deploy:\n    steps:\n      - uses: actions/deploy-pages@v4\n")
+
+        code, _, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.calls, "a deployer in the checkout is found before asking GitHub")
+        self.assertIn(".github/workflows/docs.yml already deploys a GitHub Pages site; pass --site", err)
+        self.assertFalse(self.workflow().exists())
+
+        self.assertEqual(0, self.init(github, "--site")[0])
+        self.assertTrue(self.workflow().exists())
+        self.assertEqual(0, self.init(github)[0], "Projector's own workflow is not another deployer")
+
+    def test_makes_a_private_repositorys_site_private(self) -> None:
+        github = FakeGitHub(private=True)
+
+        code, out, _ = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertIn(("PUT", "repos/owner/example/pages", "-F", "public=false"), github.writes())
+        self.assertFalse(github.pages["public"])
+        self.assertIn("updated GitHub Pages visibility: private\n", out)
+
+    def test_writes_no_workflow_when_a_private_repositorys_site_would_stay_public(self) -> None:
+        for flags, expected in (((), 0), (("--site",), 65)):
+            with self.subTest(flags=flags):
+                github = FakeGitHub(private=True, private_pages=False)
+
+                code, out, err = self.init(github, *flags)
+
+                self.assertEqual(expected, code)
+                self.assertIn("owner/example is private but GitHub will not make its Pages site private", err)
+                self.assertIn("project site serve", err)
+                self.assertIn("AGENTS.md", out, "what init wrote is still reported")
+                self.assertFalse(self.workflow().exists())
+                self.assertIsNone(github.pages, "the public site init created is deleted")
+                self.assertIn("the public Pages site init created was deleted", err)
+
+    def test_never_deletes_a_public_site_it_did_not_create(self) -> None:
+        github = FakeGitHub(private=True, private_pages=False, pages=SITE_READY)
+
+        code, _, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([("PUT", "repos/owner/example/pages", "-F", "public=false")], github.writes())
+        self.assertEqual(SITE_READY, github.pages)
+        self.assertNotIn("was deleted", err)
+        self.assertFalse(self.workflow().exists())
+
+    def test_keeps_a_website_link_that_points_elsewhere(self) -> None:
+        for homepage, action in (("http://owner.github.io/example", "unchanged"), ("https://example.com", "kept")):
+            with self.subTest(homepage=homepage):
+                github = FakeGitHub(pages=SITE_READY, homepage=homepage)
+
+                code, out, err = self.init(github, "--json")
+
+                self.assertEqual(0, code)
+                self.assertEqual([], github.writes())
+                self.assertEqual(action, json.loads(out)["site"]["website"])
+                if action == "kept":
+                    self.assertIn("already links its website to https://example.com", err)
+
+    def test_warns_a_non_admin_and_writes_the_workflow_only_for_a_site_already_set_up(self) -> None:
+        github = FakeGitHub(admin=False, pages=SITE_READY)
+
+        code, out, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.writes())
+        self.assertIn(f"created {walkthrough.WORKFLOW_PATH}", out)
+        self.assertIn("you are not an admin of owner/example, so its website does not link", err)
+
+        self.workflow().unlink()
+        for flags, expected in (((), 0), (("--site",), 65)):
+            with self.subTest(flags=flags):
+                github = FakeGitHub(admin=False)
+
+                code, _, err = self.init(github, *flags)
+
+                self.assertEqual(expected, code)
+                self.assertEqual([], github.writes(), "nothing is attempted without admin")
+                self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
+                self.assertFalse(self.workflow().exists())
+
+
 class WorkflowTests(unittest.TestCase):
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = walkthrough.workflow_text("v0", "trunk")

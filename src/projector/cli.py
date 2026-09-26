@@ -8,6 +8,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -140,7 +141,19 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
 
-    add_output(subcommands.add_parser("init", help="adopt the project convention"))
+    init = subcommands.add_parser("init", help="adopt the project convention")
+    site_choice = init.add_mutually_exclusive_group()
+    site_choice.add_argument(
+        "--site",
+        action="store_true",
+        default=None,
+        help="require the Projector site to be set up, failing if it cannot be (default: set it up when possible)",
+    )
+    site_choice.add_argument(
+        "--no-site", action="store_false", dest="site", help="leave the GitHub Pages site and its workflow alone"
+    )
+    init.add_argument("--action-ref", default="v0", help="the projector tag or commit the site workflow runs")
+    add_output(init)
 
     listing = subcommands.add_parser("list", help="list projects")
     listing.add_argument("--status", choices=STATUSES)
@@ -392,7 +405,7 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def emit_files(files: list[FileAction], json_output: bool) -> None:
+def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None) -> None:
     """Report what `init` did, one line per file, or one JSON document.
 
     The top-level `action` and `path` still describe the projects README, as
@@ -411,6 +424,7 @@ def emit_files(files: list[FileAction], json_output: bool) -> None:
                     "action": readme.action,
                     "path": readme.path,
                     "files": [{"path": entry.path, "action": entry.action} for entry in files],
+                    **({"site": pages} if pages is not None else {}),
                 }
             )
         )
@@ -616,20 +630,108 @@ def run_site(arguments: argparse.Namespace) -> int:
         print(f"{url}reviews/{arguments.pr}/" if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
-        projects_dir = configured_projects_dir(root)
-        text = walkthrough.workflow_text(
-            arguments.action_ref,
-            arguments.branch or walkthrough.default_branch(),
-            projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
-        )
+        text = site_workflow_text(root, arguments.action_ref, arguments.branch)
         if not arguments.write:
             print(text, end="")
             return 0
-        path = root / WORKFLOW_PATH
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")
+        write_site_workflow(root, text)
+        print(f"wrote {root / WORKFLOW_PATH}; commit it to the default branch, where GitHub runs dispatched workflows")
     return 0
+
+
+def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+    projects_dir = configured_projects_dir(root)
+    return walkthrough.workflow_text(
+        action_ref,
+        branch or walkthrough.default_branch(root=root),
+        projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
+    )
+
+
+def write_site_workflow(root: Path, text: str) -> FileAction:
+    path = root / WORKFLOW_PATH
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return FileAction(WORKFLOW_PATH, "unchanged")
+    action = "updated" if path.exists() else "created"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return FileAction(
+        WORKFLOW_PATH,
+        action,
+        f"commit {WORKFLOW_PATH} to the default branch through a pull request; GitHub runs the site "
+        "workflow only from there",
+    )
+
+
+class NotOnGitHub(ProjectorError):
+    """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
+
+
+def other_pages_deployers(root: Path) -> list[str]:
+    """Workflows in the checkout, other than Projector's, that deploy a GitHub Pages site."""
+    folder = root / ".github" / "workflows"
+    ours = {Path(WORKFLOW_PATH).name, *(Path(path).name for path in walkthrough.LEGACY_WORKFLOW_PATHS)}
+    found = []
+    for path in sorted(folder.glob("*.y*ml")) if folder.is_dir() else []:
+        if path.name not in ours and "actions/deploy-pages" in path.read_text(encoding="utf-8", errors="replace"):
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict, FileAction]:
+    """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
+
+    The workflow is written only once the Pages site is safe to deploy to, so
+    a private repository whose site cannot be made private gets no workflow.
+    Without `takeover`, a repository that already deploys its own Pages site,
+    from a branch or from another workflow, keeps it.
+    """
+    try:
+        repo = walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
+    except walkthrough.SpecError:
+        repo = ""
+    if not repo:
+        raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
+    deployers = other_pages_deployers(root)
+    if deployers and not takeover:
+        raise walkthrough.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
+                                    "add the Projector site's workflow beside it")
+    if shutil.which("gh") is None:
+        raise walkthrough.SpecError("the gh CLI is not installed, and setting up Pages needs it")
+    details = json.loads(walkthrough.gh("api", f"repos/{repo}"))
+    # Only an admin can change Pages or the website link. Without admin, a site
+    # already set up still gets its workflow, which needs no admin to propose.
+    admin = bool((details.get("permissions") or {}).get("admin"))
+    pages = walkthrough.enable_pages(repo, admin, takeover)
+    # The website link is a convenience; failing to set it must not cost the workflow.
+    try:
+        pages["website"], note = walkthrough.set_homepage(
+            repo, pages["url"], details.get("homepage") or "", admin
+        ) if pages["url"] else ("unchanged", "")
+    except walkthrough.SpecError as error:
+        pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
+    if note:
+        print(f"project: {note}", file=sys.stderr)
+    return pages, write_site_workflow(root, site_workflow_text(root, action_ref))
+
+
+def site_enabled(root: Path) -> bool:
+    """`site.enabled` from configuration; unset means `init` sets the site up."""
+
+    value = load_config(root).get("site.enabled")
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ConfigError(f"site.enabled must be true or false, not {type(value).__name__}")
+    return value
+
+
+def emit_site(pages: dict) -> None:
+    print(f"{pages['pages']} GitHub Pages site {pages['url']}")
+    if pages["visibility"] == "updated":
+        print("updated GitHub Pages visibility: private")
+    if pages["website"] == "updated":
+        print(f"updated repository website {pages['url']}")
 
 
 def run(arguments: argparse.Namespace) -> int:
@@ -653,14 +755,32 @@ def run(arguments: argparse.Namespace) -> int:
     command = arguments.command
 
     if command == "init":
+        # An explicit --site or --no-site wins over configuration; unset, the
+        # site is set up when it can be and skipped with a note when it cannot.
+        wanted = site_enabled(root) if arguments.site is None else arguments.site
         try:
             files = store.init(instructions_enabled(root))
+            pages = None
+            if wanted:
+                try:
+                    pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site))
+                    files.append(workflow)
+                except ProjectorError as error:
+                    if arguments.site:
+                        raise InitError(str(error), files) from error
+                    pages = {"skipped": str(error)}
+                    # A repository with no GitHub origin has no site to miss.
+                    if not isinstance(error, NotOnGitHub):
+                        print(f"project: site not set up: {error}; pass --no-site, or set site.enabled = false, "
+                              "to stop setting it up", file=sys.stderr)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:
                 emit_files(error.files, False)
             raise
-        emit_files(files, arguments.json_output)
+        emit_files(files, arguments.json_output, pages)
+        if pages is not None and "skipped" not in pages and not arguments.json_output:
+            emit_site(pages)
     elif command == "list":
         projects = store.projects()
         if arguments.status:
