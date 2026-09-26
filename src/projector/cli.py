@@ -668,7 +668,6 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     if arguments.host not in serve.LOOPBACK:
         print(f"listening on {arguments.host}: anyone who can reach it can read this repository's site",
               file=sys.stderr)
-    print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
     # A terminal closing or a process manager stopping the server must clean up
     # as Ctrl-C does, since the build holds the repository's docs and diffs.
     def interrupt(signum, frame) -> None:
@@ -678,10 +677,13 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), interrupt)
     stop = threading.Event()
-    if not arguments.no_watch:
-        report = lambda message: print(message, flush=True)
-        threading.Thread(target=serve.watch, args=(site_state, stop, 1.0, report), daemon=True).start()
+    # Everything after the handlers runs inside the cleanup, and the address is
+    # announced last, so a signal sent as soon as it appears is always caught.
     try:
+        if not arguments.no_watch:
+            report = lambda message: print(message, flush=True)
+            threading.Thread(target=serve.watch, args=(site_state, stop, 1.0, report), daemon=True).start()
+        print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
