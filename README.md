@@ -206,7 +206,10 @@ is the GitHub repository:
            uses: ninjudd/projector/actions/site@v0
    ```
 
-   The action's `prepare` input runs a different command in its place.
+   The action's `prepare` input runs a different command in its place. On
+   your own machine, `project site serve` runs the command only after you
+   allow it once with `--allow-prepare`, so previewing a branch or a clone
+   you have not read never runs its code unasked.
 
 3. Publish something. Once the workflow is on the default branch, the
    `walkthrough-pr` skill publishes to the site by default: ask your agent

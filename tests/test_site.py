@@ -527,10 +527,11 @@ class PrepareTests(SiteRepoCase):
     def configure(self, prepare: object) -> None:
         (self.repo / ".projector.toml").write_text(f"[site]\nprepare = {json.dumps(prepare)}\n")
 
-    def build(self, *flags: str) -> tuple[int, dict, str]:
+    def build(self, *flags: str, ci: bool = False) -> tuple[int, dict, str]:
         err = io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example", "HOME": str(self.home)}), \
-             redirect_stdout(io.StringIO()), redirect_stderr(err):
+        environ = {"GITHUB_REPOSITORY": "owner/example", "HOME": str(self.home),
+                   "XDG_STATE_HOME": str(self.home / "state"), "GITHUB_ACTIONS": "true" if ci else ""}
+        with mock.patch.dict(os.environ, environ), redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo), *flags])
         manifest = json.loads((self.out / "site.json").read_text()) if (self.out / "site.json").exists() else {}
         return code, manifest, err.getvalue()
@@ -538,14 +539,41 @@ class PrepareTests(SiteRepoCase):
     def made(self, manifest: dict) -> dict:
         return {d["path"]: d["title"] for d in manifest["docs"] if d["path"].startswith("docs/made/")}
 
-    def test_the_build_runs_site_prepare_in_the_checkout_before_copying(self) -> None:
+    def test_a_checkout_s_command_is_skipped_until_it_is_allowed(self) -> None:
         self.configure(self.MAKE.format(title="Made", name="page"))
 
-        code, manifest, err = self.build()
+        code, skipped, err = self.build()
 
-        self.assertEqual(0, code)
-        self.assertEqual({"docs/made/page.html": "Made"}, self.made(manifest))
+        self.assertEqual(0, code, "the site still builds, without what the command would have made")
+        self.assertEqual({}, self.made(skipped))
+        self.assertIn("site.prepare is not allowed for this checkout", err)
+        self.assertIn("mkdir -p docs/made", err, "the skipped command is shown, so the reader can judge it")
+        self.assertIn("--allow-prepare", err)
+
+    def test_an_allowed_command_runs_and_stays_allowed_until_it_changes(self) -> None:
+        self.configure(self.MAKE.format(title="Made", name="page"))
+
+        _, allowed, err = self.build("--allow-prepare")
+        shutil.rmtree(self.repo / "docs/made")
+        _, remembered, _ = self.build()
+        shutil.rmtree(self.repo / "docs/made")
+        self.configure(self.MAKE.format(title="Changed", name="changed"))
+        _, changed, changed_err = self.build()
+
+        self.assertEqual({"docs/made/page.html": "Made"}, self.made(allowed))
         self.assertIn("preparing the site: mkdir -p docs/made", err, "a command from the repository is named first")
+        self.assertEqual({"docs/made/page.html": "Made"}, self.made(remembered))
+        self.assertEqual({}, self.made(changed), "a changed command is a new command to allow")
+        self.assertIn("site.prepare is not allowed for this checkout", changed_err)
+        self.assertNotIn(str(self.repo), (self.home / "state/projector/allowed-prepare").read_text(),
+                         "the record holds hashes, not the paths and commands themselves")
+
+    def test_a_deploy_runs_the_merged_command_unasked(self) -> None:
+        self.configure(self.MAKE.format(title="Made", name="page"))
+
+        _, manifest, _ = self.build(ci=True)
+
+        self.assertEqual({"docs/made/page.html": "Made"}, self.made(manifest))
 
     def test_the_flags_replace_or_skip_site_prepare(self) -> None:
         self.configure(self.MAKE.format(title="Configured", name="configured"))
@@ -553,16 +581,17 @@ class PrepareTests(SiteRepoCase):
 
         _, replaced, _ = self.build("--prepare", given)
         shutil.rmtree(self.repo / "docs/made")
-        _, skipped, err = self.build("--no-prepare")
+        _, skipped, err = self.build("--no-prepare", "--allow-prepare")
 
-        self.assertEqual({"docs/made/given.html": "Given"}, self.made(replaced))
+        self.assertEqual({"docs/made/given.html": "Given"}, self.made(replaced),
+                         "a command given on the command line needs no allowing")
         self.assertEqual({}, self.made(skipped))
         self.assertNotIn("preparing the site", err)
 
     def test_a_failing_prepare_command_stops_the_build(self) -> None:
         self.configure("echo half-made; exit 3")
 
-        code, manifest, err = self.build()
+        code, manifest, err = self.build("--allow-prepare")
 
         self.assertEqual(65, code)
         self.assertIn("the prepare command exited with status 3: echo half-made; exit 3", err)

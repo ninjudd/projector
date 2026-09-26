@@ -97,7 +97,21 @@ setting applies in the deploy without any workflow change.
 `project site serve` runs the command before the first build and each
 rebuild, then takes the sources' fingerprint, so a generator that rewrites
 its output every time does not start the next rebuild itself. The command
-runs through the system shell, as a Makefile target would, and is named on
-stderr before it runs, because it comes from the repository: building or
-serving a checkout runs its code, so trust the checkout as you would to run
-`make`.
+runs through the system shell, as a Makefile target would.
+
+**A checkout's command runs locally only once allowed.** The command comes
+from the checkout, so without a gate, checking out an outside contributor's
+pull request and running `project site serve` to preview its docs would run
+whatever `site.prepare` that branch wrote, as the reader, before anyone read
+the diff; an agent offering `site serve` in an unfamiliar clone would do the
+same. Locally the command runs only after the reader allows it with
+`--allow-prepare`, which remembers a hash of the checkout's path and that
+exact command in user state, `$XDG_STATE_HOME/projector/allowed-prepare`, so
+a changed command needs allowing again. Until then the build prints the
+command and builds without it. A deploy (`GITHUB_ACTIONS=true`) runs it
+unasked, because the workflow builds only merged code on the default branch,
+and a `--prepare` on the command line is already the reader's choice. The
+allowance covers the command's text, not the files it runs: a branch that
+changes what an allowed `make explorer` does still runs, as running `make`
+there would, so the gate protects against unfamiliar clones and changed
+commands, not against a hostile branch of a repository already trusted.

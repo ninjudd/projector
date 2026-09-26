@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
+import hashlib
 import importlib.metadata as metadata
 import io
 import json
@@ -260,6 +261,10 @@ def parser() -> argparse.ArgumentParser:
         help="run this shell command in the checkout before building, instead of site.prepare",
     )
     site_build.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
+    site_build.add_argument(
+        "--allow-prepare", action="store_true",
+        help="allow this checkout's site.prepare command, and remember it until the command changes",
+    )
     site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
@@ -294,6 +299,10 @@ def parser() -> argparse.ArgumentParser:
         help="run this shell command in the checkout before building, instead of site.prepare",
     )
     site_serve.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
+    site_serve.add_argument(
+        "--allow-prepare", action="store_true",
+        help="allow this checkout's site.prepare command, and remember it until the command changes",
+    )
     site_workflow = site_commands.add_parser(
         "workflow", help="print or write the workflow file for the default branch"
     )
@@ -478,10 +487,46 @@ def configured_prepare(root: Path) -> Optional[str]:
     return configured
 
 
+def allowed_prepare_file() -> Path:
+    """Where the commands a user allowed are remembered: user state, not a checkout or its config."""
+    state = os.environ.get("XDG_STATE_HOME")
+    return (Path(state) if state else Path.home() / ".local" / "state") / "projector" / "allowed-prepare"
+
+
+def prepare_key(root: Path, command: str) -> str:
+    return hashlib.sha256(f"{root.resolve()}\n{command}".encode()).hexdigest()
+
+
 def prepare_command(root: Path, arguments: argparse.Namespace) -> Optional[str]:
+    """The command to run before building, or None.
+
+    site.prepare comes from the checkout, so a branch someone else wrote, or a
+    clone of a repository you have never looked at, would otherwise run its
+    own shell command as you the moment you preview its docs. Locally it runs
+    only once you allow that exact command for that checkout; a changed
+    command needs allowing again. A deploy runs it unasked, since the workflow
+    builds only what was merged to the default branch, and a --prepare given
+    on the command line is already your choice.
+    """
     if arguments.no_prepare:
         return None
-    return arguments.prepare or configured_prepare(root)
+    if arguments.prepare:
+        return arguments.prepare
+    command = configured_prepare(root)
+    if not command or os.environ.get("GITHUB_ACTIONS") == "true":
+        return command
+    key = prepare_key(root, command)
+    allowed = allowed_prepare_file()
+    if allowed.is_file() and key in allowed.read_text(encoding="utf-8").split():
+        return command
+    if arguments.allow_prepare:
+        allowed.parent.mkdir(parents=True, exist_ok=True)
+        with allowed.open("a", encoding="utf-8") as remembered:
+            remembered.write(key + "\n")
+        return command
+    print(f"site.prepare is not allowed for this checkout, so the site is built without it:\n  {command}\n"
+          f"Rerun with --allow-prepare to allow this exact command here.", file=sys.stderr)
+    return None
 
 
 def run_prepare(root: Path, command: str) -> None:
