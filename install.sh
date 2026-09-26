@@ -2,15 +2,35 @@
 #
 # Install Projector's CLI and host plugins without replacing host configuration.
 #
-#   ./install.sh all
-#   ./install.sh cli
-#   ./install.sh claude
-#   ./install.sh codex
-#   ./install.sh status
+#   curl -fsSL https://projector.bot/install.sh | bash
+#   curl -fsSL https://projector.bot/install.sh | bash -s -- status
+#   ./install.sh [all|cli|claude|codex|status]      from a checkout
+#
+# Run from a checkout, the installer installs that checkout. Without one --
+# piped from curl, or downloaded by `project upgrade` -- it installs a release
+# from GitHub instead: the CLI from the source archive of PROJECTOR_REF
+# (default v0, the tag every release moves) and the plugins from the
+# PROJECTOR_REPO marketplace (default ninjudd/projector). Neither way needs
+# git on this machine.
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The directory holding this script, or nothing when bash reads it from stdin.
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+# A checkout is a script with the plugin manifest beside it. A copy of the
+# script on its own, such as the one `project upgrade` downloads, is not one.
+REPO=""
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/.claude-plugin/plugin.json" ]; then
+  REPO="$SCRIPT_DIR"
+fi
+RELEASE_REPO="${PROJECTOR_REPO:-ninjudd/projector}"
+RELEASE_REF="${PROJECTOR_REF:-v0}"
+PROJECTOR_PYTHON="${PROJECTOR_PYTHON:-python3}"
+VENV_DIR="${PROJECTOR_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/projector/venv}"
+BIN_DIR="${PROJECTOR_BIN_DIR:-$HOME/.local/bin}"
 PROJECTOR_USER_ROOT="${PROJECTOR_USER_ROOT:-$HOME}"
 CLAUDE_DIR="${PROJECTOR_CLAUDE_DIR:-${CLAUDE_CONFIG_DIR:-$PROJECTOR_USER_ROOT/.claude}}"
 CODEX_DIR="${PROJECTOR_CODEX_DIR:-$PROJECTOR_USER_ROOT/.codex}"
@@ -18,6 +38,8 @@ CLAUDE_COMMAND="${PROJECTOR_CLAUDE_COMMAND:-claude}"
 CODEX_COMMAND="${PROJECTOR_CODEX_COMMAND:-codex}"
 
 legacy_links_for() {
+  # Only a checkout ever linked itself into a host's directory.
+  [ -n "$REPO" ] || return 0
   case "$1" in
     claude)
       printf '%s|%s\n' "$REPO/AGENTS.md" "$PROJECTOR_USER_ROOT/CLAUDE.md"
@@ -56,25 +78,78 @@ venv_python() {
   awk -F' = ' '$1 == "executable" { print $2 }' "$venvs/projector-cli/pyvenv.cfg" | grep .
 }
 
+# What the CLI installs from: this checkout, or the release's source archive,
+# which pip builds without git.
+cli_source() {
+  if [ -n "$REPO" ]; then
+    printf '%s\n' "$REPO"
+  else
+    printf 'https://github.com/%s/archive/%s.tar.gz\n' "$RELEASE_REPO" "$RELEASE_REF"
+  fi
+}
+
+# The command that runs a target again: this checkout's installer, or the
+# upgrade, which fetches the released one.
+rerun() {
+  if [ -n "$REPO" ]; then printf './install.sh %s' "$1"; else printf 'project upgrade %s' "$1"; fi
+}
+
 install_cli() {
+  local source python
+  source="$(cli_source)"
   if command -v pipx >/dev/null 2>&1; then
-    local python
+    # pip caches a download by its URL, and the v0 archive keeps its URL while
+    # each release moves the tag, so a cached copy would reinstall the old one.
+    local args=(install --force "$source")
+    [ -n "$REPO" ] || args+=(--pip-args=--no-cache-dir)
     if python="$(venv_python)"; then
-      PIPX_DEFAULT_PYTHON="$python" pipx install --force "$REPO"
+      PIPX_DEFAULT_PYTHON="$python" pipx "${args[@]}"
     else
-      pipx install --force "$REPO"
+      pipx "${args[@]}"
     fi
   else
-    python3 -m pip install --user --upgrade "$REPO"
+    install_venv "$source"
   fi
+}
+
+# Without pipx, the CLI gets a virtual environment of its own, as pipx would
+# give it, and a link on PATH. `pip install --user` would write into the
+# system Python, which Homebrew's and Debian's refuse (PEP 668).
+install_venv() {
+  local source="$1"
+  if ! "$PROJECTOR_PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+    echo "install.sh: Projector needs Python 3.11 or newer as $PROJECTOR_PYTHON; set PROJECTOR_PYTHON to use another" >&2
+    return 69
+  fi
+  [ -x "$VENV_DIR/bin/python" ] || "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
+  "$VENV_DIR/bin/python" -m pip install --quiet --upgrade --no-cache-dir "$source"
+  mkdir -p "$BIN_DIR"
+  ln -sf "$VENV_DIR/bin/project" "$BIN_DIR/project"
+  printf '%-14s %s\n' "linked" "$BIN_DIR/project -> $VENV_DIR/bin/project"
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) warn_row "not-on-path" "$BIN_DIR is not on PATH -- add it to your shell's PATH to run project" ;;
+  esac
 }
 
 run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
 run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
 
-# The plugin version this checkout installs, from the manifest.
-checkout_plugin_version() {
-  sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/.claude-plugin/plugin.json" | head -1
+# The version this install should leave, from the plugin manifest, which
+# carries the same version as the CLI: the checkout's, or the release's,
+# fetched from GitHub. Offline, or when GitHub cannot answer, there is none to
+# compare against.
+expected_version() {
+  local manifest
+  if [ -n "$REPO" ]; then
+    manifest="$(cat "$REPO/.claude-plugin/plugin.json")"
+  elif [ -n "${PROJECTOR_OFFLINE:-}" ]; then
+    return 0
+  else
+    manifest="$(curl -fsSL --max-time 15 \
+      "https://raw.githubusercontent.com/$RELEASE_REPO/$RELEASE_REF/.claude-plugin/plugin.json" 2>/dev/null)" || return 0
+  fi
+  printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
 # Where the plugin installs from: the repository this checkout was cloned
@@ -92,6 +167,8 @@ checkout_plugin_version() {
 # unpacked archive, say -- has nothing but itself to install from.
 plugin_repo() {
   local url
+  # Without a checkout, the release's repository.
+  [ -n "$REPO" ] || { printf '%s\n' "$RELEASE_REPO"; return 0; }
   url="$(git -C "$REPO" remote get-url origin 2>/dev/null)" || return 1
   [ -n "$url" ] || return 1
   case "$url" in
@@ -240,12 +317,27 @@ install_codex() {
 # bumped reports a stale command as current -- the false reassurance this
 # check exists to prevent. The installed copy is right there to diff.
 report_cli() {
-  local path installed_dir version
+  local path installed_dir version expected
   if ! path="$(command -v project 2>/dev/null)"; then
-    printf '%-14s %s\n' "cli-missing" "project"
+    printf '%-14s %s\n' "cli-missing" "project -- run $(rerun cli)"
     return
   fi
   printf '%-14s %s\n' "cli" "$path"
+
+  # Without a checkout there is no source to diff, and a release bumps the
+  # version on every change, so the version is the comparison.
+  if [ -z "$REPO" ]; then
+    version="$(project --version 2>/dev/null | awk '{print $NF}')"
+    expected="$(expected_version)"
+    if [ -z "$expected" ]; then
+      printf '%-14s %s\n' "cli-installed" "${version:-unknown} (no release version to compare against)"
+    elif [ "$version" = "$expected" ]; then
+      printf '%-14s %s\n' "cli-current" "$version"
+    else
+      printf '%-14s %s\n' "cli-stale" "installed ${version:-unknown}, release $expected -- run $(rerun cli)"
+    fi
+    return
+  fi
 
   installed_dir="$(project --package-dir 2>/dev/null)" || true
   if [ -z "$installed_dir" ] || [ ! -d "$installed_dir" ]; then
@@ -274,17 +366,21 @@ report_plugin() {
   if [ -n "$marketplace" ]; then
     printf '%-14s %s\n' "marketplace" "$host $marketplace"
     if marketplace_is_local "$marketplace" && [ "$(plugin_source "$host")" != "$REPO" ]; then
-      warn_row "from-checkout" "$host installs from a checkout and goes stale with it -- run ./install.sh $host to move it to $(plugin_source "$host")"
+      warn_row "from-checkout" "$host installs from a checkout and goes stale with it -- run $(rerun "$host") to move it to $(plugin_source "$host")"
     fi
   fi
   installed="$(host_plugin_version "$host")"
-  expected="$(checkout_plugin_version)"
+  expected="$(expected_version)"
   if [ -z "$installed" ]; then
-    printf '%-14s %s\n' "plugin-absent" "$host -- run ./install.sh $host"
+    printf '%-14s %s\n' "plugin-absent" "$host -- run $(rerun "$host")"
+  elif [ -z "$expected" ]; then
+    printf '%-14s %s\n' "plugin" "$host $installed (no release version to compare against)"
   elif [ "$installed" = "$expected" ]; then
     printf '%-14s %s\n' "plugin-current" "$host $installed"
   else
-    printf '%-14s %s\n' "plugin-stale" "$host installed $installed, checkout $expected -- run ./install.sh $host"
+    local from="checkout"
+    [ -n "$REPO" ] || from="release"
+    printf '%-14s %s\n' "plugin-stale" "$host installed $installed, $from $expected -- run $(rerun "$host")"
   fi
 }
 
@@ -307,6 +403,7 @@ warn_row() {
 # hanging the installer on it.
 report_checkout() {
   local branch upstream remote behind commits hint note=""
+  [ -n "$REPO" ] || return 0
   git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
   if ! branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null)"; then
     printf '%-14s %s\n' "repo-untracked" "detached HEAD has no upstream to compare against"
@@ -337,6 +434,7 @@ report_checkout() {
 }
 
 show_status() {
+  [ -n "$REPO" ] || printf '%-14s %s\n' "release" "$RELEASE_REPO $RELEASE_REF"
   report_checkout
   report_cli
   report_plugin claude "$CLAUDE_COMMAND"
@@ -384,7 +482,7 @@ case "${1:-all}" in
   codex) install_codex; report_checkout ;;
   status) show_status ;;
   *)
-    echo "usage: ./install.sh [all|cli|claude|codex|status]" >&2
+    echo "usage: install.sh [all|cli|claude|codex|status]" >&2
     exit 64
     ;;
 esac

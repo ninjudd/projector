@@ -32,7 +32,7 @@ export function Hero() {
             same command-line tool.
           </p>
           <div className="mt-8 max-w-xl">
-            <Command text={INSTALL.pipx} />
+            <Command text={INSTALL.script} />
           </div>
           <p className="mt-3 font-mono text-xs text-faint">
             Python 3.11 or newer · MIT license · plugins for Claude Code and Codex

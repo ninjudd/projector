@@ -8,6 +8,7 @@ import importlib.metadata as metadata
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -18,7 +19,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
-from urllib.request import url2pathname
+from urllib.request import url2pathname, urlopen
 
 from . import site, walkthrough
 from .walkthrough import WORKFLOW_PATH
@@ -56,14 +57,12 @@ def distribution_version() -> str:
         return "unknown"
 
 
-def checkout() -> Path:
-    """The checkout this command was installed from.
+UPSTREAM = "ninjudd/projector"
+INSTALLER_URL = "https://projector.bot/install.sh"
 
-    pip records the source of every install in `direct_url.json`, so the
-    command can find its own installer without being told where the checkout
-    is. A command installed from a Git URL has no checkout, and therefore no
-    `install.sh` to hand off to.
-    """
+
+def install_record() -> dict:
+    """Where pip recorded this command's install came from, as `direct_url.json` holds it."""
 
     try:
         distribution = metadata.distribution(DISTRIBUTION)
@@ -76,36 +75,89 @@ def checkout() -> Path:
         raise EnvironmentError(
             "cannot upgrade: the installed command does not record where it came from"
         )
-    record = json.loads(text)
+    return json.loads(text)
+
+
+def checkout(record: dict) -> Optional[Path]:
+    """The checkout this command was installed from, or None for any other install.
+
+    pip records the source of every install in `direct_url.json`, so the
+    command can find its own installer without being told where the checkout
+    is. A command installed from a release archive or a Git URL has none.
+    """
+
     if "dir_info" not in record:
-        raise EnvironmentError(
-            f"cannot upgrade: install.sh needs a checkout, and project was installed "
-            f"from {record['url']}"
-        )
+        return None
     path = Path(url2pathname(urlparse(record["url"]).path))
     if not path.is_dir():
         raise EnvironmentError(f"cannot upgrade: install source no longer exists: {path}")
     return path
 
 
-def run_upgrade(targets: list[str]) -> int:
-    """Run the checkout's `install.sh` from anywhere.
+def github_repository(url: str) -> Optional[str]:
+    """owner/repo of a GitHub archive or Git URL, the two ways a release installs."""
 
-    Installation belongs to the installer, which already knows how to place
-    the CLI and each host plugin from this checkout. `project upgrade all`
-    is `./install.sh all` with the same targets, output, and exit status, so
-    nothing here decides what an upgrade is.
+    match = re.match(r"(?:git\+)?https://github\.com/([^/]+)/([^/@#]+?)(?:\.git)?(?:[/@#]|$)", url)
+    return f"{match.group(1)}/{match.group(2)}" if match else None
+
+
+def release_installer(record: dict) -> tuple[str, dict[str, str]]:
+    """The released installer to run, and the environment that points it at this install's repository.
+
+    An install from Projector's own repository upgrades through the installer
+    projector.bot serves, which is the one from the newest release. One from a
+    fork upgrades from that fork, through its own released installer.
     """
 
-    script = checkout() / "install.sh"
-    if not script.is_file():
-        raise EnvironmentError(f"cannot upgrade: {script} does not exist")
-    command = [str(script), *targets]
-    print(f"+ {shlex.join(command)}", file=sys.stderr)
+    environment = dict(os.environ)
+    override = os.environ.get("PROJECTOR_INSTALLER_URL")
+    repository = github_repository(record.get("url", "")) or UPSTREAM
+    if repository.lower() != UPSTREAM:
+        environment.setdefault("PROJECTOR_REPO", repository)
+    ref = environment.get("PROJECTOR_REF", "v0")
+    if override:
+        return override, environment
+    if repository.lower() == UPSTREAM:
+        return INSTALLER_URL, environment
+    return f"https://raw.githubusercontent.com/{repository}/{ref}/install.sh", environment
+
+
+def fetch_installer(url: str, target: Path) -> None:
+    try:
+        with urlopen(url, timeout=30) as response:
+            target.write_bytes(response.read())
+    except OSError as error:
+        raise EnvironmentError(f"cannot upgrade: could not download the installer from {url}: {error}") from error
+
+
+def run_upgrade(targets: list[str]) -> int:
+    """Run the installer from anywhere, with the same targets, output, and exit status.
+
+    Installation belongs to the installer, which already knows how to place
+    the CLI and each host plugin, so nothing here decides what an upgrade is.
+    A checkout install runs the checkout's `install.sh`. Any other install --
+    from a release archive or a Git URL -- downloads the released installer
+    and runs that, which reinstalls from the newest release without git.
+    """
+
+    record = install_record()
+    source = checkout(record)
     # `install.sh cli` rewrites this package under the running interpreter.
     # Everything this process still needs is imported already, so nothing
     # below reaches for a file the reinstall is in the middle of replacing.
-    return subprocess.run(command, check=False).returncode
+    if source is not None:
+        script = source / "install.sh"
+        if not script.is_file():
+            raise EnvironmentError(f"cannot upgrade: {script} does not exist")
+        command = [str(script), *targets]
+        print(f"+ {shlex.join(command)}", file=sys.stderr)
+        return subprocess.run(command, check=False).returncode
+    url, environment = release_installer(record)
+    with tempfile.TemporaryDirectory(prefix="projector-upgrade-") as scratch:
+        script = Path(scratch) / "install.sh"
+        fetch_installer(url, script)
+        print(f"+ curl -fsSL {url} | bash -s -- {shlex.join(targets)}".rstrip(), file=sys.stderr)
+        return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
 
 
 class PackageDir(argparse.Action):

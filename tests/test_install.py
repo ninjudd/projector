@@ -573,5 +573,146 @@ class InstallTests(unittest.TestCase):
         self.assertIn("usage:", result.stderr)
 
 
+
+ARCHIVE = "https://github.com/ninjudd/projector/archive/v0.tar.gz"
+
+
+class ReleaseInstallTests(unittest.TestCase):
+    """The installer piped from curl, with no checkout beside it."""
+
+    setUp = InstallTests.setUp
+    tearDown = InstallTests.tearDown
+    fake_project = InstallTests.fake_project
+
+    def piped(self, *arguments: str, environment: dict | None = None) -> subprocess.CompletedProcess[str]:
+        with open(ROOT / "install.sh") as script:
+            return subprocess.run(
+                ["bash", "-s", "--", *arguments],
+                stdin=script,
+                cwd=self.user_root,
+                env=environment or self.environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+    def logged(self) -> list[str]:
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def test_the_cli_installs_from_the_release_archive(self) -> None:
+        result = self.piped("cli")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"pipx install --force {ARCHIVE} --pip-args=--no-cache-dir", self.logged())
+
+    def test_a_ref_and_a_fork_choose_the_archive(self) -> None:
+        environment = {**self.environment, "PROJECTOR_REF": "v0.5.6", "PROJECTOR_REPO": "someone/projector"}
+
+        self.piped("cli", environment=environment)
+
+        self.assertIn("pipx install --force https://github.com/someone/projector/archive/v0.5.6.tar.gz "
+                      "--pip-args=--no-cache-dir", self.logged())
+
+    def test_the_plugins_install_from_the_github_marketplace(self) -> None:
+        result = self.piped("all")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.logged()
+        self.assertIn("claude plugin marketplace add ninjudd/projector --scope user", log)
+        self.assertIn("claude plugin install projector@projector --scope user", log)
+        self.assertIn("codex plugin marketplace add https://github.com/ninjudd/projector.git", log)
+        self.assertIn("codex plugin add projector@projector", log)
+
+    def test_a_marketplace_left_reading_a_checkout_moves_to_github(self) -> None:
+        (self.state / "claude-marketplaces.json").write_text(json.dumps(
+            [{"name": "projector", "source": "directory", "path": "/old/projector"}]))
+
+        result = self.piped("claude")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.logged()
+        self.assertIn("claude plugin marketplace remove projector", log)
+        self.assertIn("claude plugin marketplace add ninjudd/projector --scope user", log)
+        self.assertIn("moved          claude marketplace /old/projector -> ninjudd/projector", result.stdout)
+
+    def fake_curl(self, version: str) -> None:
+        # Multi-line, as the real manifest is, which is what the installer reads.
+        manifest = json.dumps({"name": "projector", "version": version}, indent=2)
+        path = self.fake_bin / "curl"
+        path.write_text("#!/bin/sh\n"
+                        "printf '%s %s\\n' curl \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+                        f"printf '%s\\n' '{manifest}'\n")
+        path.chmod(0o755)
+
+    def test_status_compares_the_installed_versions_with_the_release(self) -> None:
+        self.fake_project("/unused")  # answers --version with 9.9.9
+        self.fake_curl("9.9.9")
+        (self.state / "claude-plugins.json").write_text(json.dumps([{"id": "projector@projector", "version": "9.9.8"}]))
+        environment = {k: v for k, v in self.environment.items() if k != "PROJECTOR_OFFLINE"}
+
+        result = self.piped("status", environment=environment)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("release        ninjudd/projector v0", result.stdout)
+        self.assertIn("cli-current    9.9.9", result.stdout)
+        self.assertIn("plugin-stale   claude installed 9.9.8, release 9.9.9 -- run project upgrade claude", result.stdout)
+        self.assertIn("curl -fsSL --max-time 15 "
+                      "https://raw.githubusercontent.com/ninjudd/projector/v0/.claude-plugin/plugin.json", self.logged())
+
+    def test_status_offline_reports_versions_without_a_verdict(self) -> None:
+        self.fake_project("/unused")
+
+        result = self.piped("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
+        self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
+
+    def fake_python(self, *, new_enough: bool = True) -> Path:
+        """A python3 that passes or fails the version check and makes a fake venv."""
+
+        path = self.user_root / "python3"
+        template = self.user_root / "venv-python"
+        template.write_text('#!/bin/sh\nprintf "venv-python %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n')
+        template.chmod(0o755)
+        path.write_text(
+            "#!/bin/sh\n"
+            'printf "python3 %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n'
+            'case "$1" in\n'
+            f"  -c) exit {0 if new_enough else 1} ;;\n"
+            f'  -m) mkdir -p "$3/bin" && cp "{template}" "$3/bin/python" && cp "{template}" "$3/bin/project" ;;\n'
+            "esac\n"
+        )
+        path.chmod(0o755)
+        return path
+
+    def without_pipx(self, python: Path) -> dict:
+        (self.fake_bin / "pipx").unlink()
+        return {**self.environment, "PATH": f"{self.fake_bin}:/usr/bin:/bin", "PROJECTOR_PYTHON": str(python),
+                "PROJECTOR_VENV": str(self.user_root / "venv"), "PROJECTOR_BIN_DIR": str(self.user_root / "local-bin")}
+
+    def test_without_pipx_the_cli_gets_a_venv_and_a_link(self) -> None:
+        environment = self.without_pipx(self.fake_python())
+
+        result = self.piped("cli", environment=environment)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        venv = self.user_root / "venv"
+        self.assertIn(f"python3 -m venv {venv}", self.logged())
+        self.assertIn(f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}", self.logged())
+        link = self.user_root / "local-bin" / "project"
+        self.assertEqual(venv / "bin" / "project", Path(os.readlink(link)))
+        self.assertIn("not-on-path", result.stdout, "the link's directory is not on this PATH")
+
+    def test_without_pipx_an_old_python_is_refused(self) -> None:
+        environment = self.without_pipx(self.fake_python(new_enough=False))
+
+        result = self.piped("cli", environment=environment)
+
+        self.assertEqual(69, result.returncode)
+        self.assertIn("Projector needs Python 3.11 or newer", result.stderr)
+        self.assertFalse((self.user_root / "venv").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

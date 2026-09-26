@@ -24,7 +24,11 @@ export const EXAMPLE = {
 };
 
 export const INSTALL = {
-  pipx: "pipx install git+https://github.com/ninjudd/projector.git",
+  // Installs the CLI and the plugin for each coding agent on the machine, from
+  // the newest release, without git; `project upgrade` reruns it.
+  script: `curl -fsSL ${SITE_URL}/install.sh | bash`,
+  upgrade: "project upgrade",
+  pipx: `pipx install ${GITHUB}/archive/v0.tar.gz`,
   claude: [
     "claude plugin marketplace add ninjudd/projector --scope user",
     "claude plugin install projector@projector --scope user",
