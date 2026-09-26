@@ -237,8 +237,9 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
              mock.patch.object(walkthrough, "spec_time", side_effect=lambda p: times[p]), \
              redirect_stdout(io.StringIO()):
-            walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+            _, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
 
+        self.assertEqual([], failures)
         site = tmp / "site"
         self.assertIn('url=cccccccccccccccccccccccccccccccccccccccc/', (site / "7" / "index.html").read_text())
         index = (site / "index.html").read_text()
@@ -250,15 +251,72 @@ class SiteTests(unittest.TestCase):
         self.assertEqual("../../", data["indexUrl"])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
 
-    def test_refuses_a_spec_filed_under_the_wrong_head(self) -> None:
+    def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        path = self.write_spec(tmp / "walkthroughs", "a" * 40, "Old")
-        path.rename(path.parent.parent / "spec-moved.json")
-        wrong = tmp / "walkthroughs" / "7" / ("d" * 40) / "spec.json"
-        wrong.parent.mkdir()
-        wrong.write_text((path.parent.parent / "spec-moved.json").read_text())
-        with self.assertRaisesRegex(walkthrough.SpecError, "must sit at <pr.number>/<pr.head>/spec.json"):
-            walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+        self.write_spec(tmp / "walkthroughs", "a" * 40, "Good")
+        wrong = tmp / "walkthroughs" / "8" / ("d" * 40) / "spec.json"
+        wrong.parent.mkdir(parents=True)
+        wrong.write_text(json.dumps(make_spec(GOOD_GROUPS)))
+        out = io.StringIO()
+        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(out):
+            entries, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+        self.assertEqual([7], [e["number"] for e in entries])
+        self.assertEqual(1, len(failures))
+        self.assertIn("must sit at <pr.number>/<pr.head>/spec.json", failures[0])
+        self.assertIn("::error", out.getvalue())
+        self.assertTrue((tmp / "site" / "index.html").is_file())
+
+    def test_one_spec_that_does_not_match_its_diff_costs_only_its_own_page(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        good = self.write_spec(tmp / "walkthroughs", "a" * 40, "Good")
+        bad = self.write_spec(tmp / "walkthroughs", "c" * 40, "Bad")
+        spec = json.loads(bad.read_text())
+        spec["groups"] = spec["groups"][:1]
+        bad.write_text(json.dumps(spec))
+        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+             mock.patch.object(walkthrough, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
+             redirect_stdout(io.StringIO()):
+            entries, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+        self.assertEqual(1, len(failures))
+        self.assertIn("gen/api.pb.go is in no group", failures[0])
+        self.assertFalse((tmp / "site" / "7" / ("c" * 40)).exists())
+        self.assertIn(f"url={'a' * 40}/", (tmp / "site" / "7" / "index.html").read_text(), "the newest page that built")
+        self.assertEqual(1, entries[0]["heads"])
+
+    def test_skips_a_spec_for_another_repository_when_the_workflow_names_its_own(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.write_spec(tmp / "walkthroughs", "a" * 40, "Theirs")
+        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+             mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(walkthrough.SpecError, "no walkthrough built"):
+                walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+
+
+class SanitizeTests(unittest.TestCase):
+    def test_keeps_the_documented_markup_and_drops_everything_else(self) -> None:
+        clean = walkthrough.sanitize_html
+        self.assertEqual('<code>a &lt; b</code> &amp; <b>c</b>', clean('<code>a &lt; b</code> &amp; <b>c</b>'))
+        self.assertEqual('<p class="note">x</p>', clean('<p class="note evil" style="color:red" onclick="x()">x</p>'))
+        self.assertEqual('', clean('<img src=x onerror=alert(1)>'))
+        self.assertEqual('before after', clean('before <script>alert(1)</script>after'))
+        self.assertEqual('<a href="https://example.com/x?a=1&amp;b=2">x</a>', clean('<a href="https://example.com/x?a=1&amp;b=2" target="_top">x</a>'))
+        self.assertEqual('<a>x</a>', clean('<a href="javascript:alert(1)">x</a>'))
+        self.assertEqual('<a href="#core">x</a>', clean('<a href="#core">x</a>'))
+        self.assertEqual('<div class="tblwrap"><table class="tbl"><tr><td class="r">1</td></tr></table></div>',
+                         clean('<div class="tblwrap"><table class="tbl"><tr><td class="r">1</td></tr></table></div>'))
+        self.assertEqual('x &lt;y', clean('x <y'))
+
+    def test_a_built_page_carries_no_script_from_the_spec(self) -> None:
+        spec = make_spec(GOOD_GROUPS)
+        spec["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
+        spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
+        out = Path(tempfile.mkdtemp())
+        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF):
+            walkthrough.build_page(spec, out, at_head=True)
+        page = (out / "index.html").read_text()
+        for bad in ("onerror", "alert(2)", "javascript:"):
+            self.assertNotIn(bad, page)
+        self.assertIn("<b>T<\\/b>", page, "kept, with </ escaped inside the data block")
 
 
 def run(cwd: Path, *args: str) -> str:
@@ -289,7 +347,8 @@ class PublishTests(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.repo)
         try:
-            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), redirect_stdout(io.StringIO()):
+            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), \
+                 mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
                 return walkthrough.publish(self.spec, "origin", **kwargs)
         finally:
             os.chdir(cwd)
@@ -321,6 +380,21 @@ class PublishTests(unittest.TestCase):
         self.assertIsNone(self.publish("c" * 40))
         self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/walkthroughs"))
         self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
+
+    def test_refuses_to_push_a_spec_that_does_not_build(self) -> None:
+        spec = make_spec(GOOD_GROUPS[:1])
+        self.spec.write_text(json.dumps(spec))
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        try:
+            with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+                 mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append):
+                with self.assertRaisesRegex(walkthrough.SpecError, "gen/api.pb.go is in no group"):
+                    walkthrough.publish(self.spec, "origin")
+        finally:
+            os.chdir(cwd)
+        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
+        self.assertEqual([], self.dispatches)
 
     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
         self.publish("a" * 40, send_dispatch=False)

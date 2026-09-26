@@ -109,9 +109,12 @@ repository instructions say to.
 python3 <skill-dir>/scripts/walkthrough.py publish --spec WORKDIR/walkthrough.json
 ```
 
-`publish` commits the spec to `walkthroughs/<number>/<head>/spec.json` on the
-ref without touching the checkout, then sends a `repository_dispatch` event
-that starts the workflow. The site lists every walkthrough at its root,
+`publish` first builds the spec against its diff and refuses one that does
+not build, then commits it to `walkthroughs/<number>/<head>/spec.json` on the
+ref without touching the checkout and sends a `repository_dispatch` event that
+starts the workflow. The site build reports and skips any spec that still
+fails, or that names another repository, so one bad spec costs one
+walkthrough rather than the deployment. The site lists every walkthrough at its root,
 serves each pull request's newest head at `/<number>/`, and links the older
 heads from each page. The spec on the ref is the durable copy: to update a
 walkthrough later, fetch it with

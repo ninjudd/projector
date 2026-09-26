@@ -62,7 +62,13 @@ it. The spec is JSON:
 
 Every text field except `name`, `pr` and the file paths is inserted as HTML,
 so write `<code>`, `<b>` and links directly and escape a literal `<` as
-`&lt;`. These classes are styled for cards:
+`&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
+page, because a Pages site deploys whatever spec is on its ref: the tags
+`a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
+`span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
+classes below; and `href` only for `http`, `https` and `#` links. Anything
+else, such as `style`, an event handler or a `<script>`, is dropped. These
+classes are styled for cards:
 
 | Class | Use |
 | --- | --- |
@@ -71,4 +77,5 @@ so write `<code>`, `<b>` and links directly and escape a literal `<` as
 | `note` on a `p` | Muted explanatory text |
 | `tight` on a `ul` | A compact list |
 | `count` on a `span` | A muted count after a label |
+| `mono` on a `span` | Monospace text outside `<code>` |
 | `pre` | A command block |

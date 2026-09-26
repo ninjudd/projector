@@ -36,6 +36,7 @@ import argparse
 import datetime
 import hashlib
 import html
+from html.parser import HTMLParser
 import json
 import os
 import shutil
@@ -251,6 +252,112 @@ def fetch_diff(repo: str, base: str, head: str) -> str:
     return gh("api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/compare/{base}...{head}")
 
 
+# Sanitizing spec HTML
+
+ALLOWED_TAGS = {"a", "b", "br", "code", "div", "em", "h3", "h4", "i", "li", "ol", "p", "pre", "span", "strong",
+                "table", "tbody", "td", "th", "thead", "tr", "ul"}
+VOID_TAGS = {"br"}
+DROP_CONTENT = {"script", "style", "iframe", "object", "embed", "template", "noscript", "svg", "math"}
+ALLOWED_CLASSES = {"tblwrap", "tbl", "r", "note", "tight", "count", "mono"}
+
+
+class Sanitizer(HTMLParser):
+    """Rebuild spec HTML from the tags, classes and links spec.md documents."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.out: list[str] = []
+        self.dropping = 0
+        self.open: list[str] = []
+
+    def attrs_for(self, tag: str, attrs: list[tuple[str, str | None]]) -> str:
+        kept = []
+        for name, value in attrs:
+            if value is None:
+                continue
+            if name == "class":
+                classes = [c for c in value.split() if c in ALLOWED_CLASSES]
+                if classes:
+                    kept.append(f'class="{" ".join(classes)}"')
+            elif name == "href" and tag == "a":
+                target = html.unescape(value).strip()
+                if target.lower().startswith(("https://", "http://")) or target.startswith("#"):
+                    kept.append(f'href="{html.escape(target, quote=True)}"')
+        return (" " + " ".join(kept)) if kept else ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in DROP_CONTENT:
+            self.dropping += 1
+        elif not self.dropping and tag in ALLOWED_TAGS:
+            self.out.append(f"<{tag}{self.attrs_for(tag, attrs)}>")
+            if tag not in VOID_TAGS:
+                self.open.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self.dropping and tag in VOID_TAGS:
+            self.out.append(f"<{tag}>")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in DROP_CONTENT:
+            self.dropping = max(0, self.dropping - 1)
+        elif not self.dropping and tag in self.open:
+            while self.open:
+                top = self.open.pop()
+                self.out.append(f"</{top}>")
+                if top == tag:
+                    break
+
+    def handle_data(self, data: str) -> None:
+        if not self.dropping:
+            self.out.append(html.escape(data, quote=False))
+
+    def handle_entityref(self, name: str) -> None:
+        if not self.dropping:
+            self.out.append(html.escape(html.unescape(f"&{name};"), quote=False))
+
+    def handle_charref(self, name: str) -> None:
+        if not self.dropping:
+            self.out.append(html.escape(html.unescape(f"&#{name};"), quote=False))
+
+    def result(self) -> str:
+        self.close()
+        while self.open:
+            self.out.append(f"</{self.open.pop()}>")
+        return "".join(self.out)
+
+
+def sanitize_html(text: object) -> str:
+    parser = Sanitizer()
+    parser.feed(str(text))
+    tail, parser.rawdata = parser.rawdata, ""
+    if tail and not parser.dropping:
+        parser.out.append(html.escape(tail, quote=False))
+    return parser.result()
+
+
+def sanitized(spec: dict) -> tuple[dict, list[dict]]:
+    """The spec's overview and groups with every HTML field sanitized."""
+    o = spec.get("overview") or {}
+    overview = {
+        "summary": [sanitize_html(p) for p in o.get("summary") or []],
+        "cards": [{"id": str(c.get("id") or ""), "title": sanitize_html(c.get("title") or ""), "html": sanitize_html(c.get("html") or "")}
+                  for c in o.get("cards") or []],
+    }
+    groups = []
+    for g in spec["groups"]:
+        groups.append({
+            "id": str(g["id"]),
+            "title": sanitize_html(g["title"]),
+            "kicker": sanitize_html(g.get("kicker") or ""),
+            "intro": [sanitize_html(p) for p in g.get("intro") or []],
+            "concepts": [sanitize_html(c) for c in g.get("concepts") or []],
+            "checks": [{"kind": c["kind"], "text": sanitize_html(c["text"])} for c in g.get("checks") or []],
+            "files": [{k: (sanitize_html(v) if k == "note" else v) for k, v in f.items() if k in ("path", "note", "collapsed")}
+                      for f in g.get("files") or []],
+        })
+    return overview, groups
+
+
 # Specs and pages
 
 def validate(spec: dict, files: list[dict]) -> None:
@@ -323,7 +430,7 @@ def copy_assets(out: Path) -> None:
         shutil.copyfile(ASSETS / asset, out / asset)
 
 
-def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
     pr = dict(spec.get("pr") or {})
     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
         raise SpecError("pr.repo, pr.number and pr.head are required")
@@ -343,19 +450,29 @@ def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = F
         diff = fetch_diff(pr["repo"], pr["base"], pr["head"])
     files = parse_diff(diff)
     validate(spec, files)
+    overview, groups = sanitized(spec)
     payload = {
         "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} walkthrough",
         "pr": pr,
-        "overview": spec.get("overview") or {},
-        "groups": spec["groups"],
+        "overview": overview,
+        "groups": groups,
         "files": files,
         "stats": stats(files),
         "generatedAt": datetime.date.today().isoformat(),
     }
     payload.update(extra or {})
+    return payload
+
+
+def write_page(out: Path, payload: dict) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
     copy_assets(out)
+
+
+def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+    payload = prepare_page(spec, diff=diff, at_head=at_head, extra=extra)
+    write_page(out, payload)
     return payload
 
 
@@ -371,35 +488,53 @@ def spec_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_site(root: Path, out: Path) -> list[dict]:
+def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
+    """Build every spec that can be built; report and skip the rest."""
     specs = sorted(root.glob("*/*/spec.json"))
     if not specs:
         raise SpecError(f"no walkthroughs under {root}: expected <number>/<head>/spec.json")
-    by_pr: dict[str, list[tuple[int, Path, dict]]] = {}
+    own_repo = os.environ.get("GITHUB_REPOSITORY", "").lower()
+    failures: list[str] = []
+
+    def skip(path: Path, reason: object) -> None:
+        failures.append(f"{path.relative_to(root)}: {reason}")
+        print(f"::error title=Walkthrough skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
+
+    by_pr: dict[str, list[tuple[int, dict]]] = {}
     for path in specs:
-        spec = json.loads(path.read_text(encoding="utf-8"))
-        number, head = path.parent.parent.name, path.parent.name
-        if str(spec.get("pr", {}).get("number")) != number or spec.get("pr", {}).get("head") != head:
-            raise SpecError(f"{path} must sit at <pr.number>/<pr.head>/spec.json")
-        by_pr.setdefault(number, []).append((spec_time(path), path, spec))
+        try:
+            spec = json.loads(path.read_text(encoding="utf-8"))
+            pr = spec.get("pr") or {}
+            number, head = path.parent.parent.name, path.parent.name
+            if str(pr.get("number")) != number or pr.get("head") != head:
+                raise SpecError(f"it must sit at <pr.number>/<pr.head>/spec.json")
+            if own_repo and str(pr.get("repo", "")).lower() != own_repo:
+                raise SpecError(f"it is for {pr.get('repo')}, not this repository")
+            payload = prepare_page(spec, at_head=True)
+        except (SpecError, ValueError, KeyError, TypeError) as exc:
+            skip(path, exc)
+            continue
+        by_pr.setdefault(number, []).append((spec_time(path), payload))
+    if not by_pr:
+        raise SpecError(f"no walkthrough built; {len(failures)} skipped")
     out.mkdir(parents=True, exist_ok=True)
     (out / ".nojekyll").write_text("")
     copy_assets(out)
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         versions.sort(key=lambda v: v[0], reverse=True)
-        heads = [{"head": v[2]["pr"]["head"], "url": f"../{v[2]['pr']['head']}/", "at": v[0]} for v in versions]
-        for when, path, spec in versions:
-            head = spec["pr"]["head"]
-            listed = [dict(h, current=h["head"] == head) for h in heads]
-            payload = build_page(spec, out / number / head, at_head=True, extra={"indexUrl": "../../", "heads": listed})
-            print(f"built {number}/{head[:9]}: {len(spec['groups'])} groups, {payload['stats']['files']} files")
-        latest = versions[0][2]
+        heads = [{"head": p["pr"]["head"], "url": f"../{p['pr']['head']}/", "at": when} for when, p in versions]
+        for _, payload in versions:
+            head = payload["pr"]["head"]
+            payload.update(indexUrl="../../", heads=[dict(h, current=h["head"] == head) for h in heads])
+            write_page(out / number / head, payload)
+            print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
+        latest = versions[0][1]
         (out / number / "index.html").write_text(redirect(f"{latest['pr']['head']}/"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
                         "heads": len(versions), "updated": versions[0][0]})
     (out / "index.html").write_text(index_page(entries), encoding="utf-8")
-    return entries
+    return entries, failures
 
 
 def redirect(target: str) -> str:
@@ -457,6 +592,7 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     slug = repo_slug(git("remote", "get-url", remote))
     if slug and slug.lower() != pr["repo"].lower():
         raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
+    prepare_page(spec, at_head=True)
     local = ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
     fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
     parent = git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
@@ -515,8 +651,8 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 
 def cmd_site(args: argparse.Namespace) -> None:
-    entries = build_site(Path(args.root), Path(args.out))
-    print(f"wrote {args.out}/index.html: {len(entries)} pull requests")
+    entries, failures = build_site(Path(args.root), Path(args.out))
+    print(f"wrote {args.out}/index.html: {len(entries)} pull requests, {len(failures)} walkthroughs skipped")
 
 
 def cmd_publish(args: argparse.Namespace) -> None:
