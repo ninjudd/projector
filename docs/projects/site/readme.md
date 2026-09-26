@@ -136,8 +136,8 @@ fallback, the link rewriting, and the visibility refusal are tested in
 `tests/test_site.py`, and the views, in-place navigation, and direct loads of
 each path were checked in a browser against a build of this repository.
 
-Two deviations from the first design are recorded in section 4: routing on
-real paths rather than the URL's hash, and the composite action's rename from
-`actions/walkthroughs` to `actions/site` (#82). The three items in section 5
-remain deferred; none was part of the promised outcome, and each needs its own
-plan before it starts.
+Two deviations from the first design are recorded elsewhere in the plans:
+routing on real paths rather than the URL's hash, a decision in section 4,
+and the composite action's rename from `actions/walkthroughs` to
+`actions/site`, which `pr-walkthrough` section 7 records (#82). The three
+items in section 5 remain deferred; none was part of the promised outcome.
