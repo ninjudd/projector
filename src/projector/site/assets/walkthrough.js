@@ -115,10 +115,10 @@ function renderWalkthrough(data) {
     }).join(' · ') + '</div>';
   }
 
-  function plansList() {
-    var plans = data.projects || [];
-    if (!plans.length) return '';
-    return '<div class="prmeta">Plans: ' + plans.map(function (p) {
+  function projectsList() {
+    var projects = data.projects || [];
+    if (!projects.length) return '';
+    return '<div class="prmeta">Projects: ' + projects.map(function (p) {
       return '<a href="' + esc(p.url) + '">' + esc(p.title) + '</a>';
     }).join(' · ') + '</div>';
   }
@@ -130,15 +130,15 @@ function renderWalkthrough(data) {
     var extra = '<a href="#overview">Overview</a>' + (data.overview && data.overview.cards || []).filter(function (c) { return c.id; }).map(function (c) {
       return '<a href="#' + esc(c.id) + '">' + c.title + '</a>';
     }).join('');
-    var title = esc(data.name || ('Walkthrough of ' + prRef));
+    var title = esc(data.name || ('Review of ' + prRef));
     return '<div class="wrap">' +
       '<div class="prbar">' + ext(prUrl, esc(prRef), 'prref') + '<span class="prname">' + title + '</span></div>' +
       '<header class="top"><div><div class="eyebrow">' + ext(prUrl, esc(prRef)) + ' · head <span class="mono">' + short(pr.head) + '</span> on ' + esc(pr.baseRef || 'base') + '</div><h1>' + title + '</h1></div>' +
-        '<div class="sub">' + (data.indexUrl ? '<a href="' + esc(data.indexUrl) + '">All walkthroughs</a> · ' : '') + ext(prUrl, 'Open the PR') + ' · ' + ext(prUrl + '/files', 'Files tab') + ' · ' + ext(repoUrl + '/compare/' + encodeURIComponent(pr.baseRef || 'main') + '...' + pr.head, 'Compare') + '</div></header>' +
+        '<div class="sub">' + (data.indexUrl ? '<a href="' + esc(data.indexUrl) + '">All reviews</a> · ' : '') + ext(prUrl, 'Open on GitHub') + ' · ' + ext(prUrl + '/files', 'Files tab') + ' · ' + ext(repoUrl + '/compare/' + encodeURIComponent(pr.baseRef || 'main') + '...' + pr.head, 'Compare') + '</div></header>' +
       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
         '<div class="prblock">' + ext(prUrl, esc(prRef), 'prref') +
           '<div class="prtitle" title="' + esc(pr.title) + '">' + esc(pr.title) + '</div>' +
-          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div>' + headsList() + plansList() + '</div>' +
+          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div>' + headsList() + projectsList() + '</div>' +
         '<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ' + data.groups.length + '</b></div><div class="bar"><i id="progress-bar"></i></div>' +
         '<ol>' + nav + '</ol><div class="extra">' + extra + '</div></nav></aside>' +
       '<main><div class="overview" id="overview">' + renderOverview() + '</div>' +

@@ -1,4 +1,4 @@
-/* The Projector site's home, docs, and projects pages. Colours, fonts, tables and
+/* The Projector site's projects, reviews, and docs pages. Colours, fonts, tables and
    code highlighting come from walkthrough.css, which every page also loads. */
 
 .sitebar {
@@ -16,6 +16,28 @@
 .sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
 
 .sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.sidebody { min-width: 0; }
+
+/* A section's tree beside its page: the docs, or one project's folder. */
+.sitemain.withside { max-width: 1120px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px; }
+.sitemain.withside + .sitefoot { max-width: 1120px; }
+.side {
+  position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 88px); overflow-y: auto;
+  font-size: 14px; line-height: 1.4;
+}
+.side ul { list-style: none; margin: 0; padding: 0 0 0 12px; }
+.side > ul { padding-left: 0; }
+.side li { margin: 5px 0; }
+.side a { color: var(--muted); text-decoration: none; }
+.side a:hover { color: var(--text); }
+.side a.active { color: var(--text); font-weight: 600; }
+.sidetop { font-weight: 600; margin-bottom: 10px; }
+.sidetop a { color: var(--text); }
+.sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+@media (max-width: 760px) {
+  .sitemain.withside { display: block; }
+  .side { position: static; max-height: none; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+}
 .sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
 .note { color: var(--muted); font-size: 13.5px; }
 
