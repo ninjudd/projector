@@ -171,7 +171,7 @@ everywhere on the site: in the menu, the headings, the paths, and the keys of
   project's folder, listing every supplemental file, subdirectory, and nested
   project, because a project can span several files and directories. Each
   file has a path under the project, `projects/<name>/<file>/`, rather than
-  under `docs/`.
+  under `docs/`. A project that is only its readme gets no sidebar.
 - **Reviews** lists the pull request walkthroughs at `reviews/`, with each
   head at `reviews/<number>/<head>/`. Reviews replace the earlier `prs/`
   paths, and no redirect keeps the old ones, as with the move to real paths
@@ -180,6 +180,10 @@ everywhere on the site: in the menu, the headings, the paths, and the keys of
   every Markdown file under `docs/` except the projects directory, which has
   its own section. A `README.md` at the top of `docs/` moves to `docs/readme/`
   so the repository README keeps `docs/`.
+
+Both sidebars list their readme first as **Overview** rather than by its
+title, which the page's own heading already shows, and appear only when there
+is more than that readme to list.
 
 Moving a project's files under `projects/` lets a file and a folder share a
 path: `alpha/beta.md` and the nested project `alpha/beta/` both want

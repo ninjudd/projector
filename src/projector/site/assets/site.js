@@ -195,14 +195,16 @@
     });
   }
 
-  // The README, or any document under docs/, beside the docs tree.
+  // The README, or any document under docs/, beside the docs tree when there is
+  // more than the README to list. The page's own heading names it, so the
+  // README's entry is Overview.
   function showDocs(path) {
-    var top = site.readme ? { path: site.readme, title: 'README' } : null;
-    var side = tree(site.docs, 'docs/', top, path);
+    var top = site.readme ? { path: site.readme, title: 'Overview' } : null;
+    var side = site.docs.length ? tree(site.docs, 'docs/', top, path) : null;
     if (!path) return frame('docs', 'Docs', '<h1>Docs</h1><p class="note">This repository has no README.md.</p>', side);
     var doc = null;
     site.docs.forEach(function (d) { if (d.path === path) doc = d; });
-    showDocument('docs', path, doc ? doc.title : 'README', null, side);
+    showDocument('docs', path, doc ? doc.title : 'Docs', null, side);
   }
 
   function depth(name) { return name.split('/').length - 1; }
@@ -257,7 +259,9 @@
     site.projects.forEach(function (p) {
       if (p.path.indexOf(prefix) === 0) p.files.forEach(function (f) { items.push(f); });
     });
-    var side = tree(items, prefix, { path: top.path, title: top.title }, path);
+    // A project with nothing but its readme needs no sidebar. The page's heading
+    // already names the project, so its readme's entry is Overview.
+    var side = items.length ? tree(items, prefix, { path: top.path, title: 'Overview' }, path) : null;
 
     var isReadme = path === project.path;
     var file = null;
