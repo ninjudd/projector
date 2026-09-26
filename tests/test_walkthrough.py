@@ -426,19 +426,43 @@ class StatusTests(unittest.TestCase):
 
     WORKFLOW = "repos/o/r/contents/.github/workflows/walkthroughs.yml"
     PAGES = "repos/o/r/pages"
+    REPO = "repos/o/r"
+    PRESENT = ".github/workflows/walkthroughs.yml\n"
+
+    @staticmethod
+    def pages(**fields: object) -> str:
+        return json.dumps({"html_url": "https://o.example/r/", "public": True, **fields})
 
     def test_a_repository_with_the_workflow_and_a_site_prints_the_walkthrough_url(self) -> None:
-        answers = {self.WORKFLOW: ".github/workflows/walkthroughs.yml\n", self.PAGES: "https://o.example/r/\n"}
+        answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "false\n"}
         self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
         self.assertEqual((0, "https://o.example/r/66/\n", ""), self.status(answers, "--pr", "66"))
 
+    def test_a_certified_custom_domain_is_handed_over_as_https(self) -> None:
+        custom = self.pages(html_url="http://o.example/r/", https_enforced=False,
+                            https_certificate={"state": "approved"})
+        uncertified = self.pages(html_url="http://o.example/r/", https_enforced=False)
+        self.assertEqual((0, "https://o.example/r/\n", ""),
+                         self.status({self.WORKFLOW: self.PRESENT, self.PAGES: custom, self.REPO: "false\n"}))
+        self.assertEqual((0, "http://o.example/r/\n", ""),
+                         self.status({self.WORKFLOW: self.PRESENT, self.PAGES: uncertified, self.REPO: "false\n"}))
+
+    def test_a_private_repository_with_a_public_site_is_not_hosting(self) -> None:
+        code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "true\n"})
+        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual("not hosted: o/r is private but its GitHub Pages site is public\n", out)
+
+    def test_a_private_repository_with_a_private_site_is_hosting(self) -> None:
+        answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(public=False)}
+        self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
+
     def test_a_pages_site_without_the_workflow_is_not_hosting(self) -> None:
-        code, out, _ = self.status({self.WORKFLOW: None, self.PAGES: "https://o.example/r/\n"}, "--pr", "66")
+        code, out, _ = self.status({self.WORKFLOW: None, self.PAGES: self.pages()}, "--pr", "66")
         self.assertEqual(walkthrough.NOT_HOSTED, code)
         self.assertEqual("not hosted: o/r has no .github/workflows/walkthroughs.yml on its default branch\n", out)
 
     def test_the_workflow_without_a_pages_site_is_not_hosting(self) -> None:
-        code, out, _ = self.status({self.WORKFLOW: ".github/workflows/walkthroughs.yml\n", self.PAGES: None})
+        code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: None})
         self.assertEqual(walkthrough.NOT_HOSTED, code)
         self.assertIn("has the walkthroughs workflow but no GitHub Pages site", out)
 

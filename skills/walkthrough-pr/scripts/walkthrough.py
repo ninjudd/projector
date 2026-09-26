@@ -252,14 +252,19 @@ def hosting(repo: str) -> tuple[str | None, str]:
     """
     if gh_lookup("api", f"repos/{repo}/contents/{WORKFLOW_PATH}", "--jq", ".path") is None:
         return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
+    raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is None:
+        return None, f"{repo} has the walkthroughs workflow but no GitHub Pages site"
+    pages = json.loads(raw)
+    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
+        return None, f"{repo} is private but its GitHub Pages site is public"
+    site = pages["html_url"]
     # GitHub reports an http:// URL for a custom domain that does not enforce
     # HTTPS, even once its certificate is issued and https:// serves the site.
-    site = gh_lookup("api", f"repos/{repo}/pages", "--jq",
-                     'if .https_enforced or .https_certificate.state == "approved"'
-                     ' then (.html_url | sub("^http:"; "https:")) else .html_url end')
-    if site is None:
-        return None, f"{repo} has the walkthroughs workflow but no GitHub Pages site"
-    return site.strip().rstrip("/") + "/", ""
+    certified = (pages.get("https_certificate") or {}).get("state") == "approved"
+    if site.startswith("http:") and (pages.get("https_enforced") or certified):
+        site = "https:" + site.removeprefix("http:")
+    return site.rstrip("/") + "/", ""
 
 
 def merge_base(repo: str, base_ref: str, head: str) -> str:
