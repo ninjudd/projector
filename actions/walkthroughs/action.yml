@@ -1,4 +1,4 @@
-name: Projector walkthroughs
+name: Projector site
 description: Build the Projector site from the content Projector keeps in the repository, today the walkthroughs under refs/projector/walkthroughs, and deploy it to GitHub Pages.
 inputs:
   ref:
