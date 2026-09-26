@@ -7,6 +7,8 @@
   padding: 12px max(16px, calc((100% - 1040px) / 2));
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
+/* On a walkthrough page the bar scrolls away; the walkthrough's own headers stick. */
+.sitebar.scrolls { position: static; }
 .sitename { font-weight: 600; color: var(--text); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
 .sitenav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .sitenav a { color: var(--muted); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }

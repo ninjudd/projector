@@ -181,7 +181,7 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
    ref, starts the workflow, and hands you the link. Ask for a Claude
    Artifact instead when you want a private page. The site's PRs menu lists
    every walkthrough, and each pull request's newest version is at
-   `/<number>/`. The README, the plans and the docs appear on the first
+   `prs/<number>/`. The README, the plans and the docs appear on the first
    deploy, without publishing anything.
 
 ## Use the CLI

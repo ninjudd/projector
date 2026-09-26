@@ -41,21 +41,39 @@ content kinds.
 
 ## 3. How the site is built
 
-`project site build --out DIR --repo-root CHECKOUT [--walkthroughs DIR]`
-writes a static site. It reads plans through the CLI's own project model,
-honoring a configured `projects.dir`, so the site and `project list` never
-disagree about what a project is. It copies every Markdown file it serves,
-unchanged, under `content/`, and writes `site.json`: the repository and
-branch, the README and docs with their titles, each project's frontmatter
-fields and supplemental files, and each walkthrough's summary. The home page
-is one shell, `index.html`, whose `site.js` fetches `site.json` and renders
-each view on the client, routing on the URL's hash: `#/`, `#/projects`,
-`#/projects/<name>`, `#/prs`, and `#/<path>` for a document.
+`project site build --out DIR --repo-root CHECKOUT --base PATH
+[--walkthroughs DIR]` writes a static site. It reads plans through the CLI's
+own project model, honoring a configured `projects.dir`, so the site and
+`project list` never disagree about what a project is. It copies every
+Markdown file it serves, unchanged, under `content/`, and writes `site.json`:
+the base path, the repository and branch, the README and docs with their
+titles, each project's frontmatter fields and supplemental files, and each
+walkthrough's summary.
 
-Walkthrough pages keep their URLs, `/<number>/<head>/`, and their link back
-now opens `#/prs`.
+Every view has a real path under the base, which is `/projector/` for this
+repository's site:
 
-The composite action passes its checkout as `--repo-root`. A repository that
+| Path | View |
+|---|---|
+| `/` | The README |
+| `/projects/` | The projects browser |
+| `/projects/<name>/` | One plan; nested names nest |
+| `/prs/` | The walkthrough list |
+| `/prs/<number>/` | A pull request's newest walkthrough, rendered in place |
+| `/prs/<number>/<head>/` | One walkthrough version, beside its `data.json` |
+| `/docs/<path>/` | A document at its repository path without `.md` |
+| `/assets/` | The one copy of the scripts and styles every page loads |
+
+GitHub Pages serves only files that exist, so the build writes a small shell
+page at every path. The home page's shell loads `site.js`, which fetches
+`site.json`, renders the view its path names, and renders links between
+views in place through the History API. A walkthrough page loads the
+walkthrough renderer and carries the same site menu, which scrolls away so
+the walkthrough's own headers can stick. `404.html` is the home shell, so a
+mistyped path shows the site's not-found view.
+
+The composite action passes its checkout as `--repo-root` and the base path
+`actions/configure-pages` reports as `--base`. A repository that
 has published no walkthrough has no ref to fetch, and the action skips that
 step instead of failing. The workflow `project site workflow` writes gains a
 `push` trigger on the default branch for `README.md` and `docs/**`.
@@ -68,10 +86,21 @@ step instead of failing. The workflow `project site workflow` writes gains a
   highlight.js from, and sanitizes every rendered document before it touches
   the page. Content comes from the repository's default branch, but a
   README can still carry raw HTML, so sanitizing is not optional.
-- **One page, hash routes.** GitHub Pages serves static files and has no
-  rewrites, so a path per view would need a generated HTML file per document
-  and per project. A hash route needs one shell and keeps every view a plain
-  link.
+- **Real paths, one shell per path.** GitHub Pages serves static files and
+  has no rewrites. The first version routed on the URL's hash from a single
+  shell, and `/projector/#/prs` read as an odd address for a site whose
+  walkthroughs already had real paths. Each path now gets a copy of a shell
+  under a kilobyte, which costs one file per document and per project and
+  nothing at view time. Serving every path from `404.html` would have
+  avoided the files but answered every page with HTTP status 404. Old hash
+  and `/<number>/` walkthrough addresses were not redirected: they were
+  public for a day.
+- **Generate each walkthrough's data at deploy, not in the browser.** The
+  page could parse the stored diff and sanitize the spec itself, making the
+  deploy a pure copy, but only by porting the Python parser and checks to
+  JavaScript while `publish` and `site page` keep the Python ones. Two
+  implementations of one set of rules drift, and a bad spec would fail in a
+  reader's browser instead of at publish or deploy.
 - **Copy Markdown, do not pre-render it.** The deploy stays a copy plus one
   manifest, in line with walkthroughs (`pr-walkthrough` section 8), and a
   reader always sees the committed text.

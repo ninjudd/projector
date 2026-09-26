@@ -141,6 +141,7 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(html.startswith("<title>Core Walkthrough</title>"))
         self.assertTrue((site / "walkthrough.js").is_file())
         self.assertTrue((site / "walkthrough.css").is_file())
+        self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
         # A literal </script> inside the diff must not end the data block.
         self.assertNotIn('"</script>"', html)
         start = html.index('type="application/json">') + len('type="application/json">')
@@ -234,18 +235,22 @@ class SiteTests(unittest.TestCase):
 
         self.assertEqual([], failures)
         built_site = tmp / "site"
-        self.assertIn('url=cccccccccccccccccccccccccccccccccccccccc/', (built_site / "7" / "index.html").read_text())
+        self.assertIn('data-src="/prs/7/cccccccccccccccccccccccccccccccccccccccc/data.json"',
+                      (built_site / "prs" / "7" / "index.html").read_text(), "the newest head, rendered in place")
         index = (built_site / "index.html").read_text()
         listed = json.loads((built_site / "site.json").read_text())["walkthroughs"]
         self.assertEqual([(7, "New", "c" * 40, 2)], [(w["number"], w["name"], w["head"], w["heads"]) for w in listed])
         self.assertTrue((built_site / ".nojekyll").exists())
-        page = (built_site / "7" / ("a" * 40) / "index.html").read_text()
+        page = (built_site / "prs" / "7" / ("a" * 40) / "index.html").read_text()
         self.assertNotIn("walkthrough-data", page)
+        self.assertIn('<div id="sitebar" data-base="/"></div>', page, "a site page carries the site's menu")
+        self.assertIn('src="/assets/site.js"', page)
         self.assertIn('<meta charset="utf-8">', page)
-        data = json.loads((built_site / "7" / ("a" * 40) / "data.json").read_text())
-        self.assertEqual("../../#/prs", data["indexUrl"])
+        data = json.loads((built_site / "prs" / "7" / ("a" * 40) / "data.json").read_text())
+        self.assertEqual("/prs/", data["indexUrl"])
+        self.assertEqual(["/prs/7/" + "c" * 40 + "/", "/prs/7/" + "a" * 40 + "/"], [h["url"] for h in data["heads"]])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
-        for built in (page, index, (built_site / "7" / "index.html").read_text()):
+        for built in (page, index, (built_site / "prs" / "7" / "index.html").read_text()):
             self.assertIn(site.icon_link(), built)
 
     def test_a_spec_published_with_its_diff_builds_without_github(self) -> None:
@@ -259,7 +264,7 @@ class SiteTests(unittest.TestCase):
             entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
 
         self.assertEqual(([], 1), (failures, len(entries)))
-        data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
+        data = json.loads((tmp / "site" / "prs" / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual(3, data["stats"]["files"])
 
     def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None:
@@ -274,7 +279,7 @@ class SiteTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
 
-        data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
+        data = json.loads((tmp / "site" / "prs" / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual(["<b>bold</b>"], data["groups"][0]["intro"])
 
     def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
@@ -305,8 +310,9 @@ class SiteTests(unittest.TestCase):
             entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
         self.assertEqual(1, len(failures))
         self.assertIn("gen/api.pb.go is in no group", failures[0])
-        self.assertFalse((tmp / "site" / "7" / ("c" * 40)).exists())
-        self.assertIn(f"url={'a' * 40}/", (tmp / "site" / "7" / "index.html").read_text(), "the newest page that built")
+        self.assertFalse((tmp / "site" / "prs" / "7" / ("c" * 40)).exists())
+        self.assertIn(f"/prs/7/{'a' * 40}/data.json", (tmp / "site" / "prs" / "7" / "index.html").read_text(),
+                      "the newest page that built")
         self.assertEqual(1, entries[0]["heads"])
 
     def test_skips_a_spec_for_another_repository_when_the_workflow_names_its_own(self) -> None:
@@ -488,7 +494,7 @@ class StatusTests(unittest.TestCase):
     def test_a_repository_with_the_workflow_and_a_site_prints_the_walkthrough_url(self) -> None:
         answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "false\n"}
         self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
-        self.assertEqual((0, "https://o.example/r/66/\n", ""), self.status(answers, "--pr", "66"))
+        self.assertEqual((0, "https://o.example/r/prs/66/\n", ""), self.status(answers, "--pr", "66"))
 
     def test_a_certified_custom_domain_is_handed_over_as_https(self) -> None:
         custom = self.pages(html_url="http://o.example/r/", https_enforced=False,
