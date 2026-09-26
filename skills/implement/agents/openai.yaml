@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement"
+  short_description: "Implement and maintain a current project plan"
+  default_prompt: "Use $implement to implement the current project."

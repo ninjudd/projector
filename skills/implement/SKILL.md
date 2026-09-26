@@ -1,9 +1,9 @@
 ---
-name: work-project
+name: implement
 description: Implement a Projector project while keeping its plan and status current. Use when the user asks to start, continue, or complete work recorded under docs/projects.
 ---
 
-# Work Project
+# Implement
 
 Use the project plan as the durable statement of intent while treating the
 repository and current runtime behavior as authoritative evidence.

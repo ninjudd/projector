@@ -1,6 +1,6 @@
 # Code guidelines
 
-These rules apply to code any Projector skill writes or judges. `work-project`
+These rules apply to code any Projector skill writes or judges. `implement`
 writes to them, the review method's written-rules pass reads a head against
 them, and the fix loop fixes to them and verifies findings that cite them. One
 file carries them so the three skills cannot drift apart: a rule the

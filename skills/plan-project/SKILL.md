@@ -30,7 +30,7 @@ Choose the status from how finished the plan is:
 - Use `draft` while the plan is still being written or still has questions
   that block implementation.
 - Use `ready` once the plan can be executed as written.
-- Leave the transition to `in-progress` to `work-project`, which keeps that
+- Leave the transition to `in-progress` to `implement`, which keeps that
   claim with the implementation pull request.
 - Do not create a new plan as `completed`.
 
