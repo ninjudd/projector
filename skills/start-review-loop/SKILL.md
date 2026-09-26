@@ -1,6 +1,6 @@
 ---
 name: start-review-loop
-description: Monitor chat-owned pull requests in the current GitHub repository, review each exact pushed SHA locally as the operator, and publish verified findings as labeled COMMENT reviews — keeping a pull request in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
+description: Monitor the operator's pull requests in the current GitHub repository, review each exact pushed SHA locally as the operator, and publish verified findings as labeled COMMENT reviews — keeping a pull request in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
 ---
 
 # Start Review Loop
@@ -57,14 +57,15 @@ are. The watch is scoped by the tracked file rather than by any login, so a
 key here would have nothing to configure, and one that disagreed with the
 token could only mislabel who did the work.
 
-Watch only the repository containing the current working directory. Track pull
-requests this conversation creates or explicitly adopts; authorship by the
-operator is necessary for ordinary ownership but does not adopt every pull
-request from another session. The tracked set lives in the tracked file the
-watcher reads, one `owner/repo#number` per line, and the watcher sees nothing
-outside it: a pull request another session opened produces no event here until
-this conversation adopts it by appending its line. Hold validated logins
-literally in every query you run yourself; never use `@me`. Under the default
+Watch only the repository containing the current working directory. The loop
+reviews every open pull request the operator authors there, from whichever
+session opened it, plus any the user explicitly assigns. The tracked set lives
+in the tracked file the watcher reads, one `owner/repo#number` per line, and
+the watcher sees nothing outside it. Run the watcher with `--repo <owner/repo>
+--author <operator>` and it appends each operator pull request it finds open
+to that file, so a new one reports as `NEW PR` without anyone adopting it. A
+line `!owner/repo#number` keeps one pull request out when the user asks. Hold
+validated logins literally in every query you run yourself; never use `@me`. Under the default
 the two roles coincide and `@me` looks harmless, but its value follows
 whichever token is live, so under a reviewer override it resolves to the
 reviewer — an account that authors nothing here — and a listing by `@me` comes
@@ -131,8 +132,8 @@ transition is the sign-off a reader sees in the pull-request list.
 
 1. Read repository instructions and applicable review or GitHub workflow
    skills.
-2. Resolve the repository, checked-out branch, the exact chat-owned pull
-   request set, the operator's open pull requests, and the total open count:
+2. Resolve the repository, checked-out branch, the operator's open pull
+   requests, any the user assigned, and the total open count:
 
    ```sh
    gh pr list --author <operator> --state open --limit 200
@@ -146,16 +147,18 @@ transition is the sign-off a reader sees in the pull-request list.
    immediately; do not baseline it away.
 5. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
-   is the watcher's whole scope and the record of the set: append a pull
-   request when this conversation creates or adopts one, and delete its line
-   when it closes. Start or reuse a persistent recurring goal that records
-   the repository, operator, the tracked file's path, and every reviewed SHA
-   paired with the id of the review this loop published for it.
+   is the watcher's whole scope and the record of the set. The watcher
+   appends the operator's pull requests itself; append one the user assigns,
+   and delete a line when its pull request closes. Start or reuse a
+   persistent recurring goal that records the repository, operator, the
+   tracked file's path, and every reviewed SHA paired with the id of the
+   review this loop published for it.
 6. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
    ```sh
-   scripts/watch-prs.sh --tracked <file> --state <seeded-file> --once
+   scripts/watch-prs.sh --tracked <file> --state <seeded-file> \
+     --repo <owner/repo> --author <operator> --once
    ```
 
    It refuses to start, naming the line, on an entry that is not
@@ -165,9 +168,9 @@ transition is the sign-off a reader sees in the pull-request list.
    back as `NEW PR`; one that does not is a pull request missing from the
    file. The pass records those heads as announced, so the running watcher
    will not repeat them; review them from this output. Then run the same
-   script without `--once`, with the same state file, `--worktree
-   <repository>`, and an interval of at least 30 seconds, under the host's
-   persistent process or monitor facility.
+   script without `--once`, with the same state file and adoption flags,
+   `--worktree <repository>`, and an interval of at least 30 seconds, under
+   the host's persistent process or monitor facility.
 
 The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, `BRANCH`, and
 `TRACKED`. Treat `RESPONDED` as a re-review request for a still-draft head
@@ -177,15 +180,50 @@ prevents a body-only response from deadlocking both loops. A `TRACKED` line is
 a problem with the tracked file itself, announced once; fix the file. Keep the
 loop silent while no event needs action.
 
-If adopting an existing watcher, fetch unresolved state first, confirm its
-tracked file is the set this conversation owns -- a watcher another session
-started watches that session's set -- and verify its state file contains every
-expected row. Restart it when the script changed after the process started.
-Silence alone proves nothing.
+If adopting an existing watcher, fetch unresolved state first, confirm it runs
+with the adoption flags for this repository and operator and reads the tracked
+file this loop records, and verify its state file contains every expected row.
+Restart it when the script changed after the process started. Silence alone
+proves nothing.
+
+## Give each pull request its own subagent
+
+Where the host can keep a subagent alive and send it later messages, each
+tracked pull request gets one reviewing subagent for as long as it stays open.
+The main loop owns the watcher, the tracked file, and the record of reviewed
+SHAs; the subagent owns every review of its pull request. Review context that
+carries over is the point: on a fix-cycle head the subagent already knows its
+earlier findings, the author's replies, and what it verified last round, so it
+reads the new head against that history instead of rediscovering it.
+
+- On a pull request's first `NEW PR`, start its subagent with a name that
+  carries the number, such as `review-<number>`. Give it the repository, the
+  pull request, the head SHA, the reviewer and operator logins, the review
+  mode, and this file's path, and have it follow the sections from "Review an
+  exact head" through "Gate readiness claims in plans".
+- Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
+  same subagent as a message; never start a second one for it. A `NEW HEAD`
+  that arrives mid-review is the moved-head case the start-comment rule
+  covers.
+- The subagent reports each published review back: the SHA, the verdict, the
+  review id, and how many threads it opened. The main loop records the SHA
+  and review id. A question for the user, such as the collision check's, also
+  comes back to the main loop to ask.
+- On `CLOSED`, tell the subagent to finish: delete any start comment it still
+  holds and remove its scratch worktrees. Then close the subagent and delete
+  the pull request's line from the tracked file.
+- When a subagent is lost, to a session restart for example, start a
+  replacement under the same name. It rebuilds its context from GitHub: the
+  pull request's Projector reviews, their finding threads, and the replies on
+  them.
+
+The main loop routes events and records outcomes; it does not inspect code, so
+its own context stays small however many pull requests it tracks. Where the
+host has no subagents, the main loop runs the same review steps itself.
 
 ## Review an exact head
 
-For every new head:
+For every new head, in that pull request's subagent:
 
 1. Confirm the pull request remains open and record its full SHA.
 2. Fetch that commit and create a scratch worktree at it. Never run a
@@ -417,8 +455,8 @@ or standing down. Two verdicts from one account on one commit read as a single
 thorough loop, so the collision goes unnoticed unless this check catches it.
 Standing down silently is no better: a second reviewer is sometimes invited
 deliberately, and a head both loops walk away from gets no verdict at all. The
-tracked-set filter does not prevent this, because both loops can legitimately
-own the pull request.
+tracked file does not prevent this: every loop that adopts the same author's
+pull requests tracks the same ones.
 
 A head is *clean* only when the outstanding-findings query above returns
 nothing **and this review posts no P1 or P2 thread**. A `Suggestions` list in
@@ -492,6 +530,7 @@ status.
 
 Every pushed SHA, including a fix-only SHA, starts a complete review cycle.
 Green CI and resolved threads are evidence about state, not substitutes for
-review. Delete a pull request from the tracked file when it closes or merges,
-append the ones this conversation creates or adopts later, and continue until
-the user stops the loop.
+review. When a pull request closes or merges, close its subagent and delete
+its line from the tracked file. The watcher adopts the operator's new pull
+requests itself; append one the user assigns, and continue until the user
+stops the loop.
