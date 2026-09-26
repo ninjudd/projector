@@ -184,10 +184,17 @@ is the GitHub repository:
 
    A page the repository generates rather than commits, such as an HTML
    explorer or a WebAssembly module a playground loads, needs building before
-   the site. Set up its toolchain in steps before the action, and pass the
-   command that builds it as `prepare`, which the action runs in its own
-   checkout just before building the site. Add the generator's inputs to the
-   push `paths` so a change to them redeploys:
+   the site. Name the command that builds it as `site.prepare` in
+   `.projector.toml`, where the deploy and `project site serve` both find it:
+
+   ```toml
+   [site]
+   prepare = "make docs-wasm"
+   ```
+
+   The build runs it in the action's own checkout just before building the
+   site. Set up its toolchain in steps before the action, and add the
+   generator's inputs to the push `paths` so a change to them redeploys:
 
    ```yaml
        steps:
@@ -197,9 +204,12 @@ is the GitHub repository:
              go-version-file: go.mod
          - id: site
            uses: ninjudd/projector/actions/site@v0
-           with:
-             prepare: make docs-wasm
    ```
+
+   The action's `prepare` input runs a different command in its place. On
+   your own machine, `project site serve` runs the command only after you
+   allow it once with `--allow-prepare`, so previewing a branch or a clone
+   you have not read never runs its code unasked.
 
 3. Publish something. Once the workflow is on the default branch, the
    `walkthrough-pr` skill publishes to the site by default: ask your agent

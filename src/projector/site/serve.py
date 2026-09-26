@@ -119,8 +119,9 @@ class Site:
     build it replaced is removed one rebuild later rather than at once.
     """
 
-    def __init__(self, build: Callable[[Path], str], sources: Callable[[], tuple]) -> None:
-        self.build, self.sources = build, sources
+    def __init__(self, build: Callable[[Path], str], sources: Callable[[], tuple],
+                 prepare: Callable[[], None] | None = None) -> None:
+        self.build, self.sources, self.prepare = build, sources, prepare
         self.scratch = Path(tempfile.mkdtemp(prefix="projector-site-"))
         self.lock = threading.Lock()
         self.count = 0
@@ -136,6 +137,13 @@ class Site:
                 return None
             # A build that fails is retried on the next change, not every poll.
             self.seen = seen
+            if self.prepare is not None:
+                # What the command generates is not a change of its own, or every
+                # rebuild would start the next; only an edit after it counts.
+                try:
+                    self.prepare()
+                finally:
+                    self.seen = self.sources()
             self.count += 1
             out = self.scratch / str(self.count)
             try:
