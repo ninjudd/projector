@@ -13,6 +13,8 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from . import site, walkthrough
+from .walkthrough import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
 from .core import (
@@ -199,6 +201,47 @@ def parser() -> argparse.ArgumentParser:
         nargs="*",
         help="install.sh target: all (its default), cli, claude, codex, or status",
     )
+
+    walkthrough = subcommands.add_parser("walkthrough", help="write and publish pull request walkthrough specs")
+    walkthrough_commands = walkthrough.add_subparsers(dest="walkthrough_command", required=True)
+    walkthrough_init = walkthrough_commands.add_parser("init", help="write a skeleton spec for a pull request")
+    walkthrough_init.add_argument("--repo", required=True, help="OWNER/NAME")
+    walkthrough_init.add_argument("--pr", required=True, type=int)
+    walkthrough_init.add_argument("--spec", required=True)
+    walkthrough_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
+    walkthrough_publish = walkthrough_commands.add_parser(
+        "publish", help="commit a spec to the hidden walkthroughs ref and start a site build"
+    )
+    walkthrough_publish.add_argument("--spec", required=True)
+    walkthrough_publish.add_argument("--remote", default="origin")
+    walkthrough_publish.add_argument(
+        "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
+    )
+
+    site = subcommands.add_parser("site", help="build the Projector site a repository serves from GitHub Pages")
+    site_commands = site.add_subparsers(dest="site_command", required=True)
+    site_build = site_commands.add_parser("build", help="build every published walkthrough into a site")
+    site_build.add_argument(
+        "--walkthroughs", required=True, help="directory holding <number>/<head>/spec.json files"
+    )
+    site_build.add_argument("--out", required=True)
+    site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
+    site_page.add_argument("--spec", required=True)
+    site_page.add_argument("--out", required=True)
+    site_page.add_argument("--diff", help="read the diff from this file instead of GitHub")
+    site_page.add_argument(
+        "--at-head", action="store_true", help="build the spec's recorded head even if the pull request moved"
+    )
+    site_status = site_commands.add_parser(
+        "status", help="say whether a repository hosts the site, and print its URL if so"
+    )
+    site_status.add_argument("--repo", required=True, help="OWNER/NAME")
+    site_status.add_argument("--pr", type=int, help="print the URL of this pull request's walkthrough")
+    site_workflow = site_commands.add_parser(
+        "workflow", help="print or write the workflow file for the default branch"
+    )
+    site_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
+    site_workflow.add_argument("--write", action="store_true", help=f"write {WORKFLOW_PATH} in this checkout")
     return result
 
 
@@ -363,11 +406,58 @@ def configured_projects_dir(root: Path) -> Optional[Path]:
     return Path(configured)
 
 
+NOT_HOSTED = 3
+
+
+def run_walkthrough(arguments: argparse.Namespace) -> int:
+    if arguments.walkthrough_command == "init":
+        walkthrough.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
+    else:
+        walkthrough.publish(Path(arguments.spec), arguments.remote, send_dispatch=not arguments.no_dispatch)
+    return 0
+
+
+def run_site(arguments: argparse.Namespace) -> int:
+    command = arguments.site_command
+    if command == "build":
+        entries, failures = site.build_site(Path(arguments.walkthroughs), Path(arguments.out))
+        print(f"wrote {arguments.out}/index.html: {len(entries)} pull requests, {len(failures)} walkthroughs skipped")
+    elif command == "page":
+        spec = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))
+        diff = Path(arguments.diff).read_text(encoding="utf-8") if arguments.diff else None
+        payload = site.build_page(spec, Path(arguments.out), diff=diff, at_head=arguments.at_head)
+        counts = payload["stats"]
+        print(
+            f"wrote {arguments.out}/index.html: {len(spec['groups'])} groups, "
+            f"{counts['files']} files, +{counts['adds']} -{counts['dels']}"
+        )
+    elif command == "status":
+        url, reason = walkthrough.hosting(arguments.repo)
+        if url is None:
+            print(f"not hosted: {reason}")
+            return NOT_HOSTED
+        print(f"{url}{arguments.pr}/" if arguments.pr else url)
+    else:
+        text = walkthrough.workflow_text(arguments.action_ref)
+        if not arguments.write:
+            print(text, end="")
+            return 0
+        path = discover_git_root(Path.cwd()) / WORKFLOW_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")
+    return 0
+
+
 def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "config":
         return run_config(arguments)
     if arguments.command == "upgrade":
         return run_upgrade(arguments.target)
+    if arguments.command == "walkthrough":
+        return run_walkthrough(arguments)
+    if arguments.command == "site":
+        return run_site(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

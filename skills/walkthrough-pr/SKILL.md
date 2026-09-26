@@ -8,8 +8,14 @@ description: Build a guided, grouped walkthrough page for reviewing a large GitH
 Turn a pull request into one page a reviewer reads top to bottom: the diff
 split into logical groups in reading order, each group opened by what it
 does and why, what to hold in mind, and a checklist, followed by that
-group's files with every hunk. The page framework is fixed. Your job is the
-judgment: the grouping, the explanations, and the checks.
+group's files with every hunk. This skill writes the page's data, a
+walkthrough spec. The Projector CLI renders it and the repository's Projector
+site serves it, so your job is the judgment: the grouping, the explanations,
+and the checks. Every command below is the `project` CLI that ships beside
+this skill; install it as Projector's README describes when `project` is
+missing. The CLI updates separately from this skill, so when `project`
+rejects a command below as an invalid choice, run `project upgrade` and
+retry.
 
 Reading a pull request does not authorize changing it. Do not comment on,
 push to, or approve the pull request unless the user asks.
@@ -22,7 +28,7 @@ push to, or approve the pull request unless the user asks.
    changed file with its line counts:
 
    ```sh
-   python3 <skill-dir>/scripts/walkthrough.py init \
+   project walkthrough init \
      --repo OWNER/NAME --pr NUMBER --spec WORKDIR/walkthrough.json
    ```
 
@@ -57,11 +63,10 @@ push to, or approve the pull request unless the user asks.
 ## Build the page
 
 ```sh
-python3 <skill-dir>/scripts/walkthrough.py build \
-  --spec WORKDIR/walkthrough.json --out WORKDIR/site
+project site page --spec WORKDIR/walkthrough.json --out WORKDIR/site
 ```
 
-`build` fetches the diff from GitHub's compare API for the spec's merge base
+`page` fetches the diff from GitHub's compare API for the spec's merge base
 (`pr.base`) and head, and refuses to run when the pull request's head is no
 longer the spec's `pr.head`, so the page never describes a diff it does not
 show. When GitHub cannot serve the diff because the pull request is too
@@ -75,8 +80,8 @@ git diff "$(git merge-base origin/BASE HEAD_SHA)" HEAD_SHA > WORKDIR/pr.diff
 ```
 
 The output directory holds `index.html` with the data embedded, plus the
-shared renderer, `walkthrough.js` and `walkthrough.css`. Opening
-`index.html` from disk works in any browser.
+site's renderer files beside it. Opening `index.html` from disk works in any
+browser.
 
 ## Publish the page
 
@@ -84,7 +89,7 @@ Publish to the repository's own site when it hosts walkthroughs, and to a
 Claude Artifact otherwise. Ask which applies:
 
 ```sh
-python3 <skill-dir>/scripts/walkthrough.py status --repo OWNER/NAME --pr NUMBER
+project site status --repo OWNER/NAME --pr NUMBER
 ```
 
 - **Exit 0** prints the walkthrough's URL. The repository is set up: it has
@@ -96,9 +101,9 @@ python3 <skill-dir>/scripts/walkthrough.py status --repo OWNER/NAME --pr NUMBER
   and tell the user in one sentence that the repository can host its own
   walkthroughs, pointing at the "Set up Projector hosting" section of
   Projector's README.
-- **Exit 1** means the check itself failed, for example because `gh` could
-  not reach GitHub. Publish an Artifact and say the hosting check did not
-  run.
+- **Any other exit** means the check itself failed, for example because
+  `gh` could not reach GitHub. Publish an Artifact and say the hosting check
+  did not run.
 
 An explicit request wins either way. Publish an Artifact when the user asks
 for one or says not to publish, and publish to a site the user names even
@@ -132,7 +137,7 @@ Publishing writes to that hidden ref, which a repository accepts by setting
 hosting up; do it when `status` exits 0 or the user asks.
 
 ```sh
-python3 <skill-dir>/scripts/walkthrough.py publish --spec WORKDIR/walkthrough.json
+project walkthrough publish --spec WORKDIR/walkthrough.json
 ```
 
 `publish` first builds the spec against its diff and refuses one that does
@@ -153,7 +158,7 @@ pull request, because GitHub runs dispatched workflows only from there:
 
 ```sh
 gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
-python3 <skill-dir>/scripts/walkthrough.py workflow --write
+project site workflow --write
 ```
 
 The workflow calls `ninjudd/projector/actions/walkthroughs@v0`. Pass
