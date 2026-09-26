@@ -2,12 +2,13 @@
 """Set Projector's one version, or tag a release of it.
 
     scripts/release.py set X.Y.Z   write the version to setup.cfg and both plugin manifests
-    scripts/release.py tag         tag vX.Y.Z at origin/main and move the vX major tag to it
+    scripts/release.py tag         tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
 
 `set` is the bump a release pull request makes. `tag` runs after that pull
 request merges: it checks that origin/main carries the version, pushes the
 immutable vX.Y.Z tag, and force-moves the major tag that marketplaces and the
-walkthroughs action follow.
+walkthroughs action follow. It then creates the GitHub release for vX.Y.Z
+with generated notes; --no-release skips that step.
 """
 
 from __future__ import annotations
@@ -76,7 +77,29 @@ def git(root: Path, *args: str) -> str:
         raise ReleaseError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
-def tag(root: Path, remote: str = "origin", branch: str = "main") -> str:
+def repo_slug(url: str) -> str:
+    url = url.strip()
+    for prefix in ("git@github.com:", "ssh://git@github.com/", "https://github.com/"):
+        if url.startswith(prefix):
+            url = url[len(prefix):]
+            return url[:-4] if url.endswith(".git") else url
+    return ""
+
+
+def create_release(root: Path, remote: str, release: str) -> None:
+    slug = repo_slug(git(root, "remote", "get-url", remote))
+    if not slug:
+        raise ReleaseError(f"{remote} is not a GitHub repository")
+    try:
+        subprocess.run(["gh", "release", "create", release, "--repo", slug, "--verify-tag", "--generate-notes"],
+                       cwd=root, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise ReleaseError("the gh CLI is not installed") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(f"gh release create failed: {exc.stderr.strip()}") from exc
+
+
+def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True) -> str:
     git(root, "fetch", "--quiet", "--tags", remote, branch)
     ref = f"refs/remotes/{remote}/{branch}"
     commit = git(root, "rev-parse", ref)
@@ -89,7 +112,15 @@ def tag(root: Path, remote: str = "origin", branch: str = "main") -> str:
     git(root, "tag", "-f", "-a", major, commit, "-m", f"Projector {version}")
     git(root, "push", "--quiet", remote, f"refs/tags/{release}")
     git(root, "push", "--quiet", "--force", remote, f"refs/tags/{major}")
-    return f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
+    done = f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
+    if not github_release:
+        return done
+    try:
+        create_release(root, remote, release)
+    except ReleaseError as exc:
+        raise ReleaseError(f"{release} and {major} are pushed, but the GitHub release was not created ({exc}); "
+                           f"finish with: gh release create {release} --verify-tag --generate-notes") from exc
+    return f"{done}, and published the {release} GitHub release"
 
 
 def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
@@ -100,13 +131,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     t = sub.add_parser("tag", help="tag the merged version and move the major tag")
     t.add_argument("--remote", default="origin")
     t.add_argument("--branch", default="main")
+    t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
     args = parser.parse_args(argv)
     try:
         if args.command == "set":
             set_version(root, args.version)
             print(f"set {args.version} in setup.cfg and both plugin manifests")
         else:
-            print(tag(root, args.remote, args.branch))
+            print(tag(root, args.remote, args.branch, github_release=not args.no_release))
     except ReleaseError as exc:
         print(f"release: {exc}", file=sys.stderr)
         return 1
