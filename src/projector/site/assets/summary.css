@@ -1,9 +1,10 @@
 /* Projector's palette, shared with projector.bot: warm paper neutrals and an
-   orange accent. --brand is the logo's orange; --accent is the same hue, darkened
-   in light mode so links and badge text keep 4.5:1 contrast. */
+   orange accent kept for the mark, hover, and a few highlights; links are text
+   coloured, as projector.bot's are. --brand is the logo's orange; --accent is the
+   same hue, darkened in light mode so text set in it keeps 4.5:1 contrast. */
 :root {
   --bg: #F6F4EE; --surface: #FDFCF8; --surface-2: #EEEBE2; --text: #17150F; --muted: #5F5B50;
-  --border: #DEDAD0; --brand: #D4580F; --accent: #B54A0C; --accent-soft: #F9ECE1; --on-accent: #FFF7F0;
+  --border: #DEDAD0; --brand: #D4580F; --accent: #B54A0C; --accent-soft: #F9ECE1; --on-accent: #FFF7F0; --underline: #C4BFB2;
   --add-bg: #E4F5EA; --add-ln: #CBEAD6; --add-text: #0F5A2A;
   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
@@ -17,7 +18,7 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #100F0C; --surface: #171510; --surface-2: #1E1C16; --text: #ECE8DD; --muted: #A5A094;
-    --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03;
+    --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03; --underline: #4C483E;
     --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
@@ -30,7 +31,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #100F0C; --surface: #171510; --surface-2: #1E1C16; --text: #ECE8DD; --muted: #A5A094;
-  --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03;
+  --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03; --underline: #4C483E;
   --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
@@ -47,7 +48,8 @@ body {
 }
 code, pre, .mono, .fpath, .diff { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 code { background: var(--code-bg); border-radius: 4px; padding: .05em .35em; font-size: .92em; }
-a { color: var(--accent); }
+a { color: var(--text); text-decoration-color: var(--underline); text-underline-offset: .18em; }
+a:hover { color: var(--accent); text-decoration-color: currentColor; }
 h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 .wrap { max-width: 1440px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
 .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 32px; align-items: start; }
@@ -65,11 +67,11 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 @media (max-width: 980px) { .side { position: static; } }
 .nav { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
 .prblock { padding: 4px 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
-.prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
 .prref:hover { text-decoration: underline; }
 .prtitle { margin-top: 4px; font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.prmeta a { color: var(--accent); text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+.prmeta a { color: inherit; text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 .prmeta a:hover { text-decoration: underline; }
 .prbar { display: none; }
 @media (max-width: 980px) {
@@ -118,7 +120,7 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .groups { display: flex; flex-direction: column; gap: 36px; margin-top: 36px; }
 .group { scroll-margin-top: 16px; }
 .ghead { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: start; padding-bottom: 14px; border-bottom: 2px solid var(--border); }
-.gnum { width: 44px; height: 44px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 600; font-size: 18px; font-variant-numeric: tabular-nums; }
+.gnum { width: 44px; height: 44px; border-radius: 8px; background: var(--text); color: var(--bg); display: grid; place-items: center; font-weight: 600; font-size: 18px; font-variant-numeric: tabular-nums; }
 .gtitle h2 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
 .kicker { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
 .gstats { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
@@ -142,10 +144,11 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }
 .filebar-label { font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
 .filelist { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
-.filelist a { color: var(--accent); text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+.filelist a { color: var(--text); text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
 .filelist a:hover { text-decoration: underline; }
 .filebar-actions { margin-left: auto; display: flex; gap: 12px; }
-.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; }
+.linkbtn:hover { color: var(--accent); }
 .linkbtn:hover { text-decoration: underline; }
 
 /* files */
@@ -178,8 +181,8 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .badge.new { color: var(--ok); border-color: var(--ok); }
 .badge.generated { color: var(--warn); border-color: var(--warn); }
 .stat { font-variant-numeric: tabular-nums; }
-.flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--accent); background: var(--surface); }
-.flink:hover { border-color: var(--accent); }
+.flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
+.flink:hover { color: var(--accent); border-color: var(--accent); }
 .viewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .viewed input { accent-color: var(--ok); margin: 0; }
 .fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
