@@ -77,6 +77,8 @@ Committing specs rather than built pages keeps the ref small, because the
 diff comes from GitHub at build time, and makes the spec, the part that needs
 judgment, the only thing an agent writes. The spec on the ref is also the
 durable copy a later session starts from when the pull request moves.
+Section 8 changes the first half: the diff now sits on the ref beside its
+spec, so a deploy no longer asks GitHub for it.
 
 The shared piece is a composite action rather than a reusable workflow
 because a composite action is downloaded at the ref the caller names, with
