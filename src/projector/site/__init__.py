@@ -256,13 +256,13 @@ def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects
     if readme:
         add(readme, "docs/", "README", "doc")
     for doc in docs:
-        add(doc["path"], doc_route(doc["path"]), doc["title"], "doc")
+        add(doc["path"], doc["route"], doc["title"], "doc")
     if projects_readme:
         add(projects_readme, "projects/", "How projects work", "project")
     for project in projects:
         add(project["path"], f"projects/{project['name']}/", project["title"], "project")
         for file in project["files"]:
-            add(file["path"], project_route(file["path"], project), file["title"], "project")
+            add(file["path"], file["route"], file["title"], "project")
     return entries
 
 
@@ -289,6 +289,25 @@ def project_route(path: str, project: dict) -> str:
     return "projects/" + local_route(inside)
 
 
+def assign_routes(docs: list[dict], projects: list[dict]) -> None:
+    """Give every document and project file a route of its own, as its `route`.
+
+    A file and a folder of the same name would share a route: notes.md and
+    notes/readme.md both want notes/, and in a project the folder may be a
+    nested project. The folder keeps the plain route, since a readme is what a
+    folder's path means, and the file keeps its `.md` so it stays reachable.
+    """
+    taken = {f"projects/{p['name']}/" for p in projects}
+    entries = [(doc, doc_route(doc["path"])) for doc in docs]
+    entries += [(file, project_route(file["path"], p)) for p in projects for file in p["files"]]
+    entries.sort(key=lambda e: e[0]["path"].rpartition("/")[2].lower() != "readme.md")
+    for entry, route in entries:
+        if route in taken:
+            route = route[:-1] + ".md/"
+        taken.add(route)
+        entry["route"] = route
+
+
 def home_page(repo: str, base: str) -> str:
     assets = escape(f"{base}assets/")
     return f"""<!doctype html>
@@ -310,10 +329,10 @@ def home_page(repo: str, base: str) -> str:
 def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
     """Every path the home page's script renders, each of which needs a shell."""
     routes = {"", "projects/", "reviews/", "docs/", "search/"}
-    routes.update(doc_route(doc["path"]) for doc in docs)
+    routes.update(doc["route"] for doc in docs)
     for project in projects:
         routes.add(f"projects/{project['name']}/")
-        routes.update(project_route(file["path"], project) for file in project["files"])
+        routes.update(file["route"] for file in project["files"])
     return sorted(routes)
 
 
@@ -330,6 +349,7 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
     files = collect_files(repo_root, out) if repo_root else []
+    assign_routes(docs, described)
     link = project_linker(described, base)
     built = build_walkthroughs(walkthroughs, out, base, link) if walkthroughs and walkthroughs.is_dir() else ([], [])
     entries, failures = built

@@ -29,28 +29,21 @@
     return base + site.content + '/' + path.split('/').map(encodeURIComponent).join('/');
   }
 
-  // A Markdown file's route inside its section, as the build names it: its path
-  // without `.md`, and a readme at its folder.
-  function localRoute(path) {
-    var slash = path.lastIndexOf('/');
-    if (path.slice(slash + 1).toLowerCase() === 'readme.md') return slash < 0 ? '' : path.slice(0, slash + 1);
-    return (/\.md$/.test(path) ? path.slice(0, -3) : path) + '/';
-  }
-  // The README owns docs/ itself, so a readme at the top of docs/ moves aside.
-  function docRoute(path) {
-    return path.toLowerCase() === 'docs/readme.md' ? 'docs/readme/' : localRoute(path);
-  }
   function inProjects(path) {
     return !!site.projectsDir && path.indexOf(site.projectsDir + '/') === 0;
   }
+  // The build gives every document and project file its route in site.json, so a
+  // file and a folder of the same name never share one.
   function routeFor(path) {
     if (path === site.readme) return base + 'docs/';
-    if (inProjects(path)) {
-      var owner = ownerOf(path);
-      if (!owner) return base + 'projects/' + localRoute(path.slice(site.projectsDir.length + 1));
-      return base + 'projects/' + localRoute(owner.name + '/' + path.slice(folderOf(owner).length));
-    }
-    return base + docRoute(path);
+    if (path === site.projectsReadme) return base + 'projects/';
+    var route = null;
+    site.docs.forEach(function (d) { if (d.path === path) route = d.route; });
+    site.projects.forEach(function (p) {
+      if (p.path === path) route = 'projects/' + p.name + '/';
+      p.files.forEach(function (f) { if (f.path === path) route = f.route; });
+    });
+    return route == null ? repoUrl('blob', path) : base + route;
   }
 
   function folderOf(project) { return project.path.slice(0, project.path.lastIndexOf('/') + 1); }
@@ -437,11 +430,11 @@
       (site.files || []).forEach(function (f) { siteFiles[f] = true; });
       if (site.readme) markdownFiles[site.readme] = true;
       if (site.projectsReadme) markdownFiles[site.projectsReadme] = true;
-      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[docRoute(d.path)] = d.path; });
+      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[d.route] = d.path; });
       site.projects.forEach(function (p) {
         markdownFiles[p.path] = true;
         routes['projects/' + p.name + '/'] = p.path;
-        p.files.forEach(function (f) { markdownFiles[f.path] = true; routes[routeFor(f.path).slice(base.length)] = f.path; });
+        p.files.forEach(function (f) { markdownFiles[f.path] = true; routes[f.route] = f.path; });
       });
       window.addEventListener('popstate', route);
       route();

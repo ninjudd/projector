@@ -392,7 +392,9 @@ for each of its files, at its path inside the project without `.md`;
 `reviews/`, `reviews/<number>/` and `reviews/<number>/<head>/` for
 walkthroughs; and `docs/` for the README and `docs/<path>/` for each document
 at its repository path without `.md`. A `README.md` at the top of `docs/`
-moves to `docs/readme/`, since the repository README holds `docs/`.
+moves to `docs/readme/`, since the repository README holds `docs/`. A file
+named like a folder beside it, such as `notes.md` next to `notes/`, keeps its
+`.md` in its path, `notes.md/`, because the folder takes `notes/`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects

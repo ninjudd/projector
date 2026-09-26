@@ -52,13 +52,14 @@ class SiteBuildTests(SiteRepoCase):
         self.assertEqual(0, code)
         self.assertEqual("owner/example", manifest["repo"])
         self.assertEqual("README.md", manifest["readme"])
-        self.assertEqual([{"path": "docs/guide.md", "title": "Use the guide"}], manifest["docs"])
+        self.assertEqual([{"path": "docs/guide.md", "title": "Use the guide", "route": "docs/guide/"}], manifest["docs"])
         self.assertEqual("docs/projects", manifest["projectsDir"])
         self.assertEqual("docs/projects/README.md", manifest["projectsReadme"])
         self.assertEqual(
             [("alpha", "Build alpha", "in-progress", "now",
-              [{"path": "docs/projects/alpha/notes.md", "title": "Alpha notes"},
-               {"path": "docs/projects/alpha/research/survey.md", "title": "Survey"}]),
+              [{"path": "docs/projects/alpha/notes.md", "title": "Alpha notes", "route": "projects/alpha/notes/"},
+               {"path": "docs/projects/alpha/research/survey.md", "title": "Survey",
+                "route": "projects/alpha/research/survey/"}]),
              ("alpha/beta", "Finish beta", "completed", None, [])],
             [(p["name"], p["title"], p["status"], p["priority"], p["files"]) for p in manifest["projects"]],
         )
@@ -94,7 +95,7 @@ class SiteBuildTests(SiteRepoCase):
 
         _, manifest, _ = self.build()
 
-        self.assertIn({"path": "docs/README.md", "title": "About these docs"}, manifest["docs"])
+        self.assertIn({"path": "docs/README.md", "title": "About these docs", "route": "docs/readme/"}, manifest["docs"])
         self.assertTrue((self.out / "docs" / "readme" / "index.html").is_file())
 
     def test_the_base_path_prefixes_every_asset_and_link(self) -> None:
@@ -302,19 +303,23 @@ class HighlightTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "the route test needs node")
 class RouteTests(SiteRepoCase):
-    def test_every_link_the_page_makes_to_a_file_has_a_shell(self) -> None:
-        (self.repo / "docs/README.md").write_text("# About these docs\n")
+    def routes(self) -> list[str]:
+        """Build the site and return routeFor, run under node, of every file it serves."""
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
             cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo), "--base", "projector"])
         manifest = json.loads((self.out / "site.json").read_text())
         paths = [manifest["readme"], manifest["projectsReadme"], *(d["path"] for d in manifest["docs"])]
         for project in manifest["projects"]:
             paths += [project["path"], *(f["path"] for f in project["files"])]
-        names = ("esc", "localRoute", "docRoute", "inProjects", "routeFor", "folderOf", "projectNamed", "ownerOf")
         program = f"var site = {json.dumps(manifest)}, base = '/projector/';\n" + \
-            "\n".join(js_function(n) for n in names) + \
+            "\n".join(js_function(n) for n in ("esc", "repoUrl", "routeFor")) + \
             f"\nprocess.stdout.write(JSON.stringify({json.dumps(paths)}.map(routeFor)));"
-        routes = json.loads(subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+        return json.loads(subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+
+    def test_every_link_the_page_makes_to_a_file_has_a_shell(self) -> None:
+        (self.repo / "docs/README.md").write_text("# About these docs\n")
+
+        routes = self.routes()
 
         self.assertEqual(
             ["/projector/docs/", "/projector/projects/", "/projector/docs/readme/", "/projector/docs/guide/",
@@ -322,6 +327,22 @@ class RouteTests(SiteRepoCase):
              "/projector/projects/alpha/research/survey/", "/projector/projects/alpha/beta/"],
             routes,
         )
+        for route in routes:
+            self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
+
+    def test_a_file_named_like_a_folder_keeps_a_route_of_its_own(self) -> None:
+        # alpha/beta.md beside the nested project alpha/beta/, and guide.md beside guide/readme.md.
+        (self.repo / "docs/projects/alpha/beta.md").write_text("# Beta file\n")
+        (self.repo / "docs/guide").mkdir()
+        (self.repo / "docs/guide/readme.md").write_text("# Guide folder\n")
+
+        routes = self.routes()
+
+        self.assertEqual(len(routes), len(set(routes)), routes)
+        self.assertIn("/projector/projects/alpha/beta/", routes)
+        self.assertIn("/projector/projects/alpha/beta.md/", routes)
+        self.assertIn("/projector/docs/guide/", routes)
+        self.assertIn("/projector/docs/guide.md/", routes)
         for route in routes:
             self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
 

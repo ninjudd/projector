@@ -180,6 +180,13 @@ everywhere on the site: in the menu, the headings, the paths, and the keys of
   its own section. A `README.md` at the top of `docs/` moves to `docs/readme/`
   so the repository README keeps `docs/`.
 
+Moving a project's files under `projects/` lets a file and a folder share a
+path: `alpha/beta.md` and the nested project `alpha/beta/` both want
+`projects/alpha/beta/`, as `guide.md` and `guide/readme.md` want
+`docs/guide/`. The folder keeps the plain path, and the file keeps its `.md`,
+at `projects/alpha/beta.md/`. The build decides each route once and records it
+in `site.json`, so the page links to the same path the build wrote a shell for.
+
 A repository with no projects opens on Docs, and the menu leaves out any
 section with nothing in it. Search still covers every document and labels
 each result as a project or a doc.
