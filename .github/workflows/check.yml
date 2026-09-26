@@ -1,0 +1,23 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Installs the TypeScript compiler, so the test suite checks the committed
+      # JavaScript against its TypeScript instead of skipping that check.
+      - run: npm ci
+      - run: PYTHONPATH=src python3 -m unittest discover -v
+      - run: PYTHONPATH=src python3 -m projector check

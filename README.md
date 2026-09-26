@@ -262,6 +262,15 @@ installation replaces the legacy script in the workflow layer.
 
 ## Develop Projector
 
+The site's scripts are TypeScript under `src/projector/site/ts/`. After you
+edit one, compile it and commit the JavaScript it produces under
+`src/projector/site/assets/`, which is what every deploy and install serves:
+
+```sh
+npm ci
+npm run build
+```
+
 Run the validation gate from the repository root:
 
 ```sh
