@@ -230,48 +230,75 @@ class PublishTests(unittest.TestCase):
         (self.repo / "README.md").write_text("main\n")
         run(self.repo, "git", "add", "README.md")
         run(self.repo, "git", "commit", "--quiet", "-m", "main")
+        # The branch is not main: a developer's pre-push hook may refuse pushes to main.
         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
         self.spec = tmp / "spec.json"
+        self.dispatches: list[str] = []
 
-    def publish(self, head: str) -> object:
+    def publish(self, head: str, **kwargs: object) -> object:
         spec = make_spec(GOOD_GROUPS)
         spec["pr"]["head"] = head
         self.spec.write_text(json.dumps(spec))
         cwd = os.getcwd()
         os.chdir(self.repo)
         try:
-            with redirect_stdout(io.StringIO()):
-                return walkthrough.publish(self.spec, "origin", "projector-pages", "v1")
+            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), redirect_stdout(io.StringIO()):
+                return walkthrough.publish(self.spec, "origin", **kwargs)
         finally:
             os.chdir(cwd)
 
-    def branch_files(self) -> list[str]:
-        return run(self.remote, "git", "ls-tree", "-r", "--name-only", "projector-pages").splitlines()
+    def ref_files(self) -> list[str]:
+        return run(self.remote, "git", "ls-tree", "-r", "--name-only", "refs/projector/walkthroughs").splitlines()
 
-    def test_first_publish_creates_an_orphan_branch_with_the_workflow_and_leaves_the_checkout_alone(self) -> None:
+    def test_first_publish_creates_the_hidden_ref_dispatches_and_leaves_the_checkout_alone(self) -> None:
         (self.repo / "README.md").write_text("dirty\n")
         (self.repo / "untracked.txt").write_text("keep\n")
         before = run(self.repo, "git", "rev-parse", "HEAD")
 
         self.assertIsNotNone(self.publish("a" * 40))
 
-        self.assertEqual([".github/workflows/walkthroughs.yml", f"walkthroughs/7/{'a' * 40}/spec.json"], self.branch_files())
-        self.assertEqual("", run(self.remote, "git", "log", "--format=%P", "-1", "projector-pages"), "orphan")
-        workflow = run(self.remote, "git", "show", "projector-pages:.github/workflows/walkthroughs.yml")
-        self.assertIn("uses: ninjudd/projector/actions/walkthroughs@v1", workflow)
-        self.assertIn("branches: [projector-pages]", workflow)
-        self.assertIn("${{ steps.walkthroughs.outputs.page_url }}", workflow)
+        self.assertEqual([f"walkthroughs/7/{'a' * 40}/spec.json"], self.ref_files())
+        self.assertEqual("", run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/walkthroughs"), "orphan")
+        self.assertEqual(["trunk"], run(self.remote, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines(),
+                         "no branch is created")
+        self.assertEqual(["owner/repo"], self.dispatches)
         self.assertEqual(before, run(self.repo, "git", "rev-parse", "HEAD"))
         self.assertEqual("dirty\n", (self.repo / "README.md").read_text())
         self.assertEqual("M README.md\n?? untracked.txt", run(self.repo, "git", "status", "--porcelain"), "worktree and index untouched")
 
-    def test_later_publishes_add_heads_and_an_unchanged_spec_is_a_no_op(self) -> None:
+    def test_later_publishes_add_heads_and_an_unchanged_spec_neither_pushes_nor_dispatches(self) -> None:
         first = self.publish("a" * 40)
         second = self.publish("c" * 40)
-        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", "projector-pages"))
-        self.assertIn(f"walkthroughs/7/{'c' * 40}/spec.json", self.branch_files())
+        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/walkthroughs"))
+        self.assertIn(f"walkthroughs/7/{'c' * 40}/spec.json", self.ref_files())
         self.assertIsNone(self.publish("c" * 40))
-        self.assertEqual(second, run(self.remote, "git", "rev-parse", "projector-pages"))
+        self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/walkthroughs"))
+        self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
+
+    def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
+        self.publish("a" * 40, send_dispatch=False)
+        self.assertEqual([], self.dispatches)
+        self.assertTrue(self.ref_files())
+
+    def test_refuses_a_spec_for_another_repository(self) -> None:
+        run(self.repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
+        with self.assertRaisesRegex(walkthrough.SpecError, "origin is someone/else, but the spec is for owner/repo"):
+            self.publish("a" * 40)
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_the_workflow_runs_on_dispatch_and_pins_the_action_ref(self) -> None:
+        text = walkthrough.workflow_text("v0")
+        self.assertIn("repository_dispatch:\n    types: [projector-walkthroughs]", text)
+        self.assertIn("uses: ninjudd/projector/actions/walkthroughs@v0", text)
+        self.assertIn("${{ steps.walkthroughs.outputs.page_url }}", text)
+        self.assertNotIn("push:", text)
+        self.assertIn("@0123abc", walkthrough.workflow_text("0123abc"))
+
+    def test_repo_slug_reads_github_remotes(self) -> None:
+        for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
+            self.assertEqual("o/r", walkthrough.repo_slug(url), url)
+        self.assertEqual("", walkthrough.repo_slug("https://gitlab.com/o/r.git"))
 
 
 if __name__ == "__main__":

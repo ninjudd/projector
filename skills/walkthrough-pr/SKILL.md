@@ -96,31 +96,37 @@ Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
 
 ### Publish to the repository's GitHub Pages site
 
-A repository can host its own walkthroughs: specs live on an orphan
-`projector-pages` branch, and a workflow on that branch builds and deploys
-them with Projector's shared action. Publishing writes to the repository, so
-do it only when the user asks or repository instructions say to.
+A repository can host its own walkthroughs. Specs live on the hidden ref
+`refs/projector/walkthroughs`, which is not a branch: GitHub lists no branch
+and offers no pull request for it, and clones do not fetch it. A workflow on
+the default branch builds and deploys them with Projector's shared action.
+Publishing writes to the repository, so do it only when the user asks or
+repository instructions say to.
 
 ```sh
 python3 <skill-dir>/scripts/walkthrough.py publish --spec WORKDIR/walkthrough.json
 ```
 
 `publish` commits the spec to `walkthroughs/<number>/<head>/spec.json` on the
-branch without touching the checkout, and on first use creates the branch
-with `.github/workflows/walkthroughs.yml`. The workflow calls
-`ninjudd/projector/actions/walkthroughs@v1`; pass `--action-ref` to pin a
-different tag or a full commit SHA. The site lists every walkthrough at its
-root, serves each pull request's newest head at `/<number>/`, and links the
-older heads from each page. The spec on the branch is the durable copy: to
-update a walkthrough later, start from it rather than from a fresh `init`.
+ref without touching the checkout, then sends a `repository_dispatch` event
+that starts the workflow. The site lists every walkthrough at its root,
+serves each pull request's newest head at `/<number>/`, and links the older
+heads from each page. The spec on the ref is the durable copy: to update a
+walkthrough later, fetch it with
+`git fetch origin refs/projector/walkthroughs` and start from it rather
+than from a fresh `init`.
 
-Setting the repository up needs admin rights, once:
+Setting a repository up is once, with admin rights. Enable Pages with the
+GitHub Actions source, then add the workflow to the default branch through a
+pull request, because GitHub runs dispatched workflows only from there:
 
 ```sh
 gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
-gh api -X POST repos/OWNER/NAME/environments/github-pages/deployment-branch-policies \
-  -f name=projector-pages -f type=branch
+python3 <skill-dir>/scripts/walkthrough.py workflow --write
 ```
+
+The workflow calls `ninjudd/projector/actions/walkthroughs@v0`. Pass
+`--action-ref` to pin an exact release tag or a full commit SHA instead.
 
 A private repository's Pages site is public unless the account has private
 Pages (GitHub Enterprise Cloud). For a private repository, make the site

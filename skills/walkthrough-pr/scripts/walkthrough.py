@@ -4,7 +4,8 @@
     walkthrough.py init    --repo OWNER/NAME --pr N --spec SPEC [--diff FILE]
     walkthrough.py build   --spec SPEC --out DIR [--diff FILE] [--at-head]
     walkthrough.py site    --root DIR --out DIR
-    walkthrough.py publish --spec SPEC [--remote NAME] [--branch NAME] [--action-ref REF]
+    walkthrough.py publish  --spec SPEC [--remote NAME] [--no-dispatch]
+    walkthrough.py workflow [--action-ref REF] [--write]
 
 `init` writes a skeleton spec: the pull request's metadata, its merge base
 and head, and every changed file in one unassigned group.
@@ -17,8 +18,13 @@ exactly, which is how the Pages site rebuilds older walkthroughs.
 `site` builds every ROOT/<number>/<head>/spec.json into a Pages site with an
 index and a stable ROOT/<number>/ link to each pull request's newest head.
 
-`publish` commits a spec to the walkthroughs branch without touching the
-checkout, creating the branch and its workflow on first use.
+`publish` commits a spec to the hidden ref refs/projector/walkthroughs
+without touching the checkout, then sends the repository_dispatch event that
+runs the walkthroughs workflow. A hidden ref is not a branch: GitHub lists no
+branch and offers no pull request for it, and clones do not fetch it.
+
+`workflow` prints the workflow file a repository adds to its default branch
+once, or writes it with --write.
 
 The diff comes from GitHub's compare API for the spec's merge base and head.
 Pass --diff for a pull request too large for it, or to build offline.
@@ -40,7 +46,8 @@ from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 SPEC_VERSION = 1
-PAGES_BRANCH = "projector-pages"
+PAGES_REF = "refs/projector/walkthroughs"
+DISPATCH_EVENT = "projector-walkthroughs"
 PAGES_ROOT = "walkthroughs"
 WORKFLOW_PATH = ".github/workflows/walkthroughs.yml"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
@@ -59,8 +66,9 @@ GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
 
 WORKFLOW = """name: Walkthroughs
 on:
-  push:
-    branches: [{branch}]
+  repository_dispatch:
+    types: [{event}]
+  workflow_dispatch:
 permissions:
   contents: read
   pull-requests: read
@@ -78,8 +86,6 @@ jobs:
     steps:
       - id: walkthroughs
         uses: ninjudd/projector/actions/walkthroughs@{ref}
-        with:
-          root: {root}
 """
 
 
@@ -372,33 +378,55 @@ def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
         raise SpecError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
-def publish(spec_path: Path, remote: str, branch: str, action_ref: str, root: str = PAGES_ROOT) -> str | None:
+def repo_slug(remote_url: str) -> str:
+    url = remote_url.strip()
+    for prefix in ("git@github.com:", "ssh://git@github.com/", "https://github.com/"):
+        if url.startswith(prefix):
+            url = url[len(prefix):]
+            break
+    else:
+        return ""
+    return url[:-4] if url.endswith(".git") else url
+
+
+def dispatch(repo: str) -> None:
+    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={DISPATCH_EVENT}")
+
+
+def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT) -> str | None:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     pr = spec.get("pr") or {}
-    if spec.get("version") != SPEC_VERSION or not pr.get("number") or not pr.get("head"):
-        raise SpecError("the spec needs version, pr.number and pr.head")
-    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"],
-                             capture_output=True, text=True)
-    parent = git("rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}") if fetched.returncode == 0 else ""
+    if spec.get("version") != SPEC_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+        raise SpecError("the spec needs version, pr.repo, pr.number and pr.head")
+    slug = repo_slug(git("remote", "get-url", remote))
+    if slug and slug.lower() != pr["repo"].lower():
+        raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
+    local = ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
+    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
+    parent = git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
         if parent:
             git("read-tree", parent, env=env)
-        existing = set(git("ls-files", env=env).splitlines())
         blob = git("hash-object", "-w", "--stdin", input=json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},{root}/{pr['number']}/{pr['head']}/spec.json", env=env)
-        if WORKFLOW_PATH not in existing:
-            wf = git("hash-object", "-w", "--stdin", input=WORKFLOW.format(branch=branch, ref=action_ref, root=root))
-            git("update-index", "--add", "--cacheinfo", f"100644,{wf},{WORKFLOW_PATH}", env=env)
         tree = git("write-tree", env=env)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-        print(f"{branch} already has this spec; nothing to publish")
+        print(f"{ref} already has this spec; nothing to publish")
         return None
     message = f"Publish the walkthrough of #{pr['number']} at {pr['head'][:9]}"
     commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
-    git("push", "--quiet", remote, f"{commit}:refs/heads/{branch}")
-    print(f"pushed {commit[:9]} to {remote}/{branch}: {root}/{pr['number']}/{pr['head']}/spec.json")
+    git("push", "--quiet", remote, f"{commit}:{ref}")
+    git("update-ref", local, commit)
+    print(f"pushed {commit[:9]} to {remote} {ref}: {root}/{pr['number']}/{pr['head']}/spec.json")
+    if send_dispatch:
+        dispatch(pr["repo"])
+        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its walkthroughs workflow builds and deploys the site")
     return commit
+
+
+def workflow_text(action_ref: str) -> str:
+    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref)
 
 
 # Commands
@@ -436,7 +464,18 @@ def cmd_site(args: argparse.Namespace) -> None:
 
 
 def cmd_publish(args: argparse.Namespace) -> None:
-    publish(Path(args.spec), args.remote, args.branch, args.action_ref)
+    publish(Path(args.spec), args.remote, send_dispatch=not args.no_dispatch)
+
+
+def cmd_workflow(args: argparse.Namespace) -> None:
+    text = workflow_text(args.action_ref)
+    if not args.write:
+        print(text, end="")
+        return
+    path = Path(git("rev-parse", "--show-toplevel")) / WORKFLOW_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -458,12 +497,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--root", required=True)
     s.add_argument("--out", required=True)
     s.set_defaults(func=cmd_site)
-    u = sub.add_parser("publish", help="commit a spec to the walkthroughs branch")
+    u = sub.add_parser("publish", help="commit a spec to the hidden walkthroughs ref and start a build")
     u.add_argument("--spec", required=True)
     u.add_argument("--remote", default="origin")
-    u.add_argument("--branch", default=PAGES_BRANCH)
-    u.add_argument("--action-ref", default="v1", help="the projector ref the branch's workflow uses on first publish")
+    u.add_argument("--no-dispatch", action="store_true", help="push the spec without starting the workflow")
     u.set_defaults(func=cmd_publish)
+    w = sub.add_parser("workflow", help="print or write the workflow file for the default branch")
+    w.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
+    w.add_argument("--write", action="store_true", help="write .github/workflows/walkthroughs.yml in this checkout")
+    w.set_defaults(func=cmd_workflow)
     args = parser.parse_args(argv)
     try:
         args.func(args)
