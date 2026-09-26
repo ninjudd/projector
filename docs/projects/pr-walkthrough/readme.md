@@ -20,7 +20,7 @@ request's diff.
 
 ## 2. Acceptance criteria
 
-- The `walk-through-pr` skill builds a page from a spec and the diff, and
+- The `walkthrough-pr` skill builds a page from a spec and the diff, and
   refuses a spec that leaves a changed file out, repeats one, names one
   outside the diff, or describes a head the pull request has moved past.
 - The page works from disk in any browser and publishes unchanged as a Claude

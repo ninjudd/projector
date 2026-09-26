@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "skills" / "walk-through-pr" / "scripts" / "walkthrough.py"
+SCRIPT = ROOT / "skills" / "walkthrough-pr" / "scripts" / "walkthrough.py"
 
 spec = importlib.util.spec_from_file_location("walkthrough", SCRIPT)
 walkthrough = importlib.util.module_from_spec(spec)
@@ -148,7 +148,7 @@ class RendererTests(unittest.TestCase):
         html = walkthrough.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
         for src in __import__("re").findall(r'src="(https?://[^"]+)"', html):
             self.assertTrue(src.startswith("https://cdnjs.cloudflare.com/"), src)
-        js = (ROOT / "skills" / "walk-through-pr" / "assets" / "walkthrough.js").read_text()
+        js = (ROOT / "skills" / "walkthrough-pr" / "assets" / "walkthrough.js").read_text()
         self.assertNotIn("fetch(", js)
 
 

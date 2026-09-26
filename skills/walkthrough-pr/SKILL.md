@@ -1,9 +1,9 @@
 ---
-name: walk-through-pr
+name: walkthrough-pr
 description: Build a guided, grouped walkthrough page for reviewing a large GitHub pull request, with each logical change explained, a checklist per group, and every hunk syntax-highlighted in reading order. Use when the user asks for help walking through, understanding, or reviewing a big PR diff.
 ---
 
-# Walk Through a Pull Request
+# Pull Request Walkthrough
 
 Turn a pull request into one page a reviewer reads top to bottom: the diff
 split into logical groups in reading order, each group opened by what it
