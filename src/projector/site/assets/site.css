@@ -78,7 +78,8 @@ iframe.htmlpage { display: block; width: 100%; border: 1px solid var(--border); 
   color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
 }
 .pintro { margin: 4px 0 8px; }
-.pintro summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.pintro summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.pintro summary:hover { color: var(--accent); }
 .pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
 table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
@@ -87,7 +88,8 @@ table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
   background: var(--surface-2); color: var(--muted); margin-right: 6px; white-space: nowrap;
 }
-.badge.status-in-progress, .badge.priority-now { background: var(--accent-soft); color: var(--accent); }
+.badge.status-in-progress { background: var(--accent-soft); color: var(--accent); }
+.badge.priority-now { color: var(--text); font-weight: 600; }
 .badge.status-ready { background: var(--ok-bg); color: var(--ok); }
 .badge.status-draft, .badge.priority-next { background: var(--warn-bg); color: var(--warn); }
 
