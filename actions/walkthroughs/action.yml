@@ -1,0 +1,28 @@
+name: Projector walkthroughs
+description: Build the pull request walkthroughs committed to this branch and deploy them to GitHub Pages.
+inputs:
+  root:
+    description: Directory holding <number>/<head>/spec.json files.
+    default: walkthroughs
+outputs:
+  page_url:
+    description: The deployed site's URL.
+    value: ${{ steps.deploy.outputs.page_url }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/configure-pages@v5
+    - name: Build the walkthroughs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ROOT: ${{ inputs.root }}
+      run: python3 "$GITHUB_ACTION_PATH/../../skills/walkthrough-pr/scripts/walkthrough.py" site --root "$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
+    - uses: actions/upload-pages-artifact@v3
+      with:
+        path: ${{ runner.temp }}/walkthrough-site
+    - id: deploy
+      uses: actions/deploy-pages@v4

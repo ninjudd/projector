@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""Build a pull request walkthrough page from a spec and the PR's diff.
+"""Build pull request walkthrough pages from specs and publish them.
 
-    walkthrough.py init  --repo OWNER/NAME --pr N --spec SPEC [--diff FILE]
-    walkthrough.py build --spec SPEC --out DIR [--diff FILE]
+    walkthrough.py init    --repo OWNER/NAME --pr N --spec SPEC [--diff FILE]
+    walkthrough.py build   --spec SPEC --out DIR [--diff FILE] [--at-head]
+    walkthrough.py site    --root DIR --out DIR
+    walkthrough.py publish --spec SPEC [--remote NAME] [--branch NAME] [--action-ref REF]
 
-`init` writes a skeleton spec with the PR's metadata and every changed file
-in one unassigned group. You then group the files and write the notes.
-`build` checks that every changed file sits in exactly one group, that the
-spec's head is still the PR's head, and writes DIR/index.html with the
-renderer's walkthrough.js and walkthrough.css beside it.
+`init` writes a skeleton spec: the pull request's metadata, its merge base
+and head, and every changed file in one unassigned group.
 
-Without --diff the diff comes from `gh pr diff`. Pass --diff for a PR too
-large for GitHub's diff endpoint, or to build offline.
+`build` checks that every changed file sits in exactly one group and writes
+DIR/index.html with the renderer beside it. It refuses when the pull request
+has moved past the spec's head, unless --at-head asks for the recorded head
+exactly, which is how the Pages site rebuilds older walkthroughs.
+
+`site` builds every ROOT/<number>/<head>/spec.json into a Pages site with an
+index and a stable ROOT/<number>/ link to each pull request's newest head.
+
+`publish` commits a spec to the walkthroughs branch without touching the
+checkout, creating the branch and its workflow on first use.
+
+The diff comes from GitHub's compare API for the spec's merge base and head.
+Pass --diff for a pull request too large for it, or to build offline.
 """
 
 from __future__ import annotations
@@ -19,14 +29,20 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import html
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 SPEC_VERSION = 1
+PAGES_BRANCH = "projector-pages"
+PAGES_ROOT = "walkthroughs"
+WORKFLOW_PATH = ".github/workflows/walkthroughs.yml"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
 FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
 
@@ -34,17 +50,44 @@ LANGS = {
     ".go": "go", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
     ".mjs": "javascript", ".py": "python", ".rb": "ruby", ".rs": "rust", ".java": "java", ".kt": "kotlin",
     ".swift": "swift", ".proto": "protobuf", ".sh": "bash", ".bash": "bash", ".zsh": "bash", ".md": "markdown",
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "ini", ".sql": "sql", ".css": "css",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "ini", ".cfg": "ini", ".sql": "sql", ".css": "css",
     ".scss": "scss", ".html": "xml", ".xml": "xml", ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp",
-    ".cs": "csharp", ".php": "php", ".tf": "ini", ".dockerfile": "dockerfile",
+    ".cs": "csharp", ".php": "php", ".tf": "ini",
 }
-GENERATED_SUFFIXES = (".pb.go", "_grpc.pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
+GENERATED_SUFFIXES = (".pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
 GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
+
+WORKFLOW = """name: Walkthroughs
+on:
+  push:
+    branches: [{branch}]
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@{ref}
+        with:
+          root: {root}
+"""
 
 
 class SpecError(Exception):
     pass
 
+
+# Diff parsing
 
 def lang_of(path: str) -> str:
     name = path.rsplit("/", 1)[-1].lower()
@@ -79,8 +122,7 @@ def parse_diff(text: str) -> list[dict]:
     old_no = new_no = 0
     for raw in text.split("\n"):
         if raw.startswith("diff --git "):
-            path = raw.split(" b/", 1)[-1]
-            cur = {"path": path, "new": False, "deleted": False, "adds": 0, "dels": 0, "hunks": []}
+            cur = {"path": raw.split(" b/", 1)[-1], "new": False, "deleted": False, "adds": 0, "dels": 0, "hunks": []}
             files.append(cur)
             hunk = None
             continue
@@ -122,25 +164,38 @@ def parse_diff(text: str) -> list[dict]:
     return files
 
 
+# GitHub
+
 def gh(*args: str) -> str:
     try:
         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
     except FileNotFoundError as exc:
-        raise SpecError("the gh CLI is not installed; pass --diff and fill the PR fields by hand") from exc
+        raise SpecError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
     except subprocess.CalledProcessError as exc:
         raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
+def merge_base(repo: str, base_ref: str, head: str) -> str:
+    return gh("api", f"repos/{repo}/compare/{base_ref}...{head}", "--jq", ".merge_base_commit.sha").strip()
+
+
 def pr_metadata(repo: str, number: int) -> dict:
-    raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,baseRefName,url"))
-    return {"repo": repo, "number": number, "title": raw["title"], "head": raw["headRefOid"], "baseRef": raw["baseRefName"]}
+    raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,baseRefName"))
+    return {
+        "repo": repo,
+        "number": number,
+        "title": raw["title"],
+        "head": raw["headRefOid"],
+        "base": merge_base(repo, raw["baseRefName"], raw["headRefOid"]),
+        "baseRef": raw["baseRefName"],
+    }
 
 
-def read_diff(args: argparse.Namespace, repo: str, number: int) -> str:
-    if args.diff:
-        return Path(args.diff).read_text(encoding="utf-8")
-    return gh("pr", "diff", str(number), "--repo", repo)
+def fetch_diff(repo: str, base: str, head: str) -> str:
+    return gh("api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/compare/{base}...{head}")
 
+
+# Specs and pages
 
 def validate(spec: dict, files: list[dict]) -> None:
     if spec.get("version") != SPEC_VERSION:
@@ -189,6 +244,10 @@ def stats(files: list[dict]) -> dict:
     return out
 
 
+def escape(s: object) -> str:
+    return html.escape(str(s), quote=True)
+
+
 def page(title: str, payload: dict) -> str:
     blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     return f"""<title>{escape(title)}</title>
@@ -203,13 +262,151 @@ def page(title: str, payload: dict) -> str:
 """
 
 
-def escape(s: str) -> str:
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+def copy_assets(out: Path) -> None:
+    for asset in ("walkthrough.js", "walkthrough.css"):
+        shutil.copyfile(ASSETS / asset, out / asset)
 
+
+def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+    pr = dict(spec.get("pr") or {})
+    if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+        raise SpecError("pr.repo, pr.number and pr.head are required")
+    if diff is None:
+        if not at_head:
+            live = pr_metadata(pr["repo"], int(pr["number"]))
+            if live["head"] != pr["head"]:
+                raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
+        if not pr.get("base"):
+            pr["base"] = merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
+        diff = fetch_diff(pr["repo"], pr["base"], pr["head"])
+    files = parse_diff(diff)
+    validate(spec, files)
+    payload = {
+        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} walkthrough",
+        "pr": pr,
+        "overview": spec.get("overview") or {},
+        "groups": spec["groups"],
+        "files": files,
+        "stats": stats(files),
+        "generatedAt": datetime.date.today().isoformat(),
+    }
+    payload.update(extra or {})
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
+    copy_assets(out)
+    return payload
+
+
+def spec_time(path: Path) -> int:
+    """When the spec was committed, falling back to its modification time."""
+    try:
+        out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", path.name], cwd=path.parent,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        if out:
+            return int(out)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        pass
+    return int(path.stat().st_mtime)
+
+
+def build_site(root: Path, out: Path) -> list[dict]:
+    specs = sorted(root.glob("*/*/spec.json"))
+    if not specs:
+        raise SpecError(f"no walkthroughs under {root}: expected <number>/<head>/spec.json")
+    by_pr: dict[str, list[tuple[int, Path, dict]]] = {}
+    for path in specs:
+        spec = json.loads(path.read_text(encoding="utf-8"))
+        number, head = path.parent.parent.name, path.parent.name
+        if str(spec.get("pr", {}).get("number")) != number or spec.get("pr", {}).get("head") != head:
+            raise SpecError(f"{path} must sit at <pr.number>/<pr.head>/spec.json")
+        by_pr.setdefault(number, []).append((spec_time(path), path, spec))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / ".nojekyll").write_text("")
+    copy_assets(out)
+    entries = []
+    for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
+        versions.sort(key=lambda v: v[0], reverse=True)
+        heads = [{"head": v[2]["pr"]["head"], "url": f"../{v[2]['pr']['head']}/", "at": v[0]} for v in versions]
+        for when, path, spec in versions:
+            head = spec["pr"]["head"]
+            listed = [dict(h, current=h["head"] == head) for h in heads]
+            payload = build_page(spec, out / number / head, at_head=True, extra={"indexUrl": "../../", "heads": listed})
+            print(f"built {number}/{head[:9]}: {len(spec['groups'])} groups, {payload['stats']['files']} files")
+        latest = versions[0][2]
+        (out / number / "index.html").write_text(redirect(f"{latest['pr']['head']}/"), encoding="utf-8")
+        entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
+                        "heads": len(versions), "updated": versions[0][0]})
+    (out / "index.html").write_text(index_page(entries), encoding="utf-8")
+    return entries
+
+
+def redirect(target: str) -> str:
+    t = escape(target)
+    return f'<!doctype html><meta charset="utf-8"><title>Redirecting</title><meta http-equiv="refresh" content="0; url={t}"><link rel="canonical" href="{t}"><a href="{t}">Newest walkthrough</a>\n'
+
+
+def index_page(entries: list[dict]) -> str:
+    repo = entries[0]["pr"]["repo"] if entries else ""
+    rows = "".join(
+        f'<tr><td><a href="{e["number"]}/">#{e["number"]}</a></td><td><a href="{e["number"]}/">{escape(e["name"] or e["pr"]["title"])}</a>'
+        f'<div class="note">{escape(e["pr"]["title"])}</div></td><td class="mono">{escape(e["pr"]["head"][:9])}</td>'
+        f'<td>{e["heads"]}</td><td>{datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}</td></tr>'
+        for e in entries
+    )
+    return f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(repo)} walkthroughs</title>
+<link rel="stylesheet" href="{FONTS}">
+<link rel="stylesheet" href="walkthrough.css">
+<div class="wrap"><header class="top"><div><div class="eyebrow"><a href="https://github.com/{escape(repo)}">{escape(repo)}</a></div><h1>Pull request walkthroughs</h1></div></header>
+<div class="card"><div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Head</th><th>Versions</th><th>Updated</th></tr>{rows}</table></div>
+<p class="note">Built by Projector's <span class="mono">walkthrough-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p></div></div>
+"""
+
+
+# Publishing to the walkthroughs branch
+
+def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
+    try:
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True, env=env, input=input).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise SpecError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+
+
+def publish(spec_path: Path, remote: str, branch: str, action_ref: str, root: str = PAGES_ROOT) -> str | None:
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    pr = spec.get("pr") or {}
+    if spec.get("version") != SPEC_VERSION or not pr.get("number") or not pr.get("head"):
+        raise SpecError("the spec needs version, pr.number and pr.head")
+    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"],
+                             capture_output=True, text=True)
+    parent = git("rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}") if fetched.returncode == 0 else ""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+        if parent:
+            git("read-tree", parent, env=env)
+        existing = set(git("ls-files", env=env).splitlines())
+        blob = git("hash-object", "-w", "--stdin", input=json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
+        git("update-index", "--add", "--cacheinfo", f"100644,{blob},{root}/{pr['number']}/{pr['head']}/spec.json", env=env)
+        if WORKFLOW_PATH not in existing:
+            wf = git("hash-object", "-w", "--stdin", input=WORKFLOW.format(branch=branch, ref=action_ref, root=root))
+            git("update-index", "--add", "--cacheinfo", f"100644,{wf},{WORKFLOW_PATH}", env=env)
+        tree = git("write-tree", env=env)
+    if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+        print(f"{branch} already has this spec; nothing to publish")
+        return None
+    message = f"Publish the walkthrough of #{pr['number']} at {pr['head'][:9]}"
+    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+    git("push", "--quiet", remote, f"{commit}:refs/heads/{branch}")
+    print(f"pushed {commit[:9]} to {remote}/{branch}: {root}/{pr['number']}/{pr['head']}/spec.json")
+    return commit
+
+
+# Commands
 
 def cmd_init(args: argparse.Namespace) -> None:
     meta = pr_metadata(args.repo, args.pr)
-    files = parse_diff(read_diff(args, args.repo, args.pr))
+    diff = Path(args.diff).read_text(encoding="utf-8") if args.diff else fetch_diff(args.repo, meta["base"], meta["head"])
+    files = parse_diff(diff)
     spec = {
         "version": SPEC_VERSION,
         "name": "",
@@ -227,29 +424,19 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_build(args: argparse.Namespace) -> None:
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    pr = spec.get("pr") or {}
-    if not args.diff:
-        live = pr_metadata(pr["repo"], int(pr["number"]))
-        if live["head"] != pr.get("head"):
-            raise SpecError(f"the PR head moved from {str(pr.get('head'))[:9]} to {live['head'][:9]}; update the spec for the new head before building")
-    files = parse_diff(read_diff(args, pr["repo"], int(pr["number"])))
-    validate(spec, files)
-    payload = {
-        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} walkthrough",
-        "pr": pr,
-        "overview": spec.get("overview") or {},
-        "groups": spec["groups"],
-        "files": files,
-        "stats": stats(files),
-        "generatedAt": datetime.date.today().isoformat(),
-    }
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
-    for asset in ("walkthrough.js", "walkthrough.css"):
-        shutil.copyfile(ASSETS / asset, out / asset)
+    diff = Path(args.diff).read_text(encoding="utf-8") if args.diff else None
+    payload = build_page(spec, Path(args.out), diff=diff, at_head=args.at_head)
     s = payload["stats"]
-    print(f"wrote {out}/index.html: {len(spec['groups'])} groups, {s['files']} files, +{s['adds']} -{s['dels']}")
+    print(f"wrote {args.out}/index.html: {len(spec['groups'])} groups, {s['files']} files, +{s['adds']} -{s['dels']}")
+
+
+def cmd_site(args: argparse.Namespace) -> None:
+    entries = build_site(Path(args.root), Path(args.out))
+    print(f"wrote {args.out}/index.html: {len(entries)} pull requests")
+
+
+def cmd_publish(args: argparse.Namespace) -> None:
+    publish(Path(args.spec), args.remote, args.branch, args.action_ref)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -261,11 +448,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--spec", required=True)
     p.add_argument("--diff")
     p.set_defaults(func=cmd_init)
-    b = sub.add_parser("build", help="build the page from a spec")
+    b = sub.add_parser("build", help="build one page from a spec")
     b.add_argument("--spec", required=True)
     b.add_argument("--out", required=True)
     b.add_argument("--diff")
+    b.add_argument("--at-head", action="store_true", help="build the spec's recorded head even if the PR has moved")
     b.set_defaults(func=cmd_build)
+    s = sub.add_parser("site", help="build every spec under a root into a Pages site")
+    s.add_argument("--root", required=True)
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_site)
+    u = sub.add_parser("publish", help="commit a spec to the walkthroughs branch")
+    u.add_argument("--spec", required=True)
+    u.add_argument("--remote", default="origin")
+    u.add_argument("--branch", default=PAGES_BRANCH)
+    u.add_argument("--action-ref", default="v1", help="the projector ref the branch's workflow uses on first publish")
+    u.set_defaults(func=cmd_publish)
     args = parser.parse_args(argv)
     try:
         args.func(args)
