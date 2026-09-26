@@ -20,7 +20,7 @@ index and a stable ROOT/<number>/ link to each pull request's newest head.
 
 `publish` commits a spec to the hidden ref refs/projector/walkthroughs
 without touching the checkout, then sends the repository_dispatch event that
-runs the walkthroughs workflow. A hidden ref is not a branch: GitHub lists no
+runs the Projector site workflow. A hidden ref is not a branch: GitHub lists no
 branch and offers no pull request for it, and clones do not fetch it.
 
 `workflow` prints the workflow file a repository adds to its default branch
@@ -50,7 +50,8 @@ SPEC_VERSION = 1
 PAGES_REF = "refs/projector/walkthroughs"
 DISPATCH_EVENT = "projector-walkthroughs"
 PAGES_ROOT = "walkthroughs"
-WORKFLOW_PATH = ".github/workflows/walkthroughs.yml"
+WORKFLOW_PATH = ".github/workflows/projector-site.yml"
+LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
 FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
 
@@ -65,7 +66,7 @@ LANGS = {
 GENERATED_SUFFIXES = (".pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
 GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
 
-WORKFLOW = """name: Walkthroughs
+WORKFLOW = """name: Projector site
 on:
   repository_dispatch:
     types: [{event}]
@@ -250,11 +251,12 @@ def hosting(repo: str) -> tuple[str | None, str]:
     Both halves are required. The workflow on the default branch is the reviewed
     decision to host walkthroughs; a Pages site alone may serve something else.
     """
-    if gh_lookup("api", f"repos/{repo}/contents/{WORKFLOW_PATH}", "--jq", ".path") is None:
+    if not any(gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None
+               for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS)):
         return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
     raw = gh_lookup("api", f"repos/{repo}/pages")
     if raw is None:
-        return None, f"{repo} has the walkthroughs workflow but no GitHub Pages site"
+        return None, f"{repo} has the Projector site workflow but no GitHub Pages site"
     pages = json.loads(raw)
     if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
         return None, f"{repo} is private but its GitHub Pages site is public"
@@ -648,7 +650,7 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     print(f"pushed {commit[:9]} to {remote} {ref}: {root}/{pr['number']}/{pr['head']}/spec.json")
     if send_dispatch:
         dispatch(pr["repo"])
-        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its walkthroughs workflow builds and deploys the site")
+        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its Projector site workflow builds and deploys the site")
     return commit
 
 
@@ -747,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
     t.set_defaults(func=cmd_status)
     w = sub.add_parser("workflow", help="print or write the workflow file for the default branch")
     w.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
-    w.add_argument("--write", action="store_true", help="write .github/workflows/walkthroughs.yml in this checkout")
+    w.add_argument("--write", action="store_true", help="write .github/workflows/projector-site.yml in this checkout")
     w.set_defaults(func=cmd_workflow)
     args = parser.parse_args(argv)
     try:

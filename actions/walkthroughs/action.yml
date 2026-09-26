@@ -1,5 +1,5 @@
-name: Projector walkthroughs
-description: Build the pull request walkthroughs stored under refs/projector/walkthroughs and deploy them to GitHub Pages.
+name: Projector site
+description: Build a repository's Projector site from the content on its hidden refs, starting with the pull request walkthroughs under refs/projector/walkthroughs, and deploy it to GitHub Pages.
 inputs:
   ref:
     description: The hidden ref holding <root>/<number>/<head>/spec.json files.
