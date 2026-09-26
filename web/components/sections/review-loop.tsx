@@ -44,9 +44,10 @@ export function ReviewLoop() {
       title="Automated reviews"
       lead={
         <>
-          Two optional skills in the same plugin, <Code>start-review-loop</Code> and{" "}
-          <Code>start-fix-loop</Code>, review pull requests in the background while you keep
-          working. The plans and the CLI do not depend on them.
+          <Code>review-changes</Code> reviews one pull request&rsquo;s current head when you ask.
+          Two more skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run it
+          and fix what it finds in the background while you keep working. The plans and the CLI do
+          not depend on any of them.
         </>
       }
       size="tight"
