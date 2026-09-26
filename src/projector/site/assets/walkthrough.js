@@ -254,11 +254,29 @@
                 ev.stopPropagation();
                 const path = b.dataset.path ?? '';
                 function done() { b.classList.add('copied'); b.title = 'Copied'; setTimeout(function () { b.classList.remove('copied'); b.title = 'Copy file path'; }, 1500); }
-                // The Clipboard API needs a secure context, which a page served over plain
-                // HTTP to another machine is not. There, show the path selected for the
-                // reader to copy, rather than the deprecated document.execCommand('copy').
+                // The write fails where the Clipboard API is missing or refused: outside a
+                // secure context, in an unfocused document, when permission is denied, or
+                // on a host that blocks it, as some Claude Artifact views do, which also
+                // suppress dialogs. So show the path beside the button, selected for the
+                // reader to copy, rather than prompting or calling the deprecated
+                // document.execCommand('copy'). It goes away when focus leaves it.
                 function fallback() {
-                    window.prompt('Copy the file path:', path);
+                    const shown = b.nextElementSibling;
+                    if (shown instanceof HTMLInputElement && shown.classList.contains('copyfield')) {
+                        shown.focus();
+                        shown.select();
+                        return;
+                    }
+                    const field = document.createElement('input');
+                    field.className = 'copyfield';
+                    field.readOnly = true;
+                    field.value = path;
+                    field.size = Math.min(Math.max(path.length, 10), 60);
+                    field.setAttribute('aria-label', 'File path, selected to copy');
+                    field.addEventListener('blur', function () { field.remove(); });
+                    b.insertAdjacentElement('afterend', field);
+                    field.focus();
+                    field.select();
                 }
                 try {
                     navigator.clipboard.writeText(path).then(done, fallback);
