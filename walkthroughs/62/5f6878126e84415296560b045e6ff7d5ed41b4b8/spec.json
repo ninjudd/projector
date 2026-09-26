@@ -1,0 +1,161 @@
+{
+ "version": 1,
+ "name": "Walkthrough Skill",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 62,
+  "title": "Add a skill that walks reviewers through a large pull request",
+  "head": "5f6878126e84415296560b045e6ff7d5ed41b4b8",
+  "base": "9a4b24342d44c0e782c7cf9a1cc8c337e23a7e0e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Adds <code>walkthrough-pr</code>, a skill that turns a large pull request into one page: the diff split into logical groups in reading order, each opened by what it does, what to hold in mind and a checklist, then every hunk syntax-highlighted with viewed and reviewed state.",
+   "The page framework is a fixed renderer, <code>walkthrough.js</code> and <code>walkthrough.css</code>, so the agent only writes a JSON spec with the grouping, the explanations and the checks. <code>walkthrough.py</code>, standard library plus <code>gh</code>, validates the spec against the diff and writes the page. This page is itself a walkthrough of the pull request, built by the stacked Pages work."
+  ],
+  "cards": [
+   {
+    "title": "The pipeline",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><tr><th>Step</th><th>Who</th><th>Output</th></tr><tr><td><code>init</code></td><td>script</td><td>Skeleton spec: PR metadata, head, every file unassigned</td></tr><tr><td>Group and explain</td><td>agent</td><td>The spec's groups, notes and checks</td></tr><tr><td><code>build</code></td><td>script</td><td><code>index.html</code> with data embedded, plus the renderer</td></tr><tr><td>Publish</td><td>agent</td><td>A Claude Artifact, or a local file</td></tr></table></div><p class=\"note\"><code>build</code> refuses a spec that misses, repeats or invents a file, or describes a head the PR has moved past.</p>"
+   },
+   {
+    "id": "not-in-pr",
+    "title": "Not in this PR",
+    "html": "<ul class=\"tight\"><li>The GitHub Pages publisher: a <code>projector-pages</code> branch of specs and a shared action that builds and deploys them (the stacked PR).</li><li>Browsing <code>docs/projects</code> interactively on the same Pages site (a later PR).</li><li>A plugin version bump, which ships separately.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The skill and its spec format",
+   "kicker": "What the agent reads: when to use the skill, how to group, and the JSON it writes",
+   "intro": [
+    "<code>SKILL.md</code> is the workflow: resolve the PR, <code>init</code> a spec, read the diff and its context, fill the spec, <code>build</code>, publish, and update when the PR moves. Most of it is guidance on judgment: order groups from the contract outward, put every file in exactly one group, explain why, and write checks a reviewer can act on.",
+    "<code>spec.md</code> documents the JSON. Every text field is inserted as HTML, so notes can use <code>&lt;code&gt;</code> and tables with the listed classes."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Reading a PR never authorizes changing it: the skill says not to comment, push or approve unless asked."
+    },
+    {
+     "kind": "verify",
+     "text": "Publishing is host-neutral: a local file always works, Claude Artifacts is an enhancement, as the repository's portability rules require."
+    },
+    {
+     "kind": "flag",
+     "text": "The skill says to keep the spec in the host's scratch directory. That keeps it private but loses it when the session ends; the stacked PR's Pages branch is where specs become durable."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/walkthrough-pr/SKILL.md",
+     "note": "The workflow and the grouping guidance."
+    },
+    {
+     "path": "skills/walkthrough-pr/spec.md",
+     "collapsed": false,
+     "note": "The spec schema and the HTML classes cards may use."
+    }
+   ]
+  },
+  {
+   "id": "script",
+   "title": "The build script",
+   "kicker": "<code>walkthrough.py</code>: parse the diff, validate the spec against it, embed both in a page",
+   "intro": [
+    "<code>parse_diff</code> turns unified diff text into files with hunks and per-line old and new numbers, and classifies each file's language and kind (generated, test, docs). The anchor is GitHub's own files-tab anchor, the SHA-256 of the path, so each file links straight to its place in the PR.",
+    "<code>validate</code> collects every problem before failing: a file in no group, in two groups, a path outside the diff, a duplicate group id, a malformed check. <code>page</code> embeds the data as JSON in a script tag, escaping <code>&lt;/</code> so a diff line cannot close it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The moved-head guard in <code>build</code> compares the spec's head to the live PR, so a page never shows a diff other than the one its notes describe."
+    },
+    {
+     "kind": "verify",
+     "text": "Standard library only, plus the <code>gh</code> CLI; no dependency is added to the Python package."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>gh pr diff</code> fails for very large PRs; the skill documents a <code>git diff</code> fallback through <code>--diff</code>. The stacked PR moves the default to the compare API by merge base and head, which also makes older heads rebuildable."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/walkthrough-pr/scripts/walkthrough.py"
+    }
+   ]
+  },
+  {
+   "id": "renderer",
+   "title": "The renderer",
+   "kicker": "Fixed JS and CSS that build the whole page from the embedded data",
+   "intro": [
+    "<code>walkthrough.js</code> renders the sidebar, overview, groups and files from the JSON, then wires the interactions: collapse and expand, viewed and reviewed state in <code>localStorage</code> keyed by repo and PR, copy-path buttons, sticky file headers that square their corners while pinned, and highlight.js per hunk side so multi-line tokens survive.",
+    "<code>walkthrough.css</code> carries the light and dark palettes as tokens and the diff tints; syntax colours come from the same tokens."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Remote scripts come only from cdnjs and fonts only from Google Fonts, which keeps the page valid as a Claude Artifact; a test pins it."
+    },
+    {
+     "kind": "verify",
+     "text": "Files that start collapsed are highlighted when first opened, so a large PR still loads quickly."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/walkthrough-pr/assets/walkthrough.js"
+    },
+    {
+     "path": "skills/walkthrough-pr/assets/walkthrough.css",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and packaging",
+   "kicker": "Parsing, validation, output, and the published skill set",
+   "intro": [
+    "<code>test_walkthrough.py</code> covers line numbering, kinds, GitHub anchors, the page and renderer output, each spec refusal and the CDN allowlist, all against an inline fixture diff. <code>test_packaging.py</code> adds the skill to the exact published set both plugin manifests must ship."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The fixture diff includes a <code>&lt;/script&gt;</code> string, and the test asserts it cannot end the data block."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_walkthrough.py"
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "collapsed": false
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Plan and README",
+   "kicker": "Why the skill exists and where it goes next",
+   "intro": [
+    "The new plan, <code>docs/projects/pr-walkthrough</code>, states the outcome, the acceptance criteria, and the hosting decision: Artifacts now, GitHub Pages per repository next, no external site. The README lists the new skill."
+   ],
+   "files": [
+    {
+     "path": "docs/projects/pr-walkthrough/readme.md",
+     "collapsed": false
+    },
+    {
+     "path": "README.md"
+    }
+   ]
+  }
+ ]
+}
