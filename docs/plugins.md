@@ -60,8 +60,9 @@ check` warns when it drifts from the template the CLI ships. See
 
 ## Install from a checkout
 
-Run the installer to add the local checkout as both marketplaces and install
-the CLI with `pipx`:
+Run the installer to add the repository this checkout was cloned from as both
+hosts' marketplace, install its plugin, and install the CLI with `pipx` from
+the checkout:
 
 ```sh
 ./install.sh all
@@ -72,13 +73,24 @@ do not install the CLI, so install it separately before running a project
 workflow. `all` installs each host CLI it finds, skips a missing host, and exits
 69 only when neither Claude Code nor Codex is installed.
 
-The same command upgrades what it installed. A marketplace a host already has
-is refreshed from wherever it points, this checkout or the GitHub repository,
-rather than added again. An installed plugin is updated rather than installed
-again, because a host asked to install a plugin it already has leaves it as it
-is; the update is what moves it. Claude Code applies the update on its next
-start. A plugin moves only when its manifest version does, because a host
-caches a plugin by that version.
+The marketplace source is the checkout's `origin` remote, so a fork installs
+from the fork. A GitHub remote becomes `owner/repo` for Claude Code and the
+HTTPS URL for Codex; any other remote URL is handed to both hosts as it is;
+a checkout with no `origin` installs from itself. The plugin reads the
+repository rather than the checkout because a host refreshes a marketplace
+from its source: one that reads a checkout installs whatever commit is
+checked out and then reports itself current until someone pulls, while one
+that reads the repository moves with every release.
+
+The same command upgrades what it installed. A marketplace that reads a local
+path is moved to the repository, removed and added again from that source,
+and a `moved` row names the old path and the new source. One that already
+reads a remote is refreshed from wherever it points rather than added again.
+An installed plugin is updated rather than installed again, because a host
+asked to install a plugin it already has leaves it as it is; the update is
+what moves it. Claude Code applies the update on its next start. A plugin
+moves only when its manifest version does, because a host caches a plugin by
+that version.
 
 `pipx` installs a copy of the source rather than a link to your checkout, so
 pulling new commits does not update the command. Ask which one you have:
@@ -93,9 +105,12 @@ lives, and tells you to run `./install.sh cli`. The comparison is of the files
 themselves, so it holds whether or not anyone remembered to bump a version.
 
 `marketplace` names each host's source for the `projector` marketplace, which
-is where an upgrade refreshes from. `plugin-current` reports an installed
-plugin at the checkout's manifest version, `plugin-stale` one at another
-version, and `plugin-absent` a host with none.
+is where an upgrade refreshes from. `from-checkout` follows it, with a ⚠️
+marker, when that source is a local path and the checkout names a repository
+to move it to: the plugin goes stale with the checkout until `./install.sh
+<host>` moves it. `plugin-current` reports an installed plugin at the
+checkout's manifest version, `plugin-stale` one at another version, and
+`plugin-absent` a host with none.
 
 The first row is about the checkout itself. The installer fetches the current
 branch's upstream and prints `repo-current` when the checkout matches it,
