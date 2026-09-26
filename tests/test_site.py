@@ -34,6 +34,7 @@ class SiteRepoCase(unittest.TestCase):
             "docs/projects/README.md": "# Projects\n\nHow plans work.\n",
             "docs/projects/alpha/readme.md": plan("Build alpha", "in-progress", "now"),
             "docs/projects/alpha/notes.md": "# Alpha notes\n",
+            "docs/projects/alpha/research/survey.md": "# Survey\n",
             "docs/projects/alpha/beta/readme.md": plan("Finish beta", "completed", None),
         }
         for path, text in files.items():
@@ -57,15 +58,18 @@ class SiteBuildTests(SiteRepoCase):
         self.assertEqual(0, code)
         self.assertEqual("owner/example", manifest["repo"])
         self.assertEqual("README.md", manifest["readme"])
-        self.assertEqual([{"path": "docs/guide.md", "title": "Use the guide"}], manifest["docs"])
+        self.assertEqual([{"path": "docs/guide.md", "title": "Use the guide", "route": "docs/guide/"}], manifest["docs"])
         self.assertEqual("docs/projects", manifest["projectsDir"])
         self.assertEqual("docs/projects/README.md", manifest["projectsReadme"])
         self.assertEqual(
-            [("alpha", "Build alpha", "in-progress", "now", ["docs/projects/alpha/notes.md"]),
+            [("alpha", "Build alpha", "in-progress", "now",
+              [{"path": "docs/projects/alpha/notes.md", "title": "Alpha notes", "route": "projects/alpha/notes/"},
+               {"path": "docs/projects/alpha/research/survey.md", "title": "Survey",
+                "route": "projects/alpha/research/survey/"}]),
              ("alpha/beta", "Finish beta", "completed", None, [])],
             [(p["name"], p["title"], p["status"], p["priority"], p["files"]) for p in manifest["projects"]],
         )
-        self.assertEqual([], manifest["walkthroughs"])
+        self.assertEqual([], manifest["reviews"])
         for path in ("README.md", "docs/guide.md", "docs/projects/README.md", "docs/projects/alpha/readme.md",
                      "docs/projects/alpha/notes.md", "docs/projects/alpha/beta/readme.md"):
             self.assertEqual((self.repo / path).read_bytes(), (self.out / "content" / path).read_bytes(), path)
@@ -85,12 +89,20 @@ class SiteBuildTests(SiteRepoCase):
         self.build()
 
         home = (self.out / "index.html").read_text()
-        for route in ("projects/", "projects/alpha/", "projects/alpha/beta/", "prs/", "docs/guide/",
-                      "docs/projects/alpha/notes/"):
+        for route in ("projects/", "projects/alpha/", "projects/alpha/beta/", "projects/alpha/notes/",
+                      "projects/alpha/research/survey/", "reviews/", "docs/", "docs/guide/", "search/"):
             self.assertEqual(home, (self.out / route / "index.html").read_text(), route)
         self.assertEqual(home, (self.out / "404.html").read_text())
-        self.assertFalse((self.out / "docs" / "projects" / "alpha" / "index.html").exists(),
-                         "a plan lives under projects/, not docs/")
+        self.assertFalse((self.out / "docs" / "projects").exists(), "a project's files live under projects/, not docs/")
+        self.assertFalse((self.out / "prs").exists())
+
+    def test_a_readme_at_the_top_of_docs_moves_aside_for_the_repository_readme(self) -> None:
+        (self.repo / "docs/README.md").write_text("# About these docs\n")
+
+        _, manifest, _ = self.build()
+
+        self.assertIn({"path": "docs/README.md", "title": "About these docs", "route": "docs/readme/"}, manifest["docs"])
+        self.assertTrue((self.out / "docs" / "readme" / "index.html").is_file())
 
     def test_the_base_path_prefixes_every_asset_and_link(self) -> None:
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
@@ -220,24 +232,26 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
 
-    def test_a_walkthrough_links_to_the_plans_its_diff_changes_and_back(self) -> None:
+    def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
         self.publish(9, "c" * 40)
 
         manifest = self.build()
 
-        self.assertEqual([["alpha"]], [w["projects"] for w in manifest["walkthroughs"]])
-        walkthroughs = {p["name"]: p["walkthroughs"] for p in manifest["projects"]}
-        self.assertEqual({"alpha": [9], "alpha/beta": []}, walkthroughs, "the deepest project owns the file")
-        data = json.loads((self.out / "prs" / "9" / ("c" * 40) / "data.json").read_text())
+        self.assertEqual([["alpha"]], [r["projects"] for r in manifest["reviews"]])
+        reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
+        self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
+        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
         self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
+        self.assertEqual("/reviews/", data["indexUrl"])
+        self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
 
-    def test_a_spec_can_name_a_plan_its_diff_does_not_touch(self) -> None:
-        self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-plan"])
+    def test_a_spec_can_name_a_project_its_diff_does_not_touch(self) -> None:
+        self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
 
         manifest = self.build()
 
-        self.assertEqual(["alpha/beta", "alpha"], manifest["walkthroughs"][0]["projects"],
-                         "named plans first, unknown names dropped, then the ones the diff touches")
+        self.assertEqual(["alpha/beta", "alpha"], manifest["reviews"][0]["projects"],
+                         "named projects first, unknown names dropped, then the ones the diff touches")
 
     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
         manifest = self.build()
@@ -251,8 +265,10 @@ class SiteContentTests(SiteRepoCase):
 
         index = json.loads((self.out / "search.json").read_text())
         self.assertEqual(
-            [("", "Home", "readme"), ("docs/guide/", "Use the guide", "doc"), ("projects/", "How projects work", "doc"),
-             ("projects/alpha/", "Build alpha", "project"), ("docs/projects/alpha/notes/", "notes.md", "doc"),
+            [("docs/", "README", "doc"), ("docs/guide/", "Use the guide", "doc"),
+             ("projects/", "How projects work", "project"), ("projects/alpha/", "Build alpha", "project"),
+             ("projects/alpha/notes/", "Alpha notes", "project"),
+             ("projects/alpha/research/survey/", "Survey", "project"),
              ("projects/alpha/beta/", "Finish beta", "project")],
             [(e["route"], e["title"], e["kind"]) for e in index],
         )
@@ -318,13 +334,15 @@ class ServeTests(SiteRepoCase):
         site.refresh(force=True)
         return site
 
-    def fetch(self, site: serve.Site, base: str, path: str) -> tuple[int, str]:
-        server = serve.ThreadingHTTPServer(("127.0.0.1", 0), serve.handler(site, base))
+    def fetch(self, site: serve.Site, base: str, path: str, host: str | None = None,
+              listen: str = "127.0.0.1") -> tuple[int, str]:
+        server = serve.ThreadingHTTPServer(("127.0.0.1", 0), serve.handler(site, base, serve.allowed_hosts(listen)))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             url = f"http://127.0.0.1:{server.server_address[1]}{path}"
+            request = urllib.request.Request(url, headers={"Host": host} if host else {})
             try:
-                with urllib.request.urlopen(url) as response:
+                with urllib.request.urlopen(request) as response:
                     return response.status, response.read().decode()
             except urllib.error.HTTPError as error:
                 with error:
@@ -332,6 +350,22 @@ class ServeTests(SiteRepoCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_a_request_naming_another_host_gets_no_content(self) -> None:
+        site = self.site()
+        manifest = (site.current / "site.json").read_text()
+
+        for host in ("evil.example:8000", "attacker.example", "127.0.0.1.evil.example"):
+            with self.subTest(host=host):
+                code, body = self.fetch(site, "/", "/site.json", host=host)
+                self.assertEqual(403, code)
+                self.assertNotIn('"projects"', body)
+        for host in ("localhost:8000", "127.0.0.1", "[::1]:8000"):
+            with self.subTest(host=host):
+                self.assertEqual((200, manifest), self.fetch(site, "/", "/site.json", host=host))
+        self.assertEqual(200, self.fetch(site, "/", "/", host="box.lan:8000", listen="box.lan")[0])
+        self.assertEqual(200, self.fetch(site, "/", "/", host="192.168.1.5:8000", listen="0.0.0.0")[0],
+                         "a wildcard address answers any name, as the warning says")
 
     def test_serves_every_view_and_answers_a_missing_path_with_the_not_found_page(self) -> None:
         site = self.site()
@@ -401,9 +435,9 @@ class ServeTests(SiteRepoCase):
         site = self.site(walkthroughs=specs)
 
         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
-        self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["walkthroughs"]],
+        self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
                          "each spec is dated by its own commit, not the ref's newest")
-        self.assertEqual(200, self.fetch(site, "/", f"/prs/9/{'c' * 40}/")[0])
+        self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
 
     def test_a_checkout_without_the_ref_serves_no_walkthroughs(self) -> None:
         run_git(self.repo, "init", "--quiet")
@@ -412,27 +446,75 @@ class ServeTests(SiteRepoCase):
         self.assertIsNone(serve.walkthroughs_ref(self.repo, "origin"))
 
     @unittest.skipIf(os.name == "nt", "SIGINT is how a terminal stops the server on POSIX")
-    def test_ctrl_c_stops_the_server_and_removes_its_builds(self) -> None:
-        scratch = Path(tempfile.mkdtemp())
-        env = dict(os.environ, PYTHONPATH=str(Path(cli.__file__).parents[1]), TMPDIR=str(scratch))
-        process = subprocess.Popen(
-            [sys.executable, "-m", "projector", "site", "serve", "--port", "0", "--no-fetch",
-             "--repo-root", str(self.repo)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-        try:
-            for line in process.stdout:
-                if line.startswith("serving http://127.0.0.1:"):
-                    break
-            self.assertTrue(any(scratch.glob("projector-site-*")))
-            process.send_signal(signal.SIGINT)
-            _, err = process.communicate(timeout=10)
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()
+    def test_ctrl_c_or_a_termination_signal_stops_the_server_and_removes_its_builds(self) -> None:
+        for stop in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=stop.name):
+                scratch = Path(tempfile.mkdtemp())
+                env = dict(os.environ, PYTHONPATH=str(Path(cli.__file__).parents[1]), TMPDIR=str(scratch))
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "projector", "site", "serve", "--port", "0", "--no-fetch",
+                     "--repo-root", str(self.repo)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+                try:
+                    for line in process.stdout:
+                        if line.startswith("serving http://127.0.0.1:"):
+                            break
+                    self.assertTrue(any(scratch.glob("projector-site-*")))
+                    process.send_signal(stop)
+                    _, err = process.communicate(timeout=10)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate()
 
-        self.assertEqual(0, process.returncode, err)
-        self.assertEqual([], list(scratch.glob("projector-site-*")))
+                self.assertEqual(0, process.returncode, err)
+                self.assertEqual([], list(scratch.glob("projector-site-*")))
+
+
+@unittest.skipUnless(shutil.which("node"), "the route test needs node")
+class RouteTests(SiteRepoCase):
+    def routes(self) -> list[str]:
+        """Build the site and return routeFor, run under node, of every file it serves."""
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
+            cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo), "--base", "projector"])
+        manifest = json.loads((self.out / "site.json").read_text())
+        paths = [manifest["readme"], manifest["projectsReadme"], *(d["path"] for d in manifest["docs"])]
+        for project in manifest["projects"]:
+            paths += [project["path"], *(f["path"] for f in project["files"])]
+        program = f"var site = {json.dumps(manifest)}, base = '/projector/';\n" + \
+            "\n".join(js_function(n) for n in ("esc", "repoUrl", "routeFor")) + \
+            f"\nprocess.stdout.write(JSON.stringify({json.dumps(paths)}.map(routeFor)));"
+        return json.loads(subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+
+    def test_every_link_the_page_makes_to_a_file_has_a_shell(self) -> None:
+        (self.repo / "docs/README.md").write_text("# About these docs\n")
+
+        routes = self.routes()
+
+        self.assertEqual(
+            ["/projector/docs/", "/projector/projects/", "/projector/docs/readme/", "/projector/docs/guide/",
+             "/projector/projects/alpha/", "/projector/projects/alpha/notes/",
+             "/projector/projects/alpha/research/survey/", "/projector/projects/alpha/beta/"],
+            routes,
+        )
+        for route in routes:
+            self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
+
+    def test_a_file_named_like_a_folder_keeps_a_route_of_its_own(self) -> None:
+        # alpha/beta.md beside the nested project alpha/beta/, and guide.md beside guide/readme.md.
+        (self.repo / "docs/projects/alpha/beta.md").write_text("# Beta file\n")
+        (self.repo / "docs/guide").mkdir()
+        (self.repo / "docs/guide/readme.md").write_text("# Guide folder\n")
+
+        routes = self.routes()
+
+        self.assertEqual(len(routes), len(set(routes)), routes)
+        self.assertIn("/projector/projects/alpha/beta/", routes)
+        self.assertIn("/projector/projects/alpha/beta.md/", routes)
+        self.assertIn("/projector/docs/guide/", routes)
+        self.assertIn("/projector/docs/guide.md/", routes)
+        for route in routes:
+            self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
 
 
 class WorkflowTests(unittest.TestCase):
