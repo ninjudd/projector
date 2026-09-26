@@ -26,9 +26,10 @@ push to, or approve the pull request unless the user asks.
      --repo OWNER/NAME --pr NUMBER --spec WORKDIR/walkthrough.json
    ```
 
-   Keep `WORKDIR` somewhere you can reach again this session, such as the
-   host's scratch directory. The spec is what you edit when the pull request
-   moves.
+   Keep `WORKDIR` somewhere you can reach again this session, and put it in
+   the host's scratch directory when you will publish to Claude Artifacts,
+   which accepts supporting files only from the working directory or the
+   scratch directory. The spec is what you edit when the pull request moves.
 3. Read enough to explain the change: the pull request body, the full diff
    (`gh pr diff NUMBER --repo OWNER/NAME`), plan or design documents the
    change touches, and the review threads. For a large diff, delegate the
