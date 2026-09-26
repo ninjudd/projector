@@ -416,6 +416,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("push:", text)
         self.assertIn("@0123abc", walkthrough.workflow_text("0123abc"))
 
+    def test_the_readme_shows_the_workflow_the_skill_writes(self) -> None:
+        readme = (ROOT / "README.md").read_text()
+        block = readme.split("```yaml\n", 1)[1].split("```", 1)[0].rstrip(" ")
+        shown = "".join(line[3:] if line.startswith("   ") else line for line in block.splitlines(True))
+        self.assertEqual(walkthrough.workflow_text("v0"), shown)
+
     def test_repo_slug_reads_github_remotes(self) -> None:
         for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
             self.assertEqual("o/r", walkthrough.repo_slug(url), url)
