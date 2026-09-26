@@ -524,15 +524,24 @@ class InstallTests(unittest.TestCase):
         path.write_text(f"#!/bin/sh\n{body}\n")
         path.chmod(0o755)
 
-    def installed_copy(self, *, diverge: bool) -> str:
-        """A stand-in for the package a copying installer left behind."""
+    def installed_copy(self, *, diverge: bool = False, diverge_asset: bool = False) -> str:
+        """A stand-in for the package a copying installer left behind.
+
+        Laid out as the wheel lays it out: the source package, with the site's
+        assets from site/assets/ at projector/site/assets/.
+        """
 
         target = self.user_root / "site-packages" / "projector"
         shutil.copytree(ROOT / "src" / "projector", target,
                         ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(ROOT / "site" / "assets", target / "site" / "assets")
         if diverge:
             (target / "cli.py").write_text(
                 (target / "cli.py").read_text() + "\n# shipped since this install\n"
+            )
+        if diverge_asset:
+            (target / "site" / "assets" / "site.css").write_text(
+                (target / "site" / "assets" / "site.css").read_text() + "\n/* shipped since this install */\n"
             )
         return str(target)
 
@@ -549,6 +558,17 @@ class InstallTests(unittest.TestCase):
         # The case a version comparison misses: the CLI changed and nobody
         # bumped the version, so the installed copy still calls itself current.
         self.fake_project(self.installed_copy(diverge=True))
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("cli-stale", result.stdout)
+        self.assertIn("differs from this checkout", result.stdout)
+
+    def test_status_reports_a_cli_whose_site_assets_changed(self) -> None:
+        # The assets are built in site/assets/, outside src/projector, so a
+        # stylesheet that changed since the install must still read as stale.
+        self.fake_project(self.installed_copy(diverge_asset=True))
 
         result = self.install("status")
 

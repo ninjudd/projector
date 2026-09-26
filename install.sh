@@ -343,7 +343,11 @@ report_cli() {
   if [ -z "$installed_dir" ] || [ ! -d "$installed_dir" ]; then
     # Too old to say where it lives, which is itself the staleness.
     printf '%-14s %s\n' "cli-stale" "installed command cannot report its source -- run ./install.sh cli"
-  elif diff -rq --exclude=__pycache__ "$installed_dir" "$REPO/src/projector" >/dev/null 2>&1; then
+  # The installed package carries the site's assets at site/assets/, which the
+  # checkout builds in site/assets/ rather than under src/projector, so each
+  # half is compared against its own source.
+  elif diff -rq --exclude=__pycache__ --exclude=assets "$installed_dir" "$REPO/src/projector" >/dev/null 2>&1 &&
+       diff -rq "$installed_dir/site/assets" "$REPO/site/assets" >/dev/null 2>&1; then
     version="$(project --version 2>/dev/null | awk '{print $NF}')"
     printf '%-14s %s\n' "cli-current" "${version:-matches checkout}"
   else

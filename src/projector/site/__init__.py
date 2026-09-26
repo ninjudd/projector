@@ -31,7 +31,18 @@ from pathlib import Path
 from ..core import Project, title_from_text
 from ..summary import DIFF_FILE, SpecError, prepare_page
 
-ASSETS = resources.files(__package__) / "assets"
+
+
+def assets_dir():
+    """The site's assets: packaged beside this module in an install, and in the
+    checkout's site/assets/, where they are built, when run from source."""
+    packaged = resources.files(__package__) / "assets"
+    if packaged.is_dir():
+        return packaged
+    return Path(__file__).resolve().parents[3] / "site" / "assets"
+
+
+ASSETS = assets_dir()
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
 FONTS = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap"
 MARKED = "https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.13/lib/marked.umd.min.js"

@@ -278,7 +278,7 @@ class SiteContentTests(SiteRepoCase):
         self.assertTrue((self.out / "search" / "index.html").is_file())
 
 
-SITE_JS = Path(__file__).parents[1] / "src" / "projector" / "site" / "assets" / "site.js"
+SITE_JS = Path(__file__).parents[1] / "site" / "assets" / "site.js"
 
 
 def js_function(name: str) -> str:
