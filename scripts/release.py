@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Set Projector's one version, or tag a release of it.
 
-    scripts/release.py set X.Y.Z   write the version to setup.cfg and both plugin manifests
-    scripts/release.py tag         tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+    scripts/release.py bump patch|minor|major   raise one part of the version and write it
+    scripts/release.py set X.Y.Z                write an exact version instead
+    scripts/release.py tag [--if-untagged]      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
 
-`set` is the bump a release pull request makes. `tag` runs after that pull
-request merges: it checks that origin/main carries the version, pushes the
-immutable vX.Y.Z tag, and force-moves the major tag that marketplaces and the
-walkthroughs action follow. It then creates the GitHub release for vX.Y.Z
-with generated notes; --no-release skips that step.
+The Release workflow runs these. Started by hand with patch, minor, or major,
+it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
+When a change to setup.cfg reaches main, it runs `tag --if-untagged`: that
+checks that origin/main carries a version with no tag yet, pushes the
+immutable vX.Y.Z tag, force-moves the major tag that marketplaces and the
+site action follow, and creates the GitHub release for vX.Y.Z with generated
+notes; --no-release skips that step.
 """
 
 from __future__ import annotations
@@ -70,6 +73,18 @@ def set_version(root: Path, version: str) -> None:
         path.write_text(text)
 
 
+def bump(root: Path, part: str) -> str:
+    """Raise the patch, minor, or major number, write it, and return the new version."""
+    major, minor, patch = parse(current(root))
+    version = {
+        "patch": f"{major}.{minor}.{patch + 1}",
+        "minor": f"{major}.{minor + 1}.0",
+        "major": f"{major + 1}.0.0",
+    }[part]
+    set_version(root, version)
+    return version
+
+
 def git(root: Path, *args: str) -> str:
     try:
         return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -99,13 +114,16 @@ def create_release(root: Path, remote: str, release: str) -> None:
         raise ReleaseError(f"gh release create failed: {exc.stderr.strip()}") from exc
 
 
-def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True) -> str:
+def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True,
+        if_untagged: bool = False) -> str:
     git(root, "fetch", "--quiet", "--tags", remote, branch)
     ref = f"refs/remotes/{remote}/{branch}"
     commit = git(root, "rev-parse", ref)
     version = current(root, read=lambda path: git(root, "show", f"{commit}:{path.relative_to(root).as_posix()}"))
     release, major = f"v{version}", f"v{parse(version)[0]}"
     existing = git(root, "tag", "--list", release)
+    if existing and if_untagged:
+        return f"{release} is already released; nothing to do"
     if existing:
         raise ReleaseError(f"{release} already exists; set a new version first")
     git(root, "tag", "-a", release, commit, "-m", f"Projector {version}")
@@ -128,17 +146,24 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     s = sub.add_parser("set", help="write a new version to every version file")
     s.add_argument("version")
+    b = sub.add_parser("bump", help="raise the patch, minor, or major number and print the new version")
+    b.add_argument("part", choices=("patch", "minor", "major"))
     t = sub.add_parser("tag", help="tag the merged version and move the major tag")
     t.add_argument("--remote", default="origin")
     t.add_argument("--branch", default="main")
     t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
+    t.add_argument("--if-untagged", action="store_true",
+                   help="succeed without doing anything when the merged version is already tagged")
     args = parser.parse_args(argv)
     try:
         if args.command == "set":
             set_version(root, args.version)
             print(f"set {args.version} in setup.cfg and both plugin manifests")
+        elif args.command == "bump":
+            print(bump(root, args.part))
         else:
-            print(tag(root, args.remote, args.branch, github_release=not args.no_release))
+            print(tag(root, args.remote, args.branch, github_release=not args.no_release,
+                      if_untagged=args.if_untagged))
     except ReleaseError as exc:
         print(f"release: {exc}", file=sys.stderr)
         return 1

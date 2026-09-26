@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 from pathlib import Path
 
@@ -44,6 +46,23 @@ class SetTests(unittest.TestCase):
         after = (self.root / ".codex-plugin/plugin.json").read_text()
         self.assertEqual(before.replace(f'"{self.start}"', f'"{new}"'), after)
         self.assertEqual(json.loads(after)["name"], "projector")
+
+    def test_bump_raises_one_part_and_resets_the_smaller_ones(self) -> None:
+        major, minor, patch = release.parse(self.start)
+        for part, expected in (("patch", f"{major}.{minor}.{patch + 1}"),
+                               ("minor", f"{major}.{minor + 1}.0"),
+                               ("major", f"{major + 1}.0.0")):
+            with self.subTest(part=part):
+                copy_version_files(self.root)
+                self.assertEqual(expected, release.bump(self.root, part))
+                self.assertEqual(expected, release.current(self.root))
+
+    def test_bump_prints_only_the_new_version(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(0, release.main(["bump", "patch"], root=self.root))
+        major, minor, patch = release.parse(self.start)
+        self.assertEqual(f"{major}.{minor}.{patch + 1}\n", out.getvalue())
 
     def test_refuses_a_version_that_does_not_go_up(self) -> None:
         with self.assertRaisesRegex(release.ReleaseError, "not above the current version"):
@@ -124,6 +143,30 @@ class TagTests(unittest.TestCase):
         release.tag(self.repo, branch="trunk")
         with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
             release.tag(self.repo, branch="trunk")
+
+    def test_if_untagged_leaves_a_released_version_alone(self) -> None:
+        first = run(self.repo, "git", "rev-parse", "HEAD")
+        release.tag(self.repo, branch="trunk")
+        self.commit_other_change()
+
+        self.assertEqual("v0.5.0 is already released; nothing to do",
+                         release.tag(self.repo, branch="trunk", if_untagged=True))
+        self.assertEqual(first, self.remote_tag("v0"), "the major tag stays on the release")
+        self.assertEqual([("origin", "v0.5.0")], self.releases, "no second GitHub release")
+
+    def test_if_untagged_releases_a_new_version(self) -> None:
+        release.tag(self.repo, branch="trunk")
+        second = self.commit("0.5.1")
+
+        release.tag(self.repo, branch="trunk", if_untagged=True)
+        self.assertEqual(second, self.remote_tag("v0.5.1"))
+        self.assertEqual(second, self.remote_tag("v0"))
+
+    def commit_other_change(self) -> None:
+        (self.repo / "notes.txt").write_text("not a release\n")
+        run(self.repo, "git", "add", "-A")
+        run(self.repo, "git", "commit", "--quiet", "-m", "notes")
+        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
 
     def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None:
         # An unpushed local bump must not name the release.
