@@ -245,15 +245,30 @@ def require_private_site(repo: str) -> None:
         raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
 
 
-def enable_pages(repo: str) -> dict:
+def enable_pages(repo: str, admin: bool = True) -> dict:
     """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
 
     Returns what changed: `pages` is created, updated, or unchanged, and
     `visibility` is updated when a private repository's public site was made
     private. Raises when a private repository's site cannot be made private,
     because the site would publish the repository's README, plans and diffs.
+    Without `admin`, it changes nothing and raises when anything needs
+    changing, so a site an admin already set up still counts as set up.
     """
     raw = gh_lookup("api", f"repos/{repo}/pages")
+    if not admin:
+        pages = json.loads(raw) if raw is not None else None
+        if pages is None:
+            needed = "turn on its GitHub Pages site"
+        elif pages.get("build_type") != "workflow":
+            needed = "switch its GitHub Pages site to deploy from GitHub Actions"
+        elif exposure(repo, pages):
+            needed = "make its public GitHub Pages site private"
+        else:
+            return {"pages": "unchanged", "visibility": "unchanged", "url": site_url(pages),
+                    "public": pages.get("public", True)}
+        raise SpecError(f"you are not an admin of {repo}, so init cannot {needed}; "
+                        "ask an admin to run `project init --site`")
     if raw is None:
         gh("api", "-X", "POST", f"repos/{repo}/pages", "-f", "build_type=workflow")
         action = "created"
@@ -276,8 +291,7 @@ def enable_pages(repo: str) -> dict:
         if exposure(repo, pages):
             raise SpecError(refusal)
         visibility = "updated"
-    return {"pages": action, "visibility": visibility, "url": pages.get("html_url", ""),
-            "public": pages.get("public", True)}
+    return {"pages": action, "visibility": visibility, "url": site_url(pages), "public": pages.get("public", True)}
 
 
 def hosting(repo: str) -> tuple[str | None, str]:
@@ -296,13 +310,42 @@ def hosting(repo: str) -> tuple[str | None, str]:
     exposed = exposure(repo, pages)
     if exposed:
         return None, exposed
-    site = pages["html_url"]
+    return site_url(pages), ""
+
+
+def site_url(pages: dict) -> str:
+    """The Pages site's URL, with a trailing slash."""
+    site = pages.get("html_url") or ""
+    if not site:
+        return ""
     # GitHub reports an http:// URL for a custom domain that does not enforce
     # HTTPS, even once its certificate is issued and https:// serves the site.
     certified = (pages.get("https_certificate") or {}).get("state") == "approved"
     if site.startswith("http:") and (pages.get("https_enforced") or certified):
         site = "https:" + site.removeprefix("http:")
-    return site.rstrip("/") + "/", ""
+    return site.rstrip("/") + "/"
+
+
+def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple[str, str]:
+    """Point the repository's website link at `url`, unless it already links elsewhere.
+
+    Returns the action, updated, unchanged, or kept, and for kept, why. A
+    link that differs only in scheme or trailing slash already reaches the
+    site, as the one GitHub's "Use your GitHub Pages website" box writes does.
+    """
+    current = current.strip()
+
+    def bare(link: str) -> str:
+        return link.split("://", 1)[-1].rstrip("/").lower()
+
+    if current and bare(current) == bare(url):
+        return "unchanged", ""
+    if current:
+        return "kept", f"{repo} already links its website to {current}; set it to {url} to link the site"
+    if not admin:
+        return "kept", f"you are not an admin of {repo}, so its website does not link to {url}"
+    gh("api", "-X", "PATCH", f"repos/{repo}", "-f", f"homepage={url}")
+    return "updated", ""
 
 
 def merge_base(repo: str, base_ref: str, head: str) -> str:

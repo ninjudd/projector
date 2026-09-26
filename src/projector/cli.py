@@ -8,6 +8,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -140,14 +141,17 @@ def parser() -> argparse.ArgumentParser:
     subcommands = result.add_subparsers(dest="command", required=True)
 
     init = subcommands.add_parser("init", help="adopt the project convention")
-    init.add_argument(
+    site_choice = init.add_mutually_exclusive_group()
+    site_choice.add_argument(
         "--site",
         action="store_true",
-        help="also set up the Projector site: a GitHub Pages site and the workflow that deploys it",
+        default=None,
+        help="require the Projector site to be set up, failing if it cannot be (default: set it up when possible)",
     )
-    init.add_argument(
-        "--action-ref", default="v0", help="with --site, the projector tag or commit the workflow runs"
+    site_choice.add_argument(
+        "--no-site", action="store_false", dest="site", help="leave the GitHub Pages site and its workflow alone"
     )
+    init.add_argument("--action-ref", default="v0", help="the projector tag or commit the site workflow runs")
     add_output(init)
 
     listing = subcommands.add_parser("list", help="list projects")
@@ -648,23 +652,58 @@ def write_site_workflow(root: Path, text: str) -> FileAction:
     )
 
 
+class NotOnGitHub(ProjectorError):
+    """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
+
+
 def init_site(root: Path, action_ref: str) -> tuple[dict, FileAction]:
     """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
 
     The workflow is written only once the Pages site is safe to deploy to, so
     a private repository whose site cannot be made private gets no workflow.
     """
-    repo = site_repo(root)
+    try:
+        repo = walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
+    except walkthrough.SpecError:
+        repo = ""
     if not repo:
-        raise walkthrough.SpecError("--site needs a GitHub remote named origin to set up Pages on")
-    pages = walkthrough.enable_pages(repo)
+        raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
+    if shutil.which("gh") is None:
+        raise walkthrough.SpecError("the gh CLI is not installed, and setting up Pages needs it")
+    details = json.loads(walkthrough.gh("api", f"repos/{repo}"))
+    # Only an admin can change Pages or the website link. Without admin, a site
+    # already set up still gets its workflow, which needs no admin to propose.
+    admin = bool((details.get("permissions") or {}).get("admin"))
+    pages = walkthrough.enable_pages(repo, admin)
+    # The website link is a convenience; failing to set it must not cost the workflow.
+    try:
+        pages["website"], note = walkthrough.set_homepage(
+            repo, pages["url"], details.get("homepage") or "", admin
+        ) if pages["url"] else ("unchanged", "")
+    except walkthrough.SpecError as error:
+        pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
+    if note:
+        print(f"project: {note}", file=sys.stderr)
     return pages, write_site_workflow(root, site_workflow_text(root, action_ref))
+
+
+def site_enabled(root: Path) -> bool:
+    """`site.enabled` from configuration; unset means `init` sets the site up."""
+
+    value = load_config(root).get("site.enabled")
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ConfigError(f"site.enabled must be true or false, not {type(value).__name__}")
+    return value
 
 
 def emit_site(pages: dict) -> None:
     print(f"{pages['pages']} GitHub Pages site {pages['url']}")
     if pages["visibility"] == "updated":
         print("updated GitHub Pages visibility: private")
+    if pages["website"] == "updated":
+        print(f"updated repository website {pages['url']}")
 
 
 def run(arguments: argparse.Namespace) -> int:
@@ -688,22 +727,31 @@ def run(arguments: argparse.Namespace) -> int:
     command = arguments.command
 
     if command == "init":
+        # An explicit --site or --no-site wins over configuration; unset, the
+        # site is set up when it can be and skipped with a note when it cannot.
+        wanted = site_enabled(root) if arguments.site is None else arguments.site
         try:
             files = store.init(instructions_enabled(root))
             pages = None
-            if arguments.site:
+            if wanted:
                 try:
                     pages, workflow = init_site(root, arguments.action_ref)
+                    files.append(workflow)
                 except ProjectorError as error:
-                    raise InitError(str(error), files) from error
-                files.append(workflow)
+                    if arguments.site:
+                        raise InitError(str(error), files) from error
+                    pages = {"skipped": str(error)}
+                    # A repository with no GitHub origin has no site to miss.
+                    if not isinstance(error, NotOnGitHub):
+                        print(f"project: site not set up: {error}; pass --no-site, or set site.enabled = false, "
+                              "to stop setting it up", file=sys.stderr)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:
                 emit_files(error.files, False)
             raise
         emit_files(files, arguments.json_output, pages)
-        if pages is not None and not arguments.json_output:
+        if pages is not None and "skipped" not in pages and not arguments.json_output:
             emit_site(pages)
     elif command == "list":
         projects = store.projects()

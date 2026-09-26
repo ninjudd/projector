@@ -167,10 +167,11 @@ project init --site
 ```
 
 It enables Pages with the GitHub Actions source, makes a private
-repository's site private, and writes `.github/workflows/projector-site.yml`.
-When GitHub refuses to make a private repository's site private, it stops
-before writing the workflow; report that, and offer `project site serve` or
-an Artifact instead. Then add the workflow to the default branch through a
+repository's site private, links an empty repository website to the site,
+and writes `.github/workflows/projector-site.yml`. `--site` makes it fail
+rather than skip the site. When it fails because the user is not an admin
+or GitHub refuses to make a private repository's site private, it writes no
+workflow; report why, and offer `project site serve` or an Artifact instead. Then add the workflow to the default branch through a
 pull request, because GitHub runs dispatched workflows only from there.
 
 The workflow calls `ninjudd/projector/actions/site@v0`. Pass

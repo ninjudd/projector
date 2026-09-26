@@ -104,33 +104,53 @@ nothing and exits 0.
 
 ### Set up the site
 
-Pass `--site` to set up the [Projector site](#build-the-projector-site) as
-well. It needs admin rights on the GitHub repository that `origin` names,
-and `gh` signed in:
+`init` also sets up the [Projector site](#build-the-projector-site) for the
+GitHub repository that `origin` names, using `gh`:
 
 ```console
-$ project init --site
+$ project init
 unchanged docs/projects/README.md
 unchanged AGENTS.md
 unchanged CLAUDE.md
 created .github/workflows/projector-site.yml
 created GitHub Pages site https://owner.github.io/example/
+updated repository website https://owner.github.io/example/
 ```
 
-After the files above, `init --site` turns on GitHub Pages with GitHub
-Actions as its source, or switches an existing Pages site to that source,
-and reports the site as `created`, `updated`, or `unchanged`. When the
-repository is private and its site is public, it makes the site private and
-prints `updated GitHub Pages visibility: private`. If GitHub refuses, as it
-does without private Pages (GitHub Enterprise Cloud), `init` exits 65 without
-writing the workflow, because the site would publish the repository's
-README, plans, and diffs; `project site serve` still serves it locally.
-Last, it writes the same workflow file as `site workflow --write` and
-reports it like any other file, reminding you on stderr to merge it to the
-default branch through a pull request. `--action-ref` pins the
-Projector tag or commit the workflow runs, `v0` by default. In `--json` mode
-the document gains a `site` object with `pages`, `visibility`, `url`, and
-`public`. `init` without `--site` never contacts GitHub.
+After the files above, `init` turns on GitHub Pages with GitHub Actions as
+its source, or switches an existing Pages site to that source, and reports
+the site as `created`, `updated`, or `unchanged`. When the repository is
+private and its site is public, it makes the site private and prints
+`updated GitHub Pages visibility: private`. It points the repository's
+website link at the site when that link is empty, and keeps a link to
+anywhere else, saying so on stderr. Last, it writes the same workflow file
+as `site workflow --write` and reports it like any other file, reminding you
+on stderr to merge it to the default branch through a pull request.
+`--action-ref` pins the Projector tag or commit the workflow runs, `v0` by
+default.
+
+Changing Pages or the website link takes admin rights on the repository.
+Without them, `init` changes nothing on GitHub and says what an admin needs
+to do; it still writes the workflow when an admin has already set Pages up,
+because proposing the workflow needs no admin.
+
+The workflow is written only once the site is safe to deploy to. When `gh`
+is missing, you are not an admin and Pages needs changing, or GitHub refuses
+to make a private repository's site private, as it does without private
+Pages (GitHub Enterprise Cloud), `init` adopts the repository as usual,
+skips the site with a note on stderr, and exits 0. A repository whose
+`origin` is not on GitHub skips the site without a note. `project site serve` still serves the site locally. Pass `--site`
+to make any of those an error that exits 65, or `--no-site` to leave GitHub
+alone. To skip the site every time, set in `.projector.toml`:
+
+```toml
+[site]
+enabled = false
+```
+
+In `--json` mode the document gains a `site` object with `pages`,
+`visibility`, `url`, `public`, and `website`, or with `skipped` and the
+reason when the site was not set up.
 
 ## Browse projects
 
@@ -332,6 +352,7 @@ These are the keys Projector reads today:
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
+| `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 

@@ -187,21 +187,36 @@ archive stamps every file with the ref's newest commit.
   missing path with `404.html` can serve `project site build --out DIR`;
   no host-specific packaging was added.
 
-## 9. Set the site up with `project init --site`
+## 9. `project init` sets the site up
 
 Setting a repository up took three steps a person or agent ran by hand: a
 `gh api` call to turn on Pages with the Actions source, a second one to make
 a private repository's site private, and `project site workflow --write`.
 The second was easy to miss, and missing it publishes a private repository's
-README, plans and diffs. `project init --site` runs all three.
+README, plans and diffs. `project init` now runs all three, and points the
+repository's website link at the site.
 
-- **Opt in with a flag.** Plain `init` works offline and needs no admin
-  rights, so it never contacts GitHub; `--site` does.
+- **On by default, best effort.** Adopting Projector is when a repository
+  most wants its site, so `init` sets it up without a flag. It must still
+  adopt a repository that is not on GitHub, lacks `gh`, or whose user is not
+  an admin, so any of those skips the site with a note and exits 0. `--site`
+  makes them an error, and `--no-site` or `site.enabled = false` skips the
+  site; the key keeps a rerun of `init`, which `check` asks for, from turning
+  Pages back on after a repository declined it.
 - **Make the site safe before writing the workflow.** When GitHub refuses to
-  make a private repository's site private, `init` exits 65 without writing
-  the workflow, so nothing can be merged that would deploy the repository's
-  content publicly. The action's `--check-visibility` stays as the deploy's
-  own guard.
+  make a private repository's site private, `init` writes no workflow, so
+  nothing can be merged that would deploy the repository's content publicly.
+  The action's `--check-visibility` stays as the deploy's own guard.
+- **Check admin rights before changing anything.** A non-admin changes
+  nothing on GitHub and hears what an admin must do. A site an admin already
+  set up still gets its workflow, since proposing a file needs no admin.
+- **Never overwrite the website link.** `init` fills an empty link, treats a
+  link that differs only in scheme or trailing slash as the site, as GitHub's
+  "Use your GitHub Pages website" box writes it, and keeps any other.
+- **Read `origin`, not `GITHUB_REPOSITORY`.** The site build reads the
+  environment variable for the action; `init` reads only the checkout, so
+  tests and scripts that run `init` inside GitHub Actions do not reach the
+  repository they run in.
 - **Stay idempotent.** An existing Pages site is switched to the Actions
-  source rather than refused, and a rerun reports the site and the workflow
-  as `unchanged`, as `init` reports its other files.
+  source rather than refused, and a rerun reports the site, the link, and
+  the workflow as `unchanged`, as `init` reports its other files.
