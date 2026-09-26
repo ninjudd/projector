@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version=$(python3 scripts/release.py bump "$BUMP")
+          version=$(python3 .github/scripts/release.py bump "$BUMP")
           branch="release/v$version"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -48,7 +48,7 @@ jobs:
 
           ## Testing
 
-          The Release workflow ran \`python3 scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. After the merge, the publish job runs \`python3 scripts/release.py tag\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
+          The Release workflow ran \`python3 .github/scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. After the merge, the publish job runs \`python3 .github/scripts/release.py tag\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
           EOF
           # A pull request someone opened by hand from the branch after a failed run
           # already carries the force-pushed commit.
@@ -77,11 +77,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           status=0
-          python3 scripts/release.py released || status=$?
+          python3 .github/scripts/release.py released || status=$?
           case "$status" in
             0) exit 0 ;;
             3) ;;
             *) exit "$status" ;;
           esac
-          python3 scripts/release.py tag
+          python3 .github/scripts/release.py tag
           gh api "repos/$REPO/dispatches" -f event_type=projector-summaries
