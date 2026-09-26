@@ -456,7 +456,8 @@ verdict as one.
 
 Report the review as done only after it is published and, on a clean
 self-review, the pull request is ready. Report the SHA, the verdict, the review
-id, and how many threads it opened; `start-review-loop` records the SHA and id.
+id, how many threads it opened, and the summary's URL when the next section
+publishes one; `start-review-loop` records the SHA and id.
 Verify the input as well as the outputs: before an `approved` verdict, the
 outstanding-findings query returned nothing and the review opens no P1 or P2
 thread; after publishing, re-read the review body and the pull request's
@@ -465,9 +466,61 @@ never left with neither. Never resolve the author's findings, claim a newer
 SHA was reviewed, or merge. Resolving is the author's act, which is why your
 verification alone never closes a finding.
 
-Then remove the scratch worktree. A `start-review-loop` subagent may instead
+Once the summary below has run or been skipped, remove the scratch worktree,
+which a summary reads for context. A `start-review-loop` subagent may instead
 keep it for the pull request's next head and remove it when the pull request
 closes.
+
+## Summarize a large pull request
+
+After the review is published, give a large pull request a summary its human
+reviewers can read, with the `summarize-changes` skill in
+`../summarize-changes/SKILL.md`. A summary reads the whole diff and writes a
+page of prose, so it costs about as much as the review again: summarize only
+when all three hold.
+
+1. **Summaries are on.** `project config get review.summarize --default true`
+   prints anything but `false`.
+2. **The pull request is large.** Its added and deleted lines together reach
+   `review.summarize_min_lines`, 400 unless configuration sets another
+   number:
+
+   ```sh
+   gh pr view <number> --repo <owner>/<repo> --json additions,deletions \
+     --jq '.additions + .deletions'
+   project config get review.summarize_min_lines --default 400
+   ```
+
+3. **The repository hosts summaries.** `project site status --repo
+   <owner>/<repo> --pr <number>` exits 0 and prints the summary's URL. Without
+   a Projector site there is nowhere to publish unattended, so skip the
+   summary rather than publishing an Artifact nobody asked for.
+
+Then follow `summarize-changes` for this head, with two differences from a
+summary a person asks for:
+
+- **Update rather than start over.** When the summaries ref already holds a
+  spec for an earlier head of this pull request, start from that spec and
+  update it as the skill's "Update the page when the pull request moves"
+  section describes, so a fix-cycle head costs a revision, not a rewrite.
+- **Carry the review into it.** Every finding thread still open after this
+  review, from the outstanding-findings query, becomes a `flag` check in the
+  group holding its file, naming the `path:line` and what the finding says,
+  so a reader sees what the reviewer flagged beside the code it concerns.
+  Drop a `flag` check whose finding thread has since been resolved.
+
+Publish it with `project summary publish`, then append the URL `site status`
+printed to the review you just published, so a reader on GitHub finds it:
+
+```sh
+gh api -X PUT repos/<owner>/<repo>/pulls/<number>/reviews/<review-id> -F body=@<file>
+```
+
+`-F` reads the body from the file; `-f` would post the literal path. Keep the
+signature line and marker first, add `Summary of this head: <url>` as the
+last line, and re-read the review to confirm it. A summary that fails to
+build or publish never changes the review's verdict: say in your report that
+the summary failed and why, and leave the review as it was.
 
 ## Gate readiness claims in plans
 
