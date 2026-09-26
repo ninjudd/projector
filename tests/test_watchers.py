@@ -528,6 +528,22 @@ class WatchPrsTests(WatcherCase):
         self.assertEqual("", second.stdout)
         self.assertEqual(4, len(self.tracked.read_text().splitlines()))
 
+    def test_an_exclusion_holds_after_adoption_and_in_any_letter_case(self) -> None:
+        self.pull_request(4, ref="excluded")
+        self.pull_request(5, ref="kept")
+        # The plain line adoption wrote, then an exclusion added below it, and a
+        # second spelling of an entry the file already names.
+        self.tracked.write_text("acme/app#4\nacme/app#5\n!ACME/app#4\nAcme/App#5\n")
+
+        adopted = self.run_watcher(PRS, "--repo", "Acme/App", "--author", "operator")
+
+        self.assert_ok(adopted)
+        self.assertEqual(
+            ["NEW PR acme/app#5 (kept) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            adopted.stdout.splitlines(),
+        )
+        self.assertEqual("acme/app#4\nacme/app#5\n!ACME/app#4\nAcme/App#5\n", self.tracked.read_text())
+
     def test_adoption_starts_from_no_tracked_file_and_survives_a_failed_listing(self) -> None:
         self.pull_request(1)
         self.tracked.unlink()

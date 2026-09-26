@@ -89,26 +89,43 @@ fi
 # problem with the file to stderr, one per line. Returns 1 when the file
 # cannot be read and 2 when a line is malformed; the well-formed lines are
 # still printed in that case, so a running watch can keep to them.
+#
+# A `!` line removes its pull request wherever it sits in the file, since
+# adoption may already have appended the plain line above it. GitHub names
+# ignore case, so exclusions and duplicates are matched case-insensitively
+# and the first spelling of an entry is the one watched.
 ENTRY_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$'
 parse_tracked() {
-  local line lineno=0 rc=0
+  local line key lineno=0 rc=0 entries="" excluded=" " seen=" "
   [ -r "$TRACKED" ] || { echo "$TRACKED: cannot read the tracked file" >&2; return 1; }
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     case "$line" in ""|\#*) continue ;; esac
-    if [[ ${line#!} =~ $ENTRY_RE ]] && [ "${line:0:1}" = "!" ]; then
-      continue
+    if [ "${line:0:1}" = "!" ] && [[ ${line#!} =~ $ENTRY_RE ]]; then
+      excluded="$excluded$(lower "${line#!}") "
     elif [[ $line =~ $ENTRY_RE ]]; then
-      printf '%s %s\n' "${line%#*}" "${line##*#}"
+      entries="$entries$line
+"
     else
       echo "$TRACKED:$lineno is not owner/repo#number: $line" >&2
       rc=2
     fi
   done < "$TRACKED"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key=$(lower "$line")
+    case "$excluded$seen" in *" $key "*) continue ;; esac
+    seen="$seen$key "
+    printf '%s %s\n' "${line%#*}" "${line##*#}"
+  done <<EOF
+$entries
+EOF
   return $rc
 }
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # One row per pull request: state, draft flag, review decision, head SHA,
 # head ref, and how many threads are unresolved. The last three fields are
@@ -145,7 +162,8 @@ not_found() {
 }
 
 # Append every open pull request by $AUTHOR in $REPO that the tracked file
-# does not name yet, as an entry or as a `!` exclusion. It prints nothing:
+# does not name yet, as an entry or as a `!` exclusion, in any letter case.
+# It prints nothing:
 # each appended line reports as NEW PR on this same pass.
 adopt() {
   [ -n "$AUTHOR" ] || return 0
@@ -153,8 +171,8 @@ adopt() {
   numbers=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
     --json number --jq '.[].number' 2>"$STATE.err") || return 0
   for n in $numbers; do
-    awk -v a="$REPO#$n" -v b="!$REPO#$n" \
-      '{ gsub(/^[ \t]+|[ \t]+$/, "") } $0 == a || $0 == b { found = 1 } END { exit !found }' \
+    awk -v a="$(lower "$REPO#$n")" \
+      '{ gsub(/^[ \t]+|[ \t]+$/, ""); sub(/^!/, "") } tolower($0) == a { found = 1 } END { exit !found }' \
       "$TRACKED" 2>/dev/null && continue
     # Keep a last line without a newline from absorbing the appended one.
     [ -s "$TRACKED" ] && [ -n "$(tail -c 1 "$TRACKED")" ] && echo >> "$TRACKED"
