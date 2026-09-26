@@ -255,11 +255,17 @@
     if (at < 0) at = words.reduce(function (first, w) { var i = lower.indexOf(w); return i >= 0 && (first < 0 || i < first) ? i : first; }, -1);
     var start = Math.max(0, at - 60);
     var piece = (start ? '…' : '') + text.slice(start, start + 200) + (start + 200 < text.length ? '…' : '');
-    var marked = esc(piece);
-    words.forEach(function (w) {
-      marked = marked.replace(new RegExp('(' + esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>');
-    });
-    return marked;
+    return highlight(piece, words);
+  }
+
+  // One pass over the raw text, longest word first, so a later word never
+  // matches inside markup or an entity an earlier one produced.
+  function highlight(text, words) {
+    var pattern = words.slice().sort(function (a, b) { return b.length - a.length; })
+      .map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|');
+    return text.split(new RegExp('(' + pattern + ')', 'i')).map(function (part, i) {
+      return i % 2 ? '<mark>' + esc(part) + '</mark>' : esc(part);
+    }).join('');
   }
 
   // Every word must appear; a word in the title counts more than one in the text.

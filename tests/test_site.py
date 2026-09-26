@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -253,6 +254,35 @@ class SiteContentTests(SiteRepoCase):
         self.assertNotIn("status:", alpha["text"], "frontmatter is not searchable text")
         self.assertIn("Build alpha", alpha["text"])
         self.assertTrue((self.out / "search" / "index.html").is_file())
+
+
+SITE_JS = Path(__file__).parents[1] / "src" / "projector" / "site" / "assets" / "site.js"
+
+
+def js_function(name: str) -> str:
+    """One top-level function of site.js, from its signature to the brace that closes it."""
+    lines = SITE_JS.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"  function {name}("))
+    end = next(i for i in range(start, len(lines)) if lines[i] == "  }")
+    return "\n".join(lines[start:end + 1])
+
+
+@unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
+class HighlightTests(unittest.TestCase):
+    def highlight(self, text: str, words: list[str]) -> str:
+        program = js_function("esc") + "\n" + js_function("highlight") + \
+            f"\nprocess.stdout.write(highlight({json.dumps(text)}, {json.dumps(words)}));"
+        return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+    def test_a_later_word_never_matches_inside_an_earlier_mark(self) -> None:
+        self.assertEqual("Write <mark>a</mark> <mark>plan</mark> before you st<mark>a</mark>rt.",
+                         self.highlight("Write a plan before you start.", ["plan", "a"]))
+
+    def test_a_word_never_matches_inside_an_escaped_entity(self) -> None:
+        self.assertEqual("Tom &amp; Jerry <mark>map</mark>", self.highlight("Tom & Jerry map", ["map", "amp"]))
+
+    def test_the_text_is_escaped_and_matching_ignores_case(self) -> None:
+        self.assertEqual("&lt;b&gt;<mark>Plan</mark>&lt;/b&gt;", self.highlight("<b>Plan</b>", ["plan"]))
 
 
 class WorkflowTests(unittest.TestCase):
