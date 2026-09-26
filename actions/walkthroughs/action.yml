@@ -1,5 +1,5 @@
 name: Projector walkthroughs
-description: Build the pull request walkthroughs stored under refs/projector/walkthroughs and deploy them to GitHub Pages.
+description: Build the Projector site from the content Projector keeps in the repository, today the walkthroughs under refs/projector/walkthroughs, and deploy it to GitHub Pages.
 inputs:
   ref:
     description: The hidden ref holding <root>/<number>/<head>/spec.json files.
@@ -23,12 +23,13 @@ runs:
         git fetch --no-tags origin "+$REF:$REF"
         git worktree add --detach "$RUNNER_TEMP/walkthrough-specs" "$REF"
     - uses: actions/configure-pages@v5
-    - name: Build the walkthroughs
+    - name: Build the Projector site
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PYTHONPATH: ${{ github.action_path }}/../../src
         ROOT: ${{ inputs.root }}
-      run: python3 "$GITHUB_ACTION_PATH/../../skills/walkthrough-pr/scripts/walkthrough.py" site --root "$RUNNER_TEMP/walkthrough-specs/$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
+      run: python3 -m projector site build --walkthroughs "$RUNNER_TEMP/walkthrough-specs/$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
     - uses: actions/upload-pages-artifact@v3
       with:
         path: ${{ runner.temp }}/walkthrough-site

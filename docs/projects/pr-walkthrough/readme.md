@@ -147,3 +147,23 @@ sections, beside the walkthroughs of the pull requests that implement it.
 This is a later pull request. The site layout leaves room for it:
 walkthroughs sit under their own paths, and the root index can grow a
 projects view.
+
+## 7. The site belongs to Projector, not to the skill
+
+The Pages site is Projector's, and it outgrows walkthroughs as soon as
+browsing `docs/projects` (section 6) joins it, so it cannot live inside the
+`walkthrough-pr` skill. The skill writes the data, a spec, and nothing else.
+The CLI owns the rest in two modules: `projector.walkthrough` for the spec
+itself (skeletons, the diff it is checked against, sanitizing, publishing to
+the hidden ref, and whether a repository hosts a site), and `projector.site`
+for turning content into pages (the renderer, the index, the redirects, and
+the favicon shared with Projector's homepage). The commands are `project
+walkthrough init|publish` and `project site page|build|status|workflow`.
+
+The composite action keeps its path, `actions/walkthroughs`, so the workflow
+files repositories have already merged keep working; it runs the CLI from its
+own checkout, `python3 -m projector site build`, without installing it, which
+sidesteps a runner's system Python refusing a package install. The site's
+package owns its assets as package data, so an installed CLI renders the same
+page the action deploys. The projects view extends `projector.site` and reads
+plans through the CLI's own project model rather than parsing them again.
