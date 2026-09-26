@@ -90,8 +90,10 @@ This creates the convention at `docs/projects/README.md` and the project plan
 at `docs/projects/cool-new-feature/readme.md`. It also writes Projector's
 conventions into a marked section of `AGENTS.md`, linked as `CLAUDE.md` so
 Claude Code reads the same file, and every agent session in the repository
-reads them whether or not a Projector skill is loaded. Run `init` again to
-refresh that section when `check` says it is outdated. A project can contain
+reads them whether or not a Projector skill is loaded. When `origin` is on
+GitHub, `init` also sets up the [Projector site](#set-up-the-projector-site);
+pass `--no-site` to skip it. Run `init` again to refresh that section when
+`check` says it is outdated. A project can contain
 supporting documents and nested projects:
 
 ```text
@@ -122,31 +124,31 @@ on hidden refs such as `refs/projector/walkthroughs`, which are not branches,
 so publishing one adds no branch, no pull request banner, and nothing to
 anyone's clone. One workflow on the default branch builds and deploys the
 site when a walkthrough is published or `README.md` or `docs/` changes. Set a
-repository up once, with admin rights, from a checkout of it; `gh` fills in
-`{owner}` and `{repo}` from the checkout's remote:
+repository up once, with admin rights, from a checkout of it whose `origin`
+is the GitHub repository:
 
-1. Turn on Pages with GitHub Actions as its source:
-
-   ```sh
-   gh api -X POST 'repos/{owner}/{repo}/pages' -f build_type=workflow
-   ```
-
-   For a repository that already has a Pages site, switch its source to
-   GitHub Actions under **Settings > Pages** instead.
-
-2. If the repository is private, make the site private too, and stop here
-   if GitHub refuses. A private repository's Pages site is public unless the
-   account has private Pages, which needs GitHub Enterprise Cloud:
+1. Run `init`:
 
    ```sh
-   gh api -X PUT 'repos/{owner}/{repo}/pages' -F public=false
+   project init
    ```
 
-3. Add the workflow to the default branch through a pull request. GitHub runs
-   the dispatched workflow only from the default branch, and deploys from the
-   default branch without any change to the `github-pages` environment. Save
-   this as `.github/workflows/projector-site.yml`, or have the Projector CLI
-   write it with `project site workflow --write`:
+   Besides adopting the convention, it turns on GitHub Pages with GitHub
+   Actions as its source, and points the repository's website link at the
+   site if the link is empty. A repository that already deploys its own
+   Pages site keeps it unless you pass `--site`. If the repository is private, it makes the site private too, and
+   skips the workflow if GitHub refuses: a private repository's Pages site
+   is public unless the account has private Pages, which needs GitHub
+   Enterprise Cloud. Then it writes the workflow. When it cannot set the site
+   up, for example because you are not an admin, it says why on stderr and
+   adopts the repository anyway; pass `--site` to make that an error. Run it
+   again at any time; it changes only what is out of date.
+
+2. Commit the workflow to the default branch through a pull request. GitHub
+   runs the dispatched workflow only from the default branch, and deploys
+   from the default branch without any change to the `github-pages`
+   environment. `init` writes `.github/workflows/projector-site.yml`,
+   which `project site workflow --write` also writes on its own:
 
    ```yaml
    name: Projector site
@@ -177,7 +179,8 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
    ```
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
-   `@v0.5.0`, or a full commit SHA, to change only when you choose.
+   `@v0.5.0`, or a full commit SHA, to change only when you choose, with
+   `--action-ref`.
 
    A page the repository generates rather than commits, such as an HTML
    explorer or a WebAssembly module a playground loads, needs building before
@@ -198,7 +201,7 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
              prepare: make docs-wasm
    ```
 
-4. Publish something. Once the workflow is on the default branch, the
+3. Publish something. Once the workflow is on the default branch, the
    `walkthrough-pr` skill publishes to the site by default: ask your agent
    for a walkthrough of a pull request and it pushes the spec to the hidden
    ref, starts the workflow, and hands you the link. Ask for a Claude
@@ -227,7 +230,7 @@ path with `404.html`.
 ## Use the CLI
 
 ```sh
-project init [--json]
+project init [--site | --no-site] [--action-ref <ref>] [--json]
 project list [--status <status>] [--priority now|next|later] [--json]
 project show <project> [--json]
 project search <query> [--status <status>] [--priority <priority>] [--json]
