@@ -1,6 +1,8 @@
-// Projector site: renders the README, the docs, the project plans, and the list of
-// pull request walkthroughs from site.json. Every view has a real path under the
-// site's base; links between views update the address without a page load.
+// Projector site: three sections, drawn from site.json. Projects lists the projects
+// and renders each one's files beside a sidebar of its folder; Reviews lists the
+// pull request walkthroughs; Docs renders the README and everything else under
+// docs/ beside a sidebar of that tree. Every view has a real path under the site's
+// base; links between views update the address without a page load.
 (function () {
   'use strict';
 
@@ -12,7 +14,7 @@
   var routes = {};
   var searchIndex = null;
   var root = document.getElementById('site');
-  // A walkthrough page draws its own layout and carries only this bar.
+  // A review page draws its own layout and carries only this bar.
   var bar = document.getElementById('sitebar');
   if (!root && !bar) return;
   var base = (root || bar).dataset.base || '/';
@@ -26,23 +28,36 @@
   function contentUrl(path) {
     return base + site.content + '/' + path.split('/').map(encodeURIComponent).join('/');
   }
-  // A Markdown file's site path: its repository path without `.md`, as the build names it.
-  function docRoute(path) {
-    if (path === 'README.md') return '';
-    var slash = path.lastIndexOf('/');
-    if (path.slice(slash + 1).toLowerCase() === 'readme.md') return path.slice(0, slash + 1);
-    return (/\.md$/.test(path) ? path.slice(0, -3) : path) + '/';
+
+  function inProjects(path) {
+    return !!site.projectsDir && path.indexOf(site.projectsDir + '/') === 0;
   }
-  function projectFor(path) {
-    for (var i = 0; i < site.projects.length; i++) if (site.projects[i].path === path) return site.projects[i];
+  // The build gives every document and project file its route in site.json, so a
+  // file and a folder of the same name never share one.
+  function routeFor(path) {
+    if (path === site.readme) return base + 'docs/';
+    if (path === site.projectsReadme) return base + 'projects/';
+    var route = null;
+    site.docs.forEach(function (d) { if (d.path === path) route = d.route; });
+    site.projects.forEach(function (p) {
+      if (p.path === path) route = 'projects/' + p.name + '/';
+      p.files.forEach(function (f) { if (f.path === path) route = f.route; });
+    });
+    return route == null ? repoUrl('blob', path) : base + route;
+  }
+
+  function folderOf(project) { return project.path.slice(0, project.path.lastIndexOf('/') + 1); }
+  function projectNamed(name) {
+    for (var i = 0; i < site.projects.length; i++) if (site.projects[i].name === name) return site.projects[i];
     return null;
   }
-  function routeFor(path) {
-    var project = projectFor(path);
-    if (project) return base + 'projects/' + project.name + '/';
-    if (path === site.readme) return base;
-    if (path === site.projectsReadme) return base + 'projects/';
-    return base + docRoute(path);
+  // The deepest project whose folder holds the file.
+  function ownerOf(path) {
+    var best = null;
+    site.projects.forEach(function (p) {
+      if (path.indexOf(folderOf(p)) === 0 && (!best || p.name.length > best.name.length)) best = p;
+    });
+    return best;
   }
 
   // A path relative to the document at `from`, resolved to a repository path.
@@ -98,10 +113,10 @@
   }
 
   function nav(active) {
-    var items = [[base, 'Home', 'home']];
-    if (site.projects.length) items.push([base + 'projects/', 'Projects', 'projects']);
-    if (site.walkthroughs.length) items.push([base + 'prs/', 'PRs', 'prs']);
-    site.docs.forEach(function (doc) { items.push([routeFor(doc.path), doc.title, doc.path]); });
+    var items = [];
+    if (site.projects.length) items.push([base, 'Projects', 'projects']);
+    if (site.reviews.length) items.push([base + 'reviews/', 'Reviews', 'reviews']);
+    if (site.readme || site.docs.length) items.push([base + 'docs/', 'Docs', 'docs']);
     return items.map(function (item) {
       return '<a href="' + esc(item[0]) + '"' + (item[2] === active ? ' class="active" aria-current="page"' : '') + '>' + esc(item[1]) + '</a>';
     }).join('');
@@ -114,17 +129,51 @@
       '<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form></header>';
   }
 
-  function frame(active, title, body) {
+  // Draw the page around `body`, with `side` as a sidebar when given, and return
+  // the element the body went into.
+  function frame(active, title, body, side) {
     document.title = title ? title + ' · ' + site.repo : site.repo;
     root.innerHTML =
       header(active) +
-      '<main class="sitemain" id="sitemain"></main>' +
+      '<main class="sitemain' + (side ? ' withside' : '') + '">' +
+      (side ? '<nav class="side" aria-label="Section">' + side + '</nav>' : '') +
+      '<div class="sidebody" id="sidebody"></div></main>' +
       '<footer class="sitefoot">Built by <a href="https://github.com/ninjudd/projector">Projector</a> from ' +
       '<a href="' + esc(repoUrl()) + '">' + esc(site.repo) + '</a>.</footer>';
-    var main = document.getElementById('sitemain');
+    var main = document.getElementById('sidebody');
     if (typeof body === 'string') main.innerHTML = body;
     else main.appendChild(body);
     return main;
+  }
+
+  // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
+  // heading. A folder holding a readme is labelled by it; any other folder by its name.
+  function tree(items, prefix, top, current) {
+    var rootNode = { dirs: {}, files: [] };
+    items.forEach(function (item) {
+      var parts = item.path.slice(prefix.length).split('/');
+      var node = rootNode;
+      for (var i = 0; i < parts.length - 1; i++) {
+        node = node.dirs[parts[i]] = node.dirs[parts[i]] || { dirs: {}, files: [], index: null };
+      }
+      if (node !== rootNode && /^readme\.md$/i.test(parts[parts.length - 1])) node.index = item;
+      else node.files.push(item);
+    });
+    function link(item) {
+      return '<a href="' + esc(routeFor(item.path)) + '"' +
+        (item.path === current ? ' class="active" aria-current="page"' : '') + '>' + esc(item.title) + '</a>';
+    }
+    function render(node) {
+      var files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+        .map(function (f) { return '<li>' + link(f) + '</li>'; });
+      var dirs = Object.keys(node.dirs).sort().map(function (name) {
+        var dir = node.dirs[name];
+        return '<li>' + (dir.index ? link(dir.index) : '<span class="sidedir">' + esc(name) + '</span>') + render(dir) + '</li>';
+      });
+      var all = files.concat(dirs);
+      return all.length ? '<ul>' + all.join('') + '</ul>' : '';
+    }
+    return (top ? '<div class="sidetop">' + link(top) + '</div>' : '') + render(rootNode);
   }
 
   function loadMarkdown(path) {
@@ -134,21 +183,26 @@
     });
   }
 
-  function showDocument(active, path, title, before) {
-    frame(active, title, '<p class="note">Loading…</p>');
+  function showDocument(active, path, title, before, side) {
+    frame(active, title, '<p class="note">Loading…</p>', side);
     loadMarkdown(path).then(function (text) {
-      var main = frame(active, title, renderMarkdown(text, path));
+      var main = frame(active, title, renderMarkdown(text, path), side);
       if (before) main.insertBefore(before, main.firstChild);
       var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
       if (target) target.scrollIntoView();
     }, function (error) {
-      frame(active, title, '<p class="note">Could not load ' + esc(path) + ': ' + esc(error.message) + '</p>');
+      frame(active, title, '<p class="note">Could not load ' + esc(path) + ': ' + esc(error.message) + '</p>', side);
     });
   }
 
-  function showHome() {
-    if (site.readme) return showDocument('home', site.readme, '');
-    frame('home', '', '<h1>' + esc(site.repo) + '</h1><p class="note">This repository has no README.md.</p>');
+  // The README, or any document under docs/, beside the docs tree.
+  function showDocs(path) {
+    var top = site.readme ? { path: site.readme, title: 'README' } : null;
+    var side = tree(site.docs, 'docs/', top, path);
+    if (!path) return frame('docs', 'Docs', '<h1>Docs</h1><p class="note">This repository has no README.md.</p>', side);
+    var doc = null;
+    site.docs.forEach(function (d) { if (d.path === path) doc = d; });
+    showDocument('docs', path, doc ? doc.title : 'README', null, side);
   }
 
   function depth(name) { return name.split('/').length - 1; }
@@ -170,8 +224,8 @@
         }).join('') + '</table></div></section>';
     }).join('');
     var main = frame('projects', 'Projects',
-      '<h1>Projects</h1><p class="note">' + site.projects.length + ' plans under <span class="mono">' + esc(site.projectsDir) + '</span>. ' +
-      'Status says how finished a plan is; priority says when it is scheduled.</p>' +
+      '<h1>Projects</h1><p class="note">' + site.projects.length + ' projects under <span class="mono">' + esc(site.projectsDir) + '</span>. ' +
+      'Status says how finished a project is; priority says when it is scheduled.</p>' +
       '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
     main.querySelector('.filter').addEventListener('input', function (event) {
       var q = event.target.value.toLowerCase();
@@ -188,62 +242,68 @@
     }
   }
 
-  function showProject(name) {
-    var project = null;
-    site.projects.forEach(function (p) { if (p.name === name) project = p; });
-    if (!project) return frame('projects', 'Not found', '<h1>No project named ' + esc(name) + '</h1><p><a href="' + esc(base + 'projects/') + '">All projects</a></p>');
-    var parents = [];
-    var parts = name.split('/');
-    for (var i = 1; i < parts.length; i++) {
-      var parentName = parts.slice(0, i).join('/');
-      site.projects.forEach(function (p) { if (p.name === parentName) parents.push(p); });
-    }
-    var children = site.projects.filter(function (p) { return p.name.indexOf(name + '/') === 0 && depth(p.name) === depth(name) + 1; });
+  // Any file of a project, its readme or a supplemental file, beside a sidebar of
+  // its top-level project's folder: every file, subdirectory, and nested project.
+  function showProjectFile(path) {
+    var project = ownerOf(path);
+    if (!project) return frame('projects', 'Not found', '<h1>Not found</h1><p><a href="' + esc(base) + '">All projects</a></p>');
+    var top = projectNamed(project.name.split('/')[0]) || project;
+    var prefix = folderOf(top);
+    var items = [];
+    site.projects.forEach(function (p) {
+      if (p === top || p.path.indexOf(prefix) !== 0) return;
+      items.push({ path: p.path, title: p.title });
+    });
+    site.projects.forEach(function (p) {
+      if (p.path.indexOf(prefix) === 0) p.files.forEach(function (f) { items.push(f); });
+    });
+    var side = tree(items, prefix, { path: top.path, title: top.title }, path);
+
+    var isReadme = path === project.path;
+    var file = null;
+    project.files.forEach(function (f) { if (f.path === path) file = f; });
+    var parts = project.name.split('/');
+    var crumbs = '<a href="' + esc(base) + '">Projects</a>' + parts.map(function (part, i) {
+      var name = parts.slice(0, i + 1).join('/');
+      var here = isReadme && i === parts.length - 1;
+      return ' / ' + (here ? '<span class="mono">' + esc(part) + '</span>' : '<a href="' + esc(base + 'projects/' + name + '/') + '">' + esc(part) + '</a>');
+    }).join('') + (isReadme ? '' : ' / <span class="mono">' + esc(path.split('/').pop()) + '</span>');
     var head = document.createElement('div');
     head.className = 'phead';
-    head.innerHTML =
-      '<div class="crumbs"><a href="' + esc(base + 'projects/') + '">Projects</a>' +
-      parents.map(function (p) { return ' / <a href="' + esc(base + 'projects/' + p.name + '/') + '">' + esc(p.name.split('/').pop()) + '</a>'; }).join('') +
-      ' / <span class="mono">' + esc(parts[parts.length - 1]) + '</span></div>' +
-      '<div class="pmeta">' + badge('status', project.status) + badge('priority', project.priority) +
-      (project.owner ? '<span class="note">Owner ' + esc(project.owner) + '</span>' : '') +
-      '<a class="note" href="' + esc(repoUrl('blob', project.path)) + '">View on GitHub</a></div>' +
-      (children.length ? '<div class="plist"><b>Nested projects</b> ' + children.map(function (c) {
-        return '<a href="' + esc(base + 'projects/' + c.name + '/') + '">' + esc(c.title) + '</a> ' + badge('status', c.status);
-      }).join(' · ') + '</div>' : '') +
-      (project.files.length ? '<div class="plist"><b>Supplemental files</b> ' + project.files.map(function (f) {
-        return '<a href="' + esc(routeFor(f)) + '">' + esc(f.split('/').pop()) + '</a>';
-      }).join(' · ') + '</div>' : '') +
-      (project.walkthroughs.length ? '<div class="plist"><b>Pull requests</b> ' + project.walkthroughs.map(function (n) {
-        var w = walkthroughFor(n);
-        return '<a href="' + esc(base + 'prs/' + n + '/') + '">#' + n + (w ? ' ' + esc(w.name || w.title) : '') + '</a>';
-      }).join(' · ') + '</div>' : '');
-    showDocument('projects', project.path, project.title, head);
+    head.innerHTML = '<div class="crumbs">' + crumbs + '</div>' +
+      (isReadme ? '<div class="pmeta">' + badge('status', project.status) + badge('priority', project.priority) +
+        (project.owner ? '<span class="note">Owner ' + esc(project.owner) + '</span>' : '') +
+        '<a class="note" href="' + esc(repoUrl('blob', project.path)) + '">View on GitHub</a></div>' +
+        (project.reviews.length ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
+          var r = reviewFor(n);
+          return '<a href="' + esc(base + 'reviews/' + n + '/') + '">#' + n + (r ? ' ' + esc(r.name || r.title) : '') + '</a>';
+        }).join(' · ') + '</div>' : '')
+        : '<div class="pmeta"><a class="note" href="' + esc(repoUrl('blob', path)) + '">View on GitHub</a></div>');
+    showDocument('projects', path, isReadme ? project.title : (file ? file.title : path.split('/').pop()), head, side);
   }
 
-  function walkthroughFor(number) {
-    for (var i = 0; i < site.walkthroughs.length; i++) if (site.walkthroughs[i].number === number) return site.walkthroughs[i];
+  function reviewFor(number) {
+    for (var i = 0; i < site.reviews.length; i++) if (site.reviews[i].number === number) return site.reviews[i];
     return null;
   }
 
   function projectLinks(names) {
     return names.map(function (name) {
-      var project = null;
-      site.projects.forEach(function (p) { if (p.name === name) project = p; });
+      var project = projectNamed(name);
       return '<a href="' + esc(base + 'projects/' + name + '/') + '">' + esc(project ? project.title : name) + '</a>';
     }).join('<br>');
   }
 
-  function showPrs() {
-    frame('prs', 'Pull request walkthroughs',
-      '<h1>Pull request walkthroughs</h1>' +
-      '<div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Plans</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
-      site.walkthroughs.map(function (w) {
-        var url = esc(base + 'prs/' + w.number + '/');
-        return '<tr><td><a href="' + url + '">#' + w.number + '</a></td><td><a href="' + url + '">' + esc(w.name || w.title) + '</a>' +
-          '<div class="note">' + esc(w.title) + '</div></td><td>' + projectLinks(w.projects || []) + '</td>' +
-          '<td class="mono">' + esc(String(w.head).slice(0, 9)) + '</td>' +
-          '<td>' + w.heads + '</td><td>' + esc(w.updated) + '</td></tr>';
+  function showReviews() {
+    frame('reviews', 'Reviews',
+      '<h1>Reviews</h1>' +
+      '<div class="tblwrap"><table class="tbl"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
+      site.reviews.map(function (r) {
+        var url = esc(base + 'reviews/' + r.number + '/');
+        return '<tr><td><a href="' + url + '">#' + r.number + '</a></td><td><a href="' + url + '">' + esc(r.name || r.title) + '</a>' +
+          '<div class="note">' + esc(r.title) + '</div></td><td>' + projectLinks(r.projects || []) + '</td>' +
+          '<td class="mono">' + esc(String(r.head).slice(0, 9)) + '</td>' +
+          '<td>' + r.heads + '</td><td>' + esc(r.updated) + '</td></tr>';
       }).join('') + '</table></div>' +
       '<p class="note">Built by Projector\'s <span class="mono">walkthrough-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
   }
@@ -288,7 +348,7 @@
 
   function showSearch(query) {
     var main = frame('search', query ? 'Search: ' + query : 'Search',
-      '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the README, docs, and plans">' +
+      '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the projects and docs">' +
       '<ol class="results"></ol>');
     var input = main.querySelector('.filter');
     var list = main.querySelector('.results');
@@ -316,28 +376,25 @@
     var rel = path.indexOf(base) === 0 ? path.slice(base.length) : path.replace(/^\//, '');
     rel = decodeURIComponent(rel).replace(/index\.html$/, '').replace(/\/$/, '');
     window.scrollTo(0, 0);
-    if (!rel) return showHome();
+    // A repository with no projects opens on its docs instead.
+    if (!rel) return site.projects.length ? showProjects() : showDocs(site.readme);
     if (rel === 'projects') return showProjects();
-    if (rel.indexOf('projects/') === 0) return showProject(rel.slice('projects/'.length));
-    if (rel === 'prs') return showPrs();
+    if (rel === 'reviews') return showReviews();
+    if (rel === 'docs') return showDocs(site.readme);
     if (rel === 'search') return showSearch(new URLSearchParams(location.search).get('q') || '');
     var file = routes[rel + '/'];
-    if (file) {
-      var doc = null;
-      site.docs.forEach(function (d) { if (d.path === file) doc = d; });
-      return showDocument(doc ? file : 'projects', file, doc ? doc.title : file.split('/').pop());
-    }
+    if (file) return inProjects(file) ? showProjectFile(file) : showDocs(file);
     frame('', 'Not found', '<h1>Not found</h1><p><a href="' + esc(base) + '">Home</a></p>');
   }
 
-  // A link to another view of this site renders in place; a walkthrough page, an
-  // asset, or anything outside the site loads normally.
+  // A link to another view of this site renders in place; a review page, an asset,
+  // or anything outside the site loads normally.
   function inSite(a) {
     if (a.target || a.hasAttribute('download') || a.origin !== location.origin) return false;
     var path = a.pathname;
     if (path.indexOf(base) !== 0) return false;
     var rel = path.slice(base.length);
-    return !/^(prs\/\d|assets\/|content\/)/.test(rel) && !/\.[a-z0-9]+$/i.test(rel);
+    return !/^(reviews\/\d|assets\/|content\/)/.test(rel) && !/\.[a-z0-9]+$/i.test(rel);
   }
 
   document.addEventListener('click', function (event) {
@@ -367,16 +424,17 @@
     .then(function (data) {
       site = data;
       if (!root) {
-        bar.outerHTML = header('prs', 'scrolls');
+        bar.outerHTML = header('reviews', 'scrolls');
         return;
       }
       (site.files || []).forEach(function (f) { siteFiles[f] = true; });
       if (site.readme) markdownFiles[site.readme] = true;
       if (site.projectsReadme) markdownFiles[site.projectsReadme] = true;
-      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[docRoute(d.path)] = d.path; });
+      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[d.route] = d.path; });
       site.projects.forEach(function (p) {
         markdownFiles[p.path] = true;
-        p.files.forEach(function (f) { markdownFiles[f] = true; routes[docRoute(f)] = f; });
+        routes['projects/' + p.name + '/'] = p.path;
+        p.files.forEach(function (f) { markdownFiles[f.path] = true; routes[f.route] = f.path; });
       });
       window.addEventListener('popstate', route);
       route();

@@ -152,9 +152,10 @@ stored, the site deploy asks GitHub for nothing: it checks each spec against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any spec that still
 fails, or that names another repository, so one bad spec costs one
-walkthrough rather than the deployment. The site lists every walkthrough at
-`prs/`, serves each pull request's newest head at `prs/<number>/` and each
-head at `prs/<number>/<head>/`, and links the older heads from each page. The spec on the ref is the durable copy: to
+walkthrough rather than the deployment. The site's Reviews section lists
+every walkthrough at `reviews/`, serves each pull request's newest head at
+`reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
+older heads from each page. The spec on the ref is the durable copy: to
 update a walkthrough later, fetch it with
 `git fetch origin refs/projector/walkthroughs` and start from it rather than
 from a fresh `init`.

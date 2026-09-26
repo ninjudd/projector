@@ -222,7 +222,7 @@ def parser() -> argparse.ArgumentParser:
     site = subcommands.add_parser("site", help="build the Projector site a repository serves from GitHub Pages")
     site_commands = site.add_subparsers(dest="site_command", required=True)
     site_build = site_commands.add_parser(
-        "build", help="build the site from the README, docs, project plans, and published walkthroughs"
+        "build", help="build the site from the projects, the published reviews, and the docs"
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--walkthroughs", help="directory holding <number>/<head>/spec.json files")
@@ -248,7 +248,7 @@ def parser() -> argparse.ArgumentParser:
         "status", help="say whether a repository hosts the site, and print its URL if so"
     )
     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
-    site_status.add_argument("--pr", type=int, help="print the URL of this pull request's walkthrough")
+    site_status.add_argument("--pr", type=int, help="print the URL of this pull request's review")
     site_workflow = site_commands.add_parser(
         "workflow", help="print or write the workflow file for the default branch"
     )
@@ -490,8 +490,8 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         base=arguments.base,
     )
     print(
-        f"wrote {arguments.out}/index.html: {len(projects)} projects, {len(entries)} pull requests, "
-        f"{len(failures)} walkthroughs skipped"
+        f"wrote {arguments.out}/index.html: {len(projects)} projects, {len(entries)} reviews, "
+        f"{len(failures)} reviews skipped"
     )
     return 0
 
@@ -514,7 +514,7 @@ def run_site(arguments: argparse.Namespace) -> int:
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
-        print(f"{url}prs/{arguments.pr}/" if arguments.pr else url)
+        print(f"{url}reviews/{arguments.pr}/" if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
         projects_dir = configured_projects_dir(root)
