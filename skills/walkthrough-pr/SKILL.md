@@ -154,10 +154,10 @@ that data when it opens. The deploy reports and skips any spec that still
 fails, or that names another repository, so one bad spec costs one
 walkthrough rather than the deployment. The site lists every walkthrough at
 its root, serves each pull request's newest head at `/<number>/`, and links
-the older heads from each page. The spec on the ref is the durable copy: to update a
-walkthrough later, fetch it with
-`git fetch origin refs/projector/walkthroughs` and start from it rather
-than from a fresh `init`.
+the older heads from each page. The spec on the ref is the durable copy: to
+update a walkthrough later, fetch it with
+`git fetch origin refs/projector/walkthroughs` and start from it rather than
+from a fresh `init`.
 
 Setting a repository up is once, with admin rights. Enable Pages with the
 GitHub Actions source, then add the workflow to the default branch through a
