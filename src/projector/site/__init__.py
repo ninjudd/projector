@@ -8,7 +8,9 @@ the projects at the root and under projects/, every file of a project at its
 path inside the projects directory without `.md`; the reviews under
 reviews/<number>/<head>/, with the newest head also at reviews/<number>/; and
 the docs under docs/, the README at docs/ itself and every other document at
-its path without `.md`. GitHub Pages serves only files that exist, so each
+its path without `.md` or `.html`. An HTML page is shown as it is, in a frame
+inside the site, and the files beside it are copied too, so a page that loads
+its own data or a WebAssembly module works as it does from disk. GitHub Pages serves only files that exist, so each
 path gets a small shell page that loads the one shared copy of the assets and
 fetches its data.
 """
@@ -35,6 +37,8 @@ MARKED = "https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.13/lib/marked.umd.m
 PURIFY = "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.16/purify.min.js"
 CONTENT = "content"
 MAX_FILE_BYTES = 20 * 1024 * 1024
+PAGES = (".md", ".html")
+FIXED_ROUTES = ("", "projects/", "reviews/", "docs/", "search/")
 
 
 def escape(s: object) -> str:
@@ -162,7 +166,7 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tup
 
 
 def copy_content(repo_root: Path, path: Path, out: Path) -> str:
-    """Copy one Markdown file under out/content, returning its repository path."""
+    """Copy one file under out/content, returning its repository path."""
     relative = path.relative_to(repo_root).as_posix()
     target = out / CONTENT / relative
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -170,17 +174,42 @@ def copy_content(repo_root: Path, path: Path, out: Path) -> str:
     return relative
 
 
+def is_page(path: Path) -> bool:
+    return path.suffix.lower() in PAGES
+
+
+def page_title(path: Path) -> str:
+    """A Markdown file's first heading, or an HTML page's <title>; else its name."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    fallback = path.parent.name if path.stem.lower() == "index" else path.stem
+    if path.suffix.lower() == ".md":
+        return title_from_text(text, fallback)
+    match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.S | re.I)
+    title = re.sub(r"\s+", " ", html.unescape(match.group(1))).strip() if match else ""
+    return title or fallback
+
+
+def hidden(repo_root: Path, path: Path) -> bool:
+    return any(part.startswith(".") for part in path.relative_to(repo_root).parts)
+
+
+def pages_under(repo_root: Path, folder: Path) -> list[Path]:
+    """Every Markdown file and HTML page under `folder`, outside hidden directories."""
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.rglob("*") if p.is_file() and is_page(p) and not hidden(repo_root, p))
+
+
 def collect_docs(repo_root: Path, projects_dir: Path | None, out: Path) -> tuple[str | None, list[dict]]:
-    """Copy the README and every Markdown file under docs/ outside the projects."""
+    """Copy the README and every Markdown file and HTML page under docs/ outside the projects."""
     readme = repo_root / "README.md"
     readme_path = copy_content(repo_root, readme, out) if readme.is_file() else None
     docs = []
-    docs_dir = repo_root / "docs"
-    for path in sorted(docs_dir.rglob("*.md")) if docs_dir.is_dir() else []:
+    for path in pages_under(repo_root, repo_root / "docs"):
         if projects_dir is not None and path.is_relative_to(projects_dir):
             continue
         relative = copy_content(repo_root, path, out)
-        docs.append({"path": relative, "title": title_from_text(path.read_text(encoding="utf-8"), path.stem)})
+        docs.append({"path": relative, "title": page_title(path)})
     return readme_path, docs
 
 
@@ -190,12 +219,11 @@ def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Pat
         return []
     owners = {project.path.parent: project.name for project in projects}
     extras: dict[str, list[dict]] = {}
-    for path in sorted(projects_dir.rglob("*.md")):
+    for path in pages_under(repo_root, projects_dir):
         relative = copy_content(repo_root, path, out)
         owner = next((owners[d] for d in (path.parent, *path.parent.parents) if d in owners), None)
         if owner is not None and path.name != "readme.md":
-            title = title_from_text(path.read_text(encoding="utf-8"), path.stem)
-            extras.setdefault(owner, []).append({"path": relative, "title": title})
+            extras.setdefault(owner, []).append({"path": relative, "title": page_title(path)})
     described = []
     for project in projects:
         entry = project.public(repo_root)
@@ -204,13 +232,16 @@ def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Pat
     return described
 
 
-def collect_files(repo_root: Path, out: Path) -> list[str]:
-    """Copy every non-Markdown file under docs/, such as images, beside the Markdown."""
-    docs_dir = repo_root / "docs"
+def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list[str]:
+    """Copy every other file under docs/ and the projects directory beside the pages:
+    images, and the data, scripts, and WebAssembly modules an HTML page loads."""
+    folders = [repo_root / "docs"]
+    if projects_dir is not None and not projects_dir.is_relative_to(folders[0]):
+        folders.append(projects_dir)
     copied = []
-    for path in sorted(docs_dir.rglob("*")) if docs_dir.is_dir() else []:
+    for path in sorted(p for folder in folders if folder.is_dir() for p in folder.rglob("*")):
         relative = path.relative_to(repo_root).as_posix()
-        if not path.is_file() or path.suffix.lower() == ".md" or any(p.startswith(".") for p in relative.split("/")):
+        if not path.is_file() or is_page(path) or hidden(repo_root, path):
             continue
         if path.stat().st_size > MAX_FILE_BYTES:
             print(f"::warning title=File skipped::{relative} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB")
@@ -236,6 +267,13 @@ def project_linker(described: list[dict], base: str):
     return link
 
 
+def html_text(page: str) -> str:
+    """The visible words of an HTML page, for search: no scripts, styles, or tags."""
+    text = re.sub(r"<(script|style|template)\b.*?</\1\s*>", " ", page, flags=re.S | re.I)
+    text = re.sub(r"<!--.*?-->|<[^>]+>", " ", text, flags=re.S)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()[:20000]
+
+
 def plain_text(markdown: str) -> str:
     """The words of a Markdown document, for search: no frontmatter, markup, or link targets."""
     text = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", markdown, flags=re.S)
@@ -250,7 +288,8 @@ def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects
     entries = []
 
     def add(path: str, route: str, title: str, kind: str) -> None:
-        text = plain_text((repo_root / path).read_text(encoding="utf-8"))
+        text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+        text = html_text(text) if path.lower().endswith(".html") else plain_text(text)
         entries.append({"route": route, "title": title, "kind": kind, "text": text})
 
     if readme:
@@ -267,11 +306,13 @@ def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects
 
 
 def local_route(path: str) -> str:
-    """The route of a Markdown file under a section: its path without `.md`, a readme at its folder."""
+    """The route of a page under a section: its path without `.md` or `.html`, and a
+    readme or an index.html at its folder."""
     folder, _, name = path.rpartition("/")
-    if name.lower() == "readme.md":
+    if name.lower() in ("readme.md", "index.html"):
         return f"{folder}/" if folder else ""
-    return f"{path[:-3]}/" if path.endswith(".md") else f"{path}/"
+    stem, dot, suffix = path.rpartition(".")
+    return f"{stem}/" if dot and f".{suffix.lower()}" in PAGES else f"{path}/"
 
 
 def doc_route(path: str) -> str:
@@ -292,18 +333,25 @@ def project_route(path: str, project: dict) -> str:
 def assign_routes(docs: list[dict], projects: list[dict]) -> None:
     """Give every document and project file a route of its own, as its `route`.
 
-    A file and a folder of the same name would share a route: notes.md and
-    notes/readme.md both want notes/, and in a project the folder may be a
-    nested project. The folder keeps the plain route, since a readme is what a
-    folder's path means, and the file keeps its `.md` so it stays reachable.
+    Two pages can want one route: notes.md and notes/readme.md both want
+    notes/, a project's folder may be a nested project, and an index.html
+    wants its folder's route as a readme does. A readme claims first, since a
+    readme is what a folder's path means, then an index.html. A page that
+    finds its route taken keeps its whole file name, notes.md/, so it stays
+    reachable; an index.html keeps index/ instead, since index.html/ would be
+    a folder beside the shell page the folder's own route already wrote.
     """
-    taken = {f"projects/{p['name']}/" for p in projects}
-    entries = [(doc, doc_route(doc["path"])) for doc in docs]
-    entries += [(file, project_route(file["path"], p)) for p in projects for file in p["files"]]
-    entries.sort(key=lambda e: e[0]["path"].rpartition("/")[2].lower() != "readme.md")
-    for entry, route in entries:
+    taken = set(FIXED_ROUTES) | {f"projects/{p['name']}/" for p in projects}
+    entries = [(doc, doc_route(doc["path"]), doc["path"]) for doc in docs]
+    for p in projects:
+        folder = p["path"].rpartition("/")[0]
+        for file in p["files"]:
+            entries.append((file, project_route(file["path"], p), f"projects/{p['name']}/{file['path'][len(folder) + 1:]}"))
+    claim = {"readme.md": 0, "index.html": 1}
+    entries.sort(key=lambda e: claim.get(e[0]["path"].rpartition("/")[2].lower(), 2))
+    for entry, route, whole in entries:
         if route in taken:
-            route = route[:-1] + ".md/"
+            route = f"{whole[:-5]}/" if whole.lower().endswith("/index.html") else f"{whole}/"
         taken.add(route)
         entry["route"] = route
 
@@ -328,7 +376,7 @@ def home_page(repo: str, base: str) -> str:
 
 def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
     """Every path the home page's script renders, each of which needs a shell."""
-    routes = {"", "projects/", "reviews/", "docs/", "search/"}
+    routes = set(FIXED_ROUTES)
     routes.update(doc["route"] for doc in docs)
     for project in projects:
         routes.add(f"projects/{project['name']}/")
@@ -348,7 +396,7 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
         (out / "assets" / asset).write_bytes((ASSETS / asset).read_bytes())
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
-    files = collect_files(repo_root, out) if repo_root else []
+    files = collect_files(repo_root, projects_dir, out) if repo_root else []
     assign_routes(docs, described)
     link = project_linker(described, base)
     built = build_walkthroughs(walkthroughs, out, base, link) if walkthroughs and walkthroughs.is_dir() else ([], [])

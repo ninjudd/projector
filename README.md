@@ -114,7 +114,10 @@ Projector keeps in the repository itself. Its menu has three sections:
 **Projects**, the home page, lists the projects under `docs/projects`;
 **Reviews** lists the pull request walkthroughs the `walkthrough-pr` skill
 publishes; and **Docs** renders `README.md` beside a sidebar of every other
-Markdown document under `docs/`. Walkthroughs sit
+document under `docs/`. A document is Markdown, which the site renders, or an
+HTML page, which it shows as it is inside the site, with the files beside it,
+so an interactive explorer or a WebAssembly playground works there as it does
+from disk. Walkthroughs sit
 on hidden refs such as `refs/projector/walkthroughs`, which are not branches,
 so publishing one adds no branch, no pull request banner, and nothing to
 anyone's clone. One workflow on the default branch builds and deploys the
@@ -175,6 +178,25 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
    `@v0.5.0`, or a full commit SHA, to change only when you choose.
+
+   A page the repository generates rather than commits, such as an HTML
+   explorer or a WebAssembly module a playground loads, needs building before
+   the site. Set up its toolchain in steps before the action, and pass the
+   command that builds it as `prepare`, which the action runs in its own
+   checkout just before building the site. Add the generator's inputs to the
+   push `paths` so a change to them redeploys:
+
+   ```yaml
+       steps:
+         - uses: actions/checkout@v4
+         - uses: actions/setup-go@v5
+           with:
+             go-version-file: go.mod
+         - id: site
+           uses: ninjudd/projector/actions/site@v0
+           with:
+             prepare: make docs-wasm
+   ```
 
 4. Publish something. Once the workflow is on the default branch, the
    `walkthrough-pr` skill publishes to the site by default: ask your agent

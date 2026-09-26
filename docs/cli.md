@@ -384,18 +384,30 @@ when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
-beside a sidebar of every other Markdown file under `docs/`, leaving out the
+beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. A repository with no projects opens
-on Docs instead. The build copies those files under `content/` and describes
-them in `site.json`, and the page renders them in the browser. Every view has
-its own path: `projects/<name>/` for a project and `projects/<name>/<file>/`
-for each of its files, at its path inside the project without `.md`;
-`reviews/`, `reviews/<number>/` and `reviews/<number>/<head>/` for
-walkthroughs; and `docs/` for the README and `docs/<path>/` for each document
-at its repository path without `.md`. A `README.md` at the top of `docs/`
-moves to `docs/readme/`, since the repository README holds `docs/`. A file
-named like a folder beside it, such as `notes.md` next to `notes/`, keeps its
-`.md` in its path, `notes.md/`, because the folder takes `notes/`.
+on Docs instead. A document, in Docs or in a project, is a Markdown file or an
+HTML page. The build copies those files under `content/` and describes them in
+`site.json`; the page renders Markdown in the browser and shows an HTML page
+as it is, titled by its `<title>`, in a frame the width of the window with the
+sidebar collapsed behind a toggle. The frame loads the page's copy under
+`content/`, beside a copy of every other file under `docs/` and the projects
+directory, so the data, scripts, and WebAssembly modules the page loads by
+relative path resolve there. The address's hash passes into the frame and
+follows it back out, so a deep link into a hash-routed page works. HTML is
+served as the repository wrote it, unlike Markdown, which the page sanitizes,
+so it carries the same trust as code merged to the default branch. Every view
+has its own path: `projects/<name>/` for a project and
+`projects/<name>/<file>/` for each of its files, at its path inside the
+project without `.md` or `.html`; `reviews/`, `reviews/<number>/` and
+`reviews/<number>/<head>/` for walkthroughs; and `docs/` for the README and
+`docs/<path>/` for each document at its repository path without `.md` or
+`.html`. An `index.html` takes its folder's path when no readme does. A
+`README.md` at the top of `docs/` moves to `docs/readme/`, since the
+repository README holds `docs/`. A file named like a folder beside it, such as
+`notes.md` next to `notes/`, keeps its whole name in its path, `notes.md/`,
+because the folder takes `notes/`; an `index.html` beside a readme moves to
+`index/`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects
@@ -412,7 +424,10 @@ whether it is. For walkthroughs it builds every
 `<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
-its data so it opens from disk.
+its data so it opens from disk. The action's `prepare` input names a shell
+command it runs in its checkout just before the build, for pages or files the
+repository generates rather than commits; set up the command's toolchain in
+steps before the action.
 
 `site serve` builds the site from a checkout, as `site build` does, into a
 temporary directory and serves it over HTTP until you press Ctrl-C, or it
