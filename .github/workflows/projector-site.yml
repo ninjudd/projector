@@ -1,7 +1,7 @@
 name: Projector site
 on:
   repository_dispatch:
-    types: [projector-walkthroughs]
+    types: [projector-summaries]
   push:
     branches: [main]
     # Rebuild when the action or the site code changes too, since this site

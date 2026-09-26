@@ -1,9 +1,9 @@
-"""Pull request walkthrough specs: the data a walkthrough page is built from.
+"""Pull request summary specs: the data a summary page is built from.
 
 A spec records a pull request's merge base and head and assigns every changed
 file to a group with its explanation and checks. This module writes skeleton
 specs, checks a spec against its diff, publishes specs to the hidden ref
-refs/projector/walkthroughs, and says whether a repository hosts a site that
+refs/projector/summaries, and says whether a repository hosts a site that
 serves them. Rendering specs into pages is `projector.site`'s job.
 """
 
@@ -23,12 +23,19 @@ from pathlib import Path
 from .core import ProjectorError
 
 SPEC_VERSION = 1
-PAGES_REF = "refs/projector/walkthroughs"
-DISPATCH_EVENT = "projector-walkthroughs"
-PAGES_ROOT = "walkthroughs"
+PAGES_REF = "refs/projector/summaries"
+DISPATCH_EVENT = "projector-summaries"
+PAGES_ROOT = "summaries"
 DIFF_FILE = "diff.patch"
 WORKFLOW_PATH = ".github/workflows/projector-site.yml"
 LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
+# The names summaries were published under when they were called walkthroughs.
+# A repository that published under them keeps its specs on the old ref, under
+# the old root, until its next publish seeds the new ref from them, and its
+# site workflow may still listen for the old event.
+LEGACY_PAGES_REF = "refs/projector/walkthroughs"
+LEGACY_PAGES_ROOT = "walkthroughs"
+LEGACY_DISPATCH_EVENT = "projector-walkthroughs"
 
 LANGS = {
     ".go": "go", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
@@ -306,10 +313,10 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
 
 
 def hosting(repo: str) -> tuple[str | None, str]:
-    """Return the repository's walkthroughs site URL, or None and why it is not set up.
+    """Return the URL of the repository's site for summaries, or None and why it is not set up.
 
     Both halves are required. The workflow on the default branch is the reviewed
-    decision to host walkthroughs; a Pages site alone may serve something else.
+    decision to host summaries; a Pages site alone may serve something else.
     """
     if not any(gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None
                for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS)):
@@ -550,7 +557,7 @@ def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, ext
         except SpecError as exc:
             if diff is None:
                 raise
-            print(f"walkthrough: could not check whether the PR moved past {pr['head'][:9]} ({exc}); building from the given diff", file=sys.stderr)
+            print(f"summary: could not check whether the PR moved past {pr['head'][:9]} ({exc}); building from the given diff", file=sys.stderr)
         else:
             if live["head"] != pr["head"]:
                 raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
@@ -560,7 +567,7 @@ def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, ext
     validate(spec, files)
     overview, groups = sanitized(spec)
     payload = {
-        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} walkthrough",
+        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
         "pr": pr,
         "overview": overview,
         "groups": groups,
@@ -572,7 +579,7 @@ def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, ext
     return payload
 
 
-# Publishing to the walkthroughs branch
+# Publishing to the summaries ref
 
 def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
     try:
@@ -592,8 +599,46 @@ def repo_slug(remote_url: str) -> str:
     return url[:-4] if url.endswith(".git") else url
 
 
+def tracking_ref(remote: str, ref: str) -> str:
+    """Where this checkout keeps its copy of the remote's `ref`."""
+    return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
+
+
+def fetch_ref(remote: str, ref: str) -> str:
+    """Fetch the remote's `ref` into its tracking ref; return its commit, or '' when the fetch fails."""
+    local = tracking_ref(remote, ref)
+    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
+    return git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
+
+
+def seed_from_legacy(remote: str) -> str:
+    """A first commit for the summaries ref that carries the old walkthroughs ref's specs, or ''.
+
+    The commit's tree is the old ref's walkthroughs/ folder placed at
+    summaries/, and its parent is the old ref's head, so the specs keep the
+    history the site dates them by. Nothing is pushed here; the publish that
+    asked for the seed pushes it with its own spec on top. The old ref stays
+    on the remote, and the repository can delete it once the new ref exists.
+    """
+    old = fetch_ref(remote, LEGACY_PAGES_REF)
+    if not old:
+        return ""
+    try:
+        specs = git("rev-parse", "--verify", "--quiet", f"{old}:{LEGACY_PAGES_ROOT}")
+    except SpecError:
+        return ""
+    tree = git("mktree", input=f"040000 tree {specs}\t{PAGES_ROOT}\n")
+    return git("commit-tree", tree, "-p", old, "-m",
+               f"Carry the published specs over from {LEGACY_PAGES_REF} to {PAGES_REF}")
+
+
 def dispatch(repo: str) -> None:
     gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={DISPATCH_EVENT}")
+    # A site workflow generated before the rename listens only for the old
+    # event, so send it too; a workflow generated since listens only for the
+    # new one, so an updated repository still builds once. A later release
+    # stops sending the old event.
+    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}")
 
 
 def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
@@ -607,9 +652,12 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
         raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
     diff = diff_path.read_text(encoding="utf-8") if diff_path else spec_diff(spec)
     prepare_page(spec, diff=diff, at_head=True)
-    local = ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
-    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
-    parent = git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
+    local = tracking_ref(remote, ref)
+    parent = fetch_ref(remote, ref)
+    seeded = False
+    if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+        parent = seed_from_legacy(remote)
+        seeded = bool(parent)
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
         if parent:
@@ -620,16 +668,24 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
         tree = git("write-tree", env=env)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-        print(f"{ref} already has this spec; nothing to publish")
-        return None
-    message = f"Publish the walkthrough of #{pr['number']} at {pr['head'][:9]}"
-    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        if not seeded:
+            print(f"{ref} already has this spec; nothing to publish")
+            return None
+        # The old ref already had this spec, but the new ref still needs creating.
+        commit = parent
+    else:
+        message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
     git("push", "--quiet", remote, f"{commit}:{ref}")
     git("update-ref", local, commit)
     print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/spec.json and {DIFF_FILE}")
+    if seeded:
+        print(f"carried the specs on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
+              "once every site reads the new ref")
     if send_dispatch:
         dispatch(pr["repo"])
-        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its Projector site workflow builds and deploys the site")
+        print(f"sent {DISPATCH_EVENT} and {LEGACY_DISPATCH_EVENT} to {pr['repo']}; its Projector site workflow "
+              "builds and deploys the site")
     return commit
 
 

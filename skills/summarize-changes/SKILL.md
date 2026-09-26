@@ -1,15 +1,15 @@
 ---
-name: walkthrough-pr
-description: Build a guided, grouped walkthrough page for reviewing a large GitHub pull request, with each logical change explained, a checklist per group, and every hunk syntax-highlighted in reading order. Use when the user asks for help walking through, understanding, or reviewing a big PR diff.
+name: summarize-changes
+description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, a checklist per group, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
 ---
 
-# Pull Request Walkthrough
+# Summarize a pull request's changes
 
-Turn a pull request into one page a reviewer reads top to bottom: the diff
-split into logical groups in reading order, each group opened by what it
-does and why, what to hold in mind, and a checklist, followed by that
-group's files with every hunk. This skill writes the page's data, a
-walkthrough spec. The Projector CLI renders it and the repository's Projector
+Summarize a pull request's changes as one guided page a reviewer reads top
+to bottom: the diff split into logical groups in reading order, each group
+opened by what it does and why, what to hold in mind, and a checklist,
+followed by that group's files with every hunk. This skill writes the page's
+data, a summary spec. The Projector CLI renders it and the repository's Projector
 site serves it, so your job is the judgment: the grouping, the explanations,
 and the checks. Every command below is the `project` CLI that ships beside
 this skill; install it as Projector's README describes when `project` is
@@ -28,8 +28,8 @@ push to, or approve the pull request unless the user asks.
    changed file with its line counts:
 
    ```sh
-   project walkthrough init \
-     --repo OWNER/NAME --pr NUMBER --spec WORKDIR/walkthrough.json
+   project summary init \
+     --repo OWNER/NAME --pr NUMBER --spec WORKDIR/summary.json
    ```
 
    Keep `WORKDIR` somewhere you can reach again this session, and put it in
@@ -63,7 +63,7 @@ push to, or approve the pull request unless the user asks.
 ## Build the page
 
 ```sh
-project site page --spec WORKDIR/walkthrough.json --out WORKDIR/site
+project site page --spec WORKDIR/summary.json --out WORKDIR/site
 ```
 
 `page` fetches the diff from GitHub's compare API for the spec's merge base
@@ -85,21 +85,21 @@ browser.
 
 ## Publish the page
 
-Publish to the repository's own site when it hosts walkthroughs, and to a
+Publish to the repository's own site when it hosts summaries, and to a
 Claude Artifact otherwise. Ask which applies:
 
 ```sh
 project site status --repo OWNER/NAME --pr NUMBER
 ```
 
-- **Exit 0** prints the walkthrough's URL. The repository is set up: it has
+- **Exit 0** prints the summary's URL. The repository is set up: it has
   the Projector site workflow on its default branch and a Pages site. Setting
-  that up was the reviewed decision to host walkthroughs there, so publish to
+  that up was the reviewed decision to host summaries there, so publish to
   the site as the next section describes without asking again, and hand over
   the printed URL.
 - **Exit 3** prints why the repository is not set up. Publish an Artifact,
   and tell the user in one sentence that the repository can host its own
-  walkthroughs, pointing at the "Set up the Projector site" section of
+  summaries, pointing at the "Set up the Projector site" section of
   Projector's README.
 - **Any other exit** means the check itself failed, for example because
   `gh` could not reach GitHub. Publish an Artifact and say the hosting check
@@ -115,7 +115,7 @@ With Claude Artifacts, publish `index.html` and pass the two renderer files
 through `files`, so the page loads them by relative path:
 
 - `file_path`: `WORKDIR/site/index.html`
-- `files`: `{"walkthrough.js": "WORKDIR/site/walkthrough.js", "walkthrough.css": "WORKDIR/site/walkthrough.css"}`
+- `files`: `{"summary.js": "WORKDIR/site/summary.js", "summary.css": "WORKDIR/site/summary.css"}`
 - `icon`: `code` on the first publish
 - `description`: one sentence naming the pull request
 
@@ -129,20 +129,20 @@ Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
 
 ### Publish to the repository's GitHub Pages site
 
-A repository can host its own walkthroughs. Specs live on the hidden ref
-`refs/projector/walkthroughs`, which is not a branch: GitHub lists no branch
+A repository can host its own summaries. Specs live on the hidden ref
+`refs/projector/summaries`, which is not a branch: GitHub lists no branch
 and offers no pull request for it, and clones do not fetch it. A workflow on
 the default branch builds and deploys them with Projector's shared action.
 Publishing writes to that hidden ref, which a repository accepts by setting
 hosting up; do it when `status` exits 0 or the user asks.
 
 ```sh
-project walkthrough publish --spec WORKDIR/walkthrough.json
+project summary publish --spec WORKDIR/summary.json
 ```
 
 `publish` fetches the diff once, builds the spec against it, and refuses one
 that does not build. It then commits the spec and that diff to
-`walkthroughs/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
+`summaries/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
 starts the workflow. Pass `--diff` with the file you produced for a pull
 request too large for GitHub's compare API. It must be the diff from the
@@ -152,13 +152,16 @@ stored, the site deploy asks GitHub for nothing: it checks each spec against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any spec that still
 fails, or that names another repository, so one bad spec costs one
-walkthrough rather than the deployment. The site's Reviews section lists
-every walkthrough at `reviews/`, serves each pull request's newest head at
+summary rather than the deployment. The site's Reviews section lists
+every summary at `reviews/`, serves each pull request's newest head at
 `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
 older heads from each page. The spec on the ref is the durable copy: to
-update a walkthrough later, fetch it with
-`git fetch origin refs/projector/walkthroughs` and start from it rather than
-from a fresh `init`.
+update a summary later, fetch it with
+`git fetch origin refs/projector/summaries` and start from it rather than
+from a fresh `init`. A repository that has not published since summaries
+were called walkthroughs has its specs on `refs/projector/walkthroughs`,
+under `walkthroughs/`, instead; its next `publish` carries them over to the
+new ref.
 
 Setting a repository up is once, with admin rights, and only when the user
 asks for it. From a checkout whose `origin` is the repository, run:

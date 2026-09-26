@@ -419,39 +419,52 @@ when the released installer cannot be downloaded.
 A repository that sets up the Projector site serves it from GitHub Pages,
 built from content Projector keeps in the repository: its `README.md`, the
 Markdown documents under `docs/`, the project plans, and the pull request
-walkthroughs on the hidden ref `refs/projector/walkthroughs`. The
-`walkthrough-pr` skill writes a walkthrough's data, a spec, and these
+summaries on the hidden ref `refs/projector/summaries`. The
+`summarize-changes` skill writes a summary's data, a spec, and these
 commands do everything else:
 
 ```sh
-project walkthrough init --repo OWNER/NAME --pr 66 --spec walkthrough.json
-project walkthrough publish --spec walkthrough.json
-project site page --spec walkthrough.json --out site
-project site build --out _site --walkthroughs specs/walkthroughs
+project summary init --repo OWNER/NAME --pr 66 --spec summary.json
+project summary publish --spec summary.json
+project site page --spec summary.json --out site
+project site build --out _site --summaries specs/summaries
 project site serve --port 8000
 project site status --repo OWNER/NAME --pr 66
 project site workflow --write
 ```
 
-`walkthrough init` writes a skeleton spec with every changed file in one
-unassigned group. `walkthrough publish` fetches the pull request's diff, checks
+`summary init` writes a skeleton spec with every changed file in one
+unassigned group. `summary publish` fetches the pull request's diff, checks
 that the spec builds against it, commits the spec and the diff to the hidden
 ref without touching the checkout, and starts the repository's site workflow.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the spec's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
+It sends two `repository_dispatch` events, `projector-summaries` and
+`projector-walkthroughs`, because a site workflow written before summaries
+were renamed listens only for the second; a later release stops sending it.
 
-`site page` builds one walkthrough into a directory you can open from disk or
+A repository that published before the rename keeps its specs on
+`refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
+that ref but no `refs/projector/summaries`, `summary publish` first creates
+the new ref from it: a commit whose parent is the old ref's head and whose
+tree holds the old `walkthroughs/` folder as `summaries/`. It pushes that
+commit with the new spec on top and leaves the old ref in place; delete it
+with `git push origin :refs/projector/walkthroughs` once every site that
+reads it runs a release that reads the new ref. Until the new ref exists,
+`site serve` and the site action read the old one.
+
+`site page` builds one summary into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
 the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
 when GitHub cannot serve a diff that large.
 
 `site build` builds the whole site from a checkout, this repository unless
-`--repo-root` names another, and the walkthrough specs under `--walkthroughs`
+`--repo-root` names another, and the summary specs under `--summaries`
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
-project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
+project. **Reviews** lists the summaries. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list. A
@@ -471,7 +484,7 @@ scripts, so it carries the same trust as code merged to the default branch.
 Every view has its own path: `projects/<name>/` for a project and
 `projects/<name>/<file>/` for each of its files, at its path inside the
 project without `.md` or `.html`; `reviews/`, `reviews/<number>/` and
-`reviews/<number>/<head>/` for walkthroughs; and `docs/` for the README and
+`reviews/<number>/<head>/` for summaries; and `docs/` for the README and
 `docs/<path>/` for each document at its repository path without `.md` or
 `.html`. An `index.html` takes its folder's path when no readme does. A
 `README.md` at the top of `docs/` moves to `docs/readme/`, since the
@@ -491,7 +504,7 @@ A project that does not parse drops the Projects section with a warning
 rather than failing the build. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
-whether it is. For walkthroughs it builds every
+whether it is. For summaries it builds every
 `<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
@@ -535,13 +548,13 @@ any name. `--port 0` picks a free port and prints it. It runs an allowed
 `site.prepare`, or `--prepare`, before the first build and before each
 rebuild, and takes the sources' fingerprint after the command, so a file the
 command rewrites does not start another rebuild; `--no-prepare` skips it.
-Before building, it fetches the walkthroughs ref from `--remote`, `origin`
-by default, into the same `refs/projector/remotes/<remote>/walkthroughs`
-copy that `walkthrough publish` keeps. When the fetch fails it says why and
-serves the walkthroughs already fetched; `--no-fetch` skips the fetch, and
-`--walkthroughs` serves a directory of specs instead of the ref. While it
+Before building, it fetches the summaries ref from `--remote`, `origin`
+by default, into the same `refs/projector/remotes/<remote>/summaries`
+copy that `summary publish` keeps. When the fetch fails it says why and
+serves the summaries already fetched; `--no-fetch` skips the fetch, and
+`--summaries` serves a directory of specs instead of the ref. While it
 runs it checks `README.md`, `docs/`, a configured `projects.dir`, and the
-walkthroughs every second and rebuilds when any of them change;
+summaries every second and rebuilds when any of them change;
 `--no-watch` builds once. A path the build has no file for gets `404.html`
 with status 404, as GitHub Pages answers it. `--base` serves the site under
 a path, as `site build` builds it.
@@ -551,7 +564,7 @@ request's review URL, when the repository has the site workflow on its
 default branch and a GitHub Pages site. It exits 3 and says why when either is
 missing, or when a private repository's site is public. `site workflow`
 prints the workflow file a repository adds to its default branch once, or
-writes it with `--write`. The workflow runs when a walkthrough is published,
+writes it with `--write`. The workflow runs when a summary is published,
 when a push to the default branch changes `README.md`, `docs/`, or a
 configured `projects.dir` outside `docs/`, and on demand; `--branch` names
 the default branch when `origin` does not record it.

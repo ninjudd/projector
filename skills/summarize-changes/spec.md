@@ -1,12 +1,12 @@
-# Walkthrough spec
+# Summary spec
 
-`project walkthrough init` writes the skeleton and `project site page` reads
+`project summary init` writes the skeleton and `project site page` reads
 it. The spec is JSON:
 
 ```json
 {
   "version": 1,
-  "name": "Card Name Check Walkthrough",
+  "name": "Card Name Check Summary",
   "pr": {
     "repo": "owner/name",
     "number": 2062,
