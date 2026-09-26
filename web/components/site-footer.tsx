@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { DOCS, GITHUB } from "@/lib/links";
-import { cliVersion, pluginVersion } from "@/lib/versions";
+import { projectorVersion } from "@/lib/versions";
 import { Logo } from "./logo";
 
 function FooterLink({ href, children }: { href: string; children: ReactNode }) {
@@ -17,9 +17,7 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
 }
 
 export function SiteFooter() {
-  const cli = cliVersion();
-  const plugin = pluginVersion();
-  const versions = [cli && `CLI ${cli}`, plugin && `plugin ${plugin}`].filter(Boolean);
+  const version = projectorVersion();
 
   return (
     <footer className="border-t border-line">
@@ -30,9 +28,7 @@ export function SiteFooter() {
             Git-native project plans for people and coding agents. Open source under the MIT
             license.
           </p>
-          {versions.length > 0 ? (
-            <p className="mt-4 font-mono text-xs text-faint">{versions.join(" · ")}</p>
-          ) : null}
+          {version ? <p className="mt-4 font-mono text-xs text-faint">v{version}</p> : null}
         </div>
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-fg">Documentation</h3>

@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Set Projector's one version, or tag a release of it.
+
+    scripts/release.py set X.Y.Z   write the version to setup.cfg and both plugin manifests
+    scripts/release.py tag         tag vX.Y.Z at origin/main and move the vX major tag to it
+
+`set` is the bump a release pull request makes. `tag` runs after that pull
+request merges: it checks that origin/main carries the version, pushes the
+immutable vX.Y.Z tag, and force-moves the major tag that marketplaces and the
+walkthroughs action follow.
+"""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+
+class ReleaseError(Exception):
+    pass
+
+
+def parse(version: str) -> tuple[int, int, int]:
+    match = SEMVER.match(version)
+    if not match:
+        raise ReleaseError(f"{version!r} is not X.Y.Z")
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def versions(root: Path, read=lambda path: path.read_text()) -> dict[str, str]:
+    found = {}
+    config = configparser.ConfigParser()
+    config.read_string(read(root / "setup.cfg"))
+    found["setup.cfg"] = config["metadata"]["version"]
+    for manifest in MANIFESTS:
+        found[manifest] = json.loads(read(root / manifest))["version"]
+    return found
+
+
+def current(root: Path, read=lambda path: path.read_text()) -> str:
+    found = versions(root, read)
+    if len(set(found.values())) != 1:
+        raise ReleaseError("the version files disagree: " + ", ".join(f"{k}={v}" for k, v in found.items()))
+    return next(iter(found.values()))
+
+
+def set_version(root: Path, version: str) -> None:
+    if parse(version) <= parse(current(root)):
+        raise ReleaseError(f"{version} is not above the current version {current(root)}")
+    setup = root / "setup.cfg"
+    text, count = re.subn(r"(?m)^version\s*=.*$", f"version = {version}", setup.read_text(), count=1)
+    if count != 1:
+        raise ReleaseError("setup.cfg has no version line")
+    setup.write_text(text)
+    for manifest in MANIFESTS:
+        path = root / manifest
+        text, count = re.subn(r'("version":\s*")[^"]*(")', rf"\g<1>{version}\g<2>", path.read_text(), count=1)
+        if count != 1:
+            raise ReleaseError(f"{manifest} has no version field")
+        path.write_text(text)
+
+
+def git(root: Path, *args: str) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+
+
+def tag(root: Path, remote: str = "origin", branch: str = "main") -> str:
+    git(root, "fetch", "--quiet", "--tags", remote, branch)
+    ref = f"refs/remotes/{remote}/{branch}"
+    commit = git(root, "rev-parse", ref)
+    version = current(root, read=lambda path: git(root, "show", f"{commit}:{path.relative_to(root).as_posix()}"))
+    release, major = f"v{version}", f"v{parse(version)[0]}"
+    existing = git(root, "tag", "--list", release)
+    if existing:
+        raise ReleaseError(f"{release} already exists; set a new version first")
+    git(root, "tag", "-a", release, commit, "-m", f"Projector {version}")
+    git(root, "tag", "-f", "-a", major, commit, "-m", f"Projector {version}")
+    git(root, "push", "--quiet", remote, f"refs/tags/{release}")
+    git(root, "push", "--quiet", "--force", remote, f"refs/tags/{major}")
+    return f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
+
+
+def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("set", help="write a new version to every version file")
+    s.add_argument("version")
+    t = sub.add_parser("tag", help="tag the merged version and move the major tag")
+    t.add_argument("--remote", default="origin")
+    t.add_argument("--branch", default="main")
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "set":
+            set_version(root, args.version)
+            print(f"set {args.version} in setup.cfg and both plugin manifests")
+        else:
+            print(tag(root, args.remote, args.branch))
+    except ReleaseError as exc:
+        print(f"release: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

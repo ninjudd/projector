@@ -155,17 +155,11 @@ migration.
 
 ## Release an update
 
-Projector ships two artifacts and they carry separate versions. Bump the
-**plugin** version in both `.claude-plugin/plugin.json` and
-`.codex-plugin/plugin.json` when skills, scripts, or manifests change; a test
-asserts those two agree, because they describe one plugin to two hosts and a
-one-sided bump leaves the other on a stale cache entry. Bump the **CLI**
-version in `setup.cfg` when the CLI changes. The two need not match.
-
-Nothing depends on the CLI version being punctual. `./install.sh status`
-compares installed files against the checkout rather than version strings, so
-a release that forgets `setup.cfg` costs an inaccurate number and not a
-command that reports itself current while being behind.
+Projector has one version. `setup.cfg` names it for the CLI, and
+`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` name it for the
+plugin, and a packaging test fails when the three disagree. One number means
+one answer to "what am I running," and it lets a skill rely on the CLI that
+shipped beside it.
 
 The plugin version is what a release delivers: a host caches an installed
 plugin in a directory named by that string, so an update that finds an
@@ -176,20 +170,26 @@ Claude Code records the path it used, which you can read back:
 jq '.plugins["projector@projector"]' ~/.claude/plugins/installed_plugins.json
 ```
 
-The packaging tests assert both manifests declare the same version, because a
-one-sided bump updates one host and leaves the other on its stale cache entry.
-
-Tagging follows the bump rather than replacing it. `claude plugin tag` derives
-the tag name from the manifest, so it can only publish a version the manifest
-already declares, and it refuses a dirty working tree:
+Release in two steps. First, bump the version in a pull request. The script
+writes all three files and refuses a version that does not go up:
 
 ```sh
-claude plugin tag --dry-run .
-claude plugin tag . --push
+scripts/release.py set 0.6.0
 ```
 
-The tag is `projector--v<version>`, and the command validates that
-`plugin.json` and the enclosing marketplace entry agree before creating it.
+Second, once that pull request merges, tag the release from any checkout:
+
+```sh
+scripts/release.py tag
+```
+
+`tag` reads the version from `origin/main`, not from the checkout, so an
+unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag and
+force-moves the major tag, `v0`, to the same commit. The immutable tag names
+an exact release; the major tag is the channel that follows compatible
+releases, the convention GitHub's own actions use. A breaking change starts
+the next major tag. Under `0.x` a minor release may still break, so the `v0`
+channel promises less than a `v1` channel will.
 
 Update an installed copy with each host's own command, or run `./install.sh
 all` from a checkout, which runs these for every host it finds. Claude Code
