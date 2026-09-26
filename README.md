@@ -170,10 +170,13 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
    `@v0.5.0`, or a full commit SHA, to change only when you choose.
 
-4. Publish something. Ask your agent for a walkthrough of a pull request and
-   to publish it: the skill pushes the spec to the hidden ref and starts the
-   workflow. The site lists every walkthrough at its root and serves each
-   pull request's newest version at `/<number>/`.
+4. Publish something. Once the workflow is on the default branch, the
+   `walkthrough-pr` skill publishes to the site by default: ask your agent
+   for a walkthrough of a pull request and it pushes the spec to the hidden
+   ref, starts the workflow, and hands you the link. Ask for a Claude
+   Artifact instead when you want a private page. The site lists every
+   walkthrough at its root and serves each pull request's newest version at
+   `/<number>/`.
 
 ## Use the CLI
 

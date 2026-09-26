@@ -80,6 +80,32 @@ shared renderer, `walkthrough.js` and `walkthrough.css`. Opening
 
 ## Publish the page
 
+Publish to the repository's own site when it hosts walkthroughs, and to a
+Claude Artifact otherwise. Ask which applies:
+
+```sh
+python3 <skill-dir>/scripts/walkthrough.py status --repo OWNER/NAME --pr NUMBER
+```
+
+- **Exit 0** prints the walkthrough's URL. The repository is set up: it has
+  the walkthroughs workflow on its default branch and a Pages site. Setting
+  that up was the reviewed decision to host walkthroughs there, so publish to
+  the site as the next section describes without asking again, and hand over
+  the printed URL.
+- **Exit 3** prints why the repository is not set up. Publish an Artifact,
+  and tell the user in one sentence that the repository can host its own
+  walkthroughs, pointing at the "Set up Projector hosting" section of
+  Projector's README.
+- **Exit 1** means the check itself failed, for example because `gh` could
+  not reach GitHub. Publish an Artifact and say the hosting check did not
+  run.
+
+An explicit request wins either way. Publish an Artifact when the user asks
+for one or says not to publish, and publish to a site the user names even
+where `status` would have chosen otherwise.
+
+### Publish to a Claude Artifact
+
 With Claude Artifacts, publish `index.html` and pass the two renderer files
 through `files`, so the page loads them by relative path:
 
@@ -102,8 +128,8 @@ A repository can host its own walkthroughs. Specs live on the hidden ref
 `refs/projector/walkthroughs`, which is not a branch: GitHub lists no branch
 and offers no pull request for it, and clones do not fetch it. A workflow on
 the default branch builds and deploys them with Projector's shared action.
-Publishing writes to the repository, so do it only when the user asks or
-repository instructions say to.
+Publishing writes to that hidden ref, which a repository accepts by setting
+hosting up; do it when `status` exits 0 or the user asks.
 
 ```sh
 python3 <skill-dir>/scripts/walkthrough.py publish --spec WORKDIR/walkthrough.json
