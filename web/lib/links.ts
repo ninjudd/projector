@@ -6,12 +6,16 @@ export const DOCS = {
   index: `${GITHUB}/tree/main/docs`,
   cli: `${GITHUB}/blob/main/docs/cli.md`,
   plugins: `${GITHUB}/blob/main/docs/plugins.md`,
+  site: `${GITHUB}/blob/main/docs/site.md`,
   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
   reviewLoop: `${GITHUB}/blob/main/skills/start-review-loop/SKILL.md`,
   fixLoop: `${GITHUB}/blob/main/skills/start-fix-loop/SKILL.md`,
   issues: `${GITHUB}/issues`,
   license: `${GITHUB}/blob/main/LICENSE`,
 };
+
+// Projector's own Projector site, which its repository deploys from main.
+export const PROJECTOR_SITE = "https://ninjudd.com/projector/";
 
 // The example on the front page is a real project in ninjudd/trip.
 const TRIP = "https://github.com/ninjudd/trip";

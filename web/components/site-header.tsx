@@ -7,6 +7,7 @@ const nav = [
   { href: "#example", label: "Example" },
   { href: "#agents", label: "Agents" },
   { href: "#reviews", label: "Reviews" },
+  { href: "#site", label: "Site" },
 ];
 
 export function SiteHeader() {

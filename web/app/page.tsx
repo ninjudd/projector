@@ -4,6 +4,7 @@ import { Example } from "@/components/sections/example";
 import { Hero } from "@/components/sections/hero";
 import { Install } from "@/components/sections/install";
 import { ReviewLoop } from "@/components/sections/review-loop";
+import { Site } from "@/components/sections/site";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 
@@ -17,6 +18,7 @@ export default function Home() {
         <Example />
         <Agents />
         <ReviewLoop />
+        <Site />
         <Install />
       </main>
       <SiteFooter />

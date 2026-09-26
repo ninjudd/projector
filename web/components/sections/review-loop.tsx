@@ -7,11 +7,11 @@ import { DOCS } from "@/lib/links";
 const steps = [
   {
     title: "You push",
-    body: "A new commit lands on a pull request you opened from the session.",
+    body: "A new commit lands on one of your pull requests, whichever session opened it.",
   },
   {
     title: "The review loop reviews it",
-    body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review.",
+    body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last.",
   },
   {
     title: "The fix loop fixes it",
@@ -66,7 +66,9 @@ export function ReviewLoop() {
           to say. A clean loop is one model&rsquo;s reading of one commit. It catches what a careful
           first pass catches, and it is not proof that the change is correct, so a human review
           still follows. The rules the loops follow on GitHub, including who may mark a draft ready
-          and how findings are labeled, are in the skill documents.
+          and how findings are labeled, are in the skill documents. The loop runs a pull
+          request&rsquo;s tests only when it trusts who could push to it, and asks you before
+          running code from anyone else.
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
           <DocLink href={DOCS.reviewLoop}>Review loop</DocLink>
