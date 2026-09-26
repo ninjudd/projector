@@ -176,15 +176,34 @@ they change skills or the CLI, so everything merged since the last tag ships
 together in the next release rather than each change spending a number that
 is never tagged.
 
-Release in two steps. First, bump the version in a pull request of its own,
-or skip this step when `main` already names a version that has no tag yet.
-The script writes all three files and refuses a version that does not go up:
+Release from GitHub with the Release workflow. Start it by hand and choose
+which part of the version to raise:
 
 ```sh
+gh workflow run release.yml --repo ninjudd/projector -f bump=patch
+```
+
+`bump` is `patch`, `minor`, or `major`, and `patch` is the default in the
+Actions tab. The workflow writes the next version to all three files on a
+`release/vX.Y.Z` branch and opens a pull request for it. Merging that pull
+request is the decision to ship: the same workflow runs on the merge, tags
+the merged version, moves the major tag, and creates the GitHub release. The
+workflow opens the pull request with its own token, which needs **Allow
+GitHub Actions to create and approve pull requests** turned on under the
+repository's **Settings > Actions > General**.
+
+The workflow runs `scripts/release.py`, which also works by hand from any
+checkout. `bump` raises one part of the version and `set` writes an exact
+one, both refusing a version that does not go up:
+
+```sh
+scripts/release.py bump minor
 scripts/release.py set 0.6.0
 ```
 
-Second, once that pull request merges, tag the release from any checkout:
+Once the bump merges, `tag` releases it. `--if-untagged` makes it succeed
+without doing anything when the merged version already has a tag, which is
+how the workflow runs it on every `setup.cfg` change:
 
 ```sh
 scripts/release.py tag

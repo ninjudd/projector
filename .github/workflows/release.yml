@@ -1,0 +1,65 @@
+name: Release
+# Start a release by hand: choose patch, minor, or major, and the propose job
+# opens a pull request that raises the version. Merging it is the decision to
+# ship; the publish job then tags the merged version, moves the major tag, and
+# creates the GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  push:
+    branches: [main]
+    paths: [setup.cfg]
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  propose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open the release pull request
+        env:
+          BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(python3 scripts/release.py bump "$BUMP")
+          branch="release/v$version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit --quiet -am "Release $version"
+          git push --quiet origin "$branch"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          Raises Projector's version to $version in \`setup.cfg\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes.
+
+          ## Testing
+
+          The Release workflow ran \`python3 scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. After the merge, the publish job runs \`python3 scripts/release.py tag --if-untagged\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
+          EOF
+          gh pr create --base main --head "$branch" --title "Release $version" --body-file "$RUNNER_TEMP/body.md"
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A setup.cfg change that leaves the version alone, or one whose version is
+      # already tagged, releases nothing.
+      - name: Tag and publish the merged version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/release.py tag --if-untagged
