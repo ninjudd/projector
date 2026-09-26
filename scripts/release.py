@@ -3,15 +3,15 @@
 
     scripts/release.py bump patch|minor|major   raise one part of the version and write it
     scripts/release.py set X.Y.Z                write an exact version instead
-    scripts/release.py tag [--if-untagged]      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+    scripts/release.py released                 exit 0 if origin/main's version is tagged, 3 if not
+    scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
 
 The Release workflow runs these. Started by hand with patch, minor, or major,
 it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
-When a change to setup.cfg reaches main, it runs `tag --if-untagged`: that
-checks that origin/main carries a version with no tag yet, pushes the
-immutable vX.Y.Z tag, force-moves the major tag that marketplaces and the
-site action follow, and creates the GitHub release for vX.Y.Z with generated
-notes; --no-release skips that step.
+When a change to setup.cfg reaches main, it runs `released`, and when that
+exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, force-moves the
+major tag that marketplaces and the site action follow, and creates the
+GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
 """
 
 from __future__ import annotations
@@ -114,17 +114,21 @@ def create_release(root: Path, remote: str, release: str) -> None:
         raise ReleaseError(f"gh release create failed: {exc.stderr.strip()}") from exc
 
 
-def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True,
-        if_untagged: bool = False) -> str:
+NOT_RELEASED = 3
+
+
+def merged(root: Path, remote: str, branch: str) -> tuple[str, str, bool]:
+    """The branch's commit on the remote, the version it names, and whether that version is tagged."""
     git(root, "fetch", "--quiet", "--tags", remote, branch)
-    ref = f"refs/remotes/{remote}/{branch}"
-    commit = git(root, "rev-parse", ref)
+    commit = git(root, "rev-parse", f"refs/remotes/{remote}/{branch}")
     version = current(root, read=lambda path: git(root, "show", f"{commit}:{path.relative_to(root).as_posix()}"))
+    return commit, version, bool(git(root, "tag", "--list", f"v{version}"))
+
+
+def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True) -> str:
+    commit, version, tagged = merged(root, remote, branch)
     release, major = f"v{version}", f"v{parse(version)[0]}"
-    existing = git(root, "tag", "--list", release)
-    if existing and if_untagged:
-        return f"{release} is already released; nothing to do"
-    if existing:
+    if tagged:
         raise ReleaseError(f"{release} already exists; set a new version first")
     git(root, "tag", "-a", release, commit, "-m", f"Projector {version}")
     git(root, "tag", "-f", "-a", major, commit, "-m", f"Projector {version}")
@@ -148,12 +152,13 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     s.add_argument("version")
     b = sub.add_parser("bump", help="raise the patch, minor, or major number and print the new version")
     b.add_argument("part", choices=("patch", "minor", "major"))
+    r = sub.add_parser("released", help=f"exit 0 when the merged version is tagged, {NOT_RELEASED} when it is not")
+    r.add_argument("--remote", default="origin")
+    r.add_argument("--branch", default="main")
     t = sub.add_parser("tag", help="tag the merged version and move the major tag")
     t.add_argument("--remote", default="origin")
     t.add_argument("--branch", default="main")
     t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
-    t.add_argument("--if-untagged", action="store_true",
-                   help="succeed without doing anything when the merged version is already tagged")
     args = parser.parse_args(argv)
     try:
         if args.command == "set":
@@ -161,9 +166,12 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             print(f"set {args.version} in setup.cfg and both plugin manifests")
         elif args.command == "bump":
             print(bump(root, args.part))
+        elif args.command == "released":
+            _, version, tagged = merged(root, args.remote, args.branch)
+            print(f"v{version} is {'released' if tagged else 'not released yet'}")
+            return 0 if tagged else NOT_RELEASED
         else:
-            print(tag(root, args.remote, args.branch, github_release=not args.no_release,
-                      if_untagged=args.if_untagged))
+            print(tag(root, args.remote, args.branch, github_release=not args.no_release))
     except ReleaseError as exc:
         print(f"release: {exc}", file=sys.stderr)
         return 1
