@@ -107,17 +107,17 @@ lifecycle: `draft`, `ready`, `in-progress`, or `completed`. `priority` is the
 schedule: `now`, `next`, or `later`. Run `project list` to group projects at
 query time. Projector never writes a tracked status index.
 
-## Set up Projector hosting
+## Set up the Projector site
 
-Projector hosting gives a repository its own Projector site on GitHub Pages,
-built from content Projector keeps in the repository itself. Today the site
-serves the pull request walkthroughs the `walkthrough-pr` skill publishes; it
-is also where browsing `docs/projects` will live. The content sits on hidden
-refs such as `refs/projector/walkthroughs`, which are not branches, so
-publishing adds no branch, no pull request banner, and nothing to anyone's
-clone. One workflow on the default branch builds and deploys the site. Set a
-repository up once, with admin rights, from a checkout of it; `gh` fills in
-`{owner}` and `{repo}` from the checkout's remote:
+Projector can host a site for a repository on GitHub Pages, built from content
+Projector keeps in the repository itself. Today the site serves the pull
+request walkthroughs the `walkthrough-pr` skill publishes; it is also where
+browsing `docs/projects` will live. The content sits on hidden refs such as
+`refs/projector/walkthroughs`, which are not branches, so publishing adds no
+branch, no pull request banner, and nothing to anyone's clone. One workflow on
+the default branch builds and deploys the site. Set a repository up once, with
+admin rights, from a checkout of it; `gh` fills in `{owner}` and `{repo}` from
+the checkout's remote:
 
 1. Turn on Pages with GitHub Actions as its source:
 
@@ -139,11 +139,11 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
 3. Add the workflow to the default branch through a pull request. GitHub runs
    the dispatched workflow only from the default branch, and deploys from the
    default branch without any change to the `github-pages` environment. Save
-   this as `.github/workflows/walkthroughs.yml`, or have the Projector CLI
+   this as `.github/workflows/projector-site.yml`, or have the Projector CLI
    write it with `project site workflow --write`:
 
    ```yaml
-   name: Walkthroughs
+   name: Projector site
    on:
      repository_dispatch:
        types: [projector-walkthroughs]

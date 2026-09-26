@@ -1,4 +1,4 @@
-name: Walkthroughs
+name: Projector site
 on:
   repository_dispatch:
     types: [projector-walkthroughs]
