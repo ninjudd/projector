@@ -19,7 +19,11 @@ plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
 `review-changes` reviews a pull request's current head once, by the method in
 `skills/review-changes/method.md`, and publishes one labeled review;
 `start-review-loop` runs it on every new head of your pull requests, and the
-fix loop verifies findings by the same protocol. All three of `implement`,
+fix loop verifies findings by the same protocol. For a pull request of 400
+changed lines or more, in a repository with a Projector site,
+`review-changes` then runs `summarize-changes` and links the summary from its
+review; `review.summarize` and `review.summarize_min_lines` in
+`.projector.toml` change that. All three of `implement`,
 `review-changes`, and the fix loop share the code guidelines in
 `skills/guidelines.md`, so the rules one writes to are the rules the others
 review and fix against. The core workflows use the local CLI and do not
