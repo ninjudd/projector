@@ -252,12 +252,61 @@ For every new head, in that pull request's subagent:
    guidelines every Projector skill shares, before the repository's own rule
    documents. Cover both the new range and the pull-request-wide integration
    diff.
-6. Run focused tests and reproductions proportional to risk. A candidate the
-   protocol cannot verify is dropped, never posted.
+6. Run focused tests and reproductions proportional to risk, when the head
+   is trusted as the next section defines. A candidate the protocol cannot
+   verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
    of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
    comment as described next instead of repeating step 4, and revalidate every
    prospective finding against the new head.
+
+### Run a head's code only when the head is trusted
+
+Running a test, a reproducer, a build, the repository's validation gate, or
+any script from the head executes code whoever pushed the head wrote, on this
+machine, with the reviewer's GitHub token and credentials in reach. A
+malicious test runs as surely as a malicious build step. Reading the code
+runs nothing, so a review can always read; it runs the head's code only when
+the head is trusted.
+
+Who can push to the head's branch decides who could have put code on it, so
+start there:
+
+```sh
+gh pr view <number> --repo <owner>/<repo> \
+  --json isCrossRepository,author,commits \
+  --jq '"\(.isCrossRepository) \(.author.login)", (.commits[].authors[].login)'
+```
+
+A head is trusted only when all three hold:
+
+1. **It lives in the base repository.** `isCrossRepository` is `false`, so
+   pushing to its branch took write access to this repository. A fork's
+   branch is untrusted whoever owns the fork, because the fork's owner and
+   its collaborators can push to it with no role here.
+2. **The pull request's author is trusted.** A login is trusted when it is
+   the operator, or when this command prints `admin` or `write`, which is
+   also what it prints for `maintain`:
+
+   ```sh
+   gh api repos/<owner>/<repo>/collaborators/<login>/permission --jq .permission
+   ```
+
+3. **No commit names an untrusted author.** A commit's author login comes from
+   the email its committer wrote, so it can be forged and never grants trust;
+   a commit naming a login that fails the test above, or naming none, still
+   withholds it, since it says someone outside the repository wrote that code.
+
+A bot, and a login whose lookup fails, are untrusted.
+
+When the head is untrusted, review it by reading. The four-step protocol in
+`method.md` verifies findings without running anything. Before you run
+anything from the head, ask the user through the main loop, naming why the
+head is not trusted and the exact command you want to run, and run it only
+on a yes. A yes covers the head it was given for; a new head asks again unless
+the user said the answer covers the pull request. Publish without waiting for
+the answer when reading was enough, and say in the review's disclosures that
+the head was reviewed without running its code and why.
 
 ### One start comment per review
 
