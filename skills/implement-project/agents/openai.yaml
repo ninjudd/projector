@@ -1,4 +1,0 @@
-interface:
-  display_name: "Implement Project"
-  short_description: "Implement and maintain a current project plan"
-  default_prompt: "Use $implement-project to implement the current project."

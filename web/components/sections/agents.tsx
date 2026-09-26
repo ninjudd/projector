@@ -19,7 +19,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
   },
   {
     title: "Come back and build it",
-    invoke: "/projector:implement-project session-switcher",
+    invoke: "/projector:implement session-switcher",
     body: (
       <>
         A later session starts from the file, not from the earlier conversation. The agent moves
@@ -71,7 +71,7 @@ export function Agents() {
         ))}
       </ol>
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
-        In Codex the same skills are <Code>$plan-project</Code>, <Code>$implement-project</Code>, and{" "}
+        In Codex the same skills are <Code>$plan-project</Code>, <Code>$implement</Code>, and{" "}
         <Code>$finish-project</Code>. The plugin also carries the two review skills described next,
         and <Code>gh-stack</Code>, for splitting a large change into a chain of dependent pull
         requests.{" "}
