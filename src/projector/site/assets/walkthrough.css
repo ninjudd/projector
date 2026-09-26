@@ -163,6 +163,9 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .copypath { flex: none; margin-right: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; padding: 0; }
 .copypath:hover { background: var(--surface); border-color: var(--border); color: var(--text); }
 .copypath .ic-ok { display: none; } .copypath.copied .ic-copy { display: none; } .copypath.copied .ic-ok { display: inline; } .copypath.copied { color: var(--ok); }
+/* Shown beside the button, selected, where the clipboard refused the path. */
+.copypath:has(+ .copyfield) { margin-right: 0; }
+.copyfield { flex: none; margin-right: auto; min-width: 0; max-width: 40%; padding: 2px 6px; font: 12.5px "IBM Plex Mono", ui-monospace, monospace; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; }
 .chev { width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); transition: transform .15s; flex: none; margin-left: 2px; }
 .file.collapsed .chev { transform: rotate(-45deg); }
 .fpath { font-size: 13px; overflow-wrap: anywhere; }

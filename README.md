@@ -278,6 +278,7 @@ edit one, compile it and commit the JavaScript it produces under
 
 ```sh
 npm ci
+npm run check   # type-check and lint, with no warnings allowed
 npm run build
 ```
 

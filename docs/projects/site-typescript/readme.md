@@ -62,8 +62,8 @@ compiled output reads like the scripts it replaces and the node tests that
 load individual functions still find them. `globals.d.ts` declares the
 libraries the pages load from cdnjs and the shapes of `site.json`,
 `search.json`, and a walkthrough's data, which the scripts are now checked
-against. The compiler, TypeScript 7.0.2, is pinned exactly in
-`package.json`, and `package-lock.json` pins its native binaries.
+against. The compiler is pinned exactly in `package.json`: first
+TypeScript 7.0.2, then 6.0.3 for the lint, as section 6 records.
 
 ## 5. Outcome
 
@@ -75,3 +75,26 @@ repository's site and the HTML demo, the projects, docs, search, and review
 pages rendered from the compiled scripts, the HTML frame kept its deep link
 and sidebar toggle, and a review page collapsed a viewed file, counted a
 reviewed group, and highlighted its syntax, with no console errors.
+
+## 6. A strict lint rule set
+
+The TypeScript is linted with ESLint and typescript-eslint's two strictest
+type-aware sets, `strictTypeChecked` and `stylisticTypeChecked`, over ESLint's
+recommended rules, with `strict-boolean-expressions`,
+`switch-exhaustiveness-check`, `explicit-function-return-type`,
+`prefer-readonly`, `eqeqeq`, and `no-console` added. `npm run check` runs the
+type check and the lint with no warnings allowed, and the `Check` workflow
+runs it on every pull request. The compiler runs with `strict` plus
+`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+`noImplicitOverride`, and `noFallthroughCasesInSwitch`, so a lookup that can
+miss is handled where it happens. `noPropertyAccessFromIndexSignature` stays
+off: it would only turn `dataset.base` into `dataset['base']`, and
+`noUncheckedIndexedAccess` already types those values as possibly missing.
+
+typescript-eslint supports TypeScript only below 6.1, so the compiler is
+pinned to 6.0.3 rather than the native 7.0.2 that section 4 first chose. For
+two small scripts the native compiler's speed buys nothing, and the
+established rule set is worth more than it. oxlint's type-aware mode runs on
+TypeScript 7, but its rules port typescript-eslint's, which remain the
+reference. A finding is fixed in the code; the configuration is not loosened
+and no rule is disabled inline.
