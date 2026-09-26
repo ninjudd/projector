@@ -1,5 +1,5 @@
 name: Projector site
-description: Build the Projector site from the content Projector keeps in the repository, today the walkthroughs under refs/projector/walkthroughs, and deploy it to GitHub Pages.
+description: Build the Projector site from the content Projector keeps in the repository, its README, docs and project plans and the walkthroughs under refs/projector/walkthroughs, and deploy it to GitHub Pages.
 inputs:
   ref:
     description: The hidden ref holding <root>/<number>/<head>/spec.json files.
@@ -19,19 +19,28 @@ runs:
       shell: bash
       env:
         REF: ${{ inputs.ref }}
+        ROOT: ${{ inputs.root }}
+      # A repository that has published no walkthrough yet has no ref to fetch,
+      # and still gets a site of its README, docs and plans.
       run: |
-        git fetch --no-tags origin "+$REF:$REF"
-        git worktree add --detach "$RUNNER_TEMP/walkthrough-specs" "$REF"
+        if git ls-remote --exit-code origin "$REF" >/dev/null; then
+          git fetch --no-tags origin "+$REF:$REF"
+          git worktree add --detach "$RUNNER_TEMP/walkthrough-specs" "$REF"
+          echo "WALKTHROUGHS=$RUNNER_TEMP/walkthrough-specs/$ROOT" >> "$GITHUB_ENV"
+        fi
     - uses: actions/configure-pages@v5
     - name: Build the Projector site
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         PYTHONPATH: ${{ github.action_path }}/../../src
-        ROOT: ${{ inputs.root }}
       # -P keeps the caller's checkout, the working directory, off sys.path, so a
       # repository with its own top-level projector module cannot shadow this one.
-      run: python3 -P -m projector site build --walkthroughs "$RUNNER_TEMP/walkthrough-specs/$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
+      # --check-visibility fails the deploy when a private repository's site is
+      # public, since the site copies the README, docs, plans and diffs into it.
+      run: |
+        python3 -P -m projector site build --out "$RUNNER_TEMP/walkthrough-site" --check-visibility \
+          --repo-root "$GITHUB_WORKSPACE" ${WALKTHROUGHS:+--walkthroughs "$WALKTHROUGHS"}
     - uses: actions/upload-pages-artifact@v3
       with:
         path: ${{ runner.temp }}/walkthrough-site

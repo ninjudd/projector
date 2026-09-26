@@ -349,16 +349,17 @@ missing, or when the checkout or its `install.sh` no longer exists.
 ## Build the Projector site
 
 A repository that sets up the Projector site serves it from GitHub Pages,
-built from content Projector keeps in the repository. Today that content is
-the pull request walkthroughs on the hidden ref `refs/projector/walkthroughs`;
-browsing `docs/projects` joins it later. The `walkthrough-pr` skill writes a
-walkthrough's data, a spec, and these commands do everything else:
+built from content Projector keeps in the repository: its `README.md`, the
+Markdown documents under `docs/`, the project plans, and the pull request
+walkthroughs on the hidden ref `refs/projector/walkthroughs`. The
+`walkthrough-pr` skill writes a walkthrough's data, a spec, and these
+commands do everything else:
 
 ```sh
 project walkthrough init --repo OWNER/NAME --pr 66 --spec walkthrough.json
 project walkthrough publish --spec walkthrough.json
 project site page --spec walkthrough.json --out site
-project site build --walkthroughs specs/walkthroughs --out _site
+project site build --out _site --walkthroughs specs/walkthroughs
 project site status --repo OWNER/NAME --pr 66
 project site workflow --write
 ```
@@ -374,10 +375,22 @@ serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
 `site page` builds one walkthrough into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
 the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
-when GitHub cannot serve a diff that large. `site build` builds every
-`<number>/<head>/spec.json` under a directory into the whole site, skipping
-and reporting any spec that fails; the site workflow runs it through
-Projector's composite action. It reads each spec's `diff.patch` beside it and
+when GitHub cannot serve a diff that large.
+
+`site build` builds the whole site from a checkout, this repository unless
+`--repo-root` names another, and the walkthrough specs under `--walkthroughs`
+when there are any. The home page renders `README.md`; its menu reaches the
+projects view, which groups plans by status and opens each with its nested
+projects and supplemental files, the list of walkthroughs, and every other
+Markdown file under `docs/`. The build copies those files under `content/`
+and describes them in `site.json`, and the page renders them in the browser.
+A plan that does not parse drops the projects view with a warning rather than
+failing the build. The site workflow runs `site build` through Projector's
+composite action with `--check-visibility`, which refuses to build, and so to
+deploy, when a private repository's Pages site is public or GitHub cannot say
+whether it is. For walkthroughs it builds every
+`<number>/<head>/spec.json`, skipping and reporting any spec that fails. It
+reads each spec's `diff.patch` beside it and
 asks GitHub for a diff only for a spec published before diffs were stored.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
@@ -387,7 +400,10 @@ request's walkthrough URL, when the repository has the site workflow on its
 default branch and a GitHub Pages site. It exits 3 and says why when either is
 missing, or when a private repository's site is public. `site workflow`
 prints the workflow file a repository adds to its default branch once, or
-writes it with `--write`.
+writes it with `--write`. The workflow runs when a walkthrough is published,
+when a push to the default branch changes `README.md`, `docs/`, or a
+configured `projects.dir` outside `docs/`, and on demand; `--branch` names
+the default branch when `origin` does not record it.
 
 ## Consume JSON
 

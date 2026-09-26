@@ -110,14 +110,16 @@ query time. Projector never writes a tracked status index.
 ## Set up the Projector site
 
 Projector can host a site for a repository on GitHub Pages, built from content
-Projector keeps in the repository itself. Today the site serves the pull
-request walkthroughs the `walkthrough-pr` skill publishes; it is also where
-browsing `docs/projects` will live. The content sits on hidden refs such as
-`refs/projector/walkthroughs`, which are not branches, so publishing adds no
-branch, no pull request banner, and nothing to anyone's clone. One workflow on
-the default branch builds and deploys the site. Set a repository up once, with
-admin rights, from a checkout of it; `gh` fills in `{owner}` and `{repo}` from
-the checkout's remote:
+Projector keeps in the repository itself. Its home page renders the
+repository's `README.md`, and its menu reaches the project plans under
+`docs/projects`, the pull request walkthroughs the `walkthrough-pr` skill
+publishes, and every other Markdown document under `docs/`. Walkthroughs sit
+on hidden refs such as `refs/projector/walkthroughs`, which are not branches,
+so publishing one adds no branch, no pull request banner, and nothing to
+anyone's clone. One workflow on the default branch builds and deploys the
+site when a walkthrough is published or `README.md` or `docs/` changes. Set a
+repository up once, with admin rights, from a checkout of it; `gh` fills in
+`{owner}` and `{repo}` from the checkout's remote:
 
 1. Turn on Pages with GitHub Actions as its source:
 
@@ -147,6 +149,9 @@ the checkout's remote:
    on:
      repository_dispatch:
        types: [projector-walkthroughs]
+     push:
+       branches: [main]
+       paths: [README.md, 'docs/**']
      workflow_dispatch:
    permissions:
      contents: read
@@ -174,9 +179,10 @@ the checkout's remote:
    `walkthrough-pr` skill publishes to the site by default: ask your agent
    for a walkthrough of a pull request and it pushes the spec to the hidden
    ref, starts the workflow, and hands you the link. Ask for a Claude
-   Artifact instead when you want a private page. The site lists every
-   walkthrough at its root and serves each pull request's newest version at
-   `/<number>/`.
+   Artifact instead when you want a private page. The site's PRs menu lists
+   every walkthrough, and each pull request's newest version is at
+   `/<number>/`. The README, the plans and the docs appear on the first
+   deploy, without publishing anything.
 
 ## Use the CLI
 

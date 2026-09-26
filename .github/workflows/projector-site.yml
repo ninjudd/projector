@@ -2,6 +2,9 @@ name: Projector site
 on:
   repository_dispatch:
     types: [projector-walkthroughs]
+  push:
+    branches: [main]
+    paths: [README.md, 'docs/**']
   workflow_dispatch:
 permissions:
   contents: read
