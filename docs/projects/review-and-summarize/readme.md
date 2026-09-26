@@ -46,9 +46,12 @@ published data and trigger deploys in every repository that adopted the site,
 so the rename migrates rather than breaks. The site action and `site serve`
 read `refs/projector/summaries` and fall back to `refs/projector/walkthroughs`
 and its `walkthroughs/` folder only when the new ref does not exist. The first
-`project summary publish` after the rename seeds the new ref with a commit
-whose tree is the old folder at `summaries/` and whose parent is the old head,
-so each spec keeps the history the site dates it by. Publishing sends both
+`project summary publish` after the rename seeds the new ref by replaying
+each old commit with the old folder at `summaries/`, keeping its author,
+dates, and message. The site dates a spec by the last commit that touched its
+path, and a path-limited log does not follow a move, so a single commit
+moving every spec would date them all at the move and let an older head of a
+pull request outrank its newest; the replay keeps each spec's date. Publishing sends both
 events: a workflow generated before the rename listens only for the old one,
 and one generated since listens only for the new one, so each repository
 builds once. A later release stops sending the old event.
