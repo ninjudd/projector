@@ -221,6 +221,7 @@ class SiteTests(unittest.TestCase):
         path = root / "7" / head / "spec.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(spec))
+        path.with_name("diff.patch").write_text(DIFF)
         return path
 
     def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
@@ -266,6 +267,20 @@ class SiteTests(unittest.TestCase):
         self.assertEqual(([], 1), (failures, len(entries)))
         data = json.loads((tmp / "site" / "prs" / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual(3, data["stats"]["files"])
+
+    def test_a_spec_without_a_stored_diff_is_skipped_rather_than_fetched(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.write_spec(tmp / "walkthroughs", "a" * 40, "Stored")
+        bare = self.write_spec(tmp / "walkthroughs", "c" * 40, "Bare")
+        bare.with_name("diff.patch").unlink()
+        with mock.patch.object(walkthrough, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+             mock.patch.object(walkthrough, "merge_base", side_effect=AssertionError("must not fetch")), \
+             redirect_stdout(io.StringIO()):
+            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+
+        self.assertEqual(1, entries[0]["heads"])
+        self.assertEqual(1, len(failures))
+        self.assertIn("has no diff.patch beside it; republish it", failures[0])
 
     def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None:
         tmp = Path(tempfile.mkdtemp())
