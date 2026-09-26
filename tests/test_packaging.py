@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 PUBLISHED_SKILLS = {
     "plan-project",
-    "work-project",
+    "implement",
     "finish-project",
     "start-review-loop",
     "start-fix-loop",
@@ -87,12 +87,12 @@ class PackagingTests(unittest.TestCase):
 
         # Three skills read one method file: the review loop to inspect a
         # head, the fix loop to verify or decline what that inspection
-        # posted, and work-project to apply the same passes before a review
+        # posted, and implement to apply the same passes before a review
         # runs. A rename or removal must fail here rather than leave any of
         # them pointing at a file the plugin no longer ships.
         self.assertTrue(method.is_file())
         self.assertIn("`method.md`", review)
-        for name in ("start-fix-loop", "work-project"):
+        for name in ("start-fix-loop", "implement"):
             text = (ROOT / "skills" / name / "SKILL.md").read_text()
             self.assertIn("`../start-review-loop/method.md`", text, name)
         self.assertNotIn("ninjudd", method.read_text())
@@ -108,7 +108,7 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("ninjudd", guidelines.read_text())
         method = (ROOT / "skills" / "start-review-loop" / "method.md").read_text()
         self.assertIn("`../guidelines.md`", method)
-        for name in ("start-review-loop", "start-fix-loop", "work-project"):
+        for name in ("start-review-loop", "start-fix-loop", "implement"):
             text = (ROOT / "skills" / name / "SKILL.md").read_text()
             self.assertIn("`../guidelines.md`", text, name)
 
