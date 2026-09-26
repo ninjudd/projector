@@ -139,8 +139,8 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
 3. Add the workflow to the default branch through a pull request. GitHub runs
    the dispatched workflow only from the default branch, and deploys from the
    default branch without any change to the `github-pages` environment. Save
-   this as `.github/workflows/walkthroughs.yml`, or have the `walkthrough-pr`
-   skill write it with `walkthrough.py workflow --write`:
+   this as `.github/workflows/walkthroughs.yml`, or have the Projector CLI
+   write it with `project site workflow --write`:
 
    ```yaml
    name: Walkthroughs

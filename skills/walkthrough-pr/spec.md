@@ -1,6 +1,6 @@
 # Walkthrough spec
 
-`walkthrough.py init` writes the skeleton and `walkthrough.py build` reads
+`project walkthrough init` writes the skeleton and `project site page` reads
 it. The spec is JSON:
 
 ```json

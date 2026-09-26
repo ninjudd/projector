@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import os
@@ -11,12 +10,9 @@ from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "skills" / "walkthrough-pr" / "scripts" / "walkthrough.py"
+from projector import cli, site, walkthrough
 
-spec = importlib.util.spec_from_file_location("walkthrough", SCRIPT)
-walkthrough = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(walkthrough)
+ROOT = Path(__file__).parents[1]
 
 DIFF = """diff --git a/src/core.go b/src/core.go
 index 1111111..2222222 100644
@@ -134,7 +130,7 @@ class BuildTests(unittest.TestCase):
         err = io.StringIO()
         lookup = mock.patch.object(walkthrough, "pr_metadata", side_effect=live or walkthrough.SpecError("gh pr view failed: offline"))
         with lookup, redirect_stdout(io.StringIO()), redirect_stderr(err):
-            code = walkthrough.main(["build", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
+            code = cli.main(["site", "page", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
         return code, tmp / "site", err.getvalue()
 
     def test_writes_the_page_and_the_renderer(self) -> None:
@@ -156,7 +152,7 @@ class BuildTests(unittest.TestCase):
     def test_a_diff_file_build_still_refuses_a_moved_head(self) -> None:
         moved = lambda repo, number: dict(make_spec([])["pr"], head="c" * 40)
         code, _, err = self.build(GOOD_GROUPS, live=moved)
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertIn("moved from aaaaaaaaa to ccccccccc", err)
 
     def test_a_diff_file_build_warns_when_it_cannot_check_the_head(self) -> None:
@@ -167,34 +163,34 @@ class BuildTests(unittest.TestCase):
 
     def test_refuses_a_file_in_no_group(self) -> None:
         code, _, err = self.build([GOOD_GROUPS[0]])
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertIn("gen/api.pb.go is in no group", err)
 
     def test_refuses_a_file_in_two_groups(self) -> None:
         groups = [GOOD_GROUPS[0], {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}, {"path": "src/core.go"}]}]
         code, _, err = self.build(groups)
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertIn("src/core.go is in both core and gen", err)
 
     def test_refuses_a_path_outside_the_diff_and_a_bad_check(self) -> None:
         groups = [dict(GOOD_GROUPS[0], checks=[{"kind": "maybe", "text": "x"}]),
                   {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}, {"path": "src/gone.go"}]}]
         code, _, err = self.build(groups)
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertIn("gen: src/gone.go is not in the diff", err)
         self.assertIn("core: each check needs kind verify or flag", err)
 
     def test_refuses_a_duplicate_group_id(self) -> None:
         groups = [GOOD_GROUPS[0], dict(GOOD_GROUPS[1], id="core")]
         code, _, err = self.build(groups)
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertIn("group id 'core' is used twice", err)
 
 
 class RendererTests(unittest.TestCase):
     def test_renderer_ships_only_allowlisted_remote_scripts(self) -> None:
         # Claude Artifacts load scripts only from a CDN allowlist.
-        html = walkthrough.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
+        html = site.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
         for src in __import__("re").findall(r'src="(https?://[^"]+)"', html):
             self.assertTrue(src.startswith("https://cdnjs.cloudflare.com/"), src)
 
@@ -204,7 +200,7 @@ class AtHeadTests(unittest.TestCase):
         out = Path(tempfile.mkdtemp()) / "site"
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF) as fetch, \
              mock.patch.object(walkthrough, "pr_metadata", side_effect=AssertionError("must not check the live PR")):
-            walkthrough.build_page(make_spec(GOOD_GROUPS), out, at_head=True)
+            site.build_page(make_spec(GOOD_GROUPS), out, at_head=True)
         fetch.assert_called_once_with("owner/repo", "b" * 40, "a" * 40)
         self.assertTrue((out / "index.html").is_file())
 
@@ -213,7 +209,7 @@ class AtHeadTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "pr_metadata", return_value=live), \
              mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF):
             with self.assertRaisesRegex(walkthrough.SpecError, "moved from aaaaaaaaa to ccccccccc"):
-                walkthrough.build_page(make_spec(GOOD_GROUPS), Path(tempfile.mkdtemp()))
+                site.build_page(make_spec(GOOD_GROUPS), Path(tempfile.mkdtemp()))
 
 
 class SiteTests(unittest.TestCase):
@@ -232,21 +228,23 @@ class SiteTests(unittest.TestCase):
         new = self.write_spec(tmp / "walkthroughs", "c" * 40, "New")
         times = {old: 100, new: 200}
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
-             mock.patch.object(walkthrough, "spec_time", side_effect=lambda p: times[p]), \
+             mock.patch.object(site, "spec_time", side_effect=lambda p: times[p]), \
              redirect_stdout(io.StringIO()):
-            _, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+            _, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
 
         self.assertEqual([], failures)
-        site = tmp / "site"
-        self.assertIn('url=cccccccccccccccccccccccccccccccccccccccc/', (site / "7" / "index.html").read_text())
-        index = (site / "index.html").read_text()
+        built_site = tmp / "site"
+        self.assertIn('url=cccccccccccccccccccccccccccccccccccccccc/', (built_site / "7" / "index.html").read_text())
+        index = (built_site / "index.html").read_text()
         self.assertIn('href="7/"', index)
         self.assertIn(">New<", index)
-        self.assertTrue((site / ".nojekyll").exists())
-        page = (site / "7" / ("a" * 40) / "index.html").read_text()
+        self.assertTrue((built_site / ".nojekyll").exists())
+        page = (built_site / "7" / ("a" * 40) / "index.html").read_text()
         data = json.loads(page[page.index('type="application/json">') + 24:page.index("</script>", page.index('type="application/json">'))])
         self.assertEqual("../../", data["indexUrl"])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
+        for built in (page, index, (built_site / "7" / "index.html").read_text()):
+            self.assertIn(site.icon_link(), built)
 
     def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
         tmp = Path(tempfile.mkdtemp())
@@ -256,7 +254,7 @@ class SiteTests(unittest.TestCase):
         wrong.write_text(json.dumps(make_spec(GOOD_GROUPS)))
         out = io.StringIO()
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(out):
-            entries, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
         self.assertEqual([7], [e["number"] for e in entries])
         self.assertEqual(1, len(failures))
         self.assertIn("must sit at <pr.number>/<pr.head>/spec.json", failures[0])
@@ -271,9 +269,9 @@ class SiteTests(unittest.TestCase):
         spec["groups"] = spec["groups"][:1]
         bad.write_text(json.dumps(spec))
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
-             mock.patch.object(walkthrough, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
+             mock.patch.object(site, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
              redirect_stdout(io.StringIO()):
-            entries, failures = walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
         self.assertEqual(1, len(failures))
         self.assertIn("gen/api.pb.go is in no group", failures[0])
         self.assertFalse((tmp / "site" / "7" / ("c" * 40)).exists())
@@ -286,7 +284,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(walkthrough.SpecError, "no walkthrough built"):
-                walkthrough.build_site(tmp / "walkthroughs", tmp / "site")
+                site.build_site(tmp / "walkthroughs", tmp / "site")
 
 
 class SanitizeTests(unittest.TestCase):
@@ -309,7 +307,7 @@ class SanitizeTests(unittest.TestCase):
         spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
         out = Path(tempfile.mkdtemp())
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF):
-            walkthrough.build_page(spec, out, at_head=True)
+            site.build_page(spec, out, at_head=True)
         page = (out / "index.html").read_text()
         for bad in ("onerror", "alert(2)", "javascript:"):
             self.assertNotIn(bad, page)
@@ -421,7 +419,7 @@ class StatusTests(unittest.TestCase):
 
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(walkthrough, "gh_lookup", side_effect=lookup), redirect_stdout(out), redirect_stderr(err):
-            code = walkthrough.main(["status", "--repo", "o/r", *args])
+            code = cli.main(["site", "status", "--repo", "o/r", *args])
         return code, out.getvalue(), err.getvalue()
 
     WORKFLOW = "repos/o/r/contents/.github/workflows/walkthroughs.yml"
@@ -449,7 +447,7 @@ class StatusTests(unittest.TestCase):
 
     def test_a_private_repository_with_a_public_site_is_not_hosting(self) -> None:
         code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "true\n"})
-        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual(cli.NOT_HOSTED, code)
         self.assertEqual("not hosted: o/r is private but its GitHub Pages site is public\n", out)
 
     def test_a_private_repository_with_a_private_site_is_hosting(self) -> None:
@@ -458,17 +456,17 @@ class StatusTests(unittest.TestCase):
 
     def test_a_pages_site_without_the_workflow_is_not_hosting(self) -> None:
         code, out, _ = self.status({self.WORKFLOW: None, self.PAGES: self.pages()}, "--pr", "66")
-        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual(cli.NOT_HOSTED, code)
         self.assertEqual("not hosted: o/r has no .github/workflows/walkthroughs.yml on its default branch\n", out)
 
     def test_the_workflow_without_a_pages_site_is_not_hosting(self) -> None:
         code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: None})
-        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual(cli.NOT_HOSTED, code)
         self.assertIn("has the walkthroughs workflow but no GitHub Pages site", out)
 
     def test_a_failed_lookup_is_an_error_rather_than_not_hosting(self) -> None:
         code, out, err = self.status({})
-        self.assertEqual(1, code)
+        self.assertEqual(65, code)
         self.assertEqual("", out)
         self.assertIn("connection refused", err)
 
