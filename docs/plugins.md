@@ -201,11 +201,12 @@ scripts/release.py bump minor
 scripts/release.py set 0.6.0
 ```
 
-Once the bump merges, `tag` releases it. `--if-untagged` makes it succeed
-without doing anything when the merged version already has a tag, which is
-how the workflow runs it on every `setup.cfg` change:
+Once the bump merges, `tag` releases it. `released` exits 0 when the merged
+version already has a tag and 3 when it does not, which is how the workflow
+decides, on every `setup.cfg` change, whether there is anything to release:
 
 ```sh
+scripts/release.py released
 scripts/release.py tag
 ```
 
