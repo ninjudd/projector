@@ -33,7 +33,7 @@ from ..summary import DIFF_FILE, SpecError, prepare_page
 
 ASSETS = resources.files(__package__) / "assets"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
-FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+FONTS = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap"
 MARKED = "https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.13/lib/marked.umd.min.js"
 PURIFY = "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.16/purify.min.js"
 CONTENT = "content"
