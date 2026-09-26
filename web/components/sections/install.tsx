@@ -7,11 +7,22 @@ import { DOCS, INSTALL } from "@/lib/links";
 
 const rows: { title: string; body: ReactNode; commands: string[] }[] = [
   {
-    title: "The CLI",
+    title: "Everything, in one command",
     body: (
       <>
-        Requires Python 3.11 or newer and nothing else. <Code>pipx</Code> gives you an isolated{" "}
-        <Code>project</Code> command.
+        Installs the <Code>project</Code> command from the newest release, and the plugin for
+        Claude Code and Codex, whichever you have. It needs Python 3.11 or newer, and no git. Run{" "}
+        <Code>{INSTALL.upgrade}</Code> later to move everything to the newest release.
+      </>
+    ),
+    commands: [INSTALL.script, INSTALL.upgrade],
+  },
+  {
+    title: "Or step by step: the CLI",
+    body: (
+      <>
+        <Code>pipx</Code> gives you an isolated <Code>project</Code> command, built from the newest
+        release.
       </>
     ),
     commands: [INSTALL.pipx, "project --help"],
@@ -57,7 +68,7 @@ export function Install() {
     <Section
       id="install"
       title="Install"
-      lead="Install the CLI first. Then add the plugin for the coding agents you use."
+      lead="One command installs the CLI and the plugin for the coding agents you use. Or install each yourself."
       size="tight"
     >
       <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">

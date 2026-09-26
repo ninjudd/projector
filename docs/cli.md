@@ -376,32 +376,41 @@ an identity question either: each watcher reads its tracked set from a file of
 `owner/repo#number` lines that the conversation maintains, and sees nothing
 outside it.
 
-## Upgrade from the checkout
+## Upgrade
 
-`pipx` installs a copy of the source, so a checkout that moves on leaves the
-installed command and plugins behind. `upgrade` runs the checkout's
-`install.sh` from any directory, with the same targets:
+`upgrade` moves the installed command and the host plugins to what they were
+installed from, from any directory, with the installer's own targets:
 
 ```sh
-project upgrade          # ./install.sh, which defaults to all
-project upgrade cli      # ./install.sh cli
-project upgrade status   # ./install.sh status
+project upgrade          # all, the installer's default
+project upgrade cli
+project upgrade status
 ```
 
-The command finds the checkout in the source pip recorded at install time, so
-it needs neither a repository nor a working directory inside one. It prints the
-command it runs on stderr, then the installer's own output, and exits with the
-installer's status. The install targets end with a row saying whether that
-checkout is behind its upstream, and `status` opens with it; a `repo-behind`
-row means the command just built is older than main, so pull and run
-`upgrade` again. Targets are the installer's to validate: an unknown one is
-its usage error, exit 64. See [the plugin guide](plugins.md) for what each
-target does.
+How it upgrades depends on where pip recorded that the command came from:
 
-A command installed from a Git URL rather than a checkout has no `install.sh`
-to run, so `upgrade` exits 69 and names the URL. It also exits 69 when the
-command is not an installed distribution, when the record of its source is
-missing, or when the checkout or its `install.sh` no longer exists.
+- **A release**, installed by `curl -fsSL https://projector.bot/install.sh |
+  bash`, from a release's source archive, or from a Git URL: `upgrade`
+  downloads the installer from the newest release and runs it with the same
+  targets, which reinstalls from the newest release without git. It prints
+  the equivalent `curl ... | bash -s -- <targets>` command on stderr. The
+  installer comes from `https://projector.bot/install.sh`, or, for a command
+  installed from a GitHub fork, from `install.sh` at `PROJECTOR_REF` (default
+  `v0`) in that fork, with `PROJECTOR_REPO` set to the fork.
+  `PROJECTOR_INSTALLER_URL` names another installer to run.
+- **A checkout**: `pipx` installs a copy of the source, so a checkout that
+  moves on leaves the installed command and plugins behind. `upgrade` runs
+  the checkout's `install.sh`, prints that command on stderr, and ends with a
+  row saying whether the checkout is behind its upstream; a `repo-behind` row
+  means the command just built is older than main, so pull and run `upgrade`
+  again.
+
+Either way `upgrade` exits with the installer's status, and targets are the
+installer's to validate: an unknown one is its usage error, exit 64. See
+[the plugin guide](plugins.md) for what each target does. `upgrade` exits 69
+when the command is not an installed distribution, when the record of its
+source is missing, when a checkout or its `install.sh` no longer exists, or
+when the released installer cannot be downloaded.
 
 `upgrade` has no `--json` mode because the installer owns the output.
 
