@@ -164,7 +164,7 @@
                 (hasSide ? `<nav class="side" aria-label="Section"><button type="button" class="sidetoggle" aria-expanded="${String(!isWide)}" ` +
                     `title="Show or hide this section's pages">☰</button><div class="sidetree">${side}</div></nav>` : '') +
                 '<div class="sidebody" id="sidebody"></div></main>' +
-                '<footer class="sitefoot">Built by <a href="https://github.com/ninjudd/projector">Projector</a> from ' +
+                '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
                 `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`;
         const main = document.getElementById('sidebody');
         if (main === null)
