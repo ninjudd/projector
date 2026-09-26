@@ -277,8 +277,13 @@ def cmd_init(args: argparse.Namespace) -> None:
 def cmd_build(args: argparse.Namespace) -> None:
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
     pr = spec.get("pr") or {}
-    if not args.diff:
+    try:
         live = pr_metadata(pr["repo"], int(pr["number"]))
+    except SpecError as exc:
+        if not args.diff:
+            raise
+        print(f"walkthrough: could not check whether the PR moved past {str(pr.get('head'))[:9]} ({exc}); building from {args.diff} as given", file=sys.stderr)
+    else:
         if live["head"] != pr.get("head"):
             raise SpecError(f"the PR head moved from {str(pr.get('head'))[:9]} to {live['head'][:9]}; update the spec for the new head before building")
     files = parse_diff(read_diff(args, pr["repo"], int(pr["number"])))

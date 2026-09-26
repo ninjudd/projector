@@ -64,7 +64,9 @@ python3 <skill-dir>/scripts/walkthrough.py build \
 `build` refuses to run when the pull request's head is no longer the spec's
 `pr.head`, so the page never describes a diff it does not show. When GitHub
 cannot serve the diff because the pull request is too large, produce it
-locally and pass it with `--diff`:
+locally and pass it with `--diff`. The head check still runs; only when `gh`
+cannot reach GitHub does an offline `--diff` build go ahead with a warning,
+because it cannot tell whether the pull request moved:
 
 ```sh
 git fetch origin BASE HEAD_SHA

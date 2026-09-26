@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -124,12 +125,13 @@ class ParseDiffTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def build(self, groups: list[dict]) -> tuple[int, Path, str]:
+    def build(self, groups: list[dict], live: object = None) -> tuple[int, Path, str]:
         tmp = Path(tempfile.mkdtemp())
         (tmp / "pr.diff").write_text(DIFF)
         (tmp / "spec.json").write_text(json.dumps(make_spec(groups)))
         err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        lookup = mock.patch.object(walkthrough, "pr_metadata", side_effect=live or walkthrough.SpecError("gh pr view failed: offline"))
+        with lookup, redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = walkthrough.main(["build", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
         return code, tmp / "site", err.getvalue()
 
@@ -148,6 +150,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(3, data["stats"]["files"])
         self.assertEqual({"files": 3, "adds": 5, "dels": 2, "hand": 3, "test": 2, "generated": 2, "docs": 0}, data["stats"])
         self.assertEqual(["core", "gen"], [g["id"] for g in data["groups"]])
+
+    def test_a_diff_file_build_still_refuses_a_moved_head(self) -> None:
+        moved = lambda repo, number: dict(make_spec([])["pr"], head="c" * 40)
+        code, _, err = self.build(GOOD_GROUPS, live=moved)
+        self.assertEqual(1, code)
+        self.assertIn("moved from aaaaaaaaa to ccccccccc", err)
+
+    def test_a_diff_file_build_warns_when_it_cannot_check_the_head(self) -> None:
+        code, site, err = self.build(GOOD_GROUPS)
+        self.assertEqual(0, code, err)
+        self.assertIn("could not check whether the PR moved past aaaaaaaaa", err)
+        self.assertTrue((site / "index.html").is_file())
 
     def test_refuses_a_file_in_no_group(self) -> None:
         code, _, err = self.build([GOOD_GROUPS[0]])
