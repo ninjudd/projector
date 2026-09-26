@@ -123,11 +123,10 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tup
                 raise SpecError(f"it must sit at <pr.number>/<pr.head>/spec.json")
             if own_repo and str(pr.get("repo", "")).lower() != own_repo:
                 raise SpecError(f"it is for {pr.get('repo')}, not this repository")
-            # A spec published with its diff builds offline. One published before
-            # diffs were stored falls back to fetching its diff from GitHub.
             stored = path.with_name(DIFF_FILE)
-            diff = stored.read_text(encoding="utf-8") if stored.is_file() else None
-            payload = prepare_page(spec, diff=diff, at_head=True)
+            if not stored.is_file():
+                raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project walkthrough publish`")
+            payload = prepare_page(spec, diff=stored.read_text(encoding="utf-8"), at_head=True)
             payload["projects"] = link(spec, payload) if link else []
         except (SpecError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)

@@ -400,9 +400,8 @@ failing the build. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For walkthroughs it builds every
-`<number>/<head>/spec.json`, skipping and reporting any spec that fails. It
-reads each spec's `diff.patch` beside it and
-asks GitHub for a diff only for a spec published before diffs were stored.
+`<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
+for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 

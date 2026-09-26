@@ -1,9 +1,9 @@
 ---
-name: finish-project
+name: finish
 description: Verify a Projector project's acceptance criteria, record its outcome, and mark it done in the completing change. Use when implementation appears complete or the user ends a project as shipped, abandoned, or superseded.
 ---
 
-# Finish Project
+# Finish
 
 Close the project only when its durable plan and the repository agree about
 the outcome.

@@ -79,5 +79,5 @@ Projector section in `AGENTS.md` without touching the repository's own text.
 Compare the result against the plan's acceptance criteria. If required work
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
-requires. If every criterion is proven, continue with `finish-project` in the
-same implementation change.
+requires. If every criterion is proven, continue with `finish` in the same
+implementation change.

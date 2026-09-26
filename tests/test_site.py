@@ -259,7 +259,7 @@ class WorkflowTests(unittest.TestCase):
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = walkthrough.workflow_text("v0", "trunk")
         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**']\n", text)
-        self.assertIn("uses: ninjudd/projector/actions/walkthroughs@v0", text)
+        self.assertIn("uses: ninjudd/projector/actions/site@v0", text)
 
     def test_a_projects_directory_outside_docs_is_watched_too(self) -> None:
         self.assertIn("paths: [README.md, 'docs/**', 'plans/**']", walkthrough.workflow_text("v0", "main", "plans"))
