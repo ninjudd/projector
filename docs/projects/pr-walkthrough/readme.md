@@ -187,3 +187,12 @@ browser cannot read a private repository without the viewer's token, which
 would give up section 3's private-site case, and unauthenticated reads are
 rate limited per visitor. Specs published before diffs were stored still
 build, by fetching their diff as before, until they are republished.
+
+## 9. The site project owns the rest of the site
+
+Section 6's projects view shipped as part of a broader site, which the
+`site` project now plans: a home page that renders the README, a menu for
+the plans, the walkthroughs and the other docs, and the projects view
+itself. Walkthroughs keep their pages and URLs; the root index that listed
+them became the site's PRs view. Linking a plan to the walkthroughs of the
+pull requests that implement it stays open, in `site` section 5.

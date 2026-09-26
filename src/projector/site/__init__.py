@@ -1,9 +1,11 @@
 """The Projector site: the static pages a repository serves from GitHub Pages.
 
-The site is built from content Projector keeps in the repository. Today that
-is the pull request walkthroughs published to refs/projector/walkthroughs;
-each spec becomes a page under /<number>/<head>/, with a redirect to the
-newest head at /<number>/ and an index at the root.
+The site is built from content Projector keeps in the repository: its
+README, its `docs/` directory and the project plans under it, and the pull
+request walkthroughs published to refs/projector/walkthroughs. The root is
+one page that renders the README by default and reaches everything else from
+its menu. Each walkthrough spec becomes a page under /<number>/<head>/, with
+a redirect to the newest head at /<number>/.
 """
 
 from __future__ import annotations
@@ -17,11 +19,15 @@ import urllib.parse
 from importlib import resources
 from pathlib import Path
 
+from ..core import Project, title_from_text
 from ..walkthrough import DIFF_FILE, SpecError, prepare_page
 
 ASSETS = resources.files(__package__) / "assets"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
 FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+MARKED = "https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.13/lib/marked.umd.min.js"
+PURIFY = "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.16/purify.min.js"
+CONTENT = "content"
 
 
 def escape(s: object) -> str:
@@ -84,11 +90,11 @@ def spec_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
-    """Build every spec that can be built; report and skip the rest."""
+def build_walkthroughs(root: Path, out: Path) -> tuple[list[dict], list[str]]:
+    """Build every walkthrough spec that can be built; report and skip the rest."""
     specs = sorted(root.glob("*/*/spec.json"))
     if not specs:
-        raise SpecError(f"no walkthroughs under {root}: expected <number>/<head>/spec.json")
+        return [], []
     own_repo = os.environ.get("GITHUB_REPOSITORY", "").lower()
     failures: list[str] = []
 
@@ -115,47 +121,116 @@ def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
             skip(path, exc)
             continue
         by_pr.setdefault(number, []).append((spec_time(path), payload))
-    if not by_pr:
-        raise SpecError(f"no walkthrough built; {len(failures)} skipped")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / ".nojekyll").write_text("")
-    copy_assets(out)
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         versions.sort(key=lambda v: v[0], reverse=True)
         heads = [{"head": p["pr"]["head"], "url": f"../{p['pr']['head']}/", "at": when} for when, p in versions]
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(indexUrl="../../", heads=[dict(h, current=h["head"] == head) for h in heads])
+            payload.update(indexUrl="../../#/prs", heads=[dict(h, current=h["head"] == head) for h in heads])
             write_page(out / number / head, payload, embed=False)
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
         (out / number / "index.html").write_text(redirect(f"{latest['pr']['head']}/"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
                         "heads": len(versions), "updated": versions[0][0]})
-    (out / "index.html").write_text(index_page(entries), encoding="utf-8")
+    return entries, failures
+
+
+def copy_content(repo_root: Path, path: Path, out: Path) -> str:
+    """Copy one Markdown file under out/content, returning its repository path."""
+    relative = path.relative_to(repo_root).as_posix()
+    target = out / CONTENT / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(path.read_bytes())
+    return relative
+
+
+def collect_docs(repo_root: Path, projects_dir: Path | None, out: Path) -> tuple[str | None, list[dict]]:
+    """Copy the README and every Markdown file under docs/ outside the plans."""
+    readme = repo_root / "README.md"
+    readme_path = copy_content(repo_root, readme, out) if readme.is_file() else None
+    docs = []
+    docs_dir = repo_root / "docs"
+    for path in sorted(docs_dir.rglob("*.md")) if docs_dir.is_dir() else []:
+        if projects_dir is not None and path.is_relative_to(projects_dir):
+            continue
+        relative = copy_content(repo_root, path, out)
+        docs.append({"path": relative, "title": title_from_text(path.read_text(encoding="utf-8"), path.stem)})
+    return readme_path, docs
+
+
+def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Path | None, out: Path) -> list[dict]:
+    """Copy every plan and its supplemental files, and describe each project."""
+    if projects_dir is None or not projects_dir.is_dir():
+        return []
+    owners = {project.path.parent: project.name for project in projects}
+    extras: dict[str, list[str]] = {}
+    for path in sorted(projects_dir.rglob("*.md")):
+        relative = copy_content(repo_root, path, out)
+        owner = next((owners[d] for d in (path.parent, *path.parent.parents) if d in owners), None)
+        if owner is not None and path.name != "readme.md":
+            extras.setdefault(owner, []).append(relative)
+    described = []
+    for project in projects:
+        entry = project.public(repo_root)
+        entry["files"] = extras.get(project.name, [])
+        described.append(entry)
+    return described
+
+
+def home_page(repo: str) -> str:
+    return f"""<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(repo or "Projector")}</title>
+{icon_link()}
+<link rel="stylesheet" href="{FONTS}">
+<link rel="stylesheet" href="walkthrough.css">
+<link rel="stylesheet" href="site.css">
+<div id="site"></div>
+<script src="{MARKED}"></script>
+<script src="{PURIFY}"></script>
+<script src="{HLJS}/highlight.min.js"></script>
+<script src="site.js"></script>
+"""
+
+
+def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | None = None,
+               projects: list[Project] | None = None, projects_dir: Path | None = None,
+               repo: str = "", branch: str = "main") -> tuple[list[dict], list[str]]:
+    """Build the whole site: the home page, its manifest, the docs, the plans, and every walkthrough."""
+    out.mkdir(parents=True, exist_ok=True)
+    (out / ".nojekyll").write_text("")
+    copy_assets(out)
+    for asset in ("site.js", "site.css"):
+        (out / asset).write_bytes((ASSETS / asset).read_bytes())
+    entries, failures = build_walkthroughs(walkthroughs, out) if walkthroughs and walkthroughs.is_dir() else ([], [])
+    readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
+    described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
+    repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
+    manifest = {
+        "repo": repo,
+        "branch": branch,
+        "content": CONTENT,
+        "readme": readme,
+        "docs": docs,
+        "projectsDir": projects_dir.relative_to(repo_root).as_posix() if repo_root and projects_dir and projects_dir.is_dir() else None,
+        "projects": described,
+        "projectsReadme": (projects_dir / "README.md").relative_to(repo_root).as_posix()
+        if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None,
+        "walkthroughs": [
+            {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
+             "heads": e["heads"],
+             "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
+            for e in entries
+        ],
+    }
+    (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    (out / "index.html").write_text(home_page(repo), encoding="utf-8")
     return entries, failures
 
 
 def redirect(target: str) -> str:
     t = escape(target)
     return f'<!doctype html><meta charset="utf-8"><title>Redirecting</title>{icon_link()}<meta http-equiv="refresh" content="0; url={t}"><link rel="canonical" href="{t}"><a href="{t}">Newest walkthrough</a>\n'
-
-
-def index_page(entries: list[dict]) -> str:
-    repo = entries[0]["pr"]["repo"] if entries else ""
-    rows = "".join(
-        f'<tr><td><a href="{e["number"]}/">#{e["number"]}</a></td><td><a href="{e["number"]}/">{escape(e["name"] or e["pr"]["title"])}</a>'
-        f'<div class="note">{escape(e["pr"]["title"])}</div></td><td class="mono">{escape(e["pr"]["head"][:9])}</td>'
-        f'<td>{e["heads"]}</td><td>{datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}</td></tr>'
-        for e in entries
-    )
-    return f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(repo)} walkthroughs</title>
-{icon_link()}
-<link rel="stylesheet" href="{FONTS}">
-<link rel="stylesheet" href="walkthrough.css">
-<div class="wrap"><header class="top"><div><div class="eyebrow"><a href="https://github.com/{escape(repo)}">{escape(repo)}</a></div><h1>Pull request walkthroughs</h1></div></header>
-<div class="card"><div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Head</th><th>Versions</th><th>Updated</th></tr>{rows}</table></div>
-<p class="note">Built by Projector's <span class="mono">walkthrough-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p></div></div>
-"""

@@ -45,6 +45,9 @@ WORKFLOW = """name: Projector site
 on:
   repository_dispatch:
     types: [{event}]
+  push:
+    branches: [{branch}]
+    paths: [README.md, 'docs/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -518,8 +521,17 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     return commit
 
 
-def workflow_text(action_ref: str) -> str:
-    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref)
+def workflow_text(action_ref: str, branch: str = "main") -> str:
+    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch)
+
+
+def default_branch(remote: str = "origin") -> str:
+    """The remote's default branch as the checkout recorded it, or main."""
+    try:
+        head = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+    except SpecError:
+        return "main"
+    return head.split("/", 1)[1] if "/" in head else head
 
 
 def init(repo: str, number: int, spec_path: str, diff_path: str | None = None) -> None:
