@@ -184,12 +184,16 @@ scripts/release.py tag
 ```
 
 `tag` reads the version from `origin/main`, not from the checkout, so an
-unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag and
-force-moves the major tag, `v0`, to the same commit. The immutable tag names
-an exact release; the major tag is the channel that follows compatible
-releases, the convention GitHub's own actions use. A breaking change starts
-the next major tag. Under `0.x` a minor release may still break, so the `v0`
-channel promises less than a `v1` channel will.
+unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag,
+force-moves the major tag, `v0`, to the same commit, and creates the GitHub
+release for `v0.6.0` with generated notes, which needs an authenticated `gh`.
+Pass `--no-release` to push only the tags. If the release step fails, the tags
+are already pushed, and the error prints the `gh release create` command that
+finishes the release. The immutable tag names an exact release; the major tag
+is the channel that follows compatible releases, the convention GitHub's own
+actions use. A breaking change starts the next major tag. Under `0.x` a minor
+release may still break, so the `v0` channel promises less than a `v1` channel
+will.
 
 Update an installed copy with each host's own command, or run `./install.sh
 all` from a checkout, which runs these for every host it finds. Claude Code

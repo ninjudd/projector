@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -69,6 +70,10 @@ class TagTests(unittest.TestCase):
             run(self.repo, "git", "config", key, value)
         copy_version_files(self.repo)
         self.commit("0.5.0")
+        self.releases: list[tuple[str, str]] = []
+        patcher = mock.patch.object(release, "create_release", side_effect=lambda root, remote, tag: self.releases.append((remote, tag)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def commit(self, version: str) -> str:
         for name in FILES:
@@ -100,6 +105,21 @@ class TagTests(unittest.TestCase):
         self.assertEqual(second, self.remote_tag("v0.5.1"))
         self.assertEqual(second, self.remote_tag("v0"))
 
+    def test_creates_the_github_release_for_the_exact_tag(self) -> None:
+        release.tag(self.repo, branch="trunk")
+        self.assertEqual([("origin", "v0.5.0")], self.releases)
+
+    def test_no_release_pushes_only_the_tags(self) -> None:
+        release.tag(self.repo, branch="trunk", github_release=False)
+        self.assertEqual([], self.releases)
+        self.assertTrue(self.remote_tag("v0.5.0"))
+
+    def test_a_failed_release_says_the_tags_are_pushed_and_how_to_finish(self) -> None:
+        with mock.patch.object(release, "create_release", side_effect=release.ReleaseError("gh release create failed: HTTP 403")):
+            with self.assertRaisesRegex(release.ReleaseError, r"v0\.5\.0 and v0 are pushed.*gh release create v0\.5\.0"):
+                release.tag(self.repo, branch="trunk")
+        self.assertTrue(self.remote_tag("v0.5.0"))
+
     def test_refuses_to_retag_a_released_version(self) -> None:
         release.tag(self.repo, branch="trunk")
         with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
@@ -110,6 +130,13 @@ class TagTests(unittest.TestCase):
         (self.repo / "setup.cfg").write_text("[metadata]\nname = projector-cli\nversion = 0.9.0\n")
         release.tag(self.repo, branch="trunk")
         self.assertTrue(self.remote_tag("v0.5.0"))
+
+
+class RepoSlugTests(unittest.TestCase):
+    def test_reads_github_remotes(self) -> None:
+        for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
+            self.assertEqual("o/r", release.repo_slug(url), url)
+        self.assertEqual("", release.repo_slug("/tmp/remote.git"))
 
 
 if __name__ == "__main__":
