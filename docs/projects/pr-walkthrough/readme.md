@@ -22,7 +22,8 @@ request's diff.
 
 - The `walkthrough-pr` skill builds a page from a spec and the diff, and
   refuses a spec that leaves a changed file out, repeats one, names one
-  outside the diff, or describes a head the pull request has moved past.
+  outside the diff, or describes a head the pull request has moved past
+  whenever GitHub can be reached to say so.
 - The page works from disk in any browser and publishes unchanged as a Claude
   Artifact, with the renderer passed as supporting files.
 - The build script uses only the Python standard library and the `gh` CLI,

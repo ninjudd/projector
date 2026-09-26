@@ -83,6 +83,40 @@ class ParseDiffTests(unittest.TestCase):
         self.assertEqual("generated", files["gen/api.pb.go"]["kind"])
         self.assertEqual("m", files["gen/api.pb.go"]["hunks"][0]["lines"][-1][0])
 
+    def test_quoted_spaced_deleted_and_renamed_paths(self) -> None:
+        diff = "\n".join([
+            'diff --git "a/caf\\303\\251 \\"x\\".md" "b/caf\\303\\251 \\"x\\".md"',
+            "index 1..2 100644",
+            '--- "a/caf\\303\\251 \\"x\\".md"',
+            '+++ "b/caf\\303\\251 \\"x\\".md"',
+            "@@ -1 +1 @@",
+            "--- a removed line that looks like a header",
+            "+y",
+            "diff --git a/docs/a b/c.md b/docs/a b/c.md",
+            "index 1..2 100644",
+            "--- a/docs/a b/c.md",
+            "+++ b/docs/a b/c.md",
+            "@@ -1 +1 @@",
+            "-x",
+            "+y",
+            "diff --git a/gone.txt b/gone.txt",
+            "deleted file mode 100644",
+            "index 1..0",
+            "--- a/gone.txt",
+            "+++ /dev/null",
+            "@@ -1 +0,0 @@",
+            "-x",
+            "diff --git a/old name.txt b/new name.txt",
+            "similarity index 100%",
+            "rename from old name.txt",
+            "rename to new name.txt",
+            "",
+        ])
+        files = walkthrough.parse_diff(diff)
+        self.assertEqual(['café "x".md', "docs/a b/c.md", "gone.txt", "new name.txt"], [f["path"] for f in files])
+        self.assertEqual((1, 1), (files[0]["adds"], files[0]["dels"]), "a removed line starting with -- stays a removed line")
+        self.assertTrue(files[2]["deleted"])
+
     def test_anchor_matches_github_files_tab(self) -> None:
         core = walkthrough.parse_diff(DIFF)[0]
         # GitHub anchors a file on the files tab by the SHA-256 of its path.
@@ -93,12 +127,13 @@ class ParseDiffTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def build(self, groups: list[dict]) -> tuple[int, Path, str]:
+    def build(self, groups: list[dict], live: object = None) -> tuple[int, Path, str]:
         tmp = Path(tempfile.mkdtemp())
         (tmp / "pr.diff").write_text(DIFF)
         (tmp / "spec.json").write_text(json.dumps(make_spec(groups)))
         err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        lookup = mock.patch.object(walkthrough, "pr_metadata", side_effect=live or walkthrough.SpecError("gh pr view failed: offline"))
+        with lookup, redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = walkthrough.main(["build", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
         return code, tmp / "site", err.getvalue()
 
@@ -117,6 +152,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(3, data["stats"]["files"])
         self.assertEqual({"files": 3, "adds": 5, "dels": 2, "hand": 3, "test": 2, "generated": 2, "docs": 0}, data["stats"])
         self.assertEqual(["core", "gen"], [g["id"] for g in data["groups"]])
+
+    def test_a_diff_file_build_still_refuses_a_moved_head(self) -> None:
+        moved = lambda repo, number: dict(make_spec([])["pr"], head="c" * 40)
+        code, _, err = self.build(GOOD_GROUPS, live=moved)
+        self.assertEqual(1, code)
+        self.assertIn("moved from aaaaaaaaa to ccccccccc", err)
+
+    def test_a_diff_file_build_warns_when_it_cannot_check_the_head(self) -> None:
+        code, site, err = self.build(GOOD_GROUPS)
+        self.assertEqual(0, code, err)
+        self.assertIn("could not check whether the PR moved past aaaaaaaaa", err)
+        self.assertTrue((site / "index.html").is_file())
 
     def test_refuses_a_file_in_no_group(self) -> None:
         code, _, err = self.build([GOOD_GROUPS[0]])

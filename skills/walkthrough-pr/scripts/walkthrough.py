@@ -122,13 +122,55 @@ def kind_of(path: str) -> str:
     return ""
 
 
+C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def unquote_path(token: str) -> str:
+    """Decode a path git printed, C-quoted when it holds a special byte."""
+    token = token.rstrip("\t")
+    if not (len(token) >= 2 and token[0] == token[-1] == '"'):
+        return token
+    out = bytearray()
+    body, i = token[1:-1], 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt in "01234567" and i + 3 < len(body) + 1 and all(c in "01234567" for c in body[i + 1:i + 4]):
+                out.append(int(body[i + 1:i + 4], 8))
+                i += 4
+                continue
+            if nxt in C_ESCAPES:
+                out.append(C_ESCAPES[nxt])
+                i += 2
+                continue
+        out.extend(ch.encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", errors="replace")
+
+
+def header_path(rest: str) -> str:
+    """The b/ path of a `diff --git` line, used until the +++ line names it."""
+    if rest.startswith('"'):
+        end = 1
+        while end < len(rest) and not (rest[end] == '"' and rest[end - 1] != "\\"):
+            end += 1
+        b_side = rest[end + 1:].strip()
+        return unquote_path(b_side)[2:] if b_side else unquote_path(rest[:end + 1])[2:]
+    half = (len(rest) - 1) // 2
+    if len(rest) % 2 == 1 and rest[half] == " " and rest[:2] == "a/" and rest[half + 1:half + 3] == "b/" and rest[2:half] == rest[half + 3:]:
+        return rest[half + 3:]
+    b_side = rest.rsplit(" b/", 1)
+    return unquote_path(b_side[-1]) if len(b_side) == 2 else rest
+
+
 def parse_diff(text: str) -> list[dict]:
     files: list[dict] = []
     cur = hunk = None
     old_no = new_no = 0
     for raw in text.split("\n"):
         if raw.startswith("diff --git "):
-            cur = {"path": raw.split(" b/", 1)[-1], "new": False, "deleted": False, "adds": 0, "dels": 0, "hunks": []}
+            cur = {"path": header_path(raw[len("diff --git "):]), "new": False, "deleted": False, "adds": 0, "dels": 0, "hunks": []}
             files.append(cur)
             hunk = None
             continue
@@ -139,7 +181,15 @@ def parse_diff(text: str) -> list[dict]:
         elif raw.startswith("deleted file mode"):
             cur["deleted"] = True
         elif raw.startswith("rename to "):
-            cur["path"] = raw[len("rename to "):]
+            cur["path"] = unquote_path(raw[len("rename to "):])
+        elif hunk is None and raw.startswith("+++ "):
+            target = unquote_path(raw[4:])
+            if target.startswith("b/"):
+                cur["path"] = target[2:]
+        elif hunk is None and raw.startswith("--- "):
+            source = unquote_path(raw[4:])
+            if source.startswith("a/"):
+                cur["path"] = source[2:]
         elif raw.startswith("@@"):
             head = raw.split("@@")[1].split()
             old_no = int(head[0].lstrip("-").split(",")[0])
@@ -277,11 +327,17 @@ def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = F
     pr = dict(spec.get("pr") or {})
     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
         raise SpecError("pr.repo, pr.number and pr.head are required")
-    if diff is None:
-        if not at_head:
+    if not at_head:
+        try:
             live = pr_metadata(pr["repo"], int(pr["number"]))
+        except SpecError as exc:
+            if diff is None:
+                raise
+            print(f"walkthrough: could not check whether the PR moved past {pr['head'][:9]} ({exc}); building from the given diff", file=sys.stderr)
+        else:
             if live["head"] != pr["head"]:
                 raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
+    if diff is None:
         if not pr.get("base"):
             pr["base"] = merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
         diff = fetch_diff(pr["repo"], pr["base"], pr["head"])
