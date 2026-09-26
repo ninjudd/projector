@@ -365,9 +365,11 @@ project site workflow --write
 ```
 
 `walkthrough init` writes a skeleton spec with every changed file in one
-unassigned group. `walkthrough publish` checks that the spec builds, commits
-it to the hidden ref without touching the checkout, and starts the
-repository's site workflow; pass `--no-dispatch` to skip the workflow.
+unassigned group. `walkthrough publish` fetches the pull request's diff, checks
+that the spec builds against it, commits the spec and the diff to the hidden
+ref without touching the checkout, and starts the repository's site workflow.
+Pass `--diff` to publish a diff you produced instead of fetching one, and
+`--no-dispatch` to skip the workflow.
 
 `site page` builds one walkthrough into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
@@ -375,7 +377,10 @@ the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
 when GitHub cannot serve a diff that large. `site build` builds every
 `<number>/<head>/spec.json` under a directory into the whole site, skipping
 and reporting any spec that fails; the site workflow runs it through
-Projector's composite action.
+Projector's composite action. It reads each spec's `diff.patch` beside it and
+asks GitHub for a diff only for a spec published before diffs were stored.
+Each site page loads its `data.json` when it opens, where a `site page` embeds
+its data so it opens from disk.
 
 `site status` exits 0 and prints the site's URL, or with `--pr` the pull
 request's walkthrough URL, when the repository has the site workflow on its

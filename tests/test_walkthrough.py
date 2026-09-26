@@ -240,11 +240,42 @@ class SiteTests(unittest.TestCase):
         self.assertIn(">New<", index)
         self.assertTrue((built_site / ".nojekyll").exists())
         page = (built_site / "7" / ("a" * 40) / "index.html").read_text()
-        data = json.loads(page[page.index('type="application/json">') + 24:page.index("</script>", page.index('type="application/json">'))])
+        self.assertNotIn("walkthrough-data", page)
+        self.assertIn('<meta charset="utf-8">', page)
+        data = json.loads((built_site / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual("../../", data["indexUrl"])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "7" / "index.html").read_text()):
             self.assertIn(site.icon_link(), built)
+
+    def test_a_spec_published_with_its_diff_builds_without_github(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        spec_path = self.write_spec(tmp / "walkthroughs", "a" * 40, "Stored")
+        spec_path.with_name("diff.patch").write_text(DIFF)
+        offline = walkthrough.SpecError("gh api failed: offline")
+        with mock.patch.object(walkthrough, "fetch_diff", side_effect=offline), \
+             mock.patch.object(walkthrough, "merge_base", side_effect=offline), \
+             redirect_stdout(io.StringIO()):
+            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
+
+        self.assertEqual(([], 1), (failures, len(entries)))
+        data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
+        self.assertEqual(3, data["stats"]["files"])
+
+    def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        spec = make_spec(GOOD_GROUPS)
+        spec["pr"]["head"] = "a" * 40
+        spec["groups"][0]["intro"] = ['<script>alert(1)</script><b onclick="x()">bold</b>']
+        folder = tmp / "walkthroughs" / "7" / ("a" * 40)
+        folder.mkdir(parents=True)
+        (folder / "spec.json").write_text(json.dumps(spec))
+        (folder / "diff.patch").write_text(DIFF)
+        with redirect_stdout(io.StringIO()):
+            site.build_site(tmp / "walkthroughs", tmp / "site")
+
+        data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
+        self.assertEqual(["<b>bold</b>"], data["groups"][0]["intro"])
 
     def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
         tmp = Path(tempfile.mkdtemp())
@@ -348,6 +379,23 @@ class PublishTests(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
+        diff_file = self.spec.with_name("pr.diff")
+        diff_file.write_text(DIFF)
+        spec = make_spec(GOOD_GROUPS)
+        spec["pr"]["head"] = "a" * 40
+        self.spec.write_text(json.dumps(spec))
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        try:
+            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), \
+                 mock.patch.object(walkthrough, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+                 redirect_stdout(io.StringIO()):
+                walkthrough.publish(self.spec, "origin", diff_path=diff_file)
+        finally:
+            os.chdir(cwd)
+        self.assertIn(f"walkthroughs/7/{'a' * 40}/diff.patch", self.ref_files())
+
     def ref_files(self) -> list[str]:
         return run(self.remote, "git", "ls-tree", "-r", "--name-only", "refs/projector/walkthroughs").splitlines()
 
@@ -358,7 +406,10 @@ class PublishTests(unittest.TestCase):
 
         self.assertIsNotNone(self.publish("a" * 40))
 
-        self.assertEqual([f"walkthroughs/7/{'a' * 40}/spec.json"], self.ref_files())
+        self.assertEqual([f"walkthroughs/7/{'a' * 40}/diff.patch", f"walkthroughs/7/{'a' * 40}/spec.json"],
+                         self.ref_files())
+        self.assertEqual(DIFF, run(self.remote, "git", "show", f"refs/projector/walkthroughs:walkthroughs/7/{'a' * 40}/diff.patch")
+                         + "\n")
         self.assertEqual("", run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/walkthroughs"), "orphan")
         self.assertEqual(["trunk"], run(self.remote, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines(),
                          "no branch is created")
