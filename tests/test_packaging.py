@@ -14,6 +14,7 @@ PUBLISHED_SKILLS = {
     "start-review-loop",
     "start-fix-loop",
     "gh-stack",
+    "walk-through-pr",
 }
 
 
