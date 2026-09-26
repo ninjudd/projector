@@ -289,10 +289,10 @@ def js_function(name: str) -> str:
     return "\n".join(lines[start:end + 1])
 
 
-TSC = Path(__file__).parents[1] / "node_modules" / ".bin" / "tsc"
+TSC = SITE_JS.parents[1] / "node_modules" / ".bin" / "tsc"
 
 
-@unittest.skipUnless(TSC.exists(), "the compiled-script check needs `npm ci`")
+@unittest.skipUnless(TSC.exists(), "the compiled-script check needs `npm ci` in src/projector/site")
 class CompiledScriptTests(unittest.TestCase):
     def test_the_committed_javascript_is_what_the_typescript_compiles_to(self) -> None:
         assets = SITE_JS.parent

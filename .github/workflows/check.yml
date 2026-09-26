@@ -19,7 +19,9 @@ jobs:
       # Installs the TypeScript compiler, so the test suite checks the committed
       # JavaScript against its TypeScript instead of skipping that check.
       - run: npm ci
+        working-directory: src/projector/site
       # Type-checks the site's TypeScript and lints it with the strict rule set.
       - run: npm run check
+        working-directory: src/projector/site
       - run: PYTHONPATH=src python3 -m unittest discover -v
       - run: PYTHONPATH=src python3 -m projector check

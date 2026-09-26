@@ -57,9 +57,10 @@ user-owned file.
 The Projector site's scripts are TypeScript under `src/projector/site/ts/`.
 After you edit one, check it, compile it, and commit the JavaScript it
 produces under `src/projector/site/assets/`, which is what every deploy and
-install serves:
+install serves. The npm project that builds them is `src/projector/site/`:
 
 ```sh
+cd src/projector/site
 npm ci
 npm run check   # type-check and lint, with no warnings allowed
 npm run build
@@ -82,8 +83,9 @@ npm run dev
 
 ## Validate a change
 
-Run the validation gate from the repository root. Run `npm ci` once first, or
-the test that compares the compiled scripts with their TypeScript skips:
+Run the validation gate from the repository root. Run `npm ci` once in
+`src/projector/site/` first, or the test that compares the compiled scripts
+with their TypeScript skips:
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -v
