@@ -26,6 +26,7 @@ SPEC_VERSION = 1
 PAGES_REF = "refs/projector/walkthroughs"
 DISPATCH_EVENT = "projector-walkthroughs"
 PAGES_ROOT = "walkthroughs"
+DIFF_FILE = "diff.patch"
 WORKFLOW_PATH = ".github/workflows/projector-site.yml"
 LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
 
@@ -418,6 +419,12 @@ def stats(files: list[dict]) -> dict:
     return out
 
 
+def spec_diff(spec: dict) -> str:
+    pr = spec["pr"]
+    base = pr.get("base") or merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
+    return fetch_diff(pr["repo"], base, pr["head"])
+
+
 def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
     pr = dict(spec.get("pr") or {})
     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
@@ -433,9 +440,7 @@ def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, ext
             if live["head"] != pr["head"]:
                 raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
     if diff is None:
-        if not pr.get("base"):
-            pr["base"] = merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
-        diff = fetch_diff(pr["repo"], pr["base"], pr["head"])
+        diff = spec_diff(spec)
     files = parse_diff(diff)
     validate(spec, files)
     overview, groups = sanitized(spec)
@@ -476,7 +481,8 @@ def dispatch(repo: str) -> None:
     gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={DISPATCH_EVENT}")
 
 
-def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT) -> str | None:
+def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+            diff_path: Path | None = None) -> str | None:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     pr = spec.get("pr") or {}
     if spec.get("version") != SPEC_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
@@ -484,7 +490,8 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     slug = repo_slug(git("remote", "get-url", remote))
     if slug and slug.lower() != pr["repo"].lower():
         raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
-    prepare_page(spec, at_head=True)
+    diff = diff_path.read_text(encoding="utf-8") if diff_path else spec_diff(spec)
+    prepare_page(spec, diff=diff, at_head=True)
     local = ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
     fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
     parent = git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
@@ -492,8 +499,10 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
         if parent:
             git("read-tree", parent, env=env)
-        blob = git("hash-object", "-w", "--stdin", input=json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
-        git("update-index", "--add", "--cacheinfo", f"100644,{blob},{root}/{pr['number']}/{pr['head']}/spec.json", env=env)
+        folder = f"{root}/{pr['number']}/{pr['head']}"
+        for name, content in (("spec.json", json.dumps(spec, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
+            blob = git("hash-object", "-w", "--stdin", input=content)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
         tree = git("write-tree", env=env)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
         print(f"{ref} already has this spec; nothing to publish")
@@ -502,7 +511,7 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
     git("push", "--quiet", remote, f"{commit}:{ref}")
     git("update-ref", local, commit)
-    print(f"pushed {commit[:9]} to {remote} {ref}: {root}/{pr['number']}/{pr['head']}/spec.json")
+    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/spec.json and {DIFF_FILE}")
     if send_dispatch:
         dispatch(pr["repo"])
         print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its Projector site workflow builds and deploys the site")

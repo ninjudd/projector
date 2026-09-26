@@ -214,6 +214,7 @@ def parser() -> argparse.ArgumentParser:
     )
     walkthrough_publish.add_argument("--spec", required=True)
     walkthrough_publish.add_argument("--remote", default="origin")
+    walkthrough_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     walkthrough_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
     )
@@ -413,7 +414,12 @@ def run_walkthrough(arguments: argparse.Namespace) -> int:
     if arguments.walkthrough_command == "init":
         walkthrough.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
     else:
-        walkthrough.publish(Path(arguments.spec), arguments.remote, send_dispatch=not arguments.no_dispatch)
+        walkthrough.publish(
+            Path(arguments.spec),
+            arguments.remote,
+            send_dispatch=not arguments.no_dispatch,
+            diff_path=Path(arguments.diff) if arguments.diff else None,
+        )
     return 0
 
 

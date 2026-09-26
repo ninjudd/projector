@@ -1,11 +1,10 @@
-// Projector PR walkthrough renderer: builds the page from the JSON in #walkthrough-data,
-// then wires collapsing, viewed and reviewed state, highlighting, and sticky headers.
+// Projector PR walkthrough renderer: builds the page from walkthrough data, embedded in
+// #walkthrough-data or fetched from data.json beside the page, then wires collapsing,
+// viewed and reviewed state, highlighting, and sticky headers.
 (function () {
+function renderWalkthrough(data) {
   'use strict';
 
-  var node = document.getElementById('walkthrough-data');
-  if (!node) return;
-  var data = JSON.parse(node.textContent);
   var pr = data.pr;
   var repoUrl = 'https://github.com/' + pr.repo;
   var prUrl = repoUrl + '/pull/' + pr.number;
@@ -143,9 +142,9 @@
   var root = document.getElementById('walkthrough') || document.body;
   root.innerHTML = renderPage();
   window.__WALKTHROUGH_KEY__ = 'walkthrough:' + pr.repo + '#' + pr.number + ':';
-})();
+}
 
-(function () {
+function wireWalkthrough() {
   var KEY = window.__WALKTHROUGH_KEY__ || 'walkthrough:';
   function get(k) { try { return localStorage.getItem(KEY + k); } catch (e) { return null; } }
   function set(k, v) { try { if (v) localStorage.setItem(KEY + k, '1'); else localStorage.removeItem(KEY + k); } catch (e) {} }
@@ -317,4 +316,24 @@
   window.addEventListener('hashchange', openHashTarget);
   openHashTarget();
   refreshProgress();
+}
+
+var node = document.getElementById('walkthrough-data');
+if (node) {
+  renderWalkthrough(JSON.parse(node.textContent));
+  wireWalkthrough();
+} else {
+  fetch('data.json')
+    .then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    })
+    .then(function (data) {
+      renderWalkthrough(data);
+      wireWalkthrough();
+    }, function (error) {
+      (document.getElementById('walkthrough') || document.body).textContent =
+        'This walkthrough could not load its data: ' + error.message;
+    });
+}
 })();
