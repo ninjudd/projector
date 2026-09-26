@@ -93,13 +93,13 @@ project site status --repo OWNER/NAME --pr NUMBER
 ```
 
 - **Exit 0** prints the walkthrough's URL. The repository is set up: it has
-  the walkthroughs workflow on its default branch and a Pages site. Setting
+  the Projector site workflow on its default branch and a Pages site. Setting
   that up was the reviewed decision to host walkthroughs there, so publish to
   the site as the next section describes without asking again, and hand over
   the printed URL.
 - **Exit 3** prints why the repository is not set up. Publish an Artifact,
   and tell the user in one sentence that the repository can host its own
-  walkthroughs, pointing at the "Set up Projector hosting" section of
+  walkthroughs, pointing at the "Set up the Projector site" section of
   Projector's README.
 - **Any other exit** means the check itself failed, for example because
   `gh` could not reach GitHub. Publish an Artifact and say the hosting check

@@ -27,7 +27,8 @@ PAGES_REF = "refs/projector/walkthroughs"
 DISPATCH_EVENT = "projector-walkthroughs"
 PAGES_ROOT = "walkthroughs"
 DIFF_FILE = "diff.patch"
-WORKFLOW_PATH = ".github/workflows/walkthroughs.yml"
+WORKFLOW_PATH = ".github/workflows/projector-site.yml"
+LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
 
 LANGS = {
     ".go": "go", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
@@ -40,7 +41,7 @@ LANGS = {
 GENERATED_SUFFIXES = (".pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
 GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
 
-WORKFLOW = """name: Walkthroughs
+WORKFLOW = """name: Projector site
 on:
   repository_dispatch:
     types: [{event}]
@@ -225,11 +226,12 @@ def hosting(repo: str) -> tuple[str | None, str]:
     Both halves are required. The workflow on the default branch is the reviewed
     decision to host walkthroughs; a Pages site alone may serve something else.
     """
-    if gh_lookup("api", f"repos/{repo}/contents/{WORKFLOW_PATH}", "--jq", ".path") is None:
+    if not any(gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None
+               for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS)):
         return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
     raw = gh_lookup("api", f"repos/{repo}/pages")
     if raw is None:
-        return None, f"{repo} has the walkthroughs workflow but no GitHub Pages site"
+        return None, f"{repo} has the Projector site workflow but no GitHub Pages site"
     pages = json.loads(raw)
     if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
         return None, f"{repo} is private but its GitHub Pages site is public"
@@ -512,7 +514,7 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/spec.json and {DIFF_FILE}")
     if send_dispatch:
         dispatch(pr["repo"])
-        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its walkthroughs workflow builds and deploys the site")
+        print(f"sent {DISPATCH_EVENT} to {pr['repo']}; its Projector site workflow builds and deploys the site")
     return commit
 
 

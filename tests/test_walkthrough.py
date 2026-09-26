@@ -473,10 +473,11 @@ class StatusTests(unittest.TestCase):
             code = cli.main(["site", "status", "--repo", "o/r", *args])
         return code, out.getvalue(), err.getvalue()
 
-    WORKFLOW = "repos/o/r/contents/.github/workflows/walkthroughs.yml"
+    WORKFLOW = "repos/o/r/contents/.github/workflows/projector-site.yml"
+    LEGACY = "repos/o/r/contents/.github/workflows/walkthroughs.yml"
     PAGES = "repos/o/r/pages"
     REPO = "repos/o/r"
-    PRESENT = ".github/workflows/walkthroughs.yml\n"
+    PRESENT = ".github/workflows/projector-site.yml\n"
 
     @staticmethod
     def pages(**fields: object) -> str:
@@ -506,14 +507,18 @@ class StatusTests(unittest.TestCase):
         self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
 
     def test_a_pages_site_without_the_workflow_is_not_hosting(self) -> None:
-        code, out, _ = self.status({self.WORKFLOW: None, self.PAGES: self.pages()}, "--pr", "66")
+        code, out, _ = self.status({self.WORKFLOW: None, self.LEGACY: None, self.PAGES: self.pages()}, "--pr", "66")
         self.assertEqual(cli.NOT_HOSTED, code)
-        self.assertEqual("not hosted: o/r has no .github/workflows/walkthroughs.yml on its default branch\n", out)
+        self.assertEqual("not hosted: o/r has no .github/workflows/projector-site.yml on its default branch\n", out)
+
+    def test_a_repository_set_up_before_the_rename_still_counts(self) -> None:
+        answers = {self.WORKFLOW: None, self.LEGACY: ".github/workflows/walkthroughs.yml\n", self.PAGES: self.pages(), self.REPO: "false\n"}
+        self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
 
     def test_the_workflow_without_a_pages_site_is_not_hosting(self) -> None:
         code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: None})
         self.assertEqual(cli.NOT_HOSTED, code)
-        self.assertIn("has the walkthroughs workflow but no GitHub Pages site", out)
+        self.assertIn("has the Projector site workflow but no GitHub Pages site", out)
 
     def test_a_failed_lookup_is_an_error_rather_than_not_hosting(self) -> None:
         code, out, err = self.status({})

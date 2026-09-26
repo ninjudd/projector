@@ -348,12 +348,11 @@ missing, or when the checkout or its `install.sh` no longer exists.
 
 ## Build the Projector site
 
-A repository that sets up Projector hosting serves a Projector site from
-GitHub Pages, built from content Projector keeps in the repository. Today
-that content is the pull request walkthroughs on the hidden ref
-`refs/projector/walkthroughs`; browsing `docs/projects` joins it later. The
-`walkthrough-pr` skill writes a walkthrough's data, a spec, and these
-commands do everything else:
+A repository that sets up the Projector site serves it from GitHub Pages,
+built from content Projector keeps in the repository. Today that content is
+the pull request walkthroughs on the hidden ref `refs/projector/walkthroughs`;
+browsing `docs/projects` joins it later. The `walkthrough-pr` skill writes a
+walkthrough's data, a spec, and these commands do everything else:
 
 ```sh
 project walkthrough init --repo OWNER/NAME --pr 66 --spec walkthrough.json
