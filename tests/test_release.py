@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 from pathlib import Path
 
@@ -144,23 +144,29 @@ class TagTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
             release.tag(self.repo, branch="trunk")
 
-    def test_if_untagged_leaves_a_released_version_alone(self) -> None:
-        first = run(self.repo, "git", "rev-parse", "HEAD")
+    def released(self) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = release.main(["released", "--branch", "trunk"], root=self.repo)
+        return code, out.getvalue()
+
+    def test_released_says_whether_the_merged_version_is_tagged(self) -> None:
+        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet\n"), self.released())
+
         release.tag(self.repo, branch="trunk")
         self.commit_other_change()
+        self.assertEqual((0, "v0.5.0 is released\n"), self.released())
 
-        self.assertEqual("v0.5.0 is already released; nothing to do",
-                         release.tag(self.repo, branch="trunk", if_untagged=True))
-        self.assertEqual(first, self.remote_tag("v0"), "the major tag stays on the release")
-        self.assertEqual([("origin", "v0.5.0")], self.releases, "no second GitHub release")
+        self.commit("0.5.1")
+        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet\n"), self.released())
 
-    def test_if_untagged_releases_a_new_version(self) -> None:
-        release.tag(self.repo, branch="trunk")
-        second = self.commit("0.5.1")
-
-        release.tag(self.repo, branch="trunk", if_untagged=True)
-        self.assertEqual(second, self.remote_tag("v0.5.1"))
-        self.assertEqual(second, self.remote_tag("v0"))
+    def test_released_fails_as_an_error_when_it_cannot_tell(self) -> None:
+        run(self.repo, "git", "remote", "set-url", "origin", str(self.repo.parent / "missing.git"))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = release.main(["released", "--branch", "trunk"], root=self.repo)
+        self.assertEqual(1, code, "an error is not an answer the workflow can act on")
+        self.assertIn("git fetch", err.getvalue())
 
     def commit_other_change(self) -> None:
         (self.repo / "notes.txt").write_text("not a release\n")
