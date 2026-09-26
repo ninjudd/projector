@@ -245,17 +245,23 @@ def require_private_site(repo: str) -> None:
         raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
 
 
-def enable_pages(repo: str, admin: bool = True) -> dict:
+def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
     """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
 
     Returns what changed: `pages` is created, updated, or unchanged, and
     `visibility` is updated when a private repository's public site was made
     private. Raises when a private repository's site cannot be made private,
-    because the site would publish the repository's README, plans and diffs.
-    Without `admin`, it changes nothing and raises when anything needs
-    changing, so a site an admin already set up still counts as set up.
+    because the site would publish the repository's README, plans and diffs,
+    and first deletes a site this call created, so the refusal leaves the
+    repository as it found it. Without `admin`, it changes nothing and raises
+    when anything needs changing, so a site an admin already set up still
+    counts as set up. Without `takeover`, it raises rather than switch a site
+    that deploys from a branch, because that site is the repository's own.
     """
     raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is not None and not takeover and json.loads(raw).get("build_type") != "workflow":
+        raise SpecError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
+                        "with the Projector site")
     if not admin:
         pages = json.loads(raw) if raw is not None else None
         if pages is None:
@@ -285,11 +291,16 @@ def enable_pages(repo: str, admin: bool = True) -> dict:
                    "`project site serve` instead")
         try:
             gh("api", "-X", "PUT", f"repos/{repo}/pages", "-F", "public=false")
+            pages = json.loads(gh("api", f"repos/{repo}/pages"))
+            failure = refusal if exposure(repo, pages) else ""
         except SpecError as exc:
-            raise SpecError(f"{refusal}: {exc}") from exc
-        pages = json.loads(gh("api", f"repos/{repo}/pages"))
-        if exposure(repo, pages):
-            raise SpecError(refusal)
+            failure = f"{refusal}: {exc}"
+        if failure:
+            # A site this call created would stay public on a private repository.
+            if action == "created":
+                gh("api", "-X", "DELETE", f"repos/{repo}/pages")
+                failure += "; the public Pages site init created was deleted"
+            raise SpecError(failure)
         visibility = "updated"
     return {"pages": action, "visibility": visibility, "url": site_url(pages), "public": pages.get("public", True)}
 

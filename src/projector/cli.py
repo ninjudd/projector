@@ -667,11 +667,24 @@ class NotOnGitHub(ProjectorError):
     """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
 
 
-def init_site(root: Path, action_ref: str) -> tuple[dict, FileAction]:
+def other_pages_deployers(root: Path) -> list[str]:
+    """Workflows in the checkout, other than Projector's, that deploy a GitHub Pages site."""
+    folder = root / ".github" / "workflows"
+    ours = {Path(WORKFLOW_PATH).name, *(Path(path).name for path in walkthrough.LEGACY_WORKFLOW_PATHS)}
+    found = []
+    for path in sorted(folder.glob("*.y*ml")) if folder.is_dir() else []:
+        if path.name not in ours and "actions/deploy-pages" in path.read_text(encoding="utf-8", errors="replace"):
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict, FileAction]:
     """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
 
     The workflow is written only once the Pages site is safe to deploy to, so
     a private repository whose site cannot be made private gets no workflow.
+    Without `takeover`, a repository that already deploys its own Pages site,
+    from a branch or from another workflow, keeps it.
     """
     try:
         repo = walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
@@ -679,13 +692,17 @@ def init_site(root: Path, action_ref: str) -> tuple[dict, FileAction]:
         repo = ""
     if not repo:
         raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
+    deployers = other_pages_deployers(root)
+    if deployers and not takeover:
+        raise walkthrough.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
+                                    "add the Projector site's workflow beside it")
     if shutil.which("gh") is None:
         raise walkthrough.SpecError("the gh CLI is not installed, and setting up Pages needs it")
     details = json.loads(walkthrough.gh("api", f"repos/{repo}"))
     # Only an admin can change Pages or the website link. Without admin, a site
     # already set up still gets its workflow, which needs no admin to propose.
     admin = bool((details.get("permissions") or {}).get("admin"))
-    pages = walkthrough.enable_pages(repo, admin)
+    pages = walkthrough.enable_pages(repo, admin, takeover)
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:
         pages["website"], note = walkthrough.set_homepage(
@@ -746,7 +763,7 @@ def run(arguments: argparse.Namespace) -> int:
             pages = None
             if wanted:
                 try:
-                    pages, workflow = init_site(root, arguments.action_ref)
+                    pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site))
                     files.append(workflow)
                 except ProjectorError as error:
                     if arguments.site:

@@ -243,8 +243,16 @@ repository's website link at the site.
   Pages back on after a repository declined it.
 - **Make the site safe before writing the workflow.** When GitHub refuses to
   make a private repository's site private, `init` writes no workflow, so
-  nothing can be merged that would deploy the repository's content publicly.
-  The action's `--check-visibility` stays as the deploy's own guard.
+  nothing can be merged that would deploy the repository's content publicly,
+  and deletes a site it created in the same run, so the refusal leaves no
+  public site behind. It never deletes a site it did not create. The
+  action's `--check-visibility` stays as the deploy's own guard.
+- **Leave a repository's own site alone by default.** A Pages site that
+  deploys from a branch, or another workflow in the checkout that uses
+  `actions/deploy-pages`, is the repository's own site. Switching it, or
+  adding a second deployer, would replace that site once the workflow
+  merged, so default `init` skips the site with a note, and only `--site`
+  takes it over.
 - **Check admin rights before changing anything.** A non-admin changes
   nothing on GitHub and hears what an admin must do. A site an admin already
   set up still gets its workflow, since proposing a file needs no admin.
@@ -255,6 +263,5 @@ repository's website link at the site.
   environment variable for the action; `init` reads only the checkout, so
   tests and scripts that run `init` inside GitHub Actions do not reach the
   repository they run in.
-- **Stay idempotent.** An existing Pages site is switched to the Actions
-  source rather than refused, and a rerun reports the site, the link, and
-  the workflow as `unchanged`, as `init` reports its other files.
+- **Stay idempotent.** A rerun reports the site, the link, and the workflow
+  as `unchanged`, as `init` reports its other files.

@@ -118,8 +118,11 @@ updated repository website https://owner.github.io/example/
 ```
 
 After the files above, `init` turns on GitHub Pages with GitHub Actions as
-its source, or switches an existing Pages site to that source, and reports
-the site as `created`, `updated`, or `unchanged`. When the repository is
+its source and reports the site as `created`, `updated`, or `unchanged`. A
+repository that already deploys its own Pages site, from a branch or from
+another workflow that uses `actions/deploy-pages`, keeps it: `init` skips the
+site with a note. Pass `--site` to switch a branch site to GitHub Actions and
+add Projector's workflow beside another deployer. When the repository is
 private and its site is public, it makes the site private and prints
 `updated GitHub Pages visibility: private`. It points the repository's
 website link at the site when that link is empty, and keeps a link to
@@ -135,13 +138,17 @@ to do; it still writes the workflow when an admin has already set Pages up,
 because proposing the workflow needs no admin.
 
 The workflow is written only once the site is safe to deploy to. When `gh`
-is missing, you are not an admin and Pages needs changing, or GitHub refuses
-to make a private repository's site private, as it does without private
-Pages (GitHub Enterprise Cloud), `init` adopts the repository as usual,
-skips the site with a note on stderr, and exits 0. A repository whose
-`origin` is not on GitHub skips the site without a note. `project site serve` still serves the site locally. Pass `--site`
-to make any of those an error that exits 65, or `--no-site` to leave GitHub
-alone. To skip the site every time, set in `.projector.toml`:
+is missing, you are not an admin and Pages needs changing, the repository
+already deploys its own site, or GitHub refuses to make a private
+repository's site private, as it does without private Pages (GitHub
+Enterprise Cloud), `init` adopts the repository as usual, skips the site
+with a note on stderr, and exits 0. If `init` created the Pages site in
+that same run and cannot make it private, it deletes the site again, so a
+private repository is never left with a public site; it never deletes a
+site it did not create. A repository whose `origin` is not on GitHub skips
+the site without a note. `project site serve` still serves the site
+locally. Pass `--site` to make the other failures an error that exits 65,
+or `--no-site` to leave GitHub alone. To skip the site every time, set in `.projector.toml`:
 
 ```toml
 [site]

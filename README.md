@@ -131,9 +131,9 @@ is the GitHub repository:
    ```
 
    Besides adopting the convention, it turns on GitHub Pages with GitHub
-   Actions as its source, or switches an existing Pages site to that source,
-   and points the repository's website link at the site if the link is
-   empty. If the repository is private, it makes the site private too, and
+   Actions as its source, and points the repository's website link at the
+   site if the link is empty. A repository that already deploys its own
+   Pages site keeps it unless you pass `--site`. If the repository is private, it makes the site private too, and
    skips the workflow if GitHub refuses: a private repository's Pages site
    is public unless the account has private Pages, which needs GitHub
    Enterprise Cloud. Then it writes the workflow. When it cannot set the site

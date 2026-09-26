@@ -544,6 +544,9 @@ class FakeGitHub:
                                "permissions": {"admin": self.admin, "push": True, "pull": True}})
         if not self.admin:
             raise walkthrough.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
+        if args == ("api", "-X", "DELETE", "repos/owner/example/pages"):
+            self.pages = None
+            return ""
         method, endpoint, _, field = args[2], args[3], args[4], args[5]
         if (method, endpoint) == ("POST", "repos/owner/example/pages"):
             self.pages = {"build_type": "workflow", "public": True,
@@ -639,15 +642,39 @@ class InitSiteTests(SiteRepoCase):
         self.assertFalse(self.workflow().exists())
         self.assertEqual(65, self.init(github, "--site")[0], "--site requires the site")
 
-    def test_switches_an_existing_site_to_deploy_from_github_actions(self) -> None:
-        github = FakeGitHub(pages=dict(SITE_READY, build_type="legacy"))
+    def test_keeps_a_repositorys_own_branch_site_unless_site_asks_to_replace_it(self) -> None:
+        github = FakeGitHub(pages=dict(SITE_READY, build_type="legacy"), homepage="https://docs.example.com")
 
-        code, out, _ = self.init(github, "--action-ref", "v0.5.5")
+        code, _, err = self.init(github)
 
         self.assertEqual(0, code)
-        self.assertEqual(("PUT", "repos/owner/example/pages", "-f", "build_type=workflow"), github.writes()[0])
+        self.assertEqual([], github.writes())
+        self.assertIn("already serves its own GitHub Pages site from a branch; pass --site", err)
+        self.assertFalse(self.workflow().exists())
+
+        code, out, _ = self.init(github, "--site", "--action-ref", "v0.5.5")
+
+        self.assertEqual(0, code)
+        self.assertEqual([("PUT", "repos/owner/example/pages", "-f", "build_type=workflow")], github.writes())
         self.assertIn("updated GitHub Pages site", out)
         self.assertIn("uses: ninjudd/projector/actions/site@v0.5.5", self.workflow().read_text())
+
+    def test_keeps_a_site_another_workflow_deploys_unless_site_asks_to_add_one(self) -> None:
+        github = FakeGitHub(pages=SITE_READY)
+        docs = self.repo / ".github/workflows/docs.yml"
+        docs.parent.mkdir(parents=True)
+        docs.write_text("jobs:\n  deploy:\n    steps:\n      - uses: actions/deploy-pages@v4\n")
+
+        code, _, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.calls, "a deployer in the checkout is found before asking GitHub")
+        self.assertIn(".github/workflows/docs.yml already deploys a GitHub Pages site; pass --site", err)
+        self.assertFalse(self.workflow().exists())
+
+        self.assertEqual(0, self.init(github, "--site")[0])
+        self.assertTrue(self.workflow().exists())
+        self.assertEqual(0, self.init(github)[0], "Projector's own workflow is not another deployer")
 
     def test_makes_a_private_repositorys_site_private(self) -> None:
         github = FakeGitHub(private=True)
@@ -671,6 +698,19 @@ class InitSiteTests(SiteRepoCase):
                 self.assertIn("project site serve", err)
                 self.assertIn("AGENTS.md", out, "what init wrote is still reported")
                 self.assertFalse(self.workflow().exists())
+                self.assertIsNone(github.pages, "the public site init created is deleted")
+                self.assertIn("the public Pages site init created was deleted", err)
+
+    def test_never_deletes_a_public_site_it_did_not_create(self) -> None:
+        github = FakeGitHub(private=True, private_pages=False, pages=SITE_READY)
+
+        code, _, err = self.init(github)
+
+        self.assertEqual(0, code)
+        self.assertEqual([("PUT", "repos/owner/example/pages", "-F", "public=false")], github.writes())
+        self.assertEqual(SITE_READY, github.pages)
+        self.assertNotIn("was deleted", err)
+        self.assertFalse(self.workflow().exists())
 
     def test_keeps_a_website_link_that_points_elsewhere(self) -> None:
         for homepage, action in (("http://owner.github.io/example", "unchanged"), ("https://example.com", "kept")):
