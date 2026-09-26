@@ -54,7 +54,7 @@ hidden ref `refs/projector/walkthroughs` at
 spec there through Git plumbing, so it never touches the checkout, and then
 sends a `repository_dispatch` event. A workflow on the default branch, added
 once with `walkthrough.py workflow --write`, answers that event by calling
-Projector's composite action, `ninjudd/projector/actions/walkthroughs`. The
+Projector's composite action, now `ninjudd/projector/actions/site`. The
 action fetches the ref, runs `walkthrough.py site`, which rebuilds every spec
 at its recorded head (`build --at-head`, the diff from the compare API for
 `pr.base` and `pr.head`), writes an index, points `/<number>/` at each pull
@@ -162,10 +162,11 @@ for turning content into pages (the renderer, the index, the redirects, and
 the favicon shared with Projector's homepage). The commands are `project
 walkthrough init|publish` and `project site page|build|status|workflow`.
 
-The composite action keeps its path, `actions/walkthroughs`, so the workflow
-files repositories have already merged keep working; it runs the CLI from its
-own checkout, `python3 -m projector site build`, without installing it, which
-sidesteps a runner's system Python refusing a package install. The site's
+The composite action, since renamed `actions/site` because it builds the
+whole site and no repository outside this one had adopted it yet, runs the
+CLI from its own checkout, `python3 -m projector site build`, without
+installing it, which sidesteps a runner's system Python refusing a package
+install. The site's
 package owns its assets as package data, so an installed CLI renders the same
 page the action deploys. The projects view extends `projector.site` and reads
 plans through the CLI's own project model rather than parsing them again.

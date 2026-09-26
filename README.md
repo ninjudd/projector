@@ -166,10 +166,10 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
        runs-on: ubuntu-latest
        environment:
          name: github-pages
-         url: ${{ steps.walkthroughs.outputs.page_url }}
+         url: ${{ steps.site.outputs.page_url }}
        steps:
-         - id: walkthroughs
-           uses: ninjudd/projector/actions/walkthroughs@v0
+         - id: site
+           uses: ninjudd/projector/actions/site@v0
    ```
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as

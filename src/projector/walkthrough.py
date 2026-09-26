@@ -62,10 +62,10 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+      url: ${{{{ steps.site.outputs.page_url }}}}
     steps:
-      - id: walkthroughs
-        uses: ninjudd/projector/actions/walkthroughs@{ref}
+      - id: site
+        uses: ninjudd/projector/actions/site@{ref}
 """
 
 
