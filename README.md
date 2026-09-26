@@ -9,13 +9,35 @@ Projects never move when their status or priority changes. Two branches working
 on different projects therefore edit different files instead of contending on a
 shared `now.md`, `next.md`, or `later.md` queue.
 
-## Install the CLI
+## Install
 
-Projector requires Python 3.11 or newer. Install an isolated executable with
-`pipx` after the first Projector release reaches the default branch:
+One command installs the `project` command from the newest release and the
+plugin for Claude Code and Codex, whichever you have. It needs Python 3.11 or
+newer, and no git:
 
 ```sh
-pipx install git+https://github.com/ninjudd/projector.git
+curl -fsSL https://projector.bot/install.sh | bash
+```
+
+It installs the CLI with `pipx` when you have it, and otherwise into a
+virtual environment of its own, linking `project` into `~/.local/bin`. Later,
+move everything to the newest release, or check whether anything is behind:
+
+```sh
+project upgrade
+project upgrade status
+```
+
+Set `PROJECTOR_REF` to install a particular release, such as `v0.5.6`, and
+`PROJECTOR_REPO` to install from a fork.
+
+### Install the CLI
+
+To install only the command, use `pipx` with the newest release's source
+archive:
+
+```sh
+pipx install https://github.com/ninjudd/projector/archive/v0.tar.gz
 project --help
 ```
 
@@ -32,10 +54,11 @@ python3 -m venv .venv
 .venv/bin/project --help
 ```
 
-## Install the agent workflows
+### Install the agent workflows
 
-Projector packages the same canonical skills for Claude Code and Codex. Add the
-repository as a marketplace and install the plugin for either host:
+Projector packages the same canonical skills for Claude Code and Codex. To
+install the plugin yourself, add the repository as a marketplace and install
+it for either host:
 
 ```sh
 claude plugin marketplace add ninjudd/projector --scope user
@@ -55,10 +78,10 @@ cd projector
 
 `pipx` installs a copy and each host caches the plugin, so pulling new
 commits updates neither. Running the installer again upgrades both, and
-`project upgrade` runs it from any directory: `project upgrade all` is
-`./install.sh all`. Either one ends by saying whether the checkout is behind
-its upstream, because the command is built from the checkout while a GitHub
-marketplace serves the plugin.
+`project upgrade` runs it from any directory: for a checkout install,
+`project upgrade all` is `./install.sh all`. Either one ends by saying whether
+the checkout is behind its upstream, because the command is built from the
+checkout while a GitHub marketplace serves the plugin.
 
 The installer removes only legacy symlinks that point from the host's old
 agent-config locations into this checkout. It does not replace configuration
@@ -265,10 +288,6 @@ Use `--json` when an agent or script consumes output. Every JSON response has
 `"schema_version": 2`; diagnostics go to stderr. See [the CLI
 reference](docs/cli.md), [the plugin guide](docs/plugins.md), and [the project
 convention](docs/projects/README.md) for the complete contracts.
-
-The legacy `install.sh` still installs the pre-Projector agent configuration.
-Use the CLI installation above for this layer; native Claude and Codex plugin
-installation replaces the legacy script in the workflow layer.
 
 ## Develop Projector
 

@@ -6,6 +6,26 @@ manifest at `.claude-plugin/plugin.json` and the Codex manifest at
 instructions and supporting scripts without a generated copy or host-specific
 fork.
 
+## Install with one command
+
+The installer at projector.bot installs the CLI from the newest release and
+the plugin for each host you have, without git:
+
+```sh
+curl -fsSL https://projector.bot/install.sh | bash
+curl -fsSL https://projector.bot/install.sh | bash -s -- status
+```
+
+It takes the same targets as `./install.sh` below. Without a checkout it
+installs the CLI with `pipx` from the source archive of `PROJECTOR_REF`
+(default `v0`, which every release moves), or, without `pipx`, into a virtual
+environment under `~/.local/share/projector` with `project` linked into
+`~/.local/bin`. It adds the `PROJECTOR_REPO` marketplace (default
+`ninjudd/projector`) to each host. `status` compares the installed versions
+with the release's. `project upgrade` downloads and runs the same installer.
+projector.bot serves `install.sh` from the `v0` tag, so it is always the
+newest release's installer.
+
 ## Install for Claude Code
 
 Add the Projector marketplace and install its plugin at user scope:

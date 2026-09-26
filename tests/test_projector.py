@@ -1205,15 +1205,70 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(["1", "cli"], self.log.read_text().splitlines())
 
-    def test_a_git_install_has_no_checkout_to_run(self) -> None:
-        url = "https://github.com/ninjudd/projector.git"
-        self.installed_from({"url": url, "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
+    def served_installer(self, exit_code: int = 0) -> str:
+        """A released installer at a file:// URL, which is where `upgrade` fetches it from."""
 
-        code, _, stderr = self.invoke("all")
+        served = self.root / "served" / "install.sh"
+        served.parent.mkdir()
+        served.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$#" "$@" "repo=${{PROJECTOR_REPO:-}}" > "{self.log}"\nexit {exit_code}\n'
+        )
+        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": served.as_uri()}))
+        return served.as_uri()
+
+    def test_a_release_install_runs_the_released_installer(self) -> None:
+        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz",
+                             "archive_info": {"hash": "sha256=0"}})
+        url = self.served_installer(exit_code=3)
+
+        code, stdout, stderr = self.invoke("all")
+
+        self.assertEqual(3, code, stderr)
+        self.assertEqual(["1", "all", "repo="], self.log.read_text().splitlines())
+        self.assertEqual("", stdout)
+        self.assertIn(f"+ curl -fsSL {url} | bash -s -- all", stderr)
+
+    def test_a_git_install_upgrades_the_same_way(self) -> None:
+        self.installed_from({"url": "https://github.com/ninjudd/projector.git",
+                             "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
+        self.served_installer()
+
+        code, _, stderr = self.invoke("status")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(["1", "status", "repo="], self.log.read_text().splitlines())
+
+    def test_a_fork_upgrades_from_its_own_repository(self) -> None:
+        self.installed_from({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}})
+        self.served_installer()
+
+        self.invoke("cli")
+
+        self.assertEqual(["1", "cli", "repo=someone/projector"], self.log.read_text().splitlines())
+
+    def test_the_installer_comes_from_projector_bot_or_the_fork(self) -> None:
+        self.patch(mock.patch.dict(os.environ, {}, clear=False))
+        os.environ.pop("PROJECTOR_INSTALLER_URL", None)
+        os.environ.pop("PROJECTOR_REF", None)
+
+        upstream, _ = cli.release_installer({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz"})
+        git, _ = cli.release_installer({"url": "git+https://github.com/ninjudd/projector.git"})
+        unknown, _ = cli.release_installer({"url": "https://example.com/projector.tar.gz"})
+        fork, environment = cli.release_installer({"url": "https://github.com/someone/projector/archive/v0.tar.gz"})
+
+        self.assertEqual({"https://projector.bot/install.sh"}, {upstream, git, unknown})
+        self.assertEqual("https://raw.githubusercontent.com/someone/projector/v0/install.sh", fork)
+        self.assertEqual("someone/projector", environment["PROJECTOR_REPO"])
+
+    def test_an_installer_that_cannot_be_fetched_is_named(self) -> None:
+        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {}})
+        missing = (self.root / "nowhere" / "install.sh").as_uri()
+        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": missing}))
+
+        code, _, stderr = self.invoke()
 
         self.assertEqual(69, code)
-        self.assertIn(url, stderr)
-        self.assertIn("install.sh", stderr)
+        self.assertIn(f"could not download the installer from {missing}", stderr)
 
     def test_an_uninstalled_command_has_nothing_to_upgrade(self) -> None:
         self.patch(mock.patch.object(metadata, "distribution", side_effect=metadata.PackageNotFoundError))
