@@ -21,21 +21,28 @@
 #
 # Usage:
 #   watch-prs.sh --tracked <file> --state <path>
+#                [--repo <owner/repo> --author <login>]
 #                [--interval 60] [--worktree <dir>] [--once]
 #
 # --tracked names the file holding the tracked set: one `owner/repo#number`
 # per line, with blank lines and lines starting with `#` ignored. The file is
-# the whole scope of the watch. Nothing is listed and nothing is discovered, so
-# a push to a pull request absent from it produces no event, and every event
-# that does arrive is the loop's to review. That matters most here, because
-# this watcher's events are pushes: on a shared repository every push by
-# anyone is one, and every line is a Monitor notification counting toward the
-# limit that stops a watcher. The file is re-read every cycle: the loop adds a
-# pull request it opened or adopted by appending a line and drops a merged one
-# by deleting its line, without a restart. Every line is checked before the
-# watch starts, because a bad one would otherwise be a watch that starts
-# cleanly and never mentions the pull request it was meant for; a bad line
-# that appears later is announced once.
+# the whole scope of the watch, so a push to a pull request absent from it
+# produces no event, and every event that does arrive is the loop's to review.
+# That matters most here, because this watcher's events are pushes: on a
+# shared repository every push by anyone is one, and every line is a Monitor
+# notification counting toward the limit that stops a watcher. The file is
+# re-read every cycle: the loop adds a pull request by appending a line and
+# drops a merged one by deleting its line, without a restart. Every line is
+# checked before the watch starts, because a bad one would otherwise be a
+# watch that starts cleanly and never mentions the pull request it was meant
+# for; a bad line that appears later is announced once.
+#
+# --repo and --author, given together, adopt that author's pull requests: each
+# cycle lists the author's open pull requests in the repository and appends
+# every one the file does not name yet, which then reports as NEW PR. Adoption
+# only ever adds lines, so the file stays the scope. A line of the form
+# `!owner/repo#number` keeps that pull request out of both the watch and
+# adoption. A failed listing adopts nothing that cycle and is tried again.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
@@ -50,11 +57,13 @@
 
 set -uo pipefail
 
-TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0
+TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --tracked)  TRACKED="${2:-}"; shift 2 ;;
+    --repo)     REPO="${2:-}"; shift 2 ;;
+    --author)   AUTHOR="${2:-}"; shift 2 ;;
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
@@ -66,6 +75,12 @@ done
 [ -n "$TRACKED" ] || { echo "watch-prs.sh: --tracked is required" >&2; exit 2; }
 [ -n "$STATE" ] || { echo "watch-prs.sh: --state is required" >&2; exit 2; }
 touch "$STATE" 2>/dev/null || { echo "watch-prs.sh: cannot write state file: $STATE" >&2; exit 2; }
+if [ -n "$REPO$AUTHOR" ]; then
+  [ -n "$REPO" ] && [ -n "$AUTHOR" ] || { echo "watch-prs.sh: --repo and --author go together" >&2; exit 2; }
+  [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "watch-prs.sh: --repo is not owner/repo: $REPO" >&2; exit 2; }
+  # An adopting watch may start from nothing; adoption fills the file.
+  touch "$TRACKED" 2>/dev/null || { echo "watch-prs.sh: cannot write tracked file: $TRACKED" >&2; exit 2; }
+fi
 
 # The skill's own floor: never poll GitHub harder than every 30 seconds.
 [ "$INTERVAL" -lt 30 ] 2>/dev/null && INTERVAL=30
@@ -74,24 +89,43 @@ touch "$STATE" 2>/dev/null || { echo "watch-prs.sh: cannot write state file: $ST
 # problem with the file to stderr, one per line. Returns 1 when the file
 # cannot be read and 2 when a line is malformed; the well-formed lines are
 # still printed in that case, so a running watch can keep to them.
+#
+# A `!` line removes its pull request wherever it sits in the file, since
+# adoption may already have appended the plain line above it. GitHub names
+# ignore case, so exclusions and duplicates are matched case-insensitively
+# and the first spelling of an entry is the one watched.
 ENTRY_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$'
 parse_tracked() {
-  local line lineno=0 rc=0
+  local line key lineno=0 rc=0 entries="" excluded=" " seen=" "
   [ -r "$TRACKED" ] || { echo "$TRACKED: cannot read the tracked file" >&2; return 1; }
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     case "$line" in ""|\#*) continue ;; esac
-    if [[ $line =~ $ENTRY_RE ]]; then
-      printf '%s %s\n' "${line%#*}" "${line##*#}"
+    if [ "${line:0:1}" = "!" ] && [[ ${line#!} =~ $ENTRY_RE ]]; then
+      excluded="$excluded$(lower "${line#!}") "
+    elif [[ $line =~ $ENTRY_RE ]]; then
+      entries="$entries$line
+"
     else
       echo "$TRACKED:$lineno is not owner/repo#number: $line" >&2
       rc=2
     fi
   done < "$TRACKED"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key=$(lower "$line")
+    case "$excluded$seen" in *" $key "*) continue ;; esac
+    seen="$seen$key "
+    printf '%s %s\n' "${line%#*}" "${line##*#}"
+  done <<EOF
+$entries
+EOF
   return $rc
 }
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # One row per pull request: state, draft flag, review decision, head SHA,
 # head ref, and how many threads are unresolved. The last three fields are
@@ -127,6 +161,25 @@ not_found() {
   return 1
 }
 
+# Append every open pull request by $AUTHOR in $REPO that the tracked file
+# does not name yet, as an entry or as a `!` exclusion, in any letter case.
+# It prints nothing:
+# each appended line reports as NEW PR on this same pass.
+adopt() {
+  [ -n "$AUTHOR" ] || return 0
+  local numbers n
+  numbers=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
+    --json number --jq '.[].number' 2>"$STATE.err") || return 0
+  for n in $numbers; do
+    awk -v a="$(lower "$REPO#$n")" \
+      '{ gsub(/^[ \t]+|[ \t]+$/, ""); sub(/^!/, "") } tolower($0) == a { found = 1 } END { exit !found }' \
+      "$TRACKED" 2>/dev/null && continue
+    # Keep a last line without a newline from absorbing the appended one.
+    [ -s "$TRACKED" ] && [ -n "$(tail -c 1 "$TRACKED")" ] && echo >> "$TRACKED"
+    printf '%s#%s\n' "$REPO" "$n" >> "$TRACKED"
+  done
+}
+
 # Every line here is a notification, and a problem with the tracked file
 # persists until someone edits it, so each distinct message is said once.
 WARNED=""
@@ -143,7 +196,8 @@ announce_once() {
 # failure it was: `gh` exits non-zero for a network failure, a rate limit or a
 # bad token exactly as it does for a missing pull request, and reporting "no
 # such pull request" for a blip sends the reader off to fix a number that was
-# right all along. Either way nothing runs on an unverified set.
+# right all along. Either way nothing runs on an unverified set. Adopted lines
+# come straight from GitHub's listing, so adoption waits for the first cycle.
 entries=$(parse_tracked) || exit 2
 while read -r slug n; do
   [ -n "${slug:-}" ] || continue
@@ -171,6 +225,7 @@ while true; do
   # nothing well-formed left in it, keeps the set from the previous cycle,
   # since a watch that goes blank because of a typo is the failure this file
   # exists to prevent.
+  adopt
   problems=$(parse_tracked 2>&1 >"$STATE.entries")
   if [ -n "$problems" ]; then
     while IFS= read -r problem; do
