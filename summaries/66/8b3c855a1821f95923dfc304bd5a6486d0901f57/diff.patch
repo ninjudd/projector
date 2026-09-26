@@ -1,0 +1,169 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index ea03de4..6afd827 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -184,12 +184,16 @@ scripts/release.py tag
+ ```
+ 
+ `tag` reads the version from `origin/main`, not from the checkout, so an
+-unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag and
+-force-moves the major tag, `v0`, to the same commit. The immutable tag names
+-an exact release; the major tag is the channel that follows compatible
+-releases, the convention GitHub's own actions use. A breaking change starts
+-the next major tag. Under `0.x` a minor release may still break, so the `v0`
+-channel promises less than a `v1` channel will.
++unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag,
++force-moves the major tag, `v0`, to the same commit, and creates the GitHub
++release for `v0.6.0` with generated notes, which needs an authenticated `gh`.
++Pass `--no-release` to push only the tags. If the release step fails, the tags
++are already pushed, and the error prints the `gh release create` command that
++finishes the release. The immutable tag names an exact release; the major tag
++is the channel that follows compatible releases, the convention GitHub's own
++actions use. A breaking change starts the next major tag. Under `0.x` a minor
++release may still break, so the `v0` channel promises less than a `v1` channel
++will.
+ 
+ Update an installed copy with each host's own command, or run `./install.sh
+ all` from a checkout, which runs these for every host it finds. Claude Code
+diff --git a/scripts/release.py b/scripts/release.py
+index 5187790..7f6bf75 100755
+--- a/scripts/release.py
++++ b/scripts/release.py
+@@ -2,12 +2,13 @@
+ """Set Projector's one version, or tag a release of it.
+ 
+     scripts/release.py set X.Y.Z   write the version to setup.cfg and both plugin manifests
+-    scripts/release.py tag         tag vX.Y.Z at origin/main and move the vX major tag to it
++    scripts/release.py tag         tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+ 
+ `set` is the bump a release pull request makes. `tag` runs after that pull
+ request merges: it checks that origin/main carries the version, pushes the
+ immutable vX.Y.Z tag, and force-moves the major tag that marketplaces and the
+-walkthroughs action follow.
++walkthroughs action follow. It then creates the GitHub release for vX.Y.Z
++with generated notes; --no-release skips that step.
+ """
+ 
+ from __future__ import annotations
+@@ -76,7 +77,29 @@ def git(root: Path, *args: str) -> str:
+         raise ReleaseError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+ 
+-def tag(root: Path, remote: str = "origin", branch: str = "main") -> str:
++def repo_slug(url: str) -> str:
++    url = url.strip()
++    for prefix in ("git@github.com:", "ssh://git@github.com/", "https://github.com/"):
++        if url.startswith(prefix):
++            url = url[len(prefix):]
++            return url[:-4] if url.endswith(".git") else url
++    return ""
++
++
++def create_release(root: Path, remote: str, release: str) -> None:
++    slug = repo_slug(git(root, "remote", "get-url", remote))
++    if not slug:
++        raise ReleaseError(f"{remote} is not a GitHub repository")
++    try:
++        subprocess.run(["gh", "release", "create", release, "--repo", slug, "--verify-tag", "--generate-notes"],
++                       cwd=root, check=True, capture_output=True, text=True)
++    except FileNotFoundError as exc:
++        raise ReleaseError("the gh CLI is not installed") from exc
++    except subprocess.CalledProcessError as exc:
++        raise ReleaseError(f"gh release create failed: {exc.stderr.strip()}") from exc
++
++
++def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True) -> str:
+     git(root, "fetch", "--quiet", "--tags", remote, branch)
+     ref = f"refs/remotes/{remote}/{branch}"
+     commit = git(root, "rev-parse", ref)
+@@ -89,7 +112,15 @@ def tag(root: Path, remote: str = "origin", branch: str = "main") -> str:
+     git(root, "tag", "-f", "-a", major, commit, "-m", f"Projector {version}")
+     git(root, "push", "--quiet", remote, f"refs/tags/{release}")
+     git(root, "push", "--quiet", "--force", remote, f"refs/tags/{major}")
+-    return f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
++    done = f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
++    if not github_release:
++        return done
++    try:
++        create_release(root, remote, release)
++    except ReleaseError as exc:
++        raise ReleaseError(f"{release} and {major} are pushed, but the GitHub release was not created ({exc}); "
++                           f"finish with: gh release create {release} --verify-tag --generate-notes") from exc
++    return f"{done}, and published the {release} GitHub release"
+ 
+ 
+ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+@@ -100,13 +131,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+     t = sub.add_parser("tag", help="tag the merged version and move the major tag")
+     t.add_argument("--remote", default="origin")
+     t.add_argument("--branch", default="main")
++    t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
+     args = parser.parse_args(argv)
+     try:
+         if args.command == "set":
+             set_version(root, args.version)
+             print(f"set {args.version} in setup.cfg and both plugin manifests")
+         else:
+-            print(tag(root, args.remote, args.branch))
++            print(tag(root, args.remote, args.branch, github_release=not args.no_release))
+     except ReleaseError as exc:
+         print(f"release: {exc}", file=sys.stderr)
+         return 1
+diff --git a/tests/test_release.py b/tests/test_release.py
+index 1d5d189..2ead26c 100644
+--- a/tests/test_release.py
++++ b/tests/test_release.py
+@@ -6,6 +6,7 @@
+ import subprocess
+ import tempfile
+ import unittest
++from unittest import mock
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).parents[1]
+@@ -69,6 +70,10 @@ def setUp(self) -> None:
+             run(self.repo, "git", "config", key, value)
+         copy_version_files(self.repo)
+         self.commit("0.5.0")
++        self.releases: list[tuple[str, str]] = []
++        patcher = mock.patch.object(release, "create_release", side_effect=lambda root, remote, tag: self.releases.append((remote, tag)))
++        patcher.start()
++        self.addCleanup(patcher.stop)
+ 
+     def commit(self, version: str) -> str:
+         for name in FILES:
+@@ -100,6 +105,21 @@ def test_tags_the_release_and_moves_the_major_tag(self) -> None:
+         self.assertEqual(second, self.remote_tag("v0.5.1"))
+         self.assertEqual(second, self.remote_tag("v0"))
+ 
++    def test_creates_the_github_release_for_the_exact_tag(self) -> None:
++        release.tag(self.repo, branch="trunk")
++        self.assertEqual([("origin", "v0.5.0")], self.releases)
++
++    def test_no_release_pushes_only_the_tags(self) -> None:
++        release.tag(self.repo, branch="trunk", github_release=False)
++        self.assertEqual([], self.releases)
++        self.assertTrue(self.remote_tag("v0.5.0"))
++
++    def test_a_failed_release_says_the_tags_are_pushed_and_how_to_finish(self) -> None:
++        with mock.patch.object(release, "create_release", side_effect=release.ReleaseError("gh release create failed: HTTP 403")):
++            with self.assertRaisesRegex(release.ReleaseError, r"v0\.5\.0 and v0 are pushed.*gh release create v0\.5\.0"):
++                release.tag(self.repo, branch="trunk")
++        self.assertTrue(self.remote_tag("v0.5.0"))
++
+     def test_refuses_to_retag_a_released_version(self) -> None:
+         release.tag(self.repo, branch="trunk")
+         with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
+@@ -112,5 +132,12 @@ def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None
+         self.assertTrue(self.remote_tag("v0.5.0"))
+ 
+ 
++class RepoSlugTests(unittest.TestCase):
++    def test_reads_github_remotes(self) -> None:
++        for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
++            self.assertEqual("o/r", release.repo_slug(url), url)
++        self.assertEqual("", release.repo_slug("/tmp/remote.git"))
++
++
+ if __name__ == "__main__":
+     unittest.main()
