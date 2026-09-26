@@ -612,24 +612,35 @@ def fetch_ref(remote: str, ref: str) -> str:
 
 
 def seed_from_legacy(remote: str) -> str:
-    """A first commit for the summaries ref that carries the old walkthroughs ref's specs, or ''.
+    """The head of a history for the summaries ref that carries the old walkthroughs ref's specs, or ''.
 
-    The commit's tree is the old ref's walkthroughs/ folder placed at
-    summaries/, and its parent is the old ref's head, so the specs keep the
-    history the site dates them by. Nothing is pushed here; the publish that
-    asked for the seed pushes it with its own spec on top. The old ref stays
-    on the remote, and the repository can delete it once the new ref exists.
+    The site dates each spec by the last commit that touched its path, and a
+    path-limited log does not follow a move, so one commit moving every spec
+    to summaries/ would date them all at the move and let an older head of a
+    pull request tie with, or outrank, its newest. Each old commit is replayed
+    instead, with its walkthroughs/ folder at summaries/ and its author,
+    committer, dates, and message kept, so every spec keeps the date it was
+    published. Nothing is pushed here; the publish that asked for the seed
+    pushes it with its own spec on top. The old ref stays on the remote, and
+    the repository can delete it once the new ref exists.
     """
     old = fetch_ref(remote, LEGACY_PAGES_REF)
     if not old:
         return ""
-    try:
-        specs = git("rev-parse", "--verify", "--quiet", f"{old}:{LEGACY_PAGES_ROOT}")
-    except SpecError:
-        return ""
-    tree = git("mktree", input=f"040000 tree {specs}\t{PAGES_ROOT}\n")
-    return git("commit-tree", tree, "-p", old, "-m",
-               f"Carry the published specs over from {LEGACY_PAGES_REF} to {PAGES_REF}")
+    head = ""
+    for commit in git("rev-list", "--reverse", "--first-parent", old).split():
+        try:
+            specs = git("rev-parse", "--verify", "--quiet", f"{commit}:{LEGACY_PAGES_ROOT}")
+        except SpecError:
+            continue  # A commit from before the folder held anything.
+        tree = git("mktree", input=f"040000 tree {specs}\t{PAGES_ROOT}\n")
+        fields = git("show", "-s", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commit).split("\0", 6)
+        env = {**os.environ,
+               "GIT_AUTHOR_NAME": fields[0], "GIT_AUTHOR_EMAIL": fields[1], "GIT_AUTHOR_DATE": fields[2],
+               "GIT_COMMITTER_NAME": fields[3], "GIT_COMMITTER_EMAIL": fields[4], "GIT_COMMITTER_DATE": fields[5]}
+        parents = ["-p", head] if head else []
+        head = git("commit-tree", tree, *parents, "-m", fields[6] or f"Carry over {commit[:9]}", env=env)
+    return head
 
 
 def dispatch(repo: str) -> None:

@@ -453,9 +453,11 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
         self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
 
-    def publish_legacy(self, head: str) -> str:
-        """Publish `head` the way a release from before the rename did, to the old ref and root."""
-        old = self.publish(head, ref=summary.LEGACY_PAGES_REF, root=summary.LEGACY_PAGES_ROOT)
+    def publish_legacy(self, head: str, when: str | None = None) -> str:
+        """Publish `head` the way a release from before the rename did, to the old ref and root, dated `when`."""
+        dates = {"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when} if when else {}
+        with mock.patch.dict(os.environ, dates):
+            old = self.publish(head, ref=summary.LEGACY_PAGES_REF, root=summary.LEGACY_PAGES_ROOT)
         self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF))
         self.dispatches.clear()
         return old
@@ -468,7 +470,9 @@ class PublishTests(unittest.TestCase):
         self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json",
                           f"summaries/7/{'c' * 40}/diff.patch", f"summaries/7/{'c' * 40}/spec.json"], self.ref_files())
         seed = run(self.remote, "git", "log", "--format=%P", "-1", new)
-        self.assertEqual(old, run(self.remote, "git", "log", "--format=%P", "-1", seed), "the old history is kept")
+        self.assertEqual(run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", old),
+                         run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", seed),
+                         "the old commit is replayed with its author, dates, and message")
         self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
                          run(self.remote, "git", "rev-parse", f"{seed}:summaries"), "the old specs move unchanged")
         self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF), "the old ref is left in place")
@@ -483,10 +487,26 @@ class PublishTests(unittest.TestCase):
 
         seed = self.publish("a" * 40)
 
-        self.assertEqual(old, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"))
         self.assertEqual(seed, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
+                         run(self.remote, "git", "rev-parse", f"{seed}:summaries"))
         self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json"], self.ref_files())
         self.assertIsNone(self.publish("a" * 40), "once seeded, an unchanged spec publishes nothing")
+
+    def test_seeding_keeps_each_spec_dated_when_it_was_published(self) -> None:
+        # Two heads of one pull request, published a month apart under the old
+        # names. The site dates a spec by the last commit that touched its
+        # path, so a seed that moved both in one commit would tie them.
+        self.publish_legacy("a" * 40, when="2026-01-01T12:00:00+02:00")
+        self.publish_legacy("b" * 40, when="2026-02-01T12:00:00+02:00")
+
+        self.publish("c" * 40)
+
+        def dated(head: str) -> str:
+            return run(self.remote, "git", "log", "-1", "--format=%cI", "refs/projector/summaries", "--",
+                       f"summaries/7/{head}/spec.json")
+        self.assertEqual("2026-01-01T12:00:00+02:00", dated("a" * 40))
+        self.assertEqual("2026-02-01T12:00:00+02:00", dated("b" * 40), "the newer head stays newer")
 
     def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
         calls: list[tuple[str, ...]] = []

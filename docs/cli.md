@@ -447,9 +447,11 @@ were renamed listens only for the second; a later release stops sending it.
 A repository that published before the rename keeps its specs on
 `refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
 that ref but no `refs/projector/summaries`, `summary publish` first creates
-the new ref from it: a commit whose parent is the old ref's head and whose
-tree holds the old `walkthroughs/` folder as `summaries/`. It pushes that
-commit with the new spec on top and leaves the old ref in place; delete it
+the new ref from it by replaying each of the old ref's commits with its
+`walkthroughs/` folder as `summaries/`, keeping the commit's author, dates,
+and message, so every spec keeps the date the site orders a pull request's
+heads by. It pushes that history with the new spec on top and leaves the old
+ref in place; delete it
 with `git push origin :refs/projector/walkthroughs` once every site that
 reads it runs a release that reads the new ref. Until the new ref exists,
 `site serve` and the site action read the old one.
