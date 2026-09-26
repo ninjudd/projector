@@ -27,7 +27,7 @@ reviewable and verify each behavior in proportion to its risk. Follow the
 repository's branch, stack, commit, review, and merge rules.
 
 Apply the review method's passes to your own change before the review loop
-does; `../start-review-loop/method.md` § 3 describes them, and three apply to
+does; `../review-changes/method.md` § 3 describes them, and three apply to
 nearly every change:
 
 - **Correctness.** Trace each change past the happy path: what happens when

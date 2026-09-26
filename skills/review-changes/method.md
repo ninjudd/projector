@@ -1,7 +1,7 @@
 # Review method
 
-`SKILL.md` says when a review runs, as whom it posts, and how a verdict is
-recorded. This file says what you do between checking out the exact head and
+`SKILL.md` says which head a review covers, as whom it posts, and how a
+verdict is published. This file says what you do between checking out the exact head and
 publishing. Work through the sections in order.
 
 The method is a sequence one agent performs in one conversation. Where the

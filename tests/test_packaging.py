@@ -11,6 +11,7 @@ PUBLISHED_SKILLS = {
     "plan",
     "implement",
     "finish",
+    "review-changes",
     "start-review-loop",
     "start-fix-loop",
     "gh-stack",

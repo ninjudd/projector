@@ -128,7 +128,7 @@ Handle findings in posting order, batching only related findings that touch the
 same code:
 
 1. Verify the claim against the exact pushed head and surrounding code by the
-   four-step protocol in `../start-review-loop/method.md` § 5: quote the
+   four-step protocol in `../review-changes/method.md` § 5: quote the
    lines, walk the execution, write the triggering sequence, and look for
    what already stops it. Decline a false finding by naming that guard with
    the quoted code that shows it, rather than changing correct behavior.
