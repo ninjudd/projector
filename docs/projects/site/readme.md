@@ -140,7 +140,8 @@ Two deviations from the first design are recorded elsewhere in the plans:
 routing on real paths rather than the URL's hash, a decision in section 4,
 and the composite action's rename from `actions/walkthroughs` to
 `actions/site`, which `pr-walkthrough` section 7 records (#82). The three
-items in section 5 remain deferred; none was part of the promised outcome.
+items in section 5 were deferred, since none was part of the promised
+outcome, and `site-content` later shipped all three.
 
 ## 7. Projector's own site runs the action from `main`
 
