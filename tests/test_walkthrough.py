@@ -80,6 +80,40 @@ class ParseDiffTests(unittest.TestCase):
         self.assertEqual("generated", files["gen/api.pb.go"]["kind"])
         self.assertEqual("m", files["gen/api.pb.go"]["hunks"][0]["lines"][-1][0])
 
+    def test_quoted_spaced_deleted_and_renamed_paths(self) -> None:
+        diff = "\n".join([
+            'diff --git "a/caf\\303\\251 \\"x\\".md" "b/caf\\303\\251 \\"x\\".md"',
+            "index 1..2 100644",
+            '--- "a/caf\\303\\251 \\"x\\".md"',
+            '+++ "b/caf\\303\\251 \\"x\\".md"',
+            "@@ -1 +1 @@",
+            "--- a removed line that looks like a header",
+            "+y",
+            "diff --git a/docs/a b/c.md b/docs/a b/c.md",
+            "index 1..2 100644",
+            "--- a/docs/a b/c.md",
+            "+++ b/docs/a b/c.md",
+            "@@ -1 +1 @@",
+            "-x",
+            "+y",
+            "diff --git a/gone.txt b/gone.txt",
+            "deleted file mode 100644",
+            "index 1..0",
+            "--- a/gone.txt",
+            "+++ /dev/null",
+            "@@ -1 +0,0 @@",
+            "-x",
+            "diff --git a/old name.txt b/new name.txt",
+            "similarity index 100%",
+            "rename from old name.txt",
+            "rename to new name.txt",
+            "",
+        ])
+        files = walkthrough.parse_diff(diff)
+        self.assertEqual(['café "x".md', "docs/a b/c.md", "gone.txt", "new name.txt"], [f["path"] for f in files])
+        self.assertEqual((1, 1), (files[0]["adds"], files[0]["dels"]), "a removed line starting with -- stays a removed line")
+        self.assertTrue(files[2]["deleted"])
+
     def test_anchor_matches_github_files_tab(self) -> None:
         core = walkthrough.parse_diff(DIFF)[0]
         # GitHub anchors a file on the files tab by the SHA-256 of its path.
