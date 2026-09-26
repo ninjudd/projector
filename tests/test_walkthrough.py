@@ -247,6 +247,13 @@ class SiteTests(unittest.TestCase):
         data = json.loads(page[page.index('type="application/json">') + 24:page.index("</script>", page.index('type="application/json">'))])
         self.assertEqual("../../", data["indexUrl"])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
+        for built in (page, index, (site / "7" / "index.html").read_text()):
+            self.assertIn(walkthrough.icon_link(), built)
+
+    def test_the_page_icon_is_the_homepage_icon(self) -> None:
+        homepage = ROOT / "web" / "app" / "icon.svg"
+        self.assertEqual(homepage.read_bytes(), (walkthrough.ASSETS / "icon.svg").read_bytes())
+        self.assertIn('href="data:image/svg+xml,%3Csvg', walkthrough.icon_link())
 
     def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
         tmp = Path(tempfile.mkdtemp())

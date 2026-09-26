@@ -43,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
@@ -446,10 +447,16 @@ def escape(s: object) -> str:
     return html.escape(str(s), quote=True)
 
 
+def icon_link() -> str:
+    svg = (ASSETS / "icon.svg").read_text(encoding="utf-8")
+    return f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{urllib.parse.quote(svg)}">'
+
+
 def page(title: str, payload: dict) -> str:
     blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     return f"""<title>{escape(title)}</title>
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
+{icon_link()}
 <link rel="stylesheet" href="{FONTS}">
 <link rel="stylesheet" href="walkthrough.css">
 <div id="walkthrough"></div>
@@ -574,7 +581,7 @@ def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
 
 def redirect(target: str) -> str:
     t = escape(target)
-    return f'<!doctype html><meta charset="utf-8"><title>Redirecting</title><meta http-equiv="refresh" content="0; url={t}"><link rel="canonical" href="{t}"><a href="{t}">Newest walkthrough</a>\n'
+    return f'<!doctype html><meta charset="utf-8"><title>Redirecting</title>{icon_link()}<meta http-equiv="refresh" content="0; url={t}"><link rel="canonical" href="{t}"><a href="{t}">Newest walkthrough</a>\n'
 
 
 def index_page(entries: list[dict]) -> str:
@@ -587,6 +594,7 @@ def index_page(entries: list[dict]) -> str:
     )
     return f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(repo)} walkthroughs</title>
+{icon_link()}
 <link rel="stylesheet" href="{FONTS}">
 <link rel="stylesheet" href="walkthrough.css">
 <div class="wrap"><header class="top"><div><div class="eyebrow"><a href="https://github.com/{escape(repo)}">{escape(repo)}</a></div><h1>Pull request walkthroughs</h1></div></header>
