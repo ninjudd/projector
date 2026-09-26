@@ -431,6 +431,104 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("changed before", stderr)
         self.assertIn("Concurrent edit", path.read_text())
 
+    def test_owner_adds_the_field_before_the_closing_marker(self) -> None:
+        # An `owner:` line in the body is prose, not the field, and stays put.
+        path = self.plan("alpha", body="Uncommitted body edit.\nowner: someone in prose\n")
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("owner", "alpha", "aparsuri-poly", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(
+            before.replace("priority: later\n---", "priority: later\nowner: aparsuri-poly\n---", 1),
+            path.read_text(),
+        )
+        self.assertEqual("aparsuri-poly", ProjectStore(self.root).resolve("alpha").owner)
+
+    def test_owner_changes_only_the_owner_scalar(self) -> None:
+        path = self.plan("alpha", extra="owner: team # the lead\ncustom: keep-me\n")
+        before = path.read_bytes().replace(b"\n", b"\r\n")
+        path.write_bytes(before)
+
+        code, _, stderr = self.invoke("owner", "alpha", "Apar Suri")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(before.replace(b"owner: team #", b"owner: Apar Suri #"), path.read_bytes())
+
+    def test_owner_clear_removes_only_the_owner_line(self) -> None:
+        path = self.plan("alpha", extra="owner: team\ncustom: keep-me\n", body="owner: prose\n")
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("owner", "alpha", "--clear", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(before.replace("owner: team\n", "", 1), path.read_text())
+        self.assertIsNone(ProjectStore(self.root).resolve("alpha").owner)
+
+    def test_owner_reports_when_no_file_changed(self) -> None:
+        path = self.plan("alpha", extra="owner: team\n")
+        unowned = self.plan("beta")
+        stamps = (path.stat().st_mtime_ns, unowned.stat().st_mtime_ns)
+
+        code, stdout, stderr = self.invoke("owner", "alpha", "team", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("unchanged", json.loads(stdout)["action"])
+        code, stdout, stderr = self.invoke("owner", "beta", "--clear", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("unchanged", json.loads(stdout)["action"])
+
+        self.assertEqual(stamps, (path.stat().st_mtime_ns, unowned.stat().st_mtime_ns))
+
+    def test_owner_sets_a_nested_project_named_in_any_case(self) -> None:
+        parent = self.plan("alpha")
+        child = self.plan("alpha/child")
+        before = parent.read_text()
+
+        code, _, stderr = self.invoke("owner", "Alpha/Child", "ben")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("owner: ben\n---", child.read_text())
+        self.assertEqual(before, parent.read_text())
+
+    def test_owner_refuses_a_value_that_would_not_read_back(self) -> None:
+        path = self.plan("alpha")
+        before = path.read_text()
+
+        for value, reason in (("@ben", "leading @"), ("", "empty"), ("a: b", "plain YAML"),
+                              ("ben # lead", "plain YAML"), (" ben", "space"), ("a\nb", "one line")):
+            code, _, stderr = self.invoke("owner", "alpha", value)
+            self.assertEqual(2, code, value)
+            self.assertIn(reason, stderr, value)
+        self.assertEqual(before, path.read_text())
+
+    def test_owner_requires_a_value_or_clear_and_not_both(self) -> None:
+        self.plan("alpha")
+        for arguments in (("owner", "alpha"), ("owner", "alpha", "ben", "--clear")):
+            with self.assertRaises(SystemExit) as raised, redirect_stderr(StringIO()):
+                main(list(arguments))
+            self.assertEqual(2, raised.exception.code, arguments)
+
+    def test_owner_refuses_an_ambiguous_project(self) -> None:
+        first = self.plan("alpha").resolve()
+        store = ProjectStore(self.root)
+        second = store.projects_dir / "Alpha" / "readme.md"
+        with mock.patch.object(store, "_entry_points", return_value=[first, second]):
+            with self.assertRaises(AmbiguousProject):
+                store.set_owner("alpha", "ben")
+        self.assertNotIn("owner:", first.read_text())
+
+    def test_list_selects_one_owner_ignoring_case(self) -> None:
+        self.plan("alpha", extra="owner: Ben\n")
+        self.plan("beta", extra="owner: apar\n")
+        self.plan("gamma")
+
+        code, stdout, stderr = self.invoke("list", "--owner", "ben", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual([("alpha", "Ben")], [(p["name"], p["owner"]) for p in json.loads(stdout)["projects"]])
+
     def test_done_changes_status_and_reminds_about_the_outcome(self) -> None:
         path = self.plan("alpha", "in-progress", priority="now")
         code, _, stderr = self.invoke("done", "alpha")
@@ -842,6 +940,20 @@ class ValidationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual("Project plans are valid.\n", stdout)
+
+    def test_check_rejects_an_empty_or_multiline_owner(self) -> None:
+        self.plan("alpha", extra="owner:\n")
+        self.plan("beta", extra="owner: |\n")
+        self.plan("gamma", extra="owner: aparsuri-poly\n")
+
+        code, stdout, _ = self.invoke("check", "--json")
+
+        self.assertEqual(65, code)
+        invalid = {issue["path"]: issue["message"] for issue in json.loads(stdout)["issues"]
+                   if issue["code"] == "invalid-project"}
+        self.assertEqual({"docs/projects/alpha/readme.md", "docs/projects/beta/readme.md"}, set(invalid))
+        self.assertIn("owner must not be empty", invalid["docs/projects/alpha/readme.md"])
+        self.assertIn("owner must be a single line", invalid["docs/projects/beta/readme.md"])
 
     def test_check_accepts_markdown_images(self) -> None:
         self.plan("alpha", body="![Diagram](diagram.png)")

@@ -211,6 +211,7 @@ def parser() -> argparse.ArgumentParser:
     listing = subcommands.add_parser("list", help="list projects")
     listing.add_argument("--status", choices=STATUSES)
     listing.add_argument("--priority", choices=PRIORITIES)
+    listing.add_argument("--owner", help="only the projects this person owns, ignoring case")
     add_output(listing)
 
     show = subcommands.add_parser("show", help="show one project")
@@ -243,6 +244,13 @@ def parser() -> argparse.ArgumentParser:
     priority.add_argument("project")
     priority.add_argument("priority", choices=PRIORITIES)
     add_output(priority)
+
+    owner = subcommands.add_parser("owner", help="set or clear a project's owner")
+    owner.add_argument("project")
+    owner_value = owner.add_mutually_exclusive_group(required=True)
+    owner_value.add_argument("owner", nargs="?", help="who owns the project, preferably a GitHub login")
+    owner_value.add_argument("--clear", action="store_true", help="remove the owner field")
+    add_output(owner)
 
     done = subcommands.add_parser("done", help="mark a project completed")
     done.add_argument("project")
@@ -928,6 +936,9 @@ def run(arguments: argparse.Namespace) -> int:
             projects = [project for project in projects if project.status == arguments.status]
         if arguments.priority:
             projects = [project for project in projects if project.priority == arguments.priority]
+        if arguments.owner:
+            wanted = arguments.owner.casefold()
+            projects = [project for project in projects if (project.owner or "").casefold() == wanted]
         if arguments.json_output:
             print(json_text({"projects": [project.public(store.root) for project in projects]}))
         else:
@@ -955,6 +966,9 @@ def run(arguments: argparse.Namespace) -> int:
             open_editor(project.path)
     elif command == "edit":
         open_editor(store.resolve(arguments.project).path)
+    elif command == "owner":
+        project, changed = store.set_owner(arguments.project, None if arguments.clear else arguments.owner)
+        emit_path(store, project.path, arguments.json_output, "updated" if changed else "unchanged")
     elif command == "priority":
         project, changed = store.set_priority(arguments.project, arguments.priority)
         emit_path(store, project.path, arguments.json_output, "updated" if changed else "unchanged")

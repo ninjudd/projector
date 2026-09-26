@@ -83,6 +83,7 @@ iframe.htmlpage { display: block; width: 100%; border: 1px solid var(--border); 
 .pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
 table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
+table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
 
 .badge {
   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
