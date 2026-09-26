@@ -384,6 +384,12 @@ projects view, which groups plans by status and opens each with its nested
 projects and supplemental files, the list of walkthroughs, and every other
 Markdown file under `docs/`. The build copies those files under `content/`
 and describes them in `site.json`, and the page renders them in the browser.
+Every view has its own path: `projects/` and `projects/<name>/` for the
+plans, `prs/`, `prs/<number>/` and `prs/<number>/<head>/` for walkthroughs,
+and `docs/<path>/` for each document at its repository path without `.md`.
+Pass `--base` with the path the site is served under, such as `/projector/`
+for a project site, so every page links to the others and to the shared
+assets under `assets/`; it defaults to `/`.
 A plan that does not parse drops the projects view with a warning rather than
 failing the build. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to

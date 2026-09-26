@@ -323,7 +323,8 @@ if (node) {
   renderWalkthrough(JSON.parse(node.textContent));
   wireWalkthrough();
 } else {
-  fetch('data.json')
+  var mount = document.getElementById('walkthrough');
+  fetch((mount && mount.dataset.src) || 'data.json')
     .then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status);
       return response.json();

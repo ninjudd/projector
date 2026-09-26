@@ -230,6 +230,9 @@ def parser() -> argparse.ArgumentParser:
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
     site_build.add_argument(
+        "--base", default="/", help="the path the site is served under, such as /projector/ (default: /)"
+    )
+    site_build.add_argument(
         "--check-visibility",
         action="store_true",
         help="refuse to build when a private repository's Pages site is public, as a deploy must",
@@ -484,6 +487,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         projects_dir=projects_dir,
         repo=repo,
         branch=site_branch(root),
+        base=arguments.base,
     )
     print(
         f"wrote {arguments.out}/index.html: {len(projects)} projects, {len(entries)} pull requests, "
@@ -510,7 +514,7 @@ def run_site(arguments: argparse.Namespace) -> int:
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
-        print(f"{url}{arguments.pr}/" if arguments.pr else url)
+        print(f"{url}prs/{arguments.pr}/" if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
         projects_dir = configured_projects_dir(root)

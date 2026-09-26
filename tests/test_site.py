@@ -67,10 +67,31 @@ class SiteBuildTests(SiteRepoCase):
 
         home = (self.out / "index.html").read_text()
         self.assertIn("<title>owner/example</title>", home)
-        for needed in ('src="site.js"', "marked", "purify.min.js", 'href="site.css"', 'rel="icon"'):
+        for needed in ('src="/assets/site.js"', "marked", "purify.min.js", 'href="/assets/site.css"', 'rel="icon"',
+                       'data-base="/"'):
             self.assertIn(needed, home)
         for asset in ("site.js", "site.css", "walkthrough.js", "walkthrough.css"):
-            self.assertTrue((self.out / asset).is_file(), asset)
+            self.assertTrue((self.out / "assets" / asset).is_file(), asset)
+
+    def test_every_view_has_a_real_path_with_the_same_shell(self) -> None:
+        self.build()
+
+        home = (self.out / "index.html").read_text()
+        for route in ("projects/", "projects/alpha/", "projects/alpha/beta/", "prs/", "docs/guide/",
+                      "docs/projects/alpha/notes/"):
+            self.assertEqual(home, (self.out / route / "index.html").read_text(), route)
+        self.assertEqual(home, (self.out / "404.html").read_text())
+        self.assertFalse((self.out / "docs" / "projects" / "alpha" / "index.html").exists(),
+                         "a plan lives under projects/, not docs/")
+
+    def test_the_base_path_prefixes_every_asset_and_link(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
+            cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo), "--base", "projector"])
+
+        home = (self.out / "index.html").read_text()
+        self.assertIn('data-base="/projector/"', home)
+        self.assertIn('src="/projector/assets/site.js"', home)
+        self.assertEqual("/projector/", json.loads((self.out / "site.json").read_text())["base"])
 
     def test_a_plan_that_does_not_parse_costs_the_projects_view_not_the_deploy(self) -> None:
         (self.repo / "docs/projects/alpha/readme.md").write_text("---\nstatus: shipped\n---\n\n# Bad\n")

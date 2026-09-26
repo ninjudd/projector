@@ -1,5 +1,6 @@
 // Projector site: renders the README, the docs, the project plans, and the list of
-// pull request walkthroughs from site.json, routing on the URL's hash.
+// pull request walkthroughs from site.json. Every view has a real path under the
+// site's base; links between views update the address without a page load.
 (function () {
   'use strict';
 
@@ -7,7 +8,12 @@
   var PRIORITY_ORDER = ['now', 'next', 'later'];
   var site = null;
   var markdownFiles = {};
+  var routes = {};
   var root = document.getElementById('site');
+  // A walkthrough page draws its own layout and carries only this bar.
+  var bar = document.getElementById('sitebar');
+  if (!root && !bar) return;
+  var base = (root || bar).dataset.base || '/';
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,7 +22,14 @@
     return 'https://github.com/' + site.repo + (path ? '/' + kind + '/' + encodeURIComponent(site.branch) + '/' + path.split('/').map(encodeURIComponent).join('/') : '');
   }
   function contentUrl(path) {
-    return site.content + '/' + path.split('/').map(encodeURIComponent).join('/');
+    return base + site.content + '/' + path.split('/').map(encodeURIComponent).join('/');
+  }
+  // A Markdown file's site path: its repository path without `.md`, as the build names it.
+  function docRoute(path) {
+    if (path === 'README.md') return '';
+    var slash = path.lastIndexOf('/');
+    if (path.slice(slash + 1).toLowerCase() === 'readme.md') return path.slice(0, slash + 1);
+    return (/\.md$/.test(path) ? path.slice(0, -3) : path) + '/';
   }
   function projectFor(path) {
     for (var i = 0; i < site.projects.length; i++) if (site.projects[i].path === path) return site.projects[i];
@@ -24,10 +37,10 @@
   }
   function routeFor(path) {
     var project = projectFor(path);
-    if (project) return '#/projects/' + project.name;
-    if (path === site.readme) return '#/';
-    if (path === site.projectsReadme) return '#/projects';
-    return '#/' + path;
+    if (project) return base + 'projects/' + project.name + '/';
+    if (path === site.readme) return base;
+    if (path === site.projectsReadme) return base + 'projects/';
+    return base + docRoute(path);
   }
 
   // A path relative to the document at `from`, resolved to a repository path.
@@ -61,17 +74,10 @@
     });
     box.querySelectorAll('a[href]').forEach(function (a) {
       var href = a.getAttribute('href');
-      if (href.charAt(0) === '#') {
-        var id = decodeURIComponent(href.slice(1));
-        a.addEventListener('click', function (event) {
-          var target = document.getElementById(id);
-          if (target) { event.preventDefault(); target.scrollIntoView(); }
-        });
-        return;
-      }
-      if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.charAt(0) === '/') return;
+      if (href.charAt(0) === '#' || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.charAt(0) === '/') return;
+      var hash = href.indexOf('#') >= 0 ? href.slice(href.indexOf('#')) : '';
       var target = resolve(path, href.split('#')[0]);
-      if (markdownFiles[target]) a.setAttribute('href', routeFor(target));
+      if (markdownFiles[target]) a.setAttribute('href', routeFor(target) + hash);
       else a.setAttribute('href', repoUrl('blob', target));
     });
     box.querySelectorAll('img[src]').forEach(function (img) {
@@ -87,27 +93,30 @@
   }
 
   function nav(active) {
-    var items = [['#/', 'Home', 'home']];
-    if (site.projects.length) items.push(['#/projects', 'Projects', 'projects']);
-    if (site.walkthroughs.length) items.push(['#/prs', 'PRs', 'prs']);
+    var items = [[base, 'Home', 'home']];
+    if (site.projects.length) items.push([base + 'projects/', 'Projects', 'projects']);
+    if (site.walkthroughs.length) items.push([base + 'prs/', 'PRs', 'prs']);
     site.docs.forEach(function (doc) { items.push([routeFor(doc.path), doc.title, doc.path]); });
     return items.map(function (item) {
       return '<a href="' + esc(item[0]) + '"' + (item[2] === active ? ' class="active" aria-current="page"' : '') + '>' + esc(item[1]) + '</a>';
     }).join('');
   }
 
+  function header(active, extra) {
+    return '<header class="sitebar' + (extra ? ' ' + extra : '') + '"><a class="sitename" href="' + esc(base) + '">' +
+      esc(site.repo || 'Projector') + '</a><nav class="sitenav" aria-label="Site">' + nav(active) + '</nav></header>';
+  }
+
   function frame(active, title, body) {
     document.title = title ? title + ' · ' + site.repo : site.repo;
     root.innerHTML =
-      '<header class="sitebar"><a class="sitename" href="#/">' + esc(site.repo || 'Projector') + '</a>' +
-      '<nav class="sitenav" aria-label="Site">' + nav(active) + '</nav></header>' +
+      header(active) +
       '<main class="sitemain" id="sitemain"></main>' +
       '<footer class="sitefoot">Built by <a href="https://github.com/ninjudd/projector">Projector</a> from ' +
       '<a href="' + esc(repoUrl()) + '">' + esc(site.repo) + '</a>.</footer>';
     var main = document.getElementById('sitemain');
     if (typeof body === 'string') main.innerHTML = body;
     else main.appendChild(body);
-    window.scrollTo(0, 0);
     return main;
   }
 
@@ -123,6 +132,8 @@
     loadMarkdown(path).then(function (text) {
       var main = frame(active, title, renderMarkdown(text, path));
       if (before) main.insertBefore(before, main.firstChild);
+      var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (target) target.scrollIntoView();
     }, function (error) {
       frame(active, title, '<p class="note">Could not load ' + esc(path) + ': ' + esc(error.message) + '</p>');
     });
@@ -147,7 +158,7 @@
         '<div class="tblwrap"><table class="tbl projects"><tr><th>Project</th><th>Priority</th><th>Name</th></tr>' +
         rows.map(function (p) {
           return '<tr data-search="' + esc((p.name + ' ' + p.title).toLowerCase()) + '">' +
-            '<td style="padding-left:' + (0.75 + depth(p.name) * 1.25) + 'rem"><a href="#/projects/' + esc(p.name) + '">' + esc(p.title) + '</a></td>' +
+            '<td style="padding-left:' + (0.75 + depth(p.name) * 1.25) + 'rem"><a href="' + esc(base + 'projects/' + p.name + '/') + '">' + esc(p.title) + '</a></td>' +
             '<td>' + badge('priority', p.priority) + '</td><td class="mono">' + esc(p.name) + '</td></tr>';
         }).join('') + '</table></div></section>';
     }).join('');
@@ -173,7 +184,7 @@
   function showProject(name) {
     var project = null;
     site.projects.forEach(function (p) { if (p.name === name) project = p; });
-    if (!project) return frame('projects', 'Not found', '<h1>No project named ' + esc(name) + '</h1><p><a href="#/projects">All projects</a></p>');
+    if (!project) return frame('projects', 'Not found', '<h1>No project named ' + esc(name) + '</h1><p><a href="' + esc(base + 'projects/') + '">All projects</a></p>');
     var parents = [];
     var parts = name.split('/');
     for (var i = 1; i < parts.length; i++) {
@@ -184,17 +195,17 @@
     var head = document.createElement('div');
     head.className = 'phead';
     head.innerHTML =
-      '<div class="crumbs"><a href="#/projects">Projects</a>' +
-      parents.map(function (p) { return ' / <a href="#/projects/' + esc(p.name) + '">' + esc(p.name.split('/').pop()) + '</a>'; }).join('') +
+      '<div class="crumbs"><a href="' + esc(base + 'projects/') + '">Projects</a>' +
+      parents.map(function (p) { return ' / <a href="' + esc(base + 'projects/' + p.name + '/') + '">' + esc(p.name.split('/').pop()) + '</a>'; }).join('') +
       ' / <span class="mono">' + esc(parts[parts.length - 1]) + '</span></div>' +
       '<div class="pmeta">' + badge('status', project.status) + badge('priority', project.priority) +
       (project.owner ? '<span class="note">Owner ' + esc(project.owner) + '</span>' : '') +
       '<a class="note" href="' + esc(repoUrl('blob', project.path)) + '">View on GitHub</a></div>' +
       (children.length ? '<div class="plist"><b>Nested projects</b> ' + children.map(function (c) {
-        return '<a href="#/projects/' + esc(c.name) + '">' + esc(c.title) + '</a> ' + badge('status', c.status);
+        return '<a href="' + esc(base + 'projects/' + c.name + '/') + '">' + esc(c.title) + '</a> ' + badge('status', c.status);
       }).join(' · ') + '</div>' : '') +
       (project.files.length ? '<div class="plist"><b>Supplemental files</b> ' + project.files.map(function (f) {
-        return '<a href="#/' + esc(f) + '">' + esc(f.split('/').pop()) + '</a>';
+        return '<a href="' + esc(routeFor(f)) + '">' + esc(f.split('/').pop()) + '</a>';
       }).join(' · ') + '</div>' : '');
     showDocument('projects', project.path, project.title, head);
   }
@@ -204,7 +215,8 @@
       '<h1>Pull request walkthroughs</h1>' +
       '<div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
       site.walkthroughs.map(function (w) {
-        return '<tr><td><a href="' + w.number + '/">#' + w.number + '</a></td><td><a href="' + w.number + '/">' + esc(w.name || w.title) + '</a>' +
+        var url = esc(base + 'prs/' + w.number + '/');
+        return '<tr><td><a href="' + url + '">#' + w.number + '</a></td><td><a href="' + url + '">' + esc(w.name || w.title) + '</a>' +
           '<div class="note">' + esc(w.title) + '</div></td><td class="mono">' + esc(String(w.head).slice(0, 9)) + '</td>' +
           '<td>' + w.heads + '</td><td>' + esc(w.updated) + '</td></tr>';
       }).join('') + '</table></div>' +
@@ -212,35 +224,62 @@
   }
 
   function route() {
-    var hash = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
-    if (!hash) return showHome();
-    if (hash === 'projects') return showProjects();
-    if (hash.indexOf('projects/') === 0) return showProject(hash.slice('projects/'.length));
-    if (hash === 'prs') return showPrs();
-    if (hash.indexOf('docs/') === 0) {
-      var path = hash;
+    var path = location.pathname;
+    var rel = path.indexOf(base) === 0 ? path.slice(base.length) : path.replace(/^\//, '');
+    rel = decodeURIComponent(rel).replace(/index\.html$/, '').replace(/\/$/, '');
+    window.scrollTo(0, 0);
+    if (!rel) return showHome();
+    if (rel === 'projects') return showProjects();
+    if (rel.indexOf('projects/') === 0) return showProject(rel.slice('projects/'.length));
+    if (rel === 'prs') return showPrs();
+    var file = routes[rel + '/'];
+    if (file) {
       var doc = null;
-      site.docs.forEach(function (d) { if (d.path === path) doc = d; });
-      if (markdownFiles[path]) return showDocument(doc ? path : 'projects', path, doc ? doc.title : path.split('/').pop());
+      site.docs.forEach(function (d) { if (d.path === file) doc = d; });
+      return showDocument(doc ? file : 'projects', file, doc ? doc.title : file.split('/').pop());
     }
-    frame('', 'Not found', '<h1>Not found</h1><p><a href="#/">Home</a></p>');
+    frame('', 'Not found', '<h1>Not found</h1><p><a href="' + esc(base) + '">Home</a></p>');
   }
 
-  fetch('site.json')
+  // A link to another view of this site renders in place; a walkthrough page, an
+  // asset, or anything outside the site loads normally.
+  function inSite(a) {
+    if (a.target || a.hasAttribute('download') || a.origin !== location.origin) return false;
+    var path = a.pathname;
+    if (path.indexOf(base) !== 0) return false;
+    var rel = path.slice(base.length);
+    return !/^(prs\/\d|assets\/|content\/)/.test(rel) && !/\.[a-z0-9]+$/i.test(rel);
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!root || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var a = event.target.closest && event.target.closest('a[href]');
+    if (!a || !inSite(a)) return;
+    if (a.pathname === location.pathname && a.hash) return;
+    event.preventDefault();
+    history.pushState(null, '', a.href);
+    route();
+  });
+
+  fetch(base + 'site.json')
     .then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status);
       return response.json();
     })
     .then(function (data) {
       site = data;
+      if (!root) {
+        bar.outerHTML = header('prs', 'scrolls');
+        return;
+      }
       if (site.readme) markdownFiles[site.readme] = true;
       if (site.projectsReadme) markdownFiles[site.projectsReadme] = true;
-      site.docs.forEach(function (d) { markdownFiles[d.path] = true; });
+      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[docRoute(d.path)] = d.path; });
       site.projects.forEach(function (p) {
         markdownFiles[p.path] = true;
-        p.files.forEach(function (f) { markdownFiles[f] = true; });
+        p.files.forEach(function (f) { markdownFiles[f] = true; routes[docRoute(f)] = f; });
       });
-      window.addEventListener('hashchange', route);
+      window.addEventListener('popstate', route);
       route();
     }, function (error) {
       root.textContent = 'This site could not load its data: ' + error.message;
