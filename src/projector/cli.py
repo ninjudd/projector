@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -239,7 +240,7 @@ def parser() -> argparse.ArgumentParser:
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
     site_build = site_commands.add_parser(
-        "build", help="build the site from the README, docs, project plans, and published walkthroughs"
+        "build", help="build the site from the projects, the published reviews, and the docs"
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--walkthroughs", help="directory holding <number>/<head>/spec.json files")
@@ -265,7 +266,7 @@ def parser() -> argparse.ArgumentParser:
         "status", help="say whether a repository hosts the site, and print its URL if so"
     )
     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
-    site_status.add_argument("--pr", type=int, help="print the URL of this pull request's walkthrough")
+    site_status.add_argument("--pr", type=int, help="print the URL of this pull request's review")
     site_serve = site_commands.add_parser(
         "serve", help="build the site and serve it over HTTP, rebuilding as its sources change"
     )
@@ -519,7 +520,7 @@ def build_checkout(root: Path, out: Path, walkthroughs: Optional[Path], base: st
         branch=site_branch(root),
         base=base,
     )
-    return f"{len(projects)} projects, {len(entries)} pull requests, {len(failures)} walkthroughs skipped"
+    return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
 
 
 def run_site_build(arguments: argparse.Namespace) -> int:
@@ -571,7 +572,9 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     site_state = serve.Site(build, sources)
     try:
         print(f"built the site: {site_state.refresh(force=True)}")
-        server = serve.ThreadingHTTPServer((arguments.host, arguments.port), serve.handler(site_state, base))
+        server = serve.ThreadingHTTPServer(
+            (arguments.host, arguments.port), serve.handler(site_state, base, serve.allowed_hosts(arguments.host))
+        )
     except BaseException:
         site_state.close()
         raise
@@ -581,6 +584,14 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         print(f"listening on {arguments.host}: anyone who can reach it can read this repository's site",
               file=sys.stderr)
     print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
+    # A terminal closing or a process manager stopping the server must clean up
+    # as Ctrl-C does, since the build holds the repository's docs and diffs.
+    def interrupt(signum, frame) -> None:
+        raise KeyboardInterrupt
+
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), interrupt)
     stop = threading.Event()
     if not arguments.no_watch:
         report = lambda message: print(message, flush=True)
@@ -616,7 +627,7 @@ def run_site(arguments: argparse.Namespace) -> int:
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
-        print(f"{url}prs/{arguments.pr}/" if arguments.pr else url)
+        print(f"{url}reviews/{arguments.pr}/" if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
         text = site_workflow_text(root, arguments.action_ref, arguments.branch)

@@ -112,10 +112,11 @@ query time. Projector never writes a tracked status index.
 ## Set up the Projector site
 
 Projector can host a site for a repository on GitHub Pages, built from content
-Projector keeps in the repository itself. Its home page renders the
-repository's `README.md`, and its menu reaches the project plans under
-`docs/projects`, the pull request walkthroughs the `walkthrough-pr` skill
-publishes, and every other Markdown document under `docs/`. Walkthroughs sit
+Projector keeps in the repository itself. Its menu has three sections:
+**Projects**, the home page, lists the projects under `docs/projects`;
+**Reviews** lists the pull request walkthroughs the `walkthrough-pr` skill
+publishes; and **Docs** renders `README.md` beside a sidebar of every other
+Markdown document under `docs/`. Walkthroughs sit
 on hidden refs such as `refs/projector/walkthroughs`, which are not branches,
 so publishing one adds no branch, no pull request banner, and nothing to
 anyone's clone. One workflow on the default branch builds and deploys the
@@ -182,9 +183,9 @@ is the GitHub repository:
    `walkthrough-pr` skill publishes to the site by default: ask your agent
    for a walkthrough of a pull request and it pushes the spec to the hidden
    ref, starts the workflow, and hands you the link. Ask for a Claude
-   Artifact instead when you want a private page. The site's PRs menu lists
-   every walkthrough, and each pull request's newest version is at
-   `prs/<number>/`. The README, the plans and the docs appear on the first
+   Artifact instead when you want a private page. The site's Reviews section
+   lists every walkthrough, and each pull request's newest version is at
+   `reviews/<number>/`. The projects and the docs appear on the first
    deploy, without publishing anything.
 
 ### Serve the site without GitHub Pages
@@ -197,7 +198,7 @@ rebuilding it whenever `README.md`, `docs/`, or the plans change:
 project site serve
 ```
 
-It fetches the published walkthroughs from `origin` first, so the PRs menu
+It fetches the published walkthroughs from `origin` first, so the Reviews menu
 matches what the repository has published. Publish a walkthrough without
 starting a deploy with `project walkthrough publish --no-dispatch`. To host
 the site somewhere other than GitHub Pages, run `project site build --out

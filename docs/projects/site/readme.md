@@ -160,7 +160,39 @@ Projector's own site until someone fixes or reverts it. Finding that break
 here, before a release carries it to other repositories, is the purpose of
 the preview.
 
-## 8. Serve the site without GitHub Pages
+## 8. Three sections: projects, reviews, and docs
+
+The menu has three items, and each names one kind of content the same way
+everywhere on the site: in the menu, the headings, the paths, and the keys of
+`site.json`.
+
+- **Projects** is the home page. The root shows the projects list, and so does
+  `projects/`. A project's page renders beside a sidebar of its top-level
+  project's folder, listing every supplemental file, subdirectory, and nested
+  project, because a project can span several files and directories. Each
+  file has a path under the project, `projects/<name>/<file>/`, rather than
+  under `docs/`.
+- **Reviews** lists the pull request walkthroughs at `reviews/`, with each
+  head at `reviews/<number>/<head>/`. Reviews replace the earlier `prs/`
+  paths, and no redirect keeps the old ones, as with the move to real paths
+  in section 4.
+- **Docs** renders the repository `README.md` at `docs/` beside a sidebar of
+  every Markdown file under `docs/` except the projects directory, which has
+  its own section. A `README.md` at the top of `docs/` moves to `docs/readme/`
+  so the repository README keeps `docs/`.
+
+Moving a project's files under `projects/` lets a file and a folder share a
+path: `alpha/beta.md` and the nested project `alpha/beta/` both want
+`projects/alpha/beta/`, as `guide.md` and `guide/readme.md` want
+`docs/guide/`. The folder keeps the plain path, and the file keeps its `.md`,
+at `projects/alpha/beta.md/`. The build decides each route once and records it
+in `site.json`, so the page links to the same path the build wrote a shell for.
+
+A repository with no projects opens on Docs, and the menu leaves out any
+section with nothing in it. Search still covers every document and labels
+each result as a project or a doc.
+
+## 9. Serve the site without GitHub Pages
 
 A repository that cannot turn on GitHub Pages yet, or does not want to, can
 still read its site. `project site serve` builds the site a deploy builds
@@ -180,14 +212,20 @@ archive stamps every file with the ref's newest commit.
 - **Answer like GitHub Pages.** A missing path gets `404.html` with status
   404, and `--base` serves the site under a path, so what works locally
   works on Pages.
-- **Listen on loopback by default.** The site copies the README, docs,
-  plans and diffs. A wider `--host` is the user's decision, and the server
-  warns when it is made.
+- **Listen on loopback by default, and answer only its own names.** The site
+  copies the README, docs, plans and diffs. Loopback alone does not keep them
+  private: a page in the reader's browser can point its own hostname at
+  127.0.0.1 and read the site through DNS rebinding. The server therefore
+  answers 403 to a request whose `Host` is not `localhost`, a loopback
+  address, or the `--host` given. A wider `--host` is the user's decision,
+  and the server warns when it is made.
+- **Clean up on any stop.** Ctrl-C, SIGTERM, and SIGHUP all remove the
+  temporary directory, which holds the repository's docs and diffs.
 - **Host elsewhere with `site build`.** Any static host that answers a
   missing path with `404.html` can serve `project site build --out DIR`;
   no host-specific packaging was added.
 
-## 9. `project init` sets the site up
+## 10. `project init` sets the site up
 
 Setting a repository up took three steps a person or agent ran by hand: a
 `gh api` call to turn on Pages with the Actions source, a second one to make

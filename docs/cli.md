@@ -431,24 +431,32 @@ when GitHub cannot serve a diff that large.
 
 `site build` builds the whole site from a checkout, this repository unless
 `--repo-root` names another, and the walkthrough specs under `--walkthroughs`
-when there are any. The home page renders `README.md`; its menu reaches the
-projects view, which groups plans by status and opens each with its nested
-projects and supplemental files, the list of walkthroughs, and every other
-Markdown file under `docs/`. The build copies those files under `content/`
-and describes them in `site.json`, and the page renders them in the browser.
-Every view has its own path: `projects/` and `projects/<name>/` for the
-plans, `prs/`, `prs/<number>/` and `prs/<number>/<head>/` for walkthroughs,
-and `docs/<path>/` for each document at its repository path without `.md`.
+when there are any. Its menu has three sections. **Projects**, the home page,
+groups the projects by status, and opens each one beside a sidebar of its
+top-level project's folder: every supplemental file, subdirectory, and nested
+project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
+beside a sidebar of every other Markdown file under `docs/`, leaving out the
+projects directory, which Projects covers. A repository with no projects opens
+on Docs instead. The build copies those files under `content/` and describes
+them in `site.json`, and the page renders them in the browser. Every view has
+its own path: `projects/<name>/` for a project and `projects/<name>/<file>/`
+for each of its files, at its path inside the project without `.md`;
+`reviews/`, `reviews/<number>/` and `reviews/<number>/<head>/` for
+walkthroughs; and `docs/` for the README and `docs/<path>/` for each document
+at its repository path without `.md`. A `README.md` at the top of `docs/`
+moves to `docs/readme/`, since the repository README holds `docs/`. A file
+named like a folder beside it, such as `notes.md` next to `notes/`, keeps its
+`.md` in its path, `notes.md/`, because the folder takes `notes/`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
-assets under `assets/`; it defaults to `/`. A walkthrough links to the plans
+assets under `assets/`; it defaults to `/`. A review links to the projects
 its diff changes, and to any its spec names in a `projects` list, and each
-plan page lists its walkthroughs. `search/` searches every document the site
+project page lists its reviews. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.
-A plan that does not parse drops the projects view with a warning rather than
-failing the build. The site workflow runs `site build` through Projector's
+A project that does not parse drops the Projects section with a warning
+rather than failing the build. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For walkthroughs it builds every
@@ -458,11 +466,15 @@ Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 
 `site serve` builds the site from a checkout, as `site build` does, into a
-temporary directory and serves it over HTTP until you press Ctrl-C, which
-removes the directory. It needs no GitHub Pages site and no workflow. It
-listens on `127.0.0.1:8000` unless `--host` or `--port` says otherwise, and
-warns when `--host` reaches beyond this machine, because anyone who can reach
-the address can read the site. `--port 0` picks a free port and prints it.
+temporary directory and serves it over HTTP until you press Ctrl-C, or it
+receives SIGTERM or SIGHUP, which removes the directory. It needs no GitHub
+Pages site and no workflow. It listens on `127.0.0.1:8000` unless `--host`
+or `--port` says otherwise, and warns when `--host` reaches beyond this
+machine, because anyone who can reach the address can read the site. It
+answers 403 to a request whose `Host` header names anything but `localhost`,
+a loopback address, or the `--host` given, so a web page cannot read the
+site through DNS rebinding; a wildcard `--host` such as `0.0.0.0` answers
+any name. `--port 0` picks a free port and prints it.
 Before building, it fetches the walkthroughs ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/walkthroughs`
 copy that `walkthrough publish` keeps. When the fetch fails it says why and
@@ -475,7 +487,7 @@ with status 404, as GitHub Pages answers it. `--base` serves the site under
 a path, as `site build` builds it.
 
 `site status` exits 0 and prints the site's URL, or with `--pr` the pull
-request's walkthrough URL, when the repository has the site workflow on its
+request's review URL, when the repository has the site workflow on its
 default branch and a GitHub Pages site. It exits 3 and says why when either is
 missing, or when a private repository's site is public. `site workflow`
 prints the workflow file a repository adds to its default branch once, or

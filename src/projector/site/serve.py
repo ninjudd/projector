@@ -25,6 +25,7 @@ from ..walkthrough import PAGES_REF, PAGES_ROOT
 
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+WILDCARD = {"", "0.0.0.0", "::"}
 
 
 def run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -151,11 +152,33 @@ class Site:
         shutil.rmtree(self.scratch, ignore_errors=True)
 
 
-def handler(site: Site, base: str) -> type[http.server.SimpleHTTPRequestHandler]:
+def host_name(header: str) -> str:
+    """The name in a Host header, without its port or an IPv6 address's brackets."""
+    header = header.strip().lower()
+    if header.startswith("["):
+        return header[1:header.find("]")] if "]" in header else header
+    return header.rsplit(":", 1)[0] if header.count(":") == 1 else header
+
+
+def allowed_hosts(host: str) -> set[str] | None:
+    """The Host names the server answers to, or None for any when it listens on every address.
+
+    Answering any Host would let DNS rebinding read a loopback server: a page
+    in the reader's browser points its own name at 127.0.0.1 and fetches the
+    site as a same-origin request. A wildcard address is an explicit choice
+    to be reached by names the server cannot know, and it is warned about.
+    """
+    if host in WILDCARD:
+        return None
+    return LOOPBACK | {host_name(host)}
+
+
+def handler(site: Site, base: str, hosts: set[str] | None = LOOPBACK) -> type[http.server.SimpleHTTPRequestHandler]:
     """A request handler that serves the site's newest build under `base`.
 
     A path the build has no file for gets the not-found page with status 404,
-    as GitHub Pages answers it.
+    as GitHub Pages answers it. A request naming a host outside `hosts` gets
+    403 and no content.
     """
 
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -163,6 +186,9 @@ def handler(site: Site, base: str) -> type[http.server.SimpleHTTPRequestHandler]
             super().__init__(*args, directory=str(site.current), **kwargs)
 
         def send_head(self):
+            if hosts is not None and host_name(self.headers.get("Host", "")) not in hosts:
+                self.send_error(403, "this server answers only to the names it listens on")
+                return None
             if not (urlsplit(self.path).path + "/").startswith(base):
                 return self.not_found()
             local = Path(self.translate_path(self.path))
