@@ -1,9 +1,9 @@
 ---
-name: plan-project
+name: plan
 description: Create or refine a Git-native project plan under docs/projects. Use when the user wants to scope, design, prioritize, or record a project before or alongside implementation.
 ---
 
-# Plan Project
+# Plan
 
 Turn the requested outcome into a durable Projector plan that another person or
 agent can execute without reconstructing the conversation.

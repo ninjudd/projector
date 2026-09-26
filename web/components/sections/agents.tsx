@@ -7,7 +7,7 @@ import { DOCS } from "@/lib/links";
 const steps: { title: string; invoke: string; body: ReactNode }[] = [
   {
     title: "Ask for a plan",
-    invoke: "/projector:plan-project a session chooser opened by the detach key",
+    invoke: "/projector:plan a session chooser opened by the detach key",
     body: (
       <>
         The agent reads the repository and the existing projects first, asks only what the code
@@ -31,7 +31,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
   },
   {
     title: "Finish it",
-    invoke: "/projector:finish-project session-switcher",
+    invoke: "/projector:finish session-switcher",
     body: (
       <>
         The agent checks each acceptance criterion in the plan against the repository, records
@@ -71,8 +71,8 @@ export function Agents() {
         ))}
       </ol>
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
-        In Codex the same skills are <Code>$plan-project</Code>, <Code>$implement</Code>, and{" "}
-        <Code>$finish-project</Code>. The plugin also carries the two review skills described next,
+        In Codex the same skills are <Code>$plan</Code>, <Code>$implement</Code>, and{" "}
+        <Code>$finish</Code>. The plugin also carries the two review skills described next,
         and <Code>gh-stack</Code>, for splitting a large change into a chain of dependent pull
         requests.{" "}
         <a

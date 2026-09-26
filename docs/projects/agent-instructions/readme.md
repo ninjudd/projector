@@ -229,9 +229,9 @@ adopted repository, and the validation gate in `AGENTS.md` already runs it.
 - `docs/plugins.md`: one paragraph saying that skills load only when invoked
   and that the block is how conventions reach every session, so a reader does
   not look for a hook or a plugin `CLAUDE.md`.
-- `plan-project`, `implement`, and `finish-project` skills: the validation
-  step says to resolve any warning `project check` prints, and that
-  `project init` refreshes a stale Projector section.
+- `plan`, `implement`, and `finish` skills: the validation step says to
+  resolve any warning `project check` prints, and that `project init`
+  refreshes a stale Projector section.
 
 ## 7. Implementation sequence
 

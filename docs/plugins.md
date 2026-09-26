@@ -18,7 +18,7 @@ claude plugin install projector@projector --scope user
 Invoke a skill with the plugin namespace, for example:
 
 ```text
-/projector:plan-project plan a safer deploy workflow
+/projector:plan plan a safer deploy workflow
 ```
 
 Validate a checkout before publishing it:
@@ -40,7 +40,7 @@ codex plugin add projector@projector
 Invoke a skill directly, for example:
 
 ```text
-$plan-project plan a safer deploy workflow
+$plan plan a safer deploy workflow
 ```
 
 The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
