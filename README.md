@@ -107,6 +107,73 @@ lifecycle: `draft`, `ready`, `in-progress`, or `completed`. `priority` is the
 schedule: `now`, `next`, or `later`. Run `project list` to group projects at
 query time. Projector never writes a tracked status index.
 
+## Set up Projector hosting
+
+Projector hosting gives a repository its own Projector site on GitHub Pages,
+built from content Projector keeps in the repository itself. Today the site
+serves the pull request walkthroughs the `walkthrough-pr` skill publishes; it
+is also where browsing `docs/projects` will live. The content sits on hidden
+refs such as `refs/projector/walkthroughs`, which are not branches, so
+publishing adds no branch, no pull request banner, and nothing to anyone's
+clone. One workflow on the default branch builds and deploys the site. Set a
+repository up once, with admin rights:
+
+1. Turn on Pages with GitHub Actions as its source:
+
+   ```sh
+   gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
+   ```
+
+   For a repository that already has a Pages site, switch its source to
+   GitHub Actions under **Settings > Pages** instead.
+
+2. If the repository is private, make the site private too, and stop here
+   if GitHub refuses. A private repository's Pages site is public unless the
+   account has private Pages, which needs GitHub Enterprise Cloud:
+
+   ```sh
+   gh api -X PUT repos/OWNER/NAME/pages -F public=false
+   ```
+
+3. Add the workflow to the default branch through a pull request. GitHub runs
+   the dispatched workflow only from the default branch, and deploys from the
+   default branch without any change to the `github-pages` environment. Save
+   this as `.github/workflows/walkthroughs.yml`, or have the `walkthrough-pr`
+   skill write it with `walkthrough.py workflow --write`:
+
+   ```yaml
+   name: Walkthroughs
+   on:
+     repository_dispatch:
+       types: [projector-walkthroughs]
+     workflow_dispatch:
+   permissions:
+     contents: read
+     pull-requests: read
+     pages: write
+     id-token: write
+   concurrency:
+     group: pages
+     cancel-in-progress: false
+   jobs:
+     publish:
+       runs-on: ubuntu-latest
+       environment:
+         name: github-pages
+         url: ${{ steps.walkthroughs.outputs.page_url }}
+       steps:
+         - id: walkthroughs
+           uses: ninjudd/projector/actions/walkthroughs@v0
+   ```
+
+   `@v0` follows Projector's compatible releases. Pin an exact tag such as
+   `@v0.5.0`, or a full commit SHA, to change only when you choose.
+
+4. Publish something. Ask your agent for a walkthrough of a pull request and
+   to publish it: the skill pushes the spec to the hidden ref and starts the
+   workflow. The site lists every walkthrough at its root and serves each
+   pull request's newest version at `/<number>/`.
+
 ## Use the CLI
 
 ```sh
