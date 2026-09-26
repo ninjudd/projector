@@ -27,6 +27,8 @@ FAKE_GH = r"""#!/usr/bin/env bash
 # Serves fixtures from $FAKE_GH_DIR:
 #   <owner>/<repo>/<n>.json          the GraphQL pullRequest node; absent means NOT_FOUND
 #   <owner>/<repo>/<n>.reviews.json  the REST reviews array; absent means []
+# `pr list --repo <owner>/<repo> --author <login>` lists the open fixtures whose
+# node names that author.
 # Logs one line per call to $FAKE_GH_DIR/calls.log. With FAKE_GH_DOWN_AFTER set,
 # every call past that many already-logged calls fails like a network error.
 set -u
@@ -38,10 +40,14 @@ if [ -n "${FAKE_GH_DOWN_AFTER:-}" ] && [ "$count" -ge "$FAKE_GH_DOWN_AFTER" ]; t
   echo 'Post "https://api.github.com/graphql": dial tcp 127.0.0.1:9: connect: connection refused' >&2
   exit 1
 fi
-mode=""; owner=""; repo=""; num=""; jq_expr="."; path=""
+mode=""; owner=""; repo=""; num=""; jq_expr="."; path=""; slug=""; author=""
 while [ $# -gt 0 ]; do
   case "$1" in
     api) shift ;;
+    pr) mode=list; shift 2 ;;
+    --repo) slug="$2"; shift 2 ;;
+    --author) author="$2"; shift 2 ;;
+    --state|--limit|--json) shift 2 ;;
     graphql) mode=graphql; shift ;;
     -f) case "$2" in o=*) owner="${2#o=}" ;; r=*) repo="${2#r=}" ;; esac; shift 2 ;;
     -F) case "$2" in n=*) num="${2#n=}" ;; esac; shift 2 ;;
@@ -52,6 +58,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$mode" in
+  list)
+    [ -d "$FAKE_GH_DIR/$slug" ] || { echo "GraphQL: Could not resolve to a Repository" >&2; exit 1; }
+    for f in "$FAKE_GH_DIR/$slug"/*.json; do
+      case "$f" in *.reviews.json|*'*'*) continue ;; esac
+      jq -c --arg a "$author" --argjson n "$(basename "$f" .json)" \
+        'select(.state == "OPEN" and .author.login == $a) | {number: $n}' < "$f"
+    done | jq -s 'sort_by(.number)' | jq -r "$jq_expr"
+    ;;
   graphql)
     if [ ! -d "$FAKE_GH_DIR/$owner/$repo" ]; then
       printf '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository with the name '"'"'%s/%s'"'"'."}]}' "$owner" "$repo"
@@ -122,6 +136,7 @@ class WatcherCase(unittest.TestCase):
         decision=None,
         head=SHA_A,
         ref="feature",
+        author="operator",
         verdict=None,
         threads=(),
         reviews=(),
@@ -134,6 +149,7 @@ class WatcherCase(unittest.TestCase):
             "reviewDecision": decision,
             "headRefOid": head,
             "headRefName": ref,
+            "author": {"login": author},
             "reviews": {"nodes": [verdict] if verdict else []},
             "reviewThreads": {"nodes": list(threads)},
         }
@@ -482,7 +498,69 @@ class WatchPrsTests(WatcherCase):
         self.assertEqual(2, unreachable.returncode)
         self.assertIn("could not verify — network or auth error", unreachable.stderr)
         self.assertEqual(2, author.returncode)
-        self.assertIn("unknown argument: --author", author.stderr)
+        self.assertIn("--repo and --author go together", author.stderr)
+
+    def test_adopts_the_authors_open_pull_requests(self) -> None:
+        self.pull_request(1, ref="mine")
+        self.pull_request(2, ref="theirs", author="teammate")
+        self.pull_request(3, state="MERGED")
+        self.pull_request(4, ref="excluded")
+        self.pull_request(5, ref="tracked")
+        self.pull_request(6, ref="later")
+        # No trailing newline, so an append has to start a line of its own.
+        self.tracked.write_text("!acme/app#4\n  acme/app#5  ")
+        adopt = ("--repo", "acme/app", "--author", "operator")
+
+        first = self.run_watcher(PRS, *adopt)
+        second = self.run_watcher(PRS, *adopt)
+
+        self.assert_ok(first)
+        self.assertEqual(
+            [
+                "NEW PR acme/app#5 (tracked) head=aaaaaaa — unreviewed, needs an exact-head review",
+                "NEW PR acme/app#1 (mine) head=aaaaaaa — unreviewed, needs an exact-head review",
+                "NEW PR acme/app#6 (later) head=aaaaaaa — unreviewed, needs an exact-head review",
+            ],
+            first.stdout.splitlines(),
+        )
+        self.assertEqual("!acme/app#4\n  acme/app#5  \nacme/app#1\nacme/app#6\n", self.tracked.read_text())
+        self.assert_ok(second)
+        self.assertEqual("", second.stdout)
+        self.assertEqual(4, len(self.tracked.read_text().splitlines()))
+
+    def test_an_exclusion_holds_after_adoption_and_in_any_letter_case(self) -> None:
+        self.pull_request(4, ref="excluded")
+        self.pull_request(5, ref="kept")
+        # The plain line adoption wrote, then an exclusion added below it, and a
+        # second spelling of an entry the file already names.
+        self.tracked.write_text("acme/app#4\nacme/app#5\n!ACME/app#4\nAcme/App#5\n")
+
+        adopted = self.run_watcher(PRS, "--repo", "Acme/App", "--author", "operator")
+
+        self.assert_ok(adopted)
+        self.assertEqual(
+            ["NEW PR acme/app#5 (kept) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            adopted.stdout.splitlines(),
+        )
+        self.assertEqual("acme/app#4\nacme/app#5\n!ACME/app#4\nAcme/App#5\n", self.tracked.read_text())
+
+    def test_adoption_starts_from_no_tracked_file_and_survives_a_failed_listing(self) -> None:
+        self.pull_request(1)
+        self.tracked.unlink()
+        adopt = ("--repo", "acme/app", "--author", "operator")
+
+        failed = self.run_watcher(PRS, *adopt, down_after=0)
+        after_failure = self.tracked.read_text()
+        recovered = self.run_watcher(PRS, *adopt)
+
+        self.assert_ok(failed)
+        self.assertEqual("", failed.stdout)
+        self.assertEqual("", after_failure)
+        self.assert_ok(recovered)
+        self.assertEqual(
+            ["NEW PR acme/app#1 (feature) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            recovered.stdout.splitlines(),
+        )
 
 
 if __name__ == "__main__":
