@@ -97,6 +97,21 @@ class PackagingTests(unittest.TestCase):
             self.assertIn("`../start-review-loop/method.md`", text, name)
         self.assertNotIn("ninjudd", method.read_text())
 
+    def test_three_skills_share_one_set_of_code_guidelines(self) -> None:
+        guidelines = ROOT / "skills" / "guidelines.md"
+
+        # The same three skills write to, review against, and fix to one
+        # guidelines file, so a rule cannot be enforced by one and unknown to
+        # another.
+        self.assertTrue(guidelines.is_file())
+        self.assertIn("## 1. Comments", guidelines.read_text())
+        self.assertNotIn("ninjudd", guidelines.read_text())
+        method = (ROOT / "skills" / "start-review-loop" / "method.md").read_text()
+        self.assertIn("`../guidelines.md`", method)
+        for name in ("start-review-loop", "start-fix-loop", "work-project"):
+            text = (ROOT / "skills" / name / "SKILL.md").read_text()
+            self.assertIn("`../guidelines.md`", text, name)
+
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:
             lines = (ROOT / "skills" / name / "SKILL.md").read_text().splitlines()
