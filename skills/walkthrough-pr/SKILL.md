@@ -168,7 +168,7 @@ gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
 project site workflow --write
 ```
 
-The workflow calls `ninjudd/projector/actions/walkthroughs@v0`. Pass
+The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 `--action-ref` to pin an exact release tag or a full commit SHA instead.
 
 A private repository's Pages site is public unless the account has private
