@@ -210,7 +210,10 @@ For every new head:
    the change's intent, sort the changed files, run the passes, follow every
    changed definition to the code that depends on it, and verify each
    candidate finding by the four-step protocol before it becomes a thread.
-   Cover both the new range and the pull-request-wide integration diff.
+   The written-rules pass reads the head against `../guidelines.md`, the code
+   guidelines every Projector skill shares, before the repository's own rule
+   documents. Cover both the new range and the pull-request-wide integration
+   diff.
 6. Run focused tests and reproductions proportional to risk. A candidate the
    protocol cannot verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
@@ -324,7 +327,8 @@ threads:
 - **P1.** A defect the change introduces or worsens, with concrete impact on
   users, data, money, availability, or security. A thread; blocks.
 - **P2.** A defect the change introduces with bounded impact, or a violation
-  of a rule the repository wrote down. A thread; blocks.
+  of a rule the repository wrote down or of a section of `../guidelines.md`.
+  A thread; blocks.
 - **P3.** A change the code is correct without: a simplification, dead code,
   a gap between a written rule and practice, a defect already present at the
   base. One line in the body's `Suggestions` list; never a thread, never

@@ -46,6 +46,13 @@ nearly every change:
   commented-out block, and no compatibility wrapper the plan did not ask
   for.
 
+Write to `../guidelines.md`, the code guidelines every Projector skill shares.
+The review loop reads your head against them and the fix loop fixes to them,
+so a rule skipped here comes back as a finding citing the section you skipped.
+Its first rule is about comments: write code that needs none, simplify a
+stretch before you explain it, and add a comment only to preserve a
+constraint or reason the code cannot carry on its own.
+
 Update the project plan in the same change whenever implementation settles a
 decision, changes scope, reveals a new constraint, or completes an acceptance
 criterion. Append numbered sections rather than renumbering cited sections.
