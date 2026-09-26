@@ -245,6 +245,66 @@ def require_private_site(repo: str) -> None:
         raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
 
 
+def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
+    """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
+
+    Returns what changed: `pages` is created, updated, or unchanged, and
+    `visibility` is updated when a private repository's public site was made
+    private. Raises when a private repository's site cannot be made private,
+    because the site would publish the repository's README, plans and diffs,
+    and first deletes a site this call created, so the refusal leaves the
+    repository as it found it. Without `admin`, it changes nothing and raises
+    when anything needs changing, so a site an admin already set up still
+    counts as set up. Without `takeover`, it raises rather than switch a site
+    that deploys from a branch, because that site is the repository's own.
+    """
+    raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is not None and not takeover and json.loads(raw).get("build_type") != "workflow":
+        raise SpecError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
+                        "with the Projector site")
+    if not admin:
+        pages = json.loads(raw) if raw is not None else None
+        if pages is None:
+            needed = "turn on its GitHub Pages site"
+        elif pages.get("build_type") != "workflow":
+            needed = "switch its GitHub Pages site to deploy from GitHub Actions"
+        elif exposure(repo, pages):
+            needed = "make its public GitHub Pages site private"
+        else:
+            return {"pages": "unchanged", "visibility": "unchanged", "url": site_url(pages),
+                    "public": pages.get("public", True)}
+        raise SpecError(f"you are not an admin of {repo}, so init cannot {needed}; "
+                        "ask an admin to run `project init --site`")
+    if raw is None:
+        gh("api", "-X", "POST", f"repos/{repo}/pages", "-f", "build_type=workflow")
+        action = "created"
+    elif json.loads(raw).get("build_type") != "workflow":
+        gh("api", "-X", "PUT", f"repos/{repo}/pages", "-f", "build_type=workflow")
+        action = "updated"
+    else:
+        action = "unchanged"
+    pages = json.loads(gh("api", f"repos/{repo}/pages")) if action != "unchanged" else json.loads(raw)
+    visibility = "unchanged"
+    if exposure(repo, pages):
+        refusal = (f"{repo} is private but GitHub will not make its Pages site private, which needs private "
+                   "Pages (GitHub Enterprise Cloud); make the repository public, or serve the site with "
+                   "`project site serve` instead")
+        try:
+            gh("api", "-X", "PUT", f"repos/{repo}/pages", "-F", "public=false")
+            pages = json.loads(gh("api", f"repos/{repo}/pages"))
+            failure = refusal if exposure(repo, pages) else ""
+        except SpecError as exc:
+            failure = f"{refusal}: {exc}"
+        if failure:
+            # A site this call created would stay public on a private repository.
+            if action == "created":
+                gh("api", "-X", "DELETE", f"repos/{repo}/pages")
+                failure += "; the public Pages site init created was deleted"
+            raise SpecError(failure)
+        visibility = "updated"
+    return {"pages": action, "visibility": visibility, "url": site_url(pages), "public": pages.get("public", True)}
+
+
 def hosting(repo: str) -> tuple[str | None, str]:
     """Return the repository's walkthroughs site URL, or None and why it is not set up.
 
@@ -261,13 +321,42 @@ def hosting(repo: str) -> tuple[str | None, str]:
     exposed = exposure(repo, pages)
     if exposed:
         return None, exposed
-    site = pages["html_url"]
+    return site_url(pages), ""
+
+
+def site_url(pages: dict) -> str:
+    """The Pages site's URL, with a trailing slash."""
+    site = pages.get("html_url") or ""
+    if not site:
+        return ""
     # GitHub reports an http:// URL for a custom domain that does not enforce
     # HTTPS, even once its certificate is issued and https:// serves the site.
     certified = (pages.get("https_certificate") or {}).get("state") == "approved"
     if site.startswith("http:") and (pages.get("https_enforced") or certified):
         site = "https:" + site.removeprefix("http:")
-    return site.rstrip("/") + "/", ""
+    return site.rstrip("/") + "/"
+
+
+def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple[str, str]:
+    """Point the repository's website link at `url`, unless it already links elsewhere.
+
+    Returns the action, updated, unchanged, or kept, and for kept, why. A
+    link that differs only in scheme or trailing slash already reaches the
+    site, as the one GitHub's "Use your GitHub Pages website" box writes does.
+    """
+    current = current.strip()
+
+    def bare(link: str) -> str:
+        return link.split("://", 1)[-1].rstrip("/").lower()
+
+    if current and bare(current) == bare(url):
+        return "unchanged", ""
+    if current:
+        return "kept", f"{repo} already links its website to {current}; set it to {url} to link the site"
+    if not admin:
+        return "kept", f"you are not an admin of {repo}, so its website does not link to {url}"
+    gh("api", "-X", "PATCH", f"repos/{repo}", "-f", f"homepage={url}")
+    return "updated", ""
 
 
 def merge_base(repo: str, base_ref: str, head: str) -> str:
@@ -552,10 +641,11 @@ def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | Non
     return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
 
 
-def default_branch(remote: str = "origin") -> str:
+def default_branch(remote: str = "origin", root: Path | None = None) -> str:
     """The remote's default branch as the checkout recorded it, or main."""
+    within = ["-C", str(root)] if root is not None else []
     try:
-        head = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+        head = git(*within, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
     except SpecError:
         return "main"
     return head.split("/", 1)[1] if "/" in head else head
