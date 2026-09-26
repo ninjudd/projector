@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Set Projector's one version, or tag a release of it.
 
-    scripts/release.py bump patch|minor|major   raise one part of the version and write it
-    scripts/release.py set X.Y.Z                write an exact version instead
-    scripts/release.py released                 exit 0 if origin/main's version is tagged, 3 if not
-    scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+    .github/scripts/release.py bump patch|minor|major   raise one part of the version and write it
+    .github/scripts/release.py set X.Y.Z                write an exact version instead
+    .github/scripts/release.py released                 exit 0 if origin/main's version is tagged, 3 if not
+    .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
 
 The Release workflow runs these. Started by hand with patch, minor, or major,
 it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
@@ -24,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 

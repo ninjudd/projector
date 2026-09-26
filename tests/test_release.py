@@ -12,7 +12,7 @@ from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-spec = importlib.util.spec_from_file_location("release", ROOT / "scripts" / "release.py")
+spec = importlib.util.spec_from_file_location("release", ROOT / ".github" / "scripts" / "release.py")
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 

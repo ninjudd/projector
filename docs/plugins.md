@@ -246,13 +246,13 @@ workflow opens the pull request with its own token, which needs **Allow
 GitHub Actions to create and approve pull requests** turned on under the
 repository's **Settings > Actions > General**.
 
-The workflow runs `scripts/release.py`, which also works by hand from any
-checkout. `bump` raises one part of the version and `set` writes an exact
-one, both refusing a version that does not go up:
+The workflow runs `.github/scripts/release.py`, which also works by hand
+from any checkout. `bump` raises one part of the version and `set` writes an
+exact one, both refusing a version that does not go up:
 
 ```sh
-scripts/release.py bump minor
-scripts/release.py set 0.6.0
+.github/scripts/release.py bump minor
+.github/scripts/release.py set 0.6.0
 ```
 
 Once the bump merges, `tag` releases it. `released` exits 0 when the merged
@@ -260,8 +260,8 @@ version already has a tag and 3 when it does not, which is how the workflow
 decides, on every `setup.cfg` change, whether there is anything to release:
 
 ```sh
-scripts/release.py released
-scripts/release.py tag
+.github/scripts/release.py released
+.github/scripts/release.py tag
 ```
 
 `tag` reads the version from `origin/main`, not from the checkout, so an
