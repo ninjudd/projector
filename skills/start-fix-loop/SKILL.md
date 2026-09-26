@@ -133,9 +133,12 @@ same code:
    what already stops it. Decline a false finding by naming that guard with
    the quoted code that shows it, rather than changing correct behavior.
 2. Reproduce a valid defect with a failing test, error, or measurement.
-3. Implement the narrow fix in the branch that owns the code. Read the lines
-   around an insertion anchor before editing so an attribute, decorator, or
-   comment is not silently detached.
+3. Implement the narrow fix in the branch that owns the code, written to
+   `../guidelines.md`, the code guidelines the review read the head against.
+   A finding that cites a section of that file is verified against that
+   section, and declined only by showing the rule does not apply to the
+   quoted code. Read the lines around an insertion anchor before editing so
+   an attribute, decorator, or comment is not silently detached.
 4. Prove a regression test fails without the fix and passes with it.
 5. Run the repository's full test, lint, format, documentation, and validation
    gate.

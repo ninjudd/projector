@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 PUBLISHED_SKILLS = {
     "plan-project",
-    "work-project",
+    "implement",
     "finish-project",
     "start-review-loop",
     "start-fix-loop",
@@ -88,15 +88,30 @@ class PackagingTests(unittest.TestCase):
 
         # Three skills read one method file: the review loop to inspect a
         # head, the fix loop to verify or decline what that inspection
-        # posted, and work-project to apply the same passes before a review
+        # posted, and implement to apply the same passes before a review
         # runs. A rename or removal must fail here rather than leave any of
         # them pointing at a file the plugin no longer ships.
         self.assertTrue(method.is_file())
         self.assertIn("`method.md`", review)
-        for name in ("start-fix-loop", "work-project"):
+        for name in ("start-fix-loop", "implement"):
             text = (ROOT / "skills" / name / "SKILL.md").read_text()
             self.assertIn("`../start-review-loop/method.md`", text, name)
         self.assertNotIn("ninjudd", method.read_text())
+
+    def test_three_skills_share_one_set_of_code_guidelines(self) -> None:
+        guidelines = ROOT / "skills" / "guidelines.md"
+
+        # The same three skills write to, review against, and fix to one
+        # guidelines file, so a rule cannot be enforced by one and unknown to
+        # another.
+        self.assertTrue(guidelines.is_file())
+        self.assertIn("## 1. Comments", guidelines.read_text())
+        self.assertNotIn("ninjudd", guidelines.read_text())
+        method = (ROOT / "skills" / "start-review-loop" / "method.md").read_text()
+        self.assertIn("`../guidelines.md`", method)
+        for name in ("start-review-loop", "start-fix-loop", "implement"):
+            text = (ROOT / "skills" / name / "SKILL.md").read_text()
+            self.assertIn("`../guidelines.md`", text, name)
 
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:
