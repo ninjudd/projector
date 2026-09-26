@@ -67,6 +67,19 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue((ROOT / ".claude-plugin" / "plugin.json").exists())
         self.assertTrue((ROOT / ".codex-plugin" / "plugin.json").exists())
 
+    def test_every_python_package_is_listed_for_the_wheel(self) -> None:
+        # The package list is explicit because site/assets is mapped in from
+        # outside src/; a package missing from it would silently not ship.
+        setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["setuptools"]
+        on_disk = {
+            ".".join(init.parent.relative_to(ROOT / "src").parts)
+            for init in (ROOT / "src").rglob("__init__.py")
+        }
+
+        self.assertEqual(on_disk | {"projector.site.assets"}, set(setuptools["packages"]))
+        self.assertEqual("site/assets", setuptools["package-dir"]["projector.site.assets"])
+        self.assertTrue((ROOT / "site" / "assets" / "site.js").is_file())
+
     def test_the_installed_command_is_project(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 
