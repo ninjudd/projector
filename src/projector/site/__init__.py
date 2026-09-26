@@ -1,14 +1,16 @@
 """The Projector site: the static pages a repository serves from GitHub Pages.
 
 The site is built from content Projector keeps in the repository: its
-README, its `docs/` directory and the project plans under it, and the pull
-request walkthroughs published to refs/projector/walkthroughs. Every page
-has a real path under the site's base: the README at the root, the plans
-under projects/, each document under docs/ at its path without `.md`, and
-each walkthrough under prs/<number>/<head>/, with the newest head also at
-prs/<number>/. GitHub Pages serves only files that exist, so each path gets
-a small shell page that loads the one shared copy of the assets and fetches
-its data.
+README, its `docs/` directory and the projects under it, and the pull request
+walkthroughs published to refs/projector/walkthroughs, which the site calls
+reviews. It has three sections, each at a real path under the site's base:
+the projects at the root and under projects/, every file of a project at its
+path inside the projects directory without `.md`; the reviews under
+reviews/<number>/<head>/, with the newest head also at reviews/<number>/; and
+the docs under docs/, the README at docs/ itself and every other document at
+its path without `.md`. GitHub Pages serves only files that exist, so each
+path gets a small shell page that loads the one shared copy of the assets and
+fetches its data.
 """
 
 from __future__ import annotations
@@ -135,24 +137,24 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tup
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         versions.sort(key=lambda v: v[0], reverse=True)
-        heads = [{"head": p["pr"]["head"], "url": f"{base}prs/{number}/{p['pr']['head']}/", "at": when}
+        heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
                  for when, p in versions]
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(indexUrl=f"{base}prs/", heads=[dict(h, current=h["head"] == head) for h in heads])
-            folder = out / "prs" / number / head
+            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads])
+            folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             (folder / "data.json").write_text(data, encoding="utf-8")
             (folder / "index.html").write_text(
                 page(payload["name"], payload, embed=False, assets=f"{base}assets/", site_base=base,
-                     src=f"{base}prs/{number}/{head}/data.json"), encoding="utf-8")
+                     src=f"{base}reviews/{number}/{head}/data.json"), encoding="utf-8")
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
         newest = latest["pr"]["head"]
-        (out / "prs" / number / "index.html").write_text(
+        (out / "reviews" / number / "index.html").write_text(
             page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
-                 src=f"{base}prs/{number}/{newest}/data.json"), encoding="utf-8")
+                 src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
                         "heads": len(versions), "updated": versions[0][0],
                         "projects": [p["name"] for p in latest["projects"]]})
@@ -169,7 +171,7 @@ def copy_content(repo_root: Path, path: Path, out: Path) -> str:
 
 
 def collect_docs(repo_root: Path, projects_dir: Path | None, out: Path) -> tuple[str | None, list[dict]]:
-    """Copy the README and every Markdown file under docs/ outside the plans."""
+    """Copy the README and every Markdown file under docs/ outside the projects."""
     readme = repo_root / "README.md"
     readme_path = copy_content(repo_root, readme, out) if readme.is_file() else None
     docs = []
@@ -183,16 +185,17 @@ def collect_docs(repo_root: Path, projects_dir: Path | None, out: Path) -> tuple
 
 
 def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Path | None, out: Path) -> list[dict]:
-    """Copy every plan and its supplemental files, and describe each project."""
+    """Copy every project's readme and supplemental files, and describe each project."""
     if projects_dir is None or not projects_dir.is_dir():
         return []
     owners = {project.path.parent: project.name for project in projects}
-    extras: dict[str, list[str]] = {}
+    extras: dict[str, list[dict]] = {}
     for path in sorted(projects_dir.rglob("*.md")):
         relative = copy_content(repo_root, path, out)
         owner = next((owners[d] for d in (path.parent, *path.parent.parents) if d in owners), None)
         if owner is not None and path.name != "readme.md":
-            extras.setdefault(owner, []).append(relative)
+            title = title_from_text(path.read_text(encoding="utf-8"), path.stem)
+            extras.setdefault(owner, []).append({"path": relative, "title": title})
     described = []
     for project in projects:
         entry = project.public(repo_root)
@@ -218,7 +221,7 @@ def collect_files(repo_root: Path, out: Path) -> list[str]:
 
 
 def project_linker(described: list[dict], base: str):
-    """Link a walkthrough to every project whose plan files its diff changes, or that its spec names."""
+    """Link a review to every project whose files its diff changes, or that its spec names."""
     by_name = {p["name"]: p for p in described}
     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
 
@@ -251,26 +254,39 @@ def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects
         entries.append({"route": route, "title": title, "kind": kind, "text": text})
 
     if readme:
-        add(readme, "", "Home", "readme")
+        add(readme, "docs/", "README", "doc")
     for doc in docs:
         add(doc["path"], doc_route(doc["path"]), doc["title"], "doc")
     if projects_readme:
-        add(projects_readme, "projects/", "How projects work", "doc")
+        add(projects_readme, "projects/", "How projects work", "project")
     for project in projects:
         add(project["path"], f"projects/{project['name']}/", project["title"], "project")
-        for path in project["files"]:
-            add(path, doc_route(path), path.rsplit("/", 1)[-1], "doc")
+        for file in project["files"]:
+            add(file["path"], project_route(file["path"], project), file["title"], "project")
     return entries
 
 
-def doc_route(path: str) -> str:
-    """The site path of a Markdown file: its repository path without `.md`."""
-    if path == "README.md":
-        return ""
+def local_route(path: str) -> str:
+    """The route of a Markdown file under a section: its path without `.md`, a readme at its folder."""
     folder, _, name = path.rpartition("/")
     if name.lower() == "readme.md":
-        return f"{folder}/"
+        return f"{folder}/" if folder else ""
     return f"{path[:-3]}/" if path.endswith(".md") else f"{path}/"
+
+
+def doc_route(path: str) -> str:
+    """The site path of a document under docs/. The README owns docs/ itself, so a
+    readme at the top of docs/ moves aside to docs/readme/."""
+    if path.lower() == "docs/readme.md":
+        return "docs/readme/"
+    return local_route(path)
+
+
+def project_route(path: str, project: dict) -> str:
+    """The site path of a file in a project: projects/ and its path inside the projects directory."""
+    folder = project["path"].rpartition("/")[0]
+    inside = project["name"] + "/" + path[len(folder) + 1:]
+    return "projects/" + local_route(inside)
 
 
 def home_page(repo: str, base: str) -> str:
@@ -293,18 +309,18 @@ def home_page(repo: str, base: str) -> str:
 
 def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
     """Every path the home page's script renders, each of which needs a shell."""
-    routes = {"", "projects/", "prs/", "search/"}
+    routes = {"", "projects/", "reviews/", "docs/", "search/"}
     routes.update(doc_route(doc["path"]) for doc in docs)
     for project in projects:
         routes.add(f"projects/{project['name']}/")
-        routes.update(doc_route(path) for path in project["files"])
+        routes.update(project_route(file["path"], project) for file in project["files"])
     return sorted(routes)
 
 
 def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/") -> tuple[list[dict], list[str]]:
-    """Build the whole site: the home page, its manifest, the docs, the plans, and every walkthrough."""
+    """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs."""
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
     out.mkdir(parents=True, exist_ok=True)
     (out / ".nojekyll").write_text("")
@@ -318,7 +334,7 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
     built = build_walkthroughs(walkthroughs, out, base, link) if walkthroughs and walkthroughs.is_dir() else ([], [])
     entries, failures = built
     for project in described:
-        project["walkthroughs"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+        project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
@@ -333,7 +349,7 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
         "projects": described,
         "projectsReadme": projects_readme,
         "files": files,
-        "walkthroughs": [
+        "reviews": [
             {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
              "heads": e["heads"], "projects": e["projects"],
              "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
