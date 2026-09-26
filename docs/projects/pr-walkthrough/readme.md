@@ -73,9 +73,26 @@ what code runs with a token that can read the repository:
   from deliberate releases, never from an unreviewed commit. The spec's
   `version` is the compatibility contract: every `v1` renderer accepts every
   version 1 spec, and a breaking change becomes `v2`.
-- A full commit SHA locks the renderer for organizations that want it.
-- `@main` is rejected: any commit to a public repository would run inside
-  every adopting repository with read access to its code.
+- A full commit SHA locks the renderer for organizations that want it, as
+  GitHub's security hardening guide recommends; Dependabot keeps such pins
+  current.
+- `@main` is rejected. With it, the next publish in every adopting
+  repository would run whatever is on Projector's `main` at that moment, with
+  read access to that repository's code, so a half-finished or compromised
+  commit would reach every adopter without anyone releasing it.
+
+Nothing runs when Projector changes. A repository's workflow runs only when
+that repository publishes a spec, so a release reaches each site on that
+site's next publish, which rebuilds all of its walkthroughs with the new
+renderer, and a bad release breaks no live site until then.
+
+Releases follow the convention GitHub's own actions use: every release gets an
+immutable tag such as `v1.4.2`, and the major tag moves to it.
+
+```sh
+git tag v1.0.0 && git push origin v1.0.0
+git tag -f v1 v1.0.0 && git push -f origin v1
+```
 
 Setup is one-time and needs admin rights: set the Pages source to GitHub
 Actions, and allow `projector-pages` in the `github-pages` environment's
