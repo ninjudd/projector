@@ -16,7 +16,7 @@ spec = importlib.util.spec_from_file_location("release", ROOT / ".github" / "scr
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
-FILES = ("setup.cfg", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+FILES = ("pyproject.toml", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
 
 
 def copy_version_files(dest: Path) -> None:
@@ -97,8 +97,8 @@ class TagTests(unittest.TestCase):
     def commit(self, version: str) -> str:
         for name in FILES:
             path = self.repo / name
-            if name == "setup.cfg":
-                path.write_text("[metadata]\nname = projector-cli\nversion = %s\n" % version)
+            if name == "pyproject.toml":
+                path.write_text('[project]\nname = "projector-cli"\nversion = "%s"\n' % version)
             else:
                 data = json.loads(path.read_text())
                 data["version"] = version
@@ -176,7 +176,7 @@ class TagTests(unittest.TestCase):
 
     def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None:
         # An unpushed local bump must not name the release.
-        (self.repo / "setup.cfg").write_text("[metadata]\nname = projector-cli\nversion = 0.9.0\n")
+        (self.repo / "pyproject.toml").write_text('[project]\nname = "projector-cli"\nversion = "0.9.0"\n')
         release.tag(self.repo, branch="trunk")
         self.assertTrue(self.remote_tag("v0.5.0"))
 

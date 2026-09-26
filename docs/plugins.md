@@ -209,7 +209,7 @@ migration.
 
 ## Release an update
 
-Projector has one version. `setup.cfg` names it for the CLI, and
+Projector has one version. `pyproject.toml` names it for the CLI, and
 `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` name it for the
 plugin, and a packaging test fails when the three disagree. One number means
 one answer to "what am I running," and it lets a skill rely on the CLI that
@@ -257,7 +257,8 @@ exact one, both refusing a version that does not go up:
 
 Once the bump merges, `tag` releases it. `released` exits 0 when the merged
 version already has a tag and 3 when it does not, which is how the workflow
-decides, on every `setup.cfg` change, whether there is anything to release:
+decides, on every `pyproject.toml` change, whether there is anything to
+release:
 
 ```sh
 .github/scripts/release.py released
