@@ -54,10 +54,11 @@ user-owned file.
 
 ## Build the site's scripts
 
-The Projector site's scripts are TypeScript in the npm project at `site/`,
-kept apart from the Python package. After you edit one, check it, compile
-it, and commit the JavaScript it produces under `src/projector/site/assets/`,
-which is what every deploy and install serves:
+The Projector site's front end lives in `site/`, apart from the Python
+package: TypeScript under `site/src/`, and the stylesheets, icon, and compiled
+JavaScript under `site/assets/`, which is what every deploy and install
+serves. After you edit a script, check it, compile it, and commit the
+JavaScript it produces:
 
 ```sh
 cd site

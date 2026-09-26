@@ -13,7 +13,7 @@
     "noImplicitReturns": true,
     "newLine": "lf",
     "rootDir": "src",
-    "outDir": "../src/projector/site/assets"
+    "outDir": "assets"
   },
   "include": ["src/*.ts"]
 }
