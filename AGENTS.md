@@ -81,7 +81,10 @@ The site's scripts are TypeScript under `src/projector/site/ts/`, compiled
 into the JavaScript under `src/projector/site/assets/` that the site serves.
 Commit the compiled files with the change that alters them, because every
 repository's deploy and every CLI install reads them from a Git tree. After
-editing a `.ts` file, run `npm ci` once and `npm run build`. The test suite
+editing a `.ts` file, run `npm ci` once, then `npm run check`, which
+type-checks and lints with typescript-eslint's strict type-aware rules and
+allows no warnings, and `npm run build`. Fix a finding in the code rather
+than suppressing it or loosening the configuration. The test suite
 compiles the TypeScript and fails when the committed JavaScript differs; it
 skips that check where `npm ci` has not run. Resolve a conflict in a compiled
 file by taking either side and running `npm run build`, never by hand.
