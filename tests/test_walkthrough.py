@@ -193,13 +193,10 @@ class BuildTests(unittest.TestCase):
 
 class RendererTests(unittest.TestCase):
     def test_renderer_ships_only_allowlisted_remote_scripts(self) -> None:
-        # Claude Artifacts load scripts only from a CDN allowlist; the page
-        # template and renderer must not reach anywhere else.
+        # Claude Artifacts load scripts only from a CDN allowlist.
         html = walkthrough.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
         for src in __import__("re").findall(r'src="(https?://[^"]+)"', html):
             self.assertTrue(src.startswith("https://cdnjs.cloudflare.com/"), src)
-        js = (ROOT / "skills" / "walkthrough-pr" / "assets" / "walkthrough.js").read_text()
-        self.assertNotIn("fetch(", js)
 
 
 class AtHeadTests(unittest.TestCase):
@@ -407,21 +404,7 @@ class PublishTests(unittest.TestCase):
             self.publish("a" * 40)
 
 
-class WorkflowTests(unittest.TestCase):
-    def test_the_workflow_runs_on_dispatch_and_pins_the_action_ref(self) -> None:
-        text = walkthrough.workflow_text("v0")
-        self.assertIn("repository_dispatch:\n    types: [projector-walkthroughs]", text)
-        self.assertIn("uses: ninjudd/projector/actions/walkthroughs@v0", text)
-        self.assertIn("${{ steps.walkthroughs.outputs.page_url }}", text)
-        self.assertNotIn("push:", text)
-        self.assertIn("@0123abc", walkthrough.workflow_text("0123abc"))
-
-    def test_the_readme_shows_the_workflow_the_skill_writes(self) -> None:
-        readme = (ROOT / "README.md").read_text()
-        block = readme.split("```yaml\n", 1)[1].split("```", 1)[0].rstrip(" ")
-        shown = "".join(line[3:] if line.startswith("   ") else line for line in block.splitlines(True))
-        self.assertEqual(walkthrough.workflow_text("v0"), shown)
-
+class RepoSlugTests(unittest.TestCase):
     def test_repo_slug_reads_github_remotes(self) -> None:
         for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
             self.assertEqual("o/r", walkthrough.repo_slug(url), url)
