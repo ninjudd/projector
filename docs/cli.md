@@ -385,7 +385,9 @@ Markdown file under `docs/`. The build copies those files under `content/`
 and describes them in `site.json`, and the page renders them in the browser.
 A plan that does not parse drops the projects view with a warning rather than
 failing the build. The site workflow runs `site build` through Projector's
-composite action. For walkthroughs it builds every
+composite action with `--check-visibility`, which refuses to build, and so to
+deploy, when a private repository's Pages site is public or GitHub cannot say
+whether it is. For walkthroughs it builds every
 `<number>/<head>/spec.json`, skipping and reporting any spec that fails. It
 reads each spec's `diff.patch` beside it and
 asks GitHub for a diff only for a spec published before diffs were stored.
@@ -398,9 +400,9 @@ default branch and a GitHub Pages site. It exits 3 and says why when either is
 missing, or when a private repository's site is public. `site workflow`
 prints the workflow file a repository adds to its default branch once, or
 writes it with `--write`. The workflow runs when a walkthrough is published,
-when a push to the default branch changes `README.md` or `docs/`, and on
-demand; `--branch` names the default branch when `origin` does not record
-it.
+when a push to the default branch changes `README.md`, `docs/`, or a
+configured `projects.dir` outside `docs/`, and on demand; `--branch` names
+the default branch when `origin` does not record it.
 
 ## Consume JSON
 

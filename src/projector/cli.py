@@ -229,6 +229,11 @@ def parser() -> argparse.ArgumentParser:
     site_build.add_argument(
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
+    site_build.add_argument(
+        "--check-visibility",
+        action="store_true",
+        help="refuse to build when a private repository's Pages site is public, as a deploy must",
+    )
     site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
@@ -465,6 +470,11 @@ def site_branch(root: Path) -> str:
 
 def run_site_build(arguments: argparse.Namespace) -> int:
     root = Path(arguments.repo_root).resolve() if arguments.repo_root else discover_git_root(Path.cwd())
+    repo = site_repo(root)
+    if arguments.check_visibility:
+        if not repo:
+            raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
+        walkthrough.require_private_site(repo)
     projects, projects_dir = site_projects(root)
     entries, failures = site.build_site(
         Path(arguments.out),
@@ -472,7 +482,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         repo_root=root,
         projects=projects,
         projects_dir=projects_dir,
-        repo=site_repo(root),
+        repo=repo,
         branch=site_branch(root),
     )
     print(
@@ -502,11 +512,17 @@ def run_site(arguments: argparse.Namespace) -> int:
             return NOT_HOSTED
         print(f"{url}{arguments.pr}/" if arguments.pr else url)
     else:
-        text = walkthrough.workflow_text(arguments.action_ref, arguments.branch or walkthrough.default_branch())
+        root = discover_git_root(Path.cwd())
+        projects_dir = configured_projects_dir(root)
+        text = walkthrough.workflow_text(
+            arguments.action_ref,
+            arguments.branch or walkthrough.default_branch(),
+            projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
+        )
         if not arguments.write:
             print(text, end="")
             return 0
-        path = discover_git_root(Path.cwd()) / WORKFLOW_PATH
+        path = root / WORKFLOW_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")

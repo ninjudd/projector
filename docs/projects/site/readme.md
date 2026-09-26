@@ -33,8 +33,11 @@ content kinds.
 - A link between two documents the site serves stays in the site; any other
   relative link goes to the file on GitHub.
 - A plan that does not parse costs the projects view, not the deploy.
-- A push to the default branch that changes `README.md` or `docs/` rebuilds
-  the site, as publishing a walkthrough does.
+- A push to the default branch that changes `README.md`, `docs/`, or a
+  configured projects directory rebuilds the site, as publishing a
+  walkthrough does.
+- A deploy refuses to run when a private repository's Pages site is public,
+  or when GitHub cannot say whether it is.
 
 ## 3. How the site is built
 
@@ -72,6 +75,13 @@ step instead of failing. The workflow `project site workflow` writes gains a
 - **Copy Markdown, do not pre-render it.** The deploy stays a copy plus one
   manifest, in line with walkthroughs (`pr-walkthrough` section 8), and a
   reader always sees the committed text.
+- **Check visibility at every deploy.** The site copies a repository's
+  README, docs, plans and diffs into its Pages site, and on a plan without
+  private Pages a private repository's site is public. `pr-walkthrough`
+  section 4 already required refusing that case, but only the skill's
+  default publish checked it, and a docs push deploys without the skill. The
+  action now builds with `--check-visibility`, which reuses the same check
+  and fails closed when GitHub cannot answer.
 - **Relative links resolve against the document.** A target the site serves
   becomes its route; anything else goes to `github.com/<repo>/blob/<branch>/`
   for files and `raw/` for images, which only a reader with access to the

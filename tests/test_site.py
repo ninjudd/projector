@@ -17,7 +17,7 @@ def plan(title: str, status: str, priority: str | None) -> str:
     return f"---\n{front}---\n\n# {title}\n\n## 1. Outcome\n\nText.\n"
 
 
-class SiteBuildTests(unittest.TestCase):
+class SiteRepoCase(unittest.TestCase):
     def setUp(self) -> None:
         self.repo = Path(tempfile.mkdtemp())
         files = {
@@ -33,6 +33,8 @@ class SiteBuildTests(unittest.TestCase):
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
 
+
+class SiteBuildTests(SiteRepoCase):
     def build(self) -> tuple[int, dict, str]:
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
@@ -92,11 +94,55 @@ class SiteBuildTests(unittest.TestCase):
                                                        manifest["projectsDir"]))
 
 
+class VisibilityTests(SiteRepoCase):
+    def build_checked(self, answers: dict[str, str | None]) -> tuple[int, str]:
+        def lookup(*gh_args: str) -> str | None:
+            endpoint = gh_args[1]
+            if endpoint not in answers:
+                raise walkthrough.SpecError(f"gh api {endpoint} failed: connection refused")
+            return answers[endpoint]
+
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+             mock.patch.object(walkthrough, "gh_lookup", side_effect=lookup), \
+             redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+                             "--check-visibility"])
+        return code, err.getvalue()
+
+    def test_a_private_repository_with_a_public_site_deploys_nothing(self) -> None:
+        code, err = self.build_checked({"repos/owner/example/pages": json.dumps({"public": True}),
+                                        "repos/owner/example": "true\n"})
+
+        self.assertEqual(65, code)
+        self.assertIn("owner/example is private but its GitHub Pages site is public", err)
+        self.assertFalse(self.out.exists(), "nothing is written before the check passes")
+
+    def test_a_public_repository_or_a_private_site_deploys(self) -> None:
+        for answers in ({"repos/owner/example/pages": json.dumps({"public": True}), "repos/owner/example": "false\n"},
+                        {"repos/owner/example/pages": json.dumps({"public": False})}):
+            with self.subTest(answers=answers):
+                code, _ = self.build_checked(answers)
+                self.assertEqual(0, code)
+                self.assertTrue((self.out / "site.json").is_file())
+
+    def test_a_failed_lookup_stops_the_deploy_rather_than_assuming_it_is_safe(self) -> None:
+        code, err = self.build_checked({})
+
+        self.assertEqual(65, code)
+        self.assertIn("connection refused", err)
+        self.assertFalse(self.out.exists())
+
+
 class WorkflowTests(unittest.TestCase):
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = walkthrough.workflow_text("v0", "trunk")
         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**']\n", text)
         self.assertIn("uses: ninjudd/projector/actions/walkthroughs@v0", text)
+
+    def test_a_projects_directory_outside_docs_is_watched_too(self) -> None:
+        self.assertIn("paths: [README.md, 'docs/**', 'plans/**']", walkthrough.workflow_text("v0", "main", "plans"))
+        self.assertIn("paths: [README.md, 'docs/**']\n", walkthrough.workflow_text("v0", "main", "docs/projects"))
 
 
 if __name__ == "__main__":

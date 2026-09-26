@@ -47,7 +47,7 @@ on:
     types: [{event}]
   push:
     branches: [{branch}]
-    paths: [README.md, 'docs/**']
+    paths: [{paths}]
   workflow_dispatch:
 permissions:
   contents: read
@@ -223,6 +223,28 @@ def gh_lookup(*args: str) -> str | None:
         raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
+def exposure(repo: str, pages: dict) -> str:
+    """Why serving this repository's content on its Pages site would leak it, or ''.
+
+    On a plan without private Pages a private repository's site is public, so
+    everything the site copies from the repository would be too. A site with
+    no `public` field is treated as public.
+    """
+    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
+        return f"{repo} is private but its GitHub Pages site is public"
+    return ""
+
+
+def require_private_site(repo: str) -> None:
+    """Refuse to deploy when a private repository's Pages site is public."""
+    raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is None:
+        raise SpecError(f"{repo} has no GitHub Pages site to deploy to")
+    exposed = exposure(repo, json.loads(raw))
+    if exposed:
+        raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
+
+
 def hosting(repo: str) -> tuple[str | None, str]:
     """Return the repository's walkthroughs site URL, or None and why it is not set up.
 
@@ -236,8 +258,9 @@ def hosting(repo: str) -> tuple[str | None, str]:
     if raw is None:
         return None, f"{repo} has the Projector site workflow but no GitHub Pages site"
     pages = json.loads(raw)
-    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
-        return None, f"{repo} is private but its GitHub Pages site is public"
+    exposed = exposure(repo, pages)
+    if exposed:
+        return None, exposed
     site = pages["html_url"]
     # GitHub reports an http:// URL for a custom domain that does not enforce
     # HTTPS, even once its certificate is issued and https:// serves the site.
@@ -521,8 +544,12 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     return commit
 
 
-def workflow_text(action_ref: str, branch: str = "main") -> str:
-    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch)
+def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
+    """The site workflow; a projects directory outside docs/ is watched as well."""
+    paths = ["README.md", "'docs/**'"]
+    if projects_dir and projects_dir.strip("/") != "docs" and not projects_dir.strip("/").startswith("docs/"):
+        paths.append(f"'{projects_dir.strip('/')}/**'")
+    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
 
 
 def default_branch(remote: str = "origin") -> str:
