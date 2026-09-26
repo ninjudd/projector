@@ -8,9 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 PUBLISHED_SKILLS = {
-    "plan-project",
+    "plan",
     "implement",
-    "finish-project",
+    "finish",
     "start-review-loop",
     "start-fix-loop",
     "gh-stack",
