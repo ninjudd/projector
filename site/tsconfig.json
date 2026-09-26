@@ -12,7 +12,8 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "newLine": "lf",
-    "outDir": "../assets"
+    "rootDir": "src",
+    "outDir": "../src/projector/site/assets"
   },
-  "include": ["*.ts"]
+  "include": ["src/*.ts"]
 }
