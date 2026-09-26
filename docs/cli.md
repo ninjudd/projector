@@ -360,6 +360,7 @@ These are the keys Projector reads today:
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
+| `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 
@@ -483,10 +484,18 @@ whether it is. For walkthroughs it builds every
 `<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
-its data so it opens from disk. The action's `prepare` input names a shell
-command it runs in its checkout just before the build, for pages or files the
-repository generates rather than commits; set up the command's toolchain in
-steps before the action.
+its data so it opens from disk.
+
+For pages or files the repository generates rather than commits, `site build`
+first runs the shell command `site.prepare` names, in the checkout, through
+the system shell, and says so on stderr. `--prepare` runs a given command in
+its place and `--no-prepare` skips it. A command that fails stops the build
+with exit status 65 before anything is built. The action passes its `prepare`
+input as `--prepare`, and runs the build after its own checkout, which
+removes untracked files, so what the command generates survives to the copy;
+set up the command's toolchain in steps before the action. The command comes
+from the repository, so run `site build` or `site serve` in a checkout you
+trust, as you would `make`.
 
 `site serve` builds the site from a checkout, as `site build` does, into a
 temporary directory and serves it over HTTP until you press Ctrl-C, or it
@@ -497,7 +506,10 @@ machine, because anyone who can reach the address can read the site. It
 answers 403 to a request whose `Host` header names anything but `localhost`,
 a loopback address, or the `--host` given, so a web page cannot read the
 site through DNS rebinding; a wildcard `--host` such as `0.0.0.0` answers
-any name. `--port 0` picks a free port and prints it.
+any name. `--port 0` picks a free port and prints it. It runs `site.prepare`,
+or `--prepare`, before the first build and before each rebuild, and takes
+the sources' fingerprint after the command, so a file the command rewrites
+does not start another rebuild; `--no-prepare` skips it.
 Before building, it fetches the walkthroughs ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/walkthroughs`
 copy that `walkthrough publish` keeps. When the fetch fails it says why and

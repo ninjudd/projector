@@ -8,7 +8,7 @@ inputs:
     description: Directory inside the ref that holds the specs.
     default: walkthroughs
   prepare:
-    description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module. Set up any toolchain it needs in earlier steps.
+    description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module, in place of the repository's site.prepare setting. Set up any toolchain it needs in earlier steps.
     default: ''
 outputs:
   page_url:
@@ -31,14 +31,6 @@ runs:
           git worktree add --detach "$RUNNER_TEMP/walkthrough-specs" "$REF"
           echo "WALKTHROUGHS=$RUNNER_TEMP/walkthrough-specs/$ROOT" >> "$GITHUB_ENV"
         fi
-    # After this action's own checkout, which removes untracked files, so what the
-    # command generates is still there when the build copies it.
-    - name: Prepare generated files
-      if: inputs.prepare != ''
-      shell: bash
-      env:
-        PREPARE: ${{ inputs.prepare }}
-      run: bash -euo pipefail -c "$PREPARE"
     - id: pages
       uses: actions/configure-pages@v5
     - name: Build the Projector site
@@ -46,6 +38,7 @@ runs:
       env:
         BASE: ${{ steps.pages.outputs.base_path }}
         GH_TOKEN: ${{ github.token }}
+        PREPARE: ${{ inputs.prepare }}
         PYTHONPATH: ${{ github.action_path }}/../../src
       # -P keeps the caller's checkout, the working directory, off sys.path, so a
       # repository with its own top-level projector module cannot shadow this one.
@@ -53,9 +46,13 @@ runs:
       # public, since the site copies the README, docs, plans and diffs into it.
       # --base is the path Pages serves the site under, /projector for a project
       # site, so every page can link to the others and to the shared assets.
+      # The build runs the repository's site.prepare, or the prepare input in its
+      # place, after this action's checkout, which removes untracked files, so
+      # what the command generates is still there when the build copies it.
       run: |
         python3 -P -m projector site build --out "$RUNNER_TEMP/walkthrough-site" --check-visibility \
-          --base "${BASE:-/}" --repo-root "$GITHUB_WORKSPACE" ${WALKTHROUGHS:+--walkthroughs "$WALKTHROUGHS"}
+          --base "${BASE:-/}" --repo-root "$GITHUB_WORKSPACE" ${WALKTHROUGHS:+--walkthroughs "$WALKTHROUGHS"} \
+          ${PREPARE:+--prepare "$PREPARE"}
     - uses: actions/upload-pages-artifact@v3
       with:
         path: ${{ runner.temp }}/walkthrough-site

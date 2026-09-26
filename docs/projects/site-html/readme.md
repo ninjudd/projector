@@ -82,3 +82,22 @@ place between the checkout and the build. In Chrome, against a demo served by
 `project site serve`, a hash-routed page opened at a deep link and wrote its
 own hash back to the address, the toggle opened the sidebar, and a playground
 fetched its `cases.json` and instantiated its `.wasm` module inside the frame.
+
+## 5. `site.prepare`: one command for the deploy and the local site
+
+Section 3's `prepare` input ran only in the deploy, so a reader previewing
+with `project site serve` built the generated pages by hand first. The
+command now lives in the repository as `site.prepare` in `.projector.toml`,
+and `project site build` runs it after the visibility check and before the
+build, with `--prepare` to run another command and `--no-prepare` to skip it.
+The action's separate step is gone: it passes its `prepare` input to the
+build as `--prepare`, still after its own checkout, so the repository's
+setting applies in the deploy without any workflow change.
+
+`project site serve` runs the command before the first build and each
+rebuild, then takes the sources' fingerprint, so a generator that rewrites
+its output every time does not start the next rebuild itself. The command
+runs through the system shell, as a Makefile target would, and is named on
+stderr before it runs, because it comes from the repository: building or
+serving a checkout runs its code, so trust the checkout as you would to run
+`make`.

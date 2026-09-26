@@ -255,6 +255,11 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="refuse to build when a private repository's Pages site is public, as a deploy must",
     )
+    site_build.add_argument(
+        "--prepare", metavar="COMMAND",
+        help="run this shell command in the checkout before building, instead of site.prepare",
+    )
+    site_build.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
     site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
@@ -284,6 +289,11 @@ def parser() -> argparse.ArgumentParser:
     site_serve.add_argument("--remote", default="origin", help="the remote to fetch walkthroughs from (default: origin)")
     site_serve.add_argument("--no-fetch", action="store_true", help="serve the walkthroughs already fetched")
     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
+    site_serve.add_argument(
+        "--prepare", metavar="COMMAND",
+        help="run this shell command in the checkout before building, instead of site.prepare",
+    )
+    site_serve.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
     site_workflow = site_commands.add_parser(
         "workflow", help="print or write the workflow file for the default branch"
     )
@@ -457,6 +467,32 @@ def configured_projects_dir(root: Path) -> Optional[Path]:
     return Path(configured)
 
 
+def configured_prepare(root: Path) -> Optional[str]:
+    """`site.prepare` from configuration: the command that generates what the site copies."""
+
+    configured = load_config(root).get("site.prepare")
+    if configured is None or configured == "":
+        return None
+    if not isinstance(configured, str):
+        raise ConfigError(f"site.prepare must be a string, not {type(configured).__name__}")
+    return configured
+
+
+def prepare_command(root: Path, arguments: argparse.Namespace) -> Optional[str]:
+    if arguments.no_prepare:
+        return None
+    return arguments.prepare or configured_prepare(root)
+
+
+def run_prepare(root: Path, command: str) -> None:
+    """Run the prepare command in the checkout, through the system shell, as a Makefile target would run."""
+    # The command comes from the repository, so say what runs before it runs.
+    print(f"preparing the site: {command}", file=sys.stderr, flush=True)
+    result = subprocess.run(command, shell=True, cwd=root)
+    if result.returncode:
+        raise walkthrough.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
+
+
 NOT_HOSTED = 3
 
 
@@ -530,6 +566,9 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         if not repo:
             raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
         walkthrough.require_private_site(repo)
+    command = prepare_command(root, arguments)
+    if command:
+        run_prepare(root, command)
     walkthroughs = Path(arguments.walkthroughs) if arguments.walkthroughs else None
     summary = build_checkout(root, Path(arguments.out), walkthroughs, arguments.base, repo)
     print(f"wrote {arguments.out}/index.html: {summary}")
@@ -569,7 +608,8 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             with contextlib.redirect_stdout(io.StringIO()):
                 return build_checkout(root, out, walkthroughs, base, repo)
 
-    site_state = serve.Site(build, sources)
+    command = prepare_command(root, arguments)
+    site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
     try:
         print(f"built the site: {site_state.refresh(force=True)}")
         server = serve.ThreadingHTTPServer(
