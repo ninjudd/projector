@@ -1,10 +1,27 @@
-# Install Projector skills
+# Install Projector
+
+Projector is two things to install: the `project` command, and the plugin
+that gives Claude Code and Codex its skills. The framework is Projector; the
+command it installs is `project`. The repository, the `projector-cli`
+distribution, the Python package, and the `projector@projector` host plugin
+all keep the longer name.
 
 Projector keeps one canonical skill tree under `skills/`. The Claude Code
 manifest at `.claude-plugin/plugin.json` and the Codex manifest at
 `.codex-plugin/plugin.json` both point to that directory. A host loads the same
 instructions and supporting scripts without a generated copy or host-specific
 fork.
+
+The plugin provides `plan`, `implement`, `finish`, `start-review-loop`,
+`start-fix-loop`, and `walkthrough-pr`, which builds a guided walkthrough
+page for reviewing a large pull request. Claude invokes a plugin skill as
+`/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop inspects
+each head by the method in `skills/start-review-loop/method.md`, and the fix
+loop verifies findings by the same protocol. All three of `implement`, the
+review loop, and the fix loop share the code guidelines in
+`skills/guidelines.md`, so the rules one writes to are the rules the others
+review and fix against. The core workflows use the local CLI and do not
+require MCP.
 
 ## Install with one command
 
@@ -24,7 +41,18 @@ environment under `~/.local/share/projector` with `project` linked into
 `ninjudd/projector`) to each host. `status` compares the installed versions
 with the release's. `project upgrade` downloads and runs the same installer.
 projector.bot serves `install.sh` from the `v0` tag, so it is always the
-newest release's installer.
+newest release's installer. Set `PROJECTOR_REF` to install a particular
+release, such as `v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
+
+## Install only the CLI
+
+`pipx` installs an isolated `project` from the newest release's source
+archive. It needs Python 3.11 or newer:
+
+```sh
+pipx install https://github.com/ninjudd/projector/archive/v0.tar.gz
+project --help
+```
 
 ## Install for Claude Code
 
