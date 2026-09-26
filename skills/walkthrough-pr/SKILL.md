@@ -61,10 +61,11 @@ python3 <skill-dir>/scripts/walkthrough.py build \
   --spec WORKDIR/walkthrough.json --out WORKDIR/site
 ```
 
-`build` refuses to run when the pull request's head is no longer the spec's
-`pr.head`, so the page never describes a diff it does not show. When GitHub
-cannot serve the diff because the pull request is too large, produce it
-locally and pass it with `--diff`:
+`build` fetches the diff from GitHub's compare API for the spec's merge base
+(`pr.base`) and head, and refuses to run when the pull request's head is no
+longer the spec's `pr.head`, so the page never describes a diff it does not
+show. When GitHub cannot serve the diff because the pull request is too
+large, produce it locally and pass it with `--diff`:
 
 ```sh
 git fetch origin BASE HEAD_SHA
@@ -93,6 +94,42 @@ the user that when you hand over the link.
 
 Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
 
+### Publish to the repository's GitHub Pages site
+
+A repository can host its own walkthroughs: specs live on an orphan
+`projector-pages` branch, and a workflow on that branch builds and deploys
+them with Projector's shared action. Publishing writes to the repository, so
+do it only when the user asks or repository instructions say to.
+
+```sh
+python3 <skill-dir>/scripts/walkthrough.py publish --spec WORKDIR/walkthrough.json
+```
+
+`publish` commits the spec to `walkthroughs/<number>/<head>/spec.json` on the
+branch without touching the checkout, and on first use creates the branch
+with `.github/workflows/walkthroughs.yml`. The workflow calls
+`ninjudd/projector/actions/walkthroughs@v1`; pass `--action-ref` to pin a
+different tag or a full commit SHA. The site lists every walkthrough at its
+root, serves each pull request's newest head at `/<number>/`, and links the
+older heads from each page. The spec on the branch is the durable copy: to
+update a walkthrough later, start from it rather than from a fresh `init`.
+
+Setting the repository up needs admin rights, once:
+
+```sh
+gh api -X POST repos/OWNER/NAME/pages -f build_type=workflow
+gh api -X POST repos/OWNER/NAME/environments/github-pages/deployment-branch-policies \
+  -f name=projector-pages -f type=branch
+```
+
+A private repository's Pages site is public unless the account has private
+Pages (GitHub Enterprise Cloud). For a private repository, make the site
+private first and stop if GitHub refuses:
+
+```sh
+gh api -X PUT repos/OWNER/NAME/pages -F public=false
+```
+
 ## Update the page when the pull request moves
 
 1. List what changed since the spec's head:
@@ -105,7 +142,8 @@ Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
    Resolve or remove `flag` checks the new commits fixed.
 3. Rebuild, then republish to the same artifact: publish the same file path
    again in the conversation that created it, or pass the artifact's URL as
-   `url` after reading it from any other conversation.
+   `url` after reading it from any other conversation. On a Pages site,
+   `publish` the revised spec; it becomes a new version beside the old one.
 
 Summarize for the user what changed in the pull request and which parts of
 the page moved.

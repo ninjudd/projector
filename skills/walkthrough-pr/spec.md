@@ -12,6 +12,7 @@ it. The spec is JSON:
     "number": 2062,
     "title": "The pull request title",
     "head": "full head commit SHA",
+    "base": "full merge-base commit SHA",
     "baseRef": "main"
   },
   "overview": {
@@ -45,7 +46,9 @@ it. The spec is JSON:
 - `name` is the page title: a short name for the change, not a sentence.
   It becomes the browser tab and gallery title.
 - `pr.head` is the commit the page describes. `build` stops when the pull
-  request has moved past it.
+  request has moved past it, unless `--at-head` asks for that head exactly.
+- `pr.base` is the merge base the diff is taken from. `init` records it; the
+  page shows the diff from `pr.base` to `pr.head`.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
 - `overview.cards` lay out two per row. A card with an `id` also gets a

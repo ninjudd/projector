@@ -28,7 +28,7 @@ request's diff.
 - The build script uses only the Python standard library and the `gh` CLI,
   and the renderer loads remote scripts only from cdnjs.
 - A GitHub Pages publisher serves each repository's walkthroughs to the people
-  who can read that repository (section 4).
+  who can read that repository, from specs committed to a branch (section 4).
 
 ## 3. Hosting
 
@@ -47,17 +47,55 @@ Three hosts were weighed.
 
 ## 4. GitHub Pages publisher
 
-Deferred until a repository with private Pages is available to test against.
-The design: the agent commits the renderer and one data file per pull request
-head, such as `walkthroughs/<number>/<head>.json`, to an orphan branch through
-the Git Data API, so no checkout is needed. Pages serves that branch directly
-and the renderer loads the data file in the browser, so no Actions workflow
-runs. Other stores do not fit: Actions artifacts expire and need a login to
-fetch, Pages cannot read Git notes, secret gists are unlisted rather than
-private, and a pull request comment holds 65,536 characters while a large diff
-runs to megabytes. Open questions: squashing the branch so generated history
-does not grow without bound, keeping CI off pushes to it, and an index page
-per repository.
+A repository hosts its own walkthroughs. Specs, not built pages, live on an
+orphan `projector-pages` branch at `walkthroughs/<number>/<head>/spec.json`.
+`walkthrough.py publish` commits a spec there through Git plumbing, so it
+never touches the checkout, and on first use creates the branch with a
+workflow file. A push to the branch runs that workflow, which calls
+Projector's composite action, `ninjudd/projector/actions/walkthroughs`. The
+action runs `walkthrough.py site`, which rebuilds every spec at its recorded
+head (`build --at-head`, the diff from the compare API for `pr.base` and
+`pr.head`), writes an index, points `/<number>/` at each pull request's newest
+head, and deploys the result to Pages.
+
+Committing specs rather than built pages keeps the branch small, because
+the diff comes from GitHub at build time, and makes the spec, the part that
+needs judgment, the only thing an agent writes. The spec on the branch is also
+the durable copy a later session starts from when the pull request moves.
+
+The shared piece is a composite action rather than a reusable workflow
+because a composite action is downloaded at the ref the caller names, with
+the renderer beside it, while a reusable workflow cannot tell which ref it was
+called at. Each repository's workflow names the ref, and that choice decides
+what code runs with a token that can read the repository:
+
+- `@v1`, a moving major-version tag, is the default. Repositories get fixes
+  from deliberate releases, never from an unreviewed commit. The spec's
+  `version` is the compatibility contract: every `v1` renderer accepts every
+  version 1 spec, and a breaking change becomes `v2`.
+- A full commit SHA locks the renderer for organizations that want it.
+- `@main` is rejected: any commit to a public repository would run inside
+  every adopting repository with read access to its code.
+
+Setup is one-time and needs admin rights: set the Pages source to GitHub
+Actions, and allow `projector-pages` in the `github-pages` environment's
+deployment branches, which allow only the default branch until told
+otherwise. For a private repository the site must be private, which needs
+GitHub Enterprise Cloud; the skill stops if GitHub refuses. The built renderer
+ships inside the site, so a viewer's browser only runs the version that built
+the page.
+
+Other stores do not fit. Actions artifacts expire and need a login to fetch,
+Pages cannot read Git notes, secret gists are unlisted rather than private,
+and a pull request comment holds 65,536 characters while a large diff runs
+to megabytes.
+
+Projector's own repository dogfoods the design: its site serves a
+walkthrough of #62. It calls the action at the `walkthrough-pages` branch
+until the first `v1` release exists.
+
+Open: cutting the `v1` tag with the first release and moving Projector's own
+workflow onto it, and squashing the branch once its history grows large.
 
 ## 5. Status log
 
@@ -65,3 +103,18 @@ per repository.
   Artifacts path. The renderer began as a hand-built page for a 66-file pull
   request in another repository, reviewed in eleven groups, then was split
   into the fixed renderer and the spec format.
+- **2026-09-26** The Pages publisher lands (section 4): `publish`, `site`,
+  `build --at-head`, the composite action, and Projector's own site with a
+  walkthrough of #62. The shared piece became a composite action instead of
+  the reusable workflow first proposed, so the ref a repository names also
+  picks the renderer. Section 6 records browsing `docs/projects` on the same
+  site as later work.
+
+## 6. Browsing projects on the same site
+
+The same Pages site should become a way to browse `docs/projects`
+interactively: each plan with its status, priority, nested projects and
+sections, beside the walkthroughs of the pull requests that implement it.
+This is a later pull request. The site layout leaves room for it:
+walkthroughs sit under their own paths, and the root index can grow a
+projects view.
