@@ -17,6 +17,7 @@ import datetime
 import html
 import json
 import os
+import re
 import subprocess
 import urllib.parse
 from importlib import resources
@@ -31,6 +32,7 @@ FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600
 MARKED = "https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.13/lib/marked.umd.min.js"
 PURIFY = "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.16/purify.min.js"
 CONTENT = "content"
+MAX_FILE_BYTES = 20 * 1024 * 1024
 
 
 def escape(s: object) -> str:
@@ -99,7 +101,7 @@ def spec_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_walkthroughs(root: Path, out: Path, base: str = "/") -> tuple[list[dict], list[str]]:
+def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
     """Build every walkthrough spec that can be built; report and skip the rest."""
     specs = sorted(root.glob("*/*/spec.json"))
     if not specs:
@@ -125,6 +127,7 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/") -> tuple[list[dic
             if not stored.is_file():
                 raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project walkthrough publish`")
             payload = prepare_page(spec, diff=stored.read_text(encoding="utf-8"), at_head=True)
+            payload["projects"] = link(spec, payload) if link else []
         except (SpecError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
@@ -151,7 +154,8 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/") -> tuple[list[dic
             page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}prs/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
-                        "heads": len(versions), "updated": versions[0][0]})
+                        "heads": len(versions), "updated": versions[0][0],
+                        "projects": [p["name"] for p in latest["projects"]]})
     return entries, failures
 
 
@@ -197,6 +201,68 @@ def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Pat
     return described
 
 
+def collect_files(repo_root: Path, out: Path) -> list[str]:
+    """Copy every non-Markdown file under docs/, such as images, beside the Markdown."""
+    docs_dir = repo_root / "docs"
+    copied = []
+    for path in sorted(docs_dir.rglob("*")) if docs_dir.is_dir() else []:
+        relative = path.relative_to(repo_root).as_posix()
+        if not path.is_file() or path.suffix.lower() == ".md" or any(p.startswith(".") for p in relative.split("/")):
+            continue
+        if path.stat().st_size > MAX_FILE_BYTES:
+            print(f"::warning title=File skipped::{relative} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB")
+            continue
+        copy_content(repo_root, path, out)
+        copied.append(relative)
+    return copied
+
+
+def project_linker(described: list[dict], base: str):
+    """Link a walkthrough to every project whose plan files its diff changes, or that its spec names."""
+    by_name = {p["name"]: p for p in described}
+    folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+
+    def link(spec: dict, payload: dict) -> list[dict]:
+        names = [n for n in spec.get("projects") or [] if n in by_name]
+        for f in payload["files"]:
+            owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
+            if owner and owner not in names:
+                names.append(owner)
+        return [{"name": n, "title": by_name[n]["title"], "url": f"{base}projects/{n}/"} for n in names]
+
+    return link
+
+
+def plain_text(markdown: str) -> str:
+    """The words of a Markdown document, for search: no frontmatter, markup, or link targets."""
+    text = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", markdown, flags=re.S)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"[`*_#>|\[\]]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects: list[dict],
+                 projects_readme: str | None) -> list[dict]:
+    """One entry per served document: its site path, title, kind, and plain text."""
+    entries = []
+
+    def add(path: str, route: str, title: str, kind: str) -> None:
+        text = plain_text((repo_root / path).read_text(encoding="utf-8"))
+        entries.append({"route": route, "title": title, "kind": kind, "text": text})
+
+    if readme:
+        add(readme, "", "Home", "readme")
+    for doc in docs:
+        add(doc["path"], doc_route(doc["path"]), doc["title"], "doc")
+    if projects_readme:
+        add(projects_readme, "projects/", "How projects work", "doc")
+    for project in projects:
+        add(project["path"], f"projects/{project['name']}/", project["title"], "project")
+        for path in project["files"]:
+            add(path, doc_route(path), path.rsplit("/", 1)[-1], "doc")
+    return entries
+
+
 def doc_route(path: str) -> str:
     """The site path of a Markdown file: its repository path without `.md`."""
     if path == "README.md":
@@ -227,7 +293,7 @@ def home_page(repo: str, base: str) -> str:
 
 def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
     """Every path the home page's script renders, each of which needs a shell."""
-    routes = {"", "projects/", "prs/"}
+    routes = {"", "projects/", "prs/", "search/"}
     routes.update(doc_route(doc["path"]) for doc in docs)
     for project in projects:
         routes.add(f"projects/{project['name']}/")
@@ -245,10 +311,16 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
     (out / "assets").mkdir(exist_ok=True)
     for asset in ("walkthrough.js", "walkthrough.css", "site.js", "site.css"):
         (out / "assets" / asset).write_bytes((ASSETS / asset).read_bytes())
-    built = build_walkthroughs(walkthroughs, out, base) if walkthroughs and walkthroughs.is_dir() else ([], [])
-    entries, failures = built
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
+    files = collect_files(repo_root, out) if repo_root else []
+    link = project_linker(described, base)
+    built = build_walkthroughs(walkthroughs, out, base, link) if walkthroughs and walkthroughs.is_dir() else ([], [])
+    entries, failures = built
+    for project in described:
+        project["walkthroughs"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+    projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+        if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
     manifest = {
         "repo": repo,
@@ -259,16 +331,18 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
         "docs": docs,
         "projectsDir": projects_dir.relative_to(repo_root).as_posix() if repo_root and projects_dir and projects_dir.is_dir() else None,
         "projects": described,
-        "projectsReadme": (projects_dir / "README.md").relative_to(repo_root).as_posix()
-        if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None,
+        "projectsReadme": projects_readme,
+        "files": files,
         "walkthroughs": [
             {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
-             "heads": e["heads"],
+             "heads": e["heads"], "projects": e["projects"],
              "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
             for e in entries
         ],
     }
     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    index = search_index(repo_root, readme, docs, described, projects_readme) if repo_root else []
+    (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     shell = home_page(repo, base)
     for route in site_routes(docs, described):
         (out / route).mkdir(parents=True, exist_ok=True)

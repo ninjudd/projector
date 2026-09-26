@@ -115,6 +115,14 @@ function renderWalkthrough(data) {
     }).join(' · ') + '</div>';
   }
 
+  function plansList() {
+    var plans = data.projects || [];
+    if (!plans.length) return '';
+    return '<div class="prmeta">Plans: ' + plans.map(function (p) {
+      return '<a href="' + esc(p.url) + '">' + esc(p.title) + '</a>';
+    }).join(' · ') + '</div>';
+  }
+
   function renderPage() {
     var nav = data.groups.map(function (g, i) {
       return '<li><a href="#' + esc(g.id) + '"><span class="nnum">' + (i + 1) + '</span><span class="ntitle">' + g.title + '</span><span class="ncheck" data-gid="' + esc(g.id) + '"></span></a></li>';
@@ -130,7 +138,7 @@ function renderWalkthrough(data) {
       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
         '<div class="prblock">' + ext(prUrl, esc(prRef), 'prref') +
           '<div class="prtitle" title="' + esc(pr.title) + '">' + esc(pr.title) + '</div>' +
-          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div>' + headsList() + '</div>' +
+          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div>' + headsList() + plansList() + '</div>' +
         '<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ' + data.groups.length + '</b></div><div class="bar"><i id="progress-bar"></i></div>' +
         '<ol>' + nav + '</ol><div class="extra">' + extra + '</div></nav></aside>' +
       '<main><div class="overview" id="overview">' + renderOverview() + '</div>' +

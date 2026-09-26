@@ -389,7 +389,12 @@ plans, `prs/`, `prs/<number>/` and `prs/<number>/<head>/` for walkthroughs,
 and `docs/<path>/` for each document at its repository path without `.md`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
-assets under `assets/`; it defaults to `/`.
+assets under `assets/`; it defaults to `/`. A walkthrough links to the plans
+its diff changes, and to any its spec names in a `projects` list, and each
+plan page lists its walkthroughs. `search/` searches every document the site
+serves, from a `search.json` index the build writes, and non-Markdown files
+under `docs/`, such as images, are copied into the site so a relative link to
+one resolves there.
 A plan that does not parse drops the projects view with a warning rather than
 failing the build. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to

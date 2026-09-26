@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -153,6 +155,134 @@ class VisibilityTests(SiteRepoCase):
         self.assertEqual(65, code)
         self.assertIn("connection refused", err)
         self.assertFalse(self.out.exists())
+
+
+PLAN_DIFF = """diff --git a/docs/projects/alpha/readme.md b/docs/projects/alpha/readme.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/readme.md
++++ b/docs/projects/alpha/readme.md
+@@ -1,3 +1,4 @@
+ ---
+ status: in-progress
++owner: someone
+ ---
+diff --git a/src/app.py b/src/app.py
+index 3333333..4444444 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,1 +1,1 @@
+-old = 1
++new = 2
+"""
+
+
+class SiteContentTests(SiteRepoCase):
+    def publish(self, number: int, head: str, projects: list[str] | None = None) -> None:
+        spec = {
+            "version": 1,
+            "name": f"Walkthrough {number}",
+            "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                   "base": "b" * 40, "baseRef": "main"},
+            "overview": {"summary": [], "cards": []},
+            "groups": [{"id": "all", "title": "All",
+                        "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
+        }
+        if projects is not None:
+            spec["projects"] = projects
+        folder = self.specs / str(number) / head
+        folder.mkdir(parents=True)
+        (folder / "spec.json").write_text(json.dumps(spec))
+        (folder / "diff.patch").write_text(PLAN_DIFF)
+
+    def setUp(self) -> None:
+        super().setUp()
+        # A checkout inside a hidden directory, as a worktree under .claude/ is,
+        # must still serve its files; only hidden paths inside the repository are skipped.
+        hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
+        hidden.parent.mkdir()
+        self.repo = Path(shutil.move(str(self.repo), str(hidden)))
+        self.specs = Path(tempfile.mkdtemp()) / "walkthroughs"
+        (self.repo / "docs/images").mkdir(parents=True)
+        (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
+        (self.repo / "docs/.hidden").write_text("not served")
+
+    def build(self) -> dict:
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+                             "--walkthroughs", str(self.specs)])
+        self.assertEqual(0, code)
+        return json.loads((self.out / "site.json").read_text())
+
+    def test_a_walkthrough_links_to_the_plans_its_diff_changes_and_back(self) -> None:
+        self.publish(9, "c" * 40)
+
+        manifest = self.build()
+
+        self.assertEqual([["alpha"]], [w["projects"] for w in manifest["walkthroughs"]])
+        walkthroughs = {p["name"]: p["walkthroughs"] for p in manifest["projects"]}
+        self.assertEqual({"alpha": [9], "alpha/beta": []}, walkthroughs, "the deepest project owns the file")
+        data = json.loads((self.out / "prs" / "9" / ("c" * 40) / "data.json").read_text())
+        self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
+
+    def test_a_spec_can_name_a_plan_its_diff_does_not_touch(self) -> None:
+        self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-plan"])
+
+        manifest = self.build()
+
+        self.assertEqual(["alpha/beta", "alpha"], manifest["walkthroughs"][0]["projects"],
+                         "named plans first, unknown names dropped, then the ones the diff touches")
+
+    def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
+        manifest = self.build()
+
+        self.assertEqual(["docs/images/diagram.png"], manifest["files"])
+        self.assertEqual(b"\x89PNG fake", (self.out / "content/docs/images/diagram.png").read_bytes())
+        self.assertFalse((self.out / "content/docs/.hidden").exists())
+
+    def test_the_search_index_covers_every_served_document(self) -> None:
+        self.build()
+
+        index = json.loads((self.out / "search.json").read_text())
+        self.assertEqual(
+            [("", "Home", "readme"), ("docs/guide/", "Use the guide", "doc"), ("projects/", "How projects work", "doc"),
+             ("projects/alpha/", "Build alpha", "project"), ("docs/projects/alpha/notes/", "notes.md", "doc"),
+             ("projects/alpha/beta/", "Finish beta", "project")],
+            [(e["route"], e["title"], e["kind"]) for e in index],
+        )
+        alpha = next(e for e in index if e["route"] == "projects/alpha/")
+        self.assertNotIn("status:", alpha["text"], "frontmatter is not searchable text")
+        self.assertIn("Build alpha", alpha["text"])
+        self.assertTrue((self.out / "search" / "index.html").is_file())
+
+
+SITE_JS = Path(__file__).parents[1] / "src" / "projector" / "site" / "assets" / "site.js"
+
+
+def js_function(name: str) -> str:
+    """One top-level function of site.js, from its signature to the brace that closes it."""
+    lines = SITE_JS.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"  function {name}("))
+    end = next(i for i in range(start, len(lines)) if lines[i] == "  }")
+    return "\n".join(lines[start:end + 1])
+
+
+@unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
+class HighlightTests(unittest.TestCase):
+    def highlight(self, text: str, words: list[str]) -> str:
+        program = js_function("esc") + "\n" + js_function("highlight") + \
+            f"\nprocess.stdout.write(highlight({json.dumps(text)}, {json.dumps(words)}));"
+        return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+    def test_a_later_word_never_matches_inside_an_earlier_mark(self) -> None:
+        self.assertEqual("Write <mark>a</mark> <mark>plan</mark> before you st<mark>a</mark>rt.",
+                         self.highlight("Write a plan before you start.", ["plan", "a"]))
+
+    def test_a_word_never_matches_inside_an_escaped_entity(self) -> None:
+        self.assertEqual("Tom &amp; Jerry <mark>map</mark>", self.highlight("Tom & Jerry map", ["map", "amp"]))
+
+    def test_the_text_is_escaped_and_matching_ignores_case(self) -> None:
+        self.assertEqual("&lt;b&gt;<mark>Plan</mark>&lt;/b&gt;", self.highlight("<b>Plan</b>", ["plan"]))
 
 
 class WorkflowTests(unittest.TestCase):
