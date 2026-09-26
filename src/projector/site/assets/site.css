@@ -1,0 +1,57 @@
+/* The Projector site's home, docs, and projects pages. Colours, fonts, tables and
+   code highlighting come from walkthrough.css, which every page also loads. */
+
+.sitebar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px;
+  padding: 12px max(16px, calc((100% - 1040px) / 2));
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.sitename { font-weight: 600; color: var(--text); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.sitenav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.sitenav a { color: var(--muted); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }
+.sitenav a:hover { color: var(--text); }
+.sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
+.note { color: var(--muted); font-size: 13.5px; }
+
+.markdown { overflow-wrap: anywhere; }
+.markdown h1 { font-size: 30px; line-height: 1.2; margin: 0 0 16px; }
+.markdown h2 { font-size: 22px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.markdown h3 { font-size: 17px; margin: 24px 0 8px; }
+.markdown h4, .markdown h5, .markdown h6 { font-size: 15px; margin: 20px 0 6px; }
+.markdown pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+.markdown pre code { background: none; padding: 0; font-size: inherit; }
+.markdown blockquote { margin: 16px 0; padding: 4px 16px; border-left: 3px solid var(--border); color: var(--muted); }
+.markdown table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 14px; margin: 16px 0; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.markdown th { background: var(--surface-2); }
+.markdown img { max-width: 100%; }
+.markdown hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+
+.filter {
+  width: 100%; box-sizing: border-box; margin: 8px 0 20px; padding: 8px 12px; font: inherit;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.pintro { margin: 4px 0 8px; }
+.pintro summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
+table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
+
+.badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  background: var(--surface-2); color: var(--muted); margin-right: 6px; white-space: nowrap;
+}
+.badge.status-in-progress, .badge.priority-now { background: var(--accent-soft); color: var(--accent); }
+.badge.status-ready { background: var(--ok-bg); color: var(--ok); }
+.badge.status-draft, .badge.priority-next { background: var(--warn-bg); color: var(--warn); }
+
+.phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+.crumbs a { text-decoration: none; }
+.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.plist { margin-top: 10px; font-size: 14px; }
+.plist b { color: var(--muted); font-weight: 600; margin-right: 6px; }

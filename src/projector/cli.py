@@ -221,11 +221,19 @@ def parser() -> argparse.ArgumentParser:
 
     site = subcommands.add_parser("site", help="build the Projector site a repository serves from GitHub Pages")
     site_commands = site.add_subparsers(dest="site_command", required=True)
-    site_build = site_commands.add_parser("build", help="build every published walkthrough into a site")
-    site_build.add_argument(
-        "--walkthroughs", required=True, help="directory holding <number>/<head>/spec.json files"
+    site_build = site_commands.add_parser(
+        "build", help="build the site from the README, docs, project plans, and published walkthroughs"
     )
     site_build.add_argument("--out", required=True)
+    site_build.add_argument("--walkthroughs", help="directory holding <number>/<head>/spec.json files")
+    site_build.add_argument(
+        "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
+    )
+    site_build.add_argument(
+        "--check-visibility",
+        action="store_true",
+        help="refuse to build when a private repository's Pages site is public, as a deploy must",
+    )
     site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
@@ -243,6 +251,9 @@ def parser() -> argparse.ArgumentParser:
     )
     site_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
     site_workflow.add_argument("--write", action="store_true", help=f"write {WORKFLOW_PATH} in this checkout")
+    site_workflow.add_argument(
+        "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
+    )
     return result
 
 
@@ -423,11 +434,68 @@ def run_walkthrough(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def site_projects(root: Path) -> tuple[list, Optional[Path]]:
+    """The repository's projects for the site, or none when its plans do not parse.
+
+    A broken plan should cost the projects view, not the deploy that also
+    carries the README, the docs, and the walkthroughs.
+    """
+    store = ProjectStore(root, root, configured_projects_dir(root))
+    if not store.projects_dir.is_dir():
+        return [], None
+    try:
+        return store.projects(), store.projects_dir
+    except ProjectorError as error:
+        print(f"::warning title=Projects skipped::{error}", file=sys.stderr)
+        return [], store.projects_dir
+
+
+def site_repo(root: Path) -> str:
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if repo:
+        return repo
+    try:
+        return walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
+    except walkthrough.SpecError:
+        return ""
+
+
+def site_branch(root: Path) -> str:
+    try:
+        branch = walkthrough.git("-C", str(root), "rev-parse", "--abbrev-ref", "HEAD")
+    except walkthrough.SpecError:
+        return "main"
+    return branch if branch and branch != "HEAD" else "main"
+
+
+def run_site_build(arguments: argparse.Namespace) -> int:
+    root = Path(arguments.repo_root).resolve() if arguments.repo_root else discover_git_root(Path.cwd())
+    repo = site_repo(root)
+    if arguments.check_visibility:
+        if not repo:
+            raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
+        walkthrough.require_private_site(repo)
+    projects, projects_dir = site_projects(root)
+    entries, failures = site.build_site(
+        Path(arguments.out),
+        walkthroughs=Path(arguments.walkthroughs) if arguments.walkthroughs else None,
+        repo_root=root,
+        projects=projects,
+        projects_dir=projects_dir,
+        repo=repo,
+        branch=site_branch(root),
+    )
+    print(
+        f"wrote {arguments.out}/index.html: {len(projects)} projects, {len(entries)} pull requests, "
+        f"{len(failures)} walkthroughs skipped"
+    )
+    return 0
+
+
 def run_site(arguments: argparse.Namespace) -> int:
     command = arguments.site_command
     if command == "build":
-        entries, failures = site.build_site(Path(arguments.walkthroughs), Path(arguments.out))
-        print(f"wrote {arguments.out}/index.html: {len(entries)} pull requests, {len(failures)} walkthroughs skipped")
+        return run_site_build(arguments)
     elif command == "page":
         spec = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))
         diff = Path(arguments.diff).read_text(encoding="utf-8") if arguments.diff else None
@@ -444,11 +512,17 @@ def run_site(arguments: argparse.Namespace) -> int:
             return NOT_HOSTED
         print(f"{url}{arguments.pr}/" if arguments.pr else url)
     else:
-        text = walkthrough.workflow_text(arguments.action_ref)
+        root = discover_git_root(Path.cwd())
+        projects_dir = configured_projects_dir(root)
+        text = walkthrough.workflow_text(
+            arguments.action_ref,
+            arguments.branch or walkthrough.default_branch(),
+            projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
+        )
         if not arguments.write:
             print(text, end="")
             return 0
-        path = discover_git_root(Path.cwd()) / WORKFLOW_PATH
+        path = root / WORKFLOW_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"wrote {path}; commit it to the default branch, where GitHub runs dispatched workflows")

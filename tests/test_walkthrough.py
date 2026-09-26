@@ -230,20 +230,20 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "spec_time", side_effect=lambda p: times[p]), \
              redirect_stdout(io.StringIO()):
-            _, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
+            _, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
 
         self.assertEqual([], failures)
         built_site = tmp / "site"
         self.assertIn('url=cccccccccccccccccccccccccccccccccccccccc/', (built_site / "7" / "index.html").read_text())
         index = (built_site / "index.html").read_text()
-        self.assertIn('href="7/"', index)
-        self.assertIn(">New<", index)
+        listed = json.loads((built_site / "site.json").read_text())["walkthroughs"]
+        self.assertEqual([(7, "New", "c" * 40, 2)], [(w["number"], w["name"], w["head"], w["heads"]) for w in listed])
         self.assertTrue((built_site / ".nojekyll").exists())
         page = (built_site / "7" / ("a" * 40) / "index.html").read_text()
         self.assertNotIn("walkthrough-data", page)
         self.assertIn('<meta charset="utf-8">', page)
         data = json.loads((built_site / "7" / ("a" * 40) / "data.json").read_text())
-        self.assertEqual("../../", data["indexUrl"])
+        self.assertEqual("../../#/prs", data["indexUrl"])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "7" / "index.html").read_text()):
             self.assertIn(site.icon_link(), built)
@@ -256,7 +256,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "fetch_diff", side_effect=offline), \
              mock.patch.object(walkthrough, "merge_base", side_effect=offline), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
 
         self.assertEqual(([], 1), (failures, len(entries)))
         data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
@@ -272,7 +272,7 @@ class SiteTests(unittest.TestCase):
         (folder / "spec.json").write_text(json.dumps(spec))
         (folder / "diff.patch").write_text(DIFF)
         with redirect_stdout(io.StringIO()):
-            site.build_site(tmp / "walkthroughs", tmp / "site")
+            site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
 
         data = json.loads((tmp / "site" / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual(["<b>bold</b>"], data["groups"][0]["intro"])
@@ -285,7 +285,7 @@ class SiteTests(unittest.TestCase):
         wrong.write_text(json.dumps(make_spec(GOOD_GROUPS)))
         out = io.StringIO()
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(out):
-            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
         self.assertEqual([7], [e["number"] for e in entries])
         self.assertEqual(1, len(failures))
         self.assertIn("must sit at <pr.number>/<pr.head>/spec.json", failures[0])
@@ -302,7 +302,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
         self.assertEqual(1, len(failures))
         self.assertIn("gen/api.pb.go is in no group", failures[0])
         self.assertFalse((tmp / "site" / "7" / ("c" * 40)).exists())
@@ -314,8 +314,10 @@ class SiteTests(unittest.TestCase):
         self.write_spec(tmp / "walkthroughs", "a" * 40, "Theirs")
         with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(walkthrough.SpecError, "no walkthrough built"):
-                site.build_site(tmp / "walkthroughs", tmp / "site")
+            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+        self.assertEqual([], entries)
+        self.assertIn("it is for owner/repo, not this repository", failures[0])
+        self.assertTrue((tmp / "site" / "index.html").is_file(), "the rest of the site still deploys")
 
 
 class SanitizeTests(unittest.TestCase):
