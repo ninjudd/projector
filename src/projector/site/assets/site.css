@@ -57,3 +57,14 @@ table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
 .pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .plist { margin-top: 10px; font-size: 14px; }
 .plist b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+
+.sitesearch { margin-left: auto; }
+.sitesearch input {
+  width: 12rem; max-width: 40vw; padding: 5px 10px; font: inherit; font-size: 14px;
+  color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+}
+ol.results { list-style: none; padding: 0; margin: 0; }
+ol.results li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+ol.results li a { font-weight: 500; text-decoration: none; }
+.snippet { margin-top: 4px; font-size: 14px; color: var(--muted); }
+.snippet mark { background: var(--warn-bg); color: var(--text); border-radius: 2px; padding: 0 1px; }

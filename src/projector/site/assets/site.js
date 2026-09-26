@@ -8,7 +8,9 @@
   var PRIORITY_ORDER = ['now', 'next', 'later'];
   var site = null;
   var markdownFiles = {};
+  var siteFiles = {};
   var routes = {};
+  var searchIndex = null;
   var root = document.getElementById('site');
   // A walkthrough page draws its own layout and carries only this bar.
   var bar = document.getElementById('sitebar');
@@ -78,11 +80,14 @@
       var hash = href.indexOf('#') >= 0 ? href.slice(href.indexOf('#')) : '';
       var target = resolve(path, href.split('#')[0]);
       if (markdownFiles[target]) a.setAttribute('href', routeFor(target) + hash);
+      else if (siteFiles[target]) a.setAttribute('href', contentUrl(target));
       else a.setAttribute('href', repoUrl('blob', target));
     });
     box.querySelectorAll('img[src]').forEach(function (img) {
       var src = img.getAttribute('src');
-      if (!/^[a-z][a-z0-9+.-]*:/i.test(src) && src.charAt(0) !== '/') img.setAttribute('src', repoUrl('raw', resolve(path, src)));
+      if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.charAt(0) === '/') return;
+      var target = resolve(path, src);
+      img.setAttribute('src', siteFiles[target] ? contentUrl(target) : repoUrl('raw', target));
     });
     if (window.hljs) box.querySelectorAll('pre code').forEach(function (code) { window.hljs.highlightElement(code); });
     return box;
@@ -104,7 +109,9 @@
 
   function header(active, extra) {
     return '<header class="sitebar' + (extra ? ' ' + extra : '') + '"><a class="sitename" href="' + esc(base) + '">' +
-      esc(site.repo || 'Projector') + '</a><nav class="sitenav" aria-label="Site">' + nav(active) + '</nav></header>';
+      esc(site.repo || 'Projector') + '</a><nav class="sitenav" aria-label="Site">' + nav(active) + '</nav>' +
+      '<form class="sitesearch" role="search" action="' + esc(base + 'search/') + '">' +
+      '<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form></header>';
   }
 
   function frame(active, title, body) {
@@ -206,21 +213,102 @@
       }).join(' · ') + '</div>' : '') +
       (project.files.length ? '<div class="plist"><b>Supplemental files</b> ' + project.files.map(function (f) {
         return '<a href="' + esc(routeFor(f)) + '">' + esc(f.split('/').pop()) + '</a>';
+      }).join(' · ') + '</div>' : '') +
+      (project.walkthroughs.length ? '<div class="plist"><b>Pull requests</b> ' + project.walkthroughs.map(function (n) {
+        var w = walkthroughFor(n);
+        return '<a href="' + esc(base + 'prs/' + n + '/') + '">#' + n + (w ? ' ' + esc(w.name || w.title) : '') + '</a>';
       }).join(' · ') + '</div>' : '');
     showDocument('projects', project.path, project.title, head);
+  }
+
+  function walkthroughFor(number) {
+    for (var i = 0; i < site.walkthroughs.length; i++) if (site.walkthroughs[i].number === number) return site.walkthroughs[i];
+    return null;
+  }
+
+  function projectLinks(names) {
+    return names.map(function (name) {
+      var project = null;
+      site.projects.forEach(function (p) { if (p.name === name) project = p; });
+      return '<a href="' + esc(base + 'projects/' + name + '/') + '">' + esc(project ? project.title : name) + '</a>';
+    }).join('<br>');
   }
 
   function showPrs() {
     frame('prs', 'Pull request walkthroughs',
       '<h1>Pull request walkthroughs</h1>' +
-      '<div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
+      '<div class="tblwrap"><table class="tbl"><tr><th>PR</th><th>Walkthrough</th><th>Plans</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
       site.walkthroughs.map(function (w) {
         var url = esc(base + 'prs/' + w.number + '/');
         return '<tr><td><a href="' + url + '">#' + w.number + '</a></td><td><a href="' + url + '">' + esc(w.name || w.title) + '</a>' +
-          '<div class="note">' + esc(w.title) + '</div></td><td class="mono">' + esc(String(w.head).slice(0, 9)) + '</td>' +
+          '<div class="note">' + esc(w.title) + '</div></td><td>' + projectLinks(w.projects || []) + '</td>' +
+          '<td class="mono">' + esc(String(w.head).slice(0, 9)) + '</td>' +
           '<td>' + w.heads + '</td><td>' + esc(w.updated) + '</td></tr>';
       }).join('') + '</table></div>' +
       '<p class="note">Built by Projector\'s <span class="mono">walkthrough-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
+  }
+
+  // Centered on the whole query where the text holds it, else on the earliest word.
+  function snippet(text, words) {
+    var lower = text.toLowerCase();
+    var at = lower.indexOf(words.join(' '));
+    if (at < 0) at = words.reduce(function (first, w) { var i = lower.indexOf(w); return i >= 0 && (first < 0 || i < first) ? i : first; }, -1);
+    var start = Math.max(0, at - 60);
+    var piece = (start ? '…' : '') + text.slice(start, start + 200) + (start + 200 < text.length ? '…' : '');
+    return highlight(piece, words);
+  }
+
+  // One pass over the raw text, longest word first, so a later word never
+  // matches inside markup or an entity an earlier one produced.
+  function highlight(text, words) {
+    var pattern = words.slice().sort(function (a, b) { return b.length - a.length; })
+      .map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|');
+    return text.split(new RegExp('(' + pattern + ')', 'i')).map(function (part, i) {
+      return i % 2 ? '<mark>' + esc(part) + '</mark>' : esc(part);
+    }).join('');
+  }
+
+  // Every word must appear; a word in the title counts more than one in the text.
+  function search(query) {
+    var words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    return searchIndex.map(function (entry) {
+      var title = entry.title.toLowerCase(), text = entry.text.toLowerCase(), score = 0;
+      for (var i = 0; i < words.length; i++) {
+        var inTitle = title.indexOf(words[i]) >= 0, inText = text.indexOf(words[i]) >= 0;
+        if (!inTitle && !inText) return null;
+        score += (inTitle ? 10 : 0) + text.split(words[i]).length - 1;
+      }
+      return { entry: entry, score: score };
+    }).filter(Boolean).sort(function (a, b) { return b.score - a.score; }).map(function (r) {
+      return '<li><a href="' + esc(base + r.entry.route) + '">' + esc(r.entry.title) + '</a> <span class="note">' + esc(r.entry.kind) + '</span>' +
+        '<div class="snippet">' + snippet(r.entry.text, words) + '</div></li>';
+    });
+  }
+
+  function showSearch(query) {
+    var main = frame('search', query ? 'Search: ' + query : 'Search',
+      '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the README, docs, and plans">' +
+      '<ol class="results"></ol>');
+    var input = main.querySelector('.filter');
+    var list = main.querySelector('.results');
+    input.value = query || '';
+    function render() {
+      var q = input.value.trim();
+      history.replaceState(null, '', base + 'search/' + (q ? '?q=' + encodeURIComponent(q) : ''));
+      var results = q ? search(q) : [];
+      list.innerHTML = results.length ? results.join('') : (q ? '<p class="note">Nothing matches every word.</p>' : '');
+    }
+    input.addEventListener('input', render);
+    input.focus();
+    if (searchIndex) return render();
+    list.innerHTML = '<p class="note">Loading…</p>';
+    fetch(base + 'search.json').then(function (r) { return r.json(); }).then(function (data) {
+      searchIndex = data;
+      render();
+    }, function (error) {
+      list.innerHTML = '<p class="note">Could not load the search index: ' + esc(error.message) + '</p>';
+    });
   }
 
   function route() {
@@ -232,6 +320,7 @@
     if (rel === 'projects') return showProjects();
     if (rel.indexOf('projects/') === 0) return showProject(rel.slice('projects/'.length));
     if (rel === 'prs') return showPrs();
+    if (rel === 'search') return showSearch(new URLSearchParams(location.search).get('q') || '');
     var file = routes[rel + '/'];
     if (file) {
       var doc = null;
@@ -261,6 +350,15 @@
     route();
   });
 
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!root || !form.classList || !form.classList.contains('sitesearch')) return;
+    event.preventDefault();
+    var q = form.querySelector('input').value.trim();
+    history.pushState(null, '', base + 'search/' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    route();
+  });
+
   fetch(base + 'site.json')
     .then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -272,6 +370,7 @@
         bar.outerHTML = header('prs', 'scrolls');
         return;
       }
+      (site.files || []).forEach(function (f) { siteFiles[f] = true; });
       if (site.readme) markdownFiles[site.readme] = true;
       if (site.projectsReadme) markdownFiles[site.projectsReadme] = true;
       site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[docRoute(d.path)] = d.path; });
