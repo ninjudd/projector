@@ -2,10 +2,13 @@
 
 The site is built from content Projector keeps in the repository: its
 README, its `docs/` directory and the project plans under it, and the pull
-request walkthroughs published to refs/projector/walkthroughs. The root is
-one page that renders the README by default and reaches everything else from
-its menu. Each walkthrough spec becomes a page under /<number>/<head>/, with
-a redirect to the newest head at /<number>/.
+request walkthroughs published to refs/projector/walkthroughs. Every page
+has a real path under the site's base: the README at the root, the plans
+under projects/, each document under docs/ at its path without `.md`, and
+each walkthrough under prs/<number>/<head>/, with the newest head also at
+prs/<number>/. GitHub Pages serves only files that exist, so each path gets
+a small shell page that loads the one shared copy of the assets and fetches
+its data.
 """
 
 from __future__ import annotations
@@ -39,24 +42,31 @@ def icon_link() -> str:
     return f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{urllib.parse.quote(svg)}">'
 
 
-def page(title: str, payload: dict, embed: bool = True) -> str:
+def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: str = "data.json",
+         site_base: str | None = None) -> str:
     # A page opened from disk cannot fetch a file beside it, so a standalone page
-    # embeds its data; a site page loads data.json when it opens.
+    # embeds its data; a site page loads data.json when it opens, and carries the
+    # site's menu bar above the walkthrough.
     data = ""
     if embed:
         blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
         data = f'<script id="walkthrough-data" type="application/json">{blob}</script>\n'
+    bar_style = bar = bar_script = ""
+    if site_base is not None:
+        bar_style = f'<link rel="stylesheet" href="{escape(assets)}site.css">\n'
+        bar = f'<div id="sitebar" data-base="{escape(site_base)}"></div>\n'
+        bar_script = f'<script src="{escape(assets)}site.js"></script>\n'
     return f"""<title>{escape(title)}</title>
 <meta charset="utf-8">
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
-<link rel="stylesheet" href="walkthrough.css">
-<div id="walkthrough"></div>
+<link rel="stylesheet" href="{escape(assets)}walkthrough.css">
+{bar_style}{bar}<div id="walkthrough"{"" if embed else f' data-src="{escape(src)}"'}></div>
 {data}<script src="{HLJS}/highlight.min.js"></script>
 <script src="{HLJS}/languages/protobuf.min.js"></script>
-<script src="walkthrough.js"></script>
-"""
+<script src="{escape(assets)}walkthrough.js"></script>
+{bar_script}"""
 
 
 def copy_assets(out: Path) -> None:
@@ -64,11 +74,10 @@ def copy_assets(out: Path) -> None:
         (out / asset).write_bytes((ASSETS / asset).read_bytes())
 
 
-def write_page(out: Path, payload: dict, embed: bool = True) -> None:
+def write_page(out: Path, payload: dict) -> None:
+    """A standalone page, with its data embedded and the renderer beside it."""
     out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(page(payload["name"], payload, embed=embed), encoding="utf-8")
-    if not embed:
-        (out / "data.json").write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
     copy_assets(out)
 
 
@@ -90,7 +99,7 @@ def spec_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_walkthroughs(root: Path, out: Path) -> tuple[list[dict], list[str]]:
+def build_walkthroughs(root: Path, out: Path, base: str = "/") -> tuple[list[dict], list[str]]:
     """Build every walkthrough spec that can be built; report and skip the rest."""
     specs = sorted(root.glob("*/*/spec.json"))
     if not specs:
@@ -124,14 +133,24 @@ def build_walkthroughs(root: Path, out: Path) -> tuple[list[dict], list[str]]:
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         versions.sort(key=lambda v: v[0], reverse=True)
-        heads = [{"head": p["pr"]["head"], "url": f"../{p['pr']['head']}/", "at": when} for when, p in versions]
+        heads = [{"head": p["pr"]["head"], "url": f"{base}prs/{number}/{p['pr']['head']}/", "at": when}
+                 for when, p in versions]
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(indexUrl="../../#/prs", heads=[dict(h, current=h["head"] == head) for h in heads])
-            write_page(out / number / head, payload, embed=False)
+            payload.update(indexUrl=f"{base}prs/", heads=[dict(h, current=h["head"] == head) for h in heads])
+            folder = out / "prs" / number / head
+            folder.mkdir(parents=True, exist_ok=True)
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            (folder / "data.json").write_text(data, encoding="utf-8")
+            (folder / "index.html").write_text(
+                page(payload["name"], payload, embed=False, assets=f"{base}assets/", site_base=base,
+                     src=f"{base}prs/{number}/{head}/data.json"), encoding="utf-8")
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
-        (out / number / "index.html").write_text(redirect(f"{latest['pr']['head']}/"), encoding="utf-8")
+        newest = latest["pr"]["head"]
+        (out / "prs" / number / "index.html").write_text(
+            page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
+                 src=f"{base}prs/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
                         "heads": len(versions), "updated": versions[0][0]})
     return entries, failures
@@ -179,38 +198,62 @@ def collect_projects(repo_root: Path, projects: list[Project], projects_dir: Pat
     return described
 
 
-def home_page(repo: str) -> str:
+def doc_route(path: str) -> str:
+    """The site path of a Markdown file: its repository path without `.md`."""
+    if path == "README.md":
+        return ""
+    folder, _, name = path.rpartition("/")
+    if name.lower() == "readme.md":
+        return f"{folder}/"
+    return f"{path[:-3]}/" if path.endswith(".md") else f"{path}/"
+
+
+def home_page(repo: str, base: str) -> str:
+    assets = escape(f"{base}assets/")
     return f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(repo or "Projector")}</title>
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
-<link rel="stylesheet" href="walkthrough.css">
-<link rel="stylesheet" href="site.css">
-<div id="site"></div>
+<link rel="stylesheet" href="{assets}walkthrough.css">
+<link rel="stylesheet" href="{assets}site.css">
+<div id="site" data-base="{escape(base)}"></div>
 <script src="{MARKED}"></script>
 <script src="{PURIFY}"></script>
 <script src="{HLJS}/highlight.min.js"></script>
-<script src="site.js"></script>
+<script src="{assets}site.js"></script>
 """
+
+
+def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+    """Every path the home page's script renders, each of which needs a shell."""
+    routes = {"", "projects/", "prs/"}
+    routes.update(doc_route(doc["path"]) for doc in docs)
+    for project in projects:
+        routes.add(f"projects/{project['name']}/")
+        routes.update(doc_route(path) for path in project["files"])
+    return sorted(routes)
 
 
 def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
-               repo: str = "", branch: str = "main") -> tuple[list[dict], list[str]]:
+               repo: str = "", branch: str = "main", base: str = "/") -> tuple[list[dict], list[str]]:
     """Build the whole site: the home page, its manifest, the docs, the plans, and every walkthrough."""
+    base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
     out.mkdir(parents=True, exist_ok=True)
     (out / ".nojekyll").write_text("")
-    copy_assets(out)
-    for asset in ("site.js", "site.css"):
-        (out / asset).write_bytes((ASSETS / asset).read_bytes())
-    entries, failures = build_walkthroughs(walkthroughs, out) if walkthroughs and walkthroughs.is_dir() else ([], [])
+    (out / "assets").mkdir(exist_ok=True)
+    for asset in ("walkthrough.js", "walkthrough.css", "site.js", "site.css"):
+        (out / "assets" / asset).write_bytes((ASSETS / asset).read_bytes())
+    built = build_walkthroughs(walkthroughs, out, base) if walkthroughs and walkthroughs.is_dir() else ([], [])
+    entries, failures = built
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
     manifest = {
         "repo": repo,
+        "base": base,
         "branch": branch,
         "content": CONTENT,
         "readme": readme,
@@ -227,10 +270,9 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
         ],
     }
     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
-    (out / "index.html").write_text(home_page(repo), encoding="utf-8")
+    shell = home_page(repo, base)
+    for route in site_routes(docs, described):
+        (out / route).mkdir(parents=True, exist_ok=True)
+        (out / route / "index.html").write_text(shell, encoding="utf-8")
+    (out / "404.html").write_text(shell, encoding="utf-8")
     return entries, failures
-
-
-def redirect(target: str) -> str:
-    t = escape(target)
-    return f'<!doctype html><meta charset="utf-8"><title>Redirecting</title>{icon_link()}<meta http-equiv="refresh" content="0; url={t}"><link rel="canonical" href="{t}"><a href="{t}">Newest walkthrough</a>\n'
