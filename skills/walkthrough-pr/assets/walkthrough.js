@@ -108,6 +108,14 @@
     return out;
   }
 
+  function headsList() {
+    var heads = data.heads || [];
+    if (heads.length < 2) return '';
+    return '<div class="prmeta">Versions: ' + heads.map(function (h) {
+      return h.current ? '<b class="mono">' + short(h.head) + '</b>' : '<a href="' + esc(h.url) + '">' + short(h.head) + '</a>';
+    }).join(' · ') + '</div>';
+  }
+
   function renderPage() {
     var nav = data.groups.map(function (g, i) {
       return '<li><a href="#' + esc(g.id) + '"><span class="nnum">' + (i + 1) + '</span><span class="ntitle">' + g.title + '</span><span class="ncheck" data-gid="' + esc(g.id) + '"></span></a></li>';
@@ -119,11 +127,11 @@
     return '<div class="wrap">' +
       '<div class="prbar">' + ext(prUrl, esc(prRef), 'prref') + '<span class="prname">' + title + '</span></div>' +
       '<header class="top"><div><div class="eyebrow">' + ext(prUrl, esc(prRef)) + ' · head <span class="mono">' + short(pr.head) + '</span> on ' + esc(pr.baseRef || 'base') + '</div><h1>' + title + '</h1></div>' +
-        '<div class="sub">' + ext(prUrl, 'Open the PR') + ' · ' + ext(prUrl + '/files', 'Files tab') + ' · ' + ext(repoUrl + '/compare/' + encodeURIComponent(pr.baseRef || 'main') + '...' + pr.head, 'Compare') + '</div></header>' +
+        '<div class="sub">' + (data.indexUrl ? '<a href="' + esc(data.indexUrl) + '">All walkthroughs</a> · ' : '') + ext(prUrl, 'Open the PR') + ' · ' + ext(prUrl + '/files', 'Files tab') + ' · ' + ext(repoUrl + '/compare/' + encodeURIComponent(pr.baseRef || 'main') + '...' + pr.head, 'Compare') + '</div></header>' +
       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
         '<div class="prblock">' + ext(prUrl, esc(prRef), 'prref') +
           '<div class="prtitle" title="' + esc(pr.title) + '">' + esc(pr.title) + '</div>' +
-          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div></div>' +
+          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div>' + headsList() + '</div>' +
         '<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ' + data.groups.length + '</b></div><div class="bar"><i id="progress-bar"></i></div>' +
         '<ol>' + nav + '</ol><div class="extra">' + extra + '</div></nav></aside>' +
       '<main><div class="overview" id="overview">' + renderOverview() + '</div>' +
