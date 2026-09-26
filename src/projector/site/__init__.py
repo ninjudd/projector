@@ -17,7 +17,7 @@ import urllib.parse
 from importlib import resources
 from pathlib import Path
 
-from ..walkthrough import SpecError, prepare_page
+from ..walkthrough import DIFF_FILE, SpecError, prepare_page
 
 ASSETS = resources.files(__package__) / "assets"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
@@ -33,16 +33,21 @@ def icon_link() -> str:
     return f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{urllib.parse.quote(svg)}">'
 
 
-def page(title: str, payload: dict) -> str:
-    blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+def page(title: str, payload: dict, embed: bool = True) -> str:
+    # A page opened from disk cannot fetch a file beside it, so a standalone page
+    # embeds its data; a site page loads data.json when it opens.
+    data = ""
+    if embed:
+        blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+        data = f'<script id="walkthrough-data" type="application/json">{blob}</script>\n'
     return f"""<title>{escape(title)}</title>
+<meta charset="utf-8">
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
 <link rel="stylesheet" href="walkthrough.css">
 <div id="walkthrough"></div>
-<script id="walkthrough-data" type="application/json">{blob}</script>
-<script src="{HLJS}/highlight.min.js"></script>
+{data}<script src="{HLJS}/highlight.min.js"></script>
 <script src="{HLJS}/languages/protobuf.min.js"></script>
 <script src="walkthrough.js"></script>
 """
@@ -53,9 +58,11 @@ def copy_assets(out: Path) -> None:
         (out / asset).write_bytes((ASSETS / asset).read_bytes())
 
 
-def write_page(out: Path, payload: dict) -> None:
+def write_page(out: Path, payload: dict, embed: bool = True) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
+    (out / "index.html").write_text(page(payload["name"], payload, embed=embed), encoding="utf-8")
+    if not embed:
+        (out / "data.json").write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     copy_assets(out)
 
 
@@ -99,7 +106,11 @@ def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
                 raise SpecError(f"it must sit at <pr.number>/<pr.head>/spec.json")
             if own_repo and str(pr.get("repo", "")).lower() != own_repo:
                 raise SpecError(f"it is for {pr.get('repo')}, not this repository")
-            payload = prepare_page(spec, at_head=True)
+            # A spec published with its diff builds offline. One published before
+            # diffs were stored falls back to fetching its diff from GitHub.
+            stored = path.with_name(DIFF_FILE)
+            diff = stored.read_text(encoding="utf-8") if stored.is_file() else None
+            payload = prepare_page(spec, diff=diff, at_head=True)
         except (SpecError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
@@ -116,7 +127,7 @@ def build_site(root: Path, out: Path) -> tuple[list[dict], list[str]]:
         for _, payload in versions:
             head = payload["pr"]["head"]
             payload.update(indexUrl="../../", heads=[dict(h, current=h["head"] == head) for h in heads])
-            write_page(out / number / head, payload)
+            write_page(out / number / head, payload, embed=False)
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
         (out / number / "index.html").write_text(redirect(f"{latest['pr']['head']}/"), encoding="utf-8")

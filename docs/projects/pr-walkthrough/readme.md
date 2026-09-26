@@ -167,3 +167,23 @@ sidesteps a runner's system Python refusing a package install. The site's
 package owns its assets as package data, so an installed CLI renders the same
 page the action deploys. The projects view extends `projector.site` and reads
 plans through the CLI's own project model rather than parsing them again.
+
+## 8. Publish the data once and let the page load it
+
+A deploy used to rebuild every walkthrough from scratch: fetch each spec's
+diff from GitHub, parse it, check the spec against it, sanitize, and embed
+the result in each page. That work grows with every walkthrough a repository
+publishes, and each deploy spends one GitHub request per spec. Now
+`project walkthrough publish` fetches the diff once and commits it beside the
+spec as `diff.patch`, so a deploy asks GitHub for nothing. The site build
+still parses, checks, and sanitizes each stored diff, because anyone who can
+push to the hidden ref can write it, and that work is local and fast. Each
+site page is a shell that loads its `data.json` when it opens; `project site
+page` still embeds its data, since a browser will not fetch a file beside a
+page opened from disk.
+
+Serving data from GitHub at view time, with no deploy at all, was rejected: a
+browser cannot read a private repository without the viewer's token, which
+would give up section 3's private-site case, and unauthenticated reads are
+rate limited per visitor. Specs published before diffs were stored still
+build, by fetching their diff as before, until they are republished.

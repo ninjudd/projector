@@ -140,12 +140,17 @@ hosting up; do it when `status` exits 0 or the user asks.
 project walkthrough publish --spec WORKDIR/walkthrough.json
 ```
 
-`publish` first builds the spec against its diff and refuses one that does
-not build, then commits it to `walkthroughs/<number>/<head>/spec.json` on the
-ref without touching the checkout and sends a `repository_dispatch` event that
-starts the workflow. The site build reports and skips any spec that still
-fails, or that names another repository, so one bad spec costs one
-walkthrough rather than the deployment. The site lists every walkthrough at its root,
+`publish` fetches the diff once, builds the spec against it, and refuses one
+that does not build. It then commits the spec and that diff to
+`walkthroughs/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
+without touching the checkout, and sends a `repository_dispatch` event that
+starts the workflow. Pass `--diff` with the file you produced for a pull
+request too large for GitHub's compare API. Because the diff is stored, the
+site deploy asks GitHub for nothing: it checks each spec against its stored
+diff and writes each page's data beside it, and the page loads that data
+when it opens. The deploy reports and skips any spec that still fails, or
+that names another repository, so one bad spec costs one walkthrough rather
+than the deployment. The site lists every walkthrough at its root,
 serves each pull request's newest head at `/<number>/`, and links the older
 heads from each page. The spec on the ref is the durable copy: to update a
 walkthrough later, fetch it with
