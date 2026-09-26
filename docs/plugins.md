@@ -170,10 +170,11 @@ Claude Code records the path it used, which you can read back:
 jq '.plugins["projector@projector"]' ~/.claude/plugins/installed_plugins.json
 ```
 
-Only a release changes the version. Other pull requests leave it alone, even
-when they change skills or the CLI, so everything merged since the last tag
-ships together in the next release rather than each change spending a number
-that is never tagged.
+A release is a deliberate decision to ship what has merged, and only a
+release changes the version. Other pull requests leave it alone, even when
+they change skills or the CLI, so everything merged since the last tag ships
+together in the next release rather than each change spending a number that
+is never tagged.
 
 Release in two steps. First, bump the version in a pull request of its own,
 or skip this step when `main` already names a version that has no tag yet.
