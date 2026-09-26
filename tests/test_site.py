@@ -289,15 +289,16 @@ def js_function(name: str) -> str:
     return "\n".join(lines[start:end + 1])
 
 
-TSC = SITE_JS.parents[1] / "node_modules" / ".bin" / "tsc"
+TS_PROJECT = Path(__file__).parents[1] / "site"
+TSC = TS_PROJECT / "node_modules" / ".bin" / "tsc"
 
 
-@unittest.skipUnless(TSC.exists(), "the compiled-script check needs `npm ci` in src/projector/site")
+@unittest.skipUnless(TSC.exists(), "the compiled-script check needs `npm ci` in site/")
 class CompiledScriptTests(unittest.TestCase):
     def test_the_committed_javascript_is_what_the_typescript_compiles_to(self) -> None:
         assets = SITE_JS.parent
         with tempfile.TemporaryDirectory() as out:
-            subprocess.run([str(TSC), "-p", str(assets.parent / "ts"), "--outDir", out],
+            subprocess.run([str(TSC), "-p", str(TS_PROJECT), "--outDir", out],
                            check=True, capture_output=True, text=True)
             built = sorted(p.name for p in Path(out).glob("*.js"))
             self.assertEqual(["site.js", "summary.js"], built)

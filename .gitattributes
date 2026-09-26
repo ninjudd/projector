@@ -1,4 +1,4 @@
-# Compiled from src/projector/site/ts by `npm run build`. GitHub collapses them in
+# Compiled from site/src by `npm run build`. GitHub collapses them in
 # diffs; edit the TypeScript, rebuild, and resolve a conflict by rebuilding.
 src/projector/site/assets/site.js linguist-generated=true
 src/projector/site/assets/summary.js linguist-generated=true
