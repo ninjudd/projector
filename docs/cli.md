@@ -360,6 +360,7 @@ project walkthrough init --repo OWNER/NAME --pr 66 --spec walkthrough.json
 project walkthrough publish --spec walkthrough.json
 project site page --spec walkthrough.json --out site
 project site build --out _site --walkthroughs specs/walkthroughs
+project site serve --port 8000
 project site status --repo OWNER/NAME --pr 66
 project site workflow --write
 ```
@@ -412,6 +413,27 @@ whether it is. For walkthroughs it builds every
 for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
+
+`site serve` builds the site from a checkout, as `site build` does, into a
+temporary directory and serves it over HTTP until you press Ctrl-C, or it
+receives SIGTERM or SIGHUP, which removes the directory. It needs no GitHub
+Pages site and no workflow. It listens on `127.0.0.1:8000` unless `--host`
+or `--port` says otherwise, and warns when `--host` reaches beyond this
+machine, because anyone who can reach the address can read the site. It
+answers 403 to a request whose `Host` header names anything but `localhost`,
+a loopback address, or the `--host` given, so a web page cannot read the
+site through DNS rebinding; a wildcard `--host` such as `0.0.0.0` answers
+any name. `--port 0` picks a free port and prints it.
+Before building, it fetches the walkthroughs ref from `--remote`, `origin`
+by default, into the same `refs/projector/remotes/<remote>/walkthroughs`
+copy that `walkthrough publish` keeps. When the fetch fails it says why and
+serves the walkthroughs already fetched; `--no-fetch` skips the fetch, and
+`--walkthroughs` serves a directory of specs instead of the ref. While it
+runs it checks `README.md`, `docs/`, a configured `projects.dir`, and the
+walkthroughs every second and rebuilds when any of them change;
+`--no-watch` builds once. A path the build has no file for gets `404.html`
+with status 404, as GitHub Pages answers it. `--base` serves the site under
+a path, as `site build` builds it.
 
 `site status` exits 0 and prints the site's URL, or with `--pr` the pull
 request's review URL, when the repository has the site workflow on its

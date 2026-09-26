@@ -191,3 +191,36 @@ in `site.json`, so the page links to the same path the build wrote a shell for.
 A repository with no projects opens on Docs, and the menu leaves out any
 section with nothing in it. Search still covers every document and labels
 each result as a project or a doc.
+
+## 9. Serve the site without GitHub Pages
+
+A repository that cannot turn on GitHub Pages yet, or does not want to, can
+still read its site. `project site serve` builds the site a deploy builds
+into a temporary directory and serves it over HTTP from the standard
+library's `http.server`, so it adds no dependency. It fetches the
+walkthroughs ref into the copy `walkthrough publish` keeps, extracts it with
+`git archive`, and dates each spec by the commit that last changed it,
+because the build orders a pull request's walkthroughs by that date and an
+archive stamps every file with the ref's newest commit.
+
+- **Rebuild on change by polling.** The server checks the README, `docs/`,
+  the projects directory, and the walkthroughs ref every second and builds a
+  fresh directory when any changed. The standard library has no
+  cross-platform file watcher, and a second of latency costs a reader
+  nothing. A request in flight keeps its directory, which the next rebuild
+  removes.
+- **Answer like GitHub Pages.** A missing path gets `404.html` with status
+  404, and `--base` serves the site under a path, so what works locally
+  works on Pages.
+- **Listen on loopback by default, and answer only its own names.** The site
+  copies the README, docs, plans and diffs. Loopback alone does not keep them
+  private: a page in the reader's browser can point its own hostname at
+  127.0.0.1 and read the site through DNS rebinding. The server therefore
+  answers 403 to a request whose `Host` is not `localhost`, a loopback
+  address, or the `--host` given. A wider `--host` is the user's decision,
+  and the server warns when it is made.
+- **Clean up on any stop.** Ctrl-C, SIGTERM, and SIGHUP all remove the
+  temporary directory, which holds the repository's docs and diffs.
+- **Host elsewhere with `site build`.** Any static host that answers a
+  missing path with `404.html` can serve `project site build --out DIR`;
+  no host-specific packaging was added.
