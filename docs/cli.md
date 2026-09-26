@@ -445,18 +445,20 @@ project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list. A
-repository with no projects opens on Docs instead. A document, in Docs or in a project, is a Markdown file or an
-HTML page. The build copies those files under `content/` and describes them in
-`site.json`; the page renders Markdown in the browser and shows an HTML page
-as it is, titled by its `<title>`, in a frame the width of the window with the
-sidebar collapsed behind a toggle. The frame loads the page's copy under
-`content/`, beside a copy of every other file under `docs/` and the projects
-directory, so the data, scripts, and WebAssembly modules the page loads by
-relative path resolve there. The address's hash passes into the frame and
-follows it back out, so a deep link into a hash-routed page works. HTML is
-served as the repository wrote it, unlike Markdown, which the page sanitizes,
-so it carries the same trust as code merged to the default branch. Every view
-has its own path: `projects/<name>/` for a project and
+repository with no projects opens on Docs instead. A document, in Docs or in a
+project, is a Markdown file or an HTML page. The build copies those files
+under `content/` and describes them in `site.json`; the page renders Markdown
+in the browser and shows an HTML page as it is, titled by its `<title>`, in a
+frame the width of the window with the sidebar collapsed behind a toggle.
+The frame loads the page's copy under `content/`, beside a copy of every
+other file under `docs/` and the projects directory, so the data, scripts,
+and WebAssembly modules the page loads by relative path resolve there. The
+address's hash passes into the frame and follows it back out, so a deep link
+into a hash-routed page works. HTML is served as the repository wrote it,
+unlike Markdown, which the page sanitizes with DOMPurify: an HTML page runs
+unsandboxed on the site's origin, with the same reach as the site's own
+scripts, so it carries the same trust as code merged to the default branch.
+Every view has its own path: `projects/<name>/` for a project and
 `projects/<name>/<file>/` for each of its files, at its path inside the
 project without `.md` or `.html`; `reviews/`, `reviews/<number>/` and
 `reviews/<number>/<head>/` for walkthroughs; and `docs/` for the README and

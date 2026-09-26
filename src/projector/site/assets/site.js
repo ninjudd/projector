@@ -240,8 +240,8 @@
   }
 
   // The README, or any document under docs/, beside the docs tree when there is
-  // more than the README to list. The page's own heading names it, so the
-  // README's entry is Overview.
+  // more than the README to list. The README's entry is Overview, the page the
+  // tree starts from, rather than a title the README's own heading repeats.
   function showDocs(path) {
     var top = site.readme ? { path: site.readme, title: 'Overview' } : null;
     var side = site.docs.length ? tree(site.docs, 'docs/', top, path) : null;
@@ -303,8 +303,10 @@
     site.projects.forEach(function (p) {
       if (p.path.indexOf(prefix) === 0) p.files.forEach(function (f) { items.push(f); });
     });
-    // A project with nothing but its readme needs no sidebar. The page's heading
-    // already names the project, so its readme's entry is Overview.
+    // A project with nothing but its readme needs no sidebar. The top-level
+    // project's readme is Overview, the page the tree starts from: on that page
+    // its title would repeat the heading, and on every other page of the
+    // project the breadcrumbs already name the project.
     var side = items.length ? tree(items, prefix, { path: top.path, title: 'Overview' }, path) : null;
 
     var isReadme = path === project.path;
