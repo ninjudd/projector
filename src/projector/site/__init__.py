@@ -5,13 +5,14 @@ README, its `docs/` directory and the projects under it, and the pull request
 walkthroughs published to refs/projector/walkthroughs, which the site calls
 reviews. It has three sections, each at a real path under the site's base:
 the projects at the root and under projects/, every file of a project at its
-path inside the projects directory without `.md`; the reviews under
-reviews/<number>/<head>/, with the newest head also at reviews/<number>/; and
-the docs under docs/, the README at docs/ itself and every other document at
-its path without `.md` or `.html`. An HTML page is shown as it is, in a frame
-inside the site, and the files beside it are copied too, so a page that loads
-its own data or a WebAssembly module works as it does from disk. GitHub Pages serves only files that exist, so each
-path gets a small shell page that loads the one shared copy of the assets and
+path inside the projects directory without `.md` or `.html`; the reviews
+under reviews/<number>/<head>/, with the newest head also at
+reviews/<number>/; and the docs under docs/, the README at docs/ itself and
+every other document at its path without `.md` or `.html`. An HTML page is
+shown as it is, in a frame inside the site, and the files beside it are
+copied too, so a page that loads its own data or a WebAssembly module works
+as it does from disk. GitHub Pages serves only files that exist, so each path
+gets a small shell page that loads the one shared copy of the assets and
 fetches its data.
 """
 

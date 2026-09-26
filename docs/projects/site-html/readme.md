@@ -82,3 +82,36 @@ place between the checkout and the build. In Chrome, against a demo served by
 `project site serve`, a hash-routed page opened at a deep link and wrote its
 own hash back to the address, the toggle opened the sidebar, and a playground
 fetched its `cases.json` and instantiated its `.wasm` module inside the frame.
+
+## 5. `site.prepare`: one command for the deploy and the local site
+
+Section 3's `prepare` input ran only in the deploy, so a reader previewing
+with `project site serve` built the generated pages by hand first. The
+command now lives in the repository as `site.prepare` in `.projector.toml`,
+and `project site build` runs it after the visibility check and before the
+build, with `--prepare` to run another command and `--no-prepare` to skip it.
+The action's separate step is gone: it passes its `prepare` input to the
+build as `--prepare`, still after its own checkout, so the repository's
+setting applies in the deploy without any workflow change.
+
+`project site serve` runs the command before the first build and each
+rebuild, then takes the sources' fingerprint, so a generator that rewrites
+its output every time does not start the next rebuild itself. The command
+runs through the system shell, as a Makefile target would.
+
+**A checkout's command runs locally only once allowed.** The command comes
+from the checkout, so without a gate, checking out an outside contributor's
+pull request and running `project site serve` to preview its docs would run
+whatever `site.prepare` that branch wrote, as the reader, before anyone read
+the diff; an agent offering `site serve` in an unfamiliar clone would do the
+same. Locally the command runs only after the reader allows it with
+`--allow-prepare`, which remembers a hash of the checkout's path and that
+exact command in user state, `$XDG_STATE_HOME/projector/allowed-prepare`, so
+a changed command needs allowing again. Until then the build prints the
+command and builds without it. A deploy (`GITHUB_ACTIONS=true`) runs it
+unasked, because the workflow builds only merged code on the default branch,
+and a `--prepare` on the command line is already the reader's choice. The
+allowance covers the command's text, not the files it runs: a branch that
+changes what an allowed `make explorer` does still runs, as running `make`
+there would, so the gate protects against unfamiliar clones and changed
+commands, not against a hostile branch of a repository already trusted.

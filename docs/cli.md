@@ -360,6 +360,7 @@ These are the keys Projector reads today:
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
+| `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
 
@@ -445,18 +446,20 @@ project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list. A
-repository with no projects opens on Docs instead. A document, in Docs or in a project, is a Markdown file or an
-HTML page. The build copies those files under `content/` and describes them in
-`site.json`; the page renders Markdown in the browser and shows an HTML page
-as it is, titled by its `<title>`, in a frame the width of the window with the
-sidebar collapsed behind a toggle. The frame loads the page's copy under
-`content/`, beside a copy of every other file under `docs/` and the projects
-directory, so the data, scripts, and WebAssembly modules the page loads by
-relative path resolve there. The address's hash passes into the frame and
-follows it back out, so a deep link into a hash-routed page works. HTML is
-served as the repository wrote it, unlike Markdown, which the page sanitizes,
-so it carries the same trust as code merged to the default branch. Every view
-has its own path: `projects/<name>/` for a project and
+repository with no projects opens on Docs instead. A document, in Docs or in a
+project, is a Markdown file or an HTML page. The build copies those files
+under `content/` and describes them in `site.json`; the page renders Markdown
+in the browser and shows an HTML page as it is, titled by its `<title>`, in a
+frame the width of the window with the sidebar collapsed behind a toggle.
+The frame loads the page's copy under `content/`, beside a copy of every
+other file under `docs/` and the projects directory, so the data, scripts,
+and WebAssembly modules the page loads by relative path resolve there. The
+address's hash passes into the frame and follows it back out, so a deep link
+into a hash-routed page works. HTML is served as the repository wrote it,
+unlike Markdown, which the page sanitizes with DOMPurify: an HTML page runs
+unsandboxed on the site's origin, with the same reach as the site's own
+scripts, so it carries the same trust as code merged to the default branch.
+Every view has its own path: `projects/<name>/` for a project and
 `projects/<name>/<file>/` for each of its files, at its path inside the
 project without `.md` or `.html`; `reviews/`, `reviews/<number>/` and
 `reviews/<number>/<head>/` for walkthroughs; and `docs/` for the README and
@@ -483,10 +486,32 @@ whether it is. For walkthroughs it builds every
 `<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any spec that fails or has no stored diff.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
-its data so it opens from disk. The action's `prepare` input names a shell
-command it runs in its checkout just before the build, for pages or files the
-repository generates rather than commits; set up the command's toolchain in
-steps before the action.
+its data so it opens from disk.
+
+For pages or files the repository generates rather than commits, `site build`
+first runs the shell command `site.prepare` names, in the checkout, through
+the system shell, and says so on stderr. `--prepare` runs a given command in
+its place and `--no-prepare` skips it. A command that fails stops the build
+with exit status 65 before anything is built. The action passes its `prepare`
+input as `--prepare`, and runs the build after its own checkout, which
+removes untracked files, so what the command generates survives to the copy;
+set up the command's toolchain in steps before the action.
+
+`site.prepare` comes from the checkout, so a branch someone else wrote, or a
+clone of a repository you have never read, could otherwise run its own shell
+command as you the moment you preview its docs. On your machine the command
+runs only once you allow it: pass `--allow-prepare` to `site build` or
+`site serve`, and Projector remembers that exact command for that checkout
+until the command changes. Until then it prints the command and builds the
+site without it. The record is a list of hashes in
+`$XDG_STATE_HOME/projector/allowed-prepare`, or
+`~/.local/state/projector/allowed-prepare`, outside every checkout and its
+configuration. A deploy (`GITHUB_ACTIONS=true`) runs the command unasked,
+since the site workflow builds only what was merged to the default branch,
+and a `--prepare` given on the command line needs no allowing. Allowing covers
+the command's text, not the files it runs: once `make explorer` is allowed, a
+branch that changes the Makefile's `explorer` target runs that change, as
+running `make` there would.
 
 `site serve` builds the site from a checkout, as `site build` does, into a
 temporary directory and serves it over HTTP until you press Ctrl-C, or it
@@ -497,7 +522,10 @@ machine, because anyone who can reach the address can read the site. It
 answers 403 to a request whose `Host` header names anything but `localhost`,
 a loopback address, or the `--host` given, so a web page cannot read the
 site through DNS rebinding; a wildcard `--host` such as `0.0.0.0` answers
-any name. `--port 0` picks a free port and prints it.
+any name. `--port 0` picks a free port and prints it. It runs an allowed
+`site.prepare`, or `--prepare`, before the first build and before each
+rebuild, and takes the sources' fingerprint after the command, so a file the
+command rewrites does not start another rebuild; `--no-prepare` skips it.
 Before building, it fetches the walkthroughs ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/walkthroughs`
 copy that `walkthrough publish` keeps. When the fetch fails it says why and

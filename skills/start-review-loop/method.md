@@ -231,9 +231,10 @@ concrete sequence from inputs and state to a wrong result. One that refutes
 names the guard that prevents it. A second look that cannot decide is a
 dropped candidate, never a question handed to the author.
 
-Run a test or reproduction when the code is runnable and the cost is
-proportional to the risk, as `SKILL.md` requires. The protocol is what
-verifies a finding when running it is not possible.
+Run a test or reproduction when the code is runnable, the cost is
+proportional to the risk, and the head is trusted, as `SKILL.md`
+requires. The protocol is what verifies a finding when running it is not
+possible or not permitted.
 
 ## 6. Decide what ships
 
@@ -278,7 +279,8 @@ reads in this order:
    before the review posts. The marker's `covered=` field carries the same
    two numbers.
 4. Disclosures, when any: an advisory check skipped for a new dependency, a
-   file too large for a pass to read in full, a test that could not run.
+   file too large for a pass to read in full, a test that could not run, a
+   head reviewed without running its code because the head is not trusted.
 5. `Suggestions`, the P3 list, when any, each as one line naming the
    `path:line` and the change.
 6. On a clean head, what was checked, as `SKILL.md` requires.
