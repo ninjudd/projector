@@ -2,7 +2,7 @@
 
 The site is built from content Projector keeps in the repository: its
 README, its `docs/` directory and the projects under it, and the pull request
-walkthroughs published to refs/projector/walkthroughs, which the site calls
+summaries published to refs/projector/summaries, which the site calls
 reviews. It has three sections, each at a real path under the site's base:
 the projects at the root and under projects/, every file of a project at its
 path inside the projects directory without `.md` or `.html`; the reviews
@@ -29,7 +29,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, title_from_text
-from ..walkthrough import DIFF_FILE, SpecError, prepare_page
+from ..summary import DIFF_FILE, SpecError, prepare_page
 
 ASSETS = resources.files(__package__) / "assets"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
@@ -55,11 +55,11 @@ def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: s
          site_base: str | None = None) -> str:
     # A page opened from disk cannot fetch a file beside it, so a standalone page
     # embeds its data; a site page loads data.json when it opens, and carries the
-    # site's menu bar above the walkthrough.
+    # site's menu bar above the summary.
     data = ""
     if embed:
         blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
-        data = f'<script id="walkthrough-data" type="application/json">{blob}</script>\n'
+        data = f'<script id="summary-data" type="application/json">{blob}</script>\n'
     bar_style = bar = bar_script = ""
     if site_base is not None:
         bar_style = f'<link rel="stylesheet" href="{escape(assets)}site.css">\n'
@@ -70,16 +70,16 @@ def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: s
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
-<link rel="stylesheet" href="{escape(assets)}walkthrough.css">
-{bar_style}{bar}<div id="walkthrough"{"" if embed else f' data-src="{escape(src)}"'}></div>
+<link rel="stylesheet" href="{escape(assets)}summary.css">
+{bar_style}{bar}<div id="summary"{"" if embed else f' data-src="{escape(src)}"'}></div>
 {data}<script src="{HLJS}/highlight.min.js"></script>
 <script src="{HLJS}/languages/protobuf.min.js"></script>
-<script src="{escape(assets)}walkthrough.js"></script>
+<script src="{escape(assets)}summary.js"></script>
 {bar_script}"""
 
 
 def copy_assets(out: Path) -> None:
-    for asset in ("walkthrough.js", "walkthrough.css"):
+    for asset in ("summary.js", "summary.css"):
         (out / asset).write_bytes((ASSETS / asset).read_bytes())
 
 
@@ -108,8 +108,8 @@ def spec_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
-    """Build every walkthrough spec that can be built; report and skip the rest."""
+def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
+    """Build every summary spec that can be built; report and skip the rest."""
     specs = sorted(root.glob("*/*/spec.json"))
     if not specs:
         return [], []
@@ -118,7 +118,7 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tup
 
     def skip(path: Path, reason: object) -> None:
         failures.append(f"{path.relative_to(root)}: {reason}")
-        print(f"::error title=Walkthrough skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
+        print(f"::error title=Summary skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
 
     by_pr: dict[str, list[tuple[int, dict]]] = {}
     for path in specs:
@@ -132,7 +132,7 @@ def build_walkthroughs(root: Path, out: Path, base: str = "/", link=None) -> tup
                 raise SpecError(f"it is for {pr.get('repo')}, not this repository")
             stored = path.with_name(DIFF_FILE)
             if not stored.is_file():
-                raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project walkthrough publish`")
+                raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
             payload = prepare_page(spec, diff=stored.read_text(encoding="utf-8"), at_head=True)
             payload["projects"] = link(spec, payload) if link else []
         except (SpecError, ValueError, KeyError, TypeError) as exc:
@@ -365,7 +365,7 @@ def home_page(repo: str, base: str) -> str:
 <title>{escape(repo or "Projector")}</title>
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
-<link rel="stylesheet" href="{assets}walkthrough.css">
+<link rel="stylesheet" href="{assets}summary.css">
 <link rel="stylesheet" href="{assets}site.css">
 <div id="site" data-base="{escape(base)}"></div>
 <script src="{MARKED}"></script>
@@ -385,7 +385,7 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
     return sorted(routes)
 
 
-def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | None = None,
+def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/") -> tuple[list[dict], list[str]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs."""
@@ -393,14 +393,14 @@ def build_site(out: Path, walkthroughs: Path | None = None, repo_root: Path | No
     out.mkdir(parents=True, exist_ok=True)
     (out / ".nojekyll").write_text("")
     (out / "assets").mkdir(exist_ok=True)
-    for asset in ("walkthrough.js", "walkthrough.css", "site.js", "site.css"):
+    for asset in ("summary.js", "summary.css", "site.js", "site.css"):
         (out / "assets" / asset).write_bytes((ASSETS / asset).read_bytes())
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
     files = collect_files(repo_root, projects_dir, out) if repo_root else []
     assign_routes(docs, described)
     link = project_linker(described, base)
-    built = build_walkthroughs(walkthroughs, out, base, link) if walkthroughs and walkthroughs.is_dir() else ([], [])
+    built = build_summaries(summaries, out, base, link) if summaries and summaries.is_dir() else ([], [])
     entries, failures = built
     for project in described:
         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]

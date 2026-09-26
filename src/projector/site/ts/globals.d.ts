@@ -9,14 +9,14 @@ interface Window {
     highlight(text: string, options: { language: string; ignoreIllegals: boolean }): { value: string };
     getLanguage(name: string): unknown;
   };
-  /** The localStorage prefix a rendered walkthrough keeps its checkboxes under. */
-  __WALKTHROUGH_KEY__?: string;
+  /** The localStorage prefix a rendered summary keeps its checkboxes under. */
+  __SUMMARY_KEY__?: string;
 }
 
 /** A diff line: its kind (a, d, c, or m for a meta line), old and new numbers, and text. */
-type WalkthroughLine = [string, number | null, number | null, string];
+type SummaryLine = [string, number | null, number | null, string];
 
-interface WalkthroughFile {
+interface SummaryFile {
   path: string;
   id: string;
   anchor: string;
@@ -26,10 +26,10 @@ interface WalkthroughFile {
   deleted?: boolean;
   adds: number;
   dels: number;
-  hunks: { header: string; lines: WalkthroughLine[] }[];
+  hunks: { header: string; lines: SummaryLine[] }[];
 }
 
-interface WalkthroughGroup {
+interface SummaryGroup {
   id: string;
   title: string;
   kicker?: string;
@@ -39,12 +39,12 @@ interface WalkthroughGroup {
   files: { path: string; collapsed?: boolean | null; note?: string }[];
 }
 
-/** A walkthrough page's data: the spec checked against its diff by the build. */
-interface WalkthroughData {
+/** A summary page's data: the spec checked against its diff by the build. */
+interface SummaryData {
   name?: string;
   pr: { repo: string; number: number; title: string; head: string; baseRef?: string };
-  files: WalkthroughFile[];
-  groups: WalkthroughGroup[];
+  files: SummaryFile[];
+  groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };
   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
   heads?: { head: string; url: string; current: boolean }[];

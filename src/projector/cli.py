@@ -21,8 +21,8 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import site, walkthrough
-from .walkthrough import WORKFLOW_PATH
+from . import site, summary
+from .summary import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
 from .core import (
@@ -273,20 +273,20 @@ def parser() -> argparse.ArgumentParser:
         help="install.sh target: all (its default), cli, claude, codex, or status",
     )
 
-    walkthrough = subcommands.add_parser("walkthrough", help="write and publish pull request walkthrough specs")
-    walkthrough_commands = walkthrough.add_subparsers(dest="walkthrough_command", required=True)
-    walkthrough_init = walkthrough_commands.add_parser("init", help="write a skeleton spec for a pull request")
-    walkthrough_init.add_argument("--repo", required=True, help="OWNER/NAME")
-    walkthrough_init.add_argument("--pr", required=True, type=int)
-    walkthrough_init.add_argument("--spec", required=True)
-    walkthrough_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
-    walkthrough_publish = walkthrough_commands.add_parser(
-        "publish", help="commit a spec to the hidden walkthroughs ref and start a site build"
+    summary_parser = subcommands.add_parser("summary", help="write and publish pull request summary specs")
+    summary_commands = summary_parser.add_subparsers(dest="summary_command", required=True)
+    summary_init = summary_commands.add_parser("init", help="write a skeleton spec for a pull request")
+    summary_init.add_argument("--repo", required=True, help="OWNER/NAME")
+    summary_init.add_argument("--pr", required=True, type=int)
+    summary_init.add_argument("--spec", required=True)
+    summary_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
+    summary_publish = summary_commands.add_parser(
+        "publish", help="commit a spec to the hidden summaries ref and start a site build"
     )
-    walkthrough_publish.add_argument("--spec", required=True)
-    walkthrough_publish.add_argument("--remote", default="origin")
-    walkthrough_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
-    walkthrough_publish.add_argument(
+    summary_publish.add_argument("--spec", required=True)
+    summary_publish.add_argument("--remote", default="origin")
+    summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
+    summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
     )
 
@@ -296,7 +296,7 @@ def parser() -> argparse.ArgumentParser:
         "build", help="build the site from the projects, the published reviews, and the docs"
     )
     site_build.add_argument("--out", required=True)
-    site_build.add_argument("--walkthroughs", help="directory holding <number>/<head>/spec.json files")
+    site_build.add_argument("--summaries", help="directory holding <number>/<head>/spec.json files")
     site_build.add_argument(
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
@@ -317,7 +317,7 @@ def parser() -> argparse.ArgumentParser:
         "--allow-prepare", action="store_true",
         help="allow this checkout's site.prepare command, and remember it until the command changes",
     )
-    site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
+    site_page = site_commands.add_parser("page", help="build one summary page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
     site_page.add_argument("--diff", help="read the diff from this file instead of GitHub")
@@ -341,10 +341,10 @@ def parser() -> argparse.ArgumentParser:
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
     site_serve.add_argument(
-        "--walkthroughs", help="directory holding <number>/<head>/spec.json files, instead of the walkthroughs ref"
+        "--summaries", help="directory holding <number>/<head>/spec.json files, instead of the summaries ref"
     )
-    site_serve.add_argument("--remote", default="origin", help="the remote to fetch walkthroughs from (default: origin)")
-    site_serve.add_argument("--no-fetch", action="store_true", help="serve the walkthroughs already fetched")
+    site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
+    site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
     site_serve.add_argument(
         "--prepare", metavar="COMMAND",
@@ -587,17 +587,17 @@ def run_prepare(root: Path, command: str) -> None:
     print(f"preparing the site: {command}", file=sys.stderr, flush=True)
     result = subprocess.run(command, shell=True, cwd=root)
     if result.returncode:
-        raise walkthrough.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
+        raise summary.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
 
 
 NOT_HOSTED = 3
 
 
-def run_walkthrough(arguments: argparse.Namespace) -> int:
-    if arguments.walkthrough_command == "init":
-        walkthrough.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
+def run_summary(arguments: argparse.Namespace) -> int:
+    if arguments.summary_command == "init":
+        summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
     else:
-        walkthrough.publish(
+        summary.publish(
             Path(arguments.spec),
             arguments.remote,
             send_dispatch=not arguments.no_dispatch,
@@ -610,7 +610,7 @@ def site_projects(root: Path) -> tuple[list, Optional[Path]]:
     """The repository's projects for the site, or none when its plans do not parse.
 
     A broken plan should cost the projects view, not the deploy that also
-    carries the README, the docs, and the walkthroughs.
+    carries the README, the docs, and the summaries.
     """
     store = ProjectStore(root, root, configured_projects_dir(root))
     if not store.projects_dir.is_dir():
@@ -627,25 +627,25 @@ def site_repo(root: Path) -> str:
     if repo:
         return repo
     try:
-        return walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
-    except walkthrough.SpecError:
+        return summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
+    except summary.SpecError:
         return ""
 
 
 def site_branch(root: Path) -> str:
     try:
-        branch = walkthrough.git("-C", str(root), "rev-parse", "--abbrev-ref", "HEAD")
-    except walkthrough.SpecError:
+        branch = summary.git("-C", str(root), "rev-parse", "--abbrev-ref", "HEAD")
+    except summary.SpecError:
         return "main"
     return branch if branch and branch != "HEAD" else "main"
 
 
-def build_checkout(root: Path, out: Path, walkthroughs: Optional[Path], base: str, repo: str) -> str:
+def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
     """Build the site from a checkout, and summarize what it holds."""
     projects, projects_dir = site_projects(root)
     entries, failures = site.build_site(
         out,
-        walkthroughs=walkthroughs,
+        summaries=summaries,
         repo_root=root,
         projects=projects,
         projects_dir=projects_dir,
@@ -661,14 +661,14 @@ def run_site_build(arguments: argparse.Namespace) -> int:
     repo = site_repo(root)
     if arguments.check_visibility:
         if not repo:
-            raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
-        walkthrough.require_private_site(repo)
+            raise summary.SpecError("cannot check the site's visibility without knowing the repository")
+        summary.require_private_site(repo)
     command = prepare_command(root, arguments)
     if command:
         run_prepare(root, command)
-    walkthroughs = Path(arguments.walkthroughs) if arguments.walkthroughs else None
-    summary = build_checkout(root, Path(arguments.out), walkthroughs, arguments.base, repo)
-    print(f"wrote {arguments.out}/index.html: {summary}")
+    summaries = Path(arguments.summaries) if arguments.summaries else None
+    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo)
+    print(f"wrote {arguments.out}/index.html: {built}")
     return 0
 
 
@@ -678,15 +678,17 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     root = Path(arguments.repo_root).resolve() if arguments.repo_root else discover_git_root(Path.cwd())
     repo = site_repo(root)
     base = "/" + arguments.base.strip("/") + "/" if arguments.base.strip("/") else "/"
-    given = Path(arguments.walkthroughs).resolve() if arguments.walkthroughs else None
-    ref = None
+    given = Path(arguments.summaries).resolve() if arguments.summaries else None
+    ref, folder = None, summary.PAGES_ROOT
     if given is None:
         if not arguments.no_fetch:
-            reason = serve.fetch_walkthroughs(root, arguments.remote)
+            reason = serve.fetch_summaries(root, arguments.remote)
             if reason:
-                print(f"serving the walkthroughs already fetched; {arguments.remote} has none to fetch: {reason}",
+                print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {reason}",
                       file=sys.stderr)
-        ref = serve.walkthroughs_ref(root, arguments.remote)
+        # The folder comes with the ref, because the old walkthroughs ref a
+        # repository may still have keeps its specs under another name.
+        ref, folder = serve.summaries_ref(root, arguments.remote) or (None, folder)
     projects_dir = configured_projects_dir(root)
     watched = [root / "README.md", root / "docs"]
     if projects_dir is not None:
@@ -700,10 +702,10 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     def build(out: Path) -> str:
         # The build copies what it needs from the specs, so they outlive it only as long as it runs.
         with tempfile.TemporaryDirectory(prefix="projector-specs-") as specs:
-            walkthroughs = serve.extract_walkthroughs(root, ref, Path(specs)) if ref is not None else given
-            # The build reports each walkthrough as a deploy log would; a server keeps its summary.
+            summaries = serve.extract_summaries(root, ref, Path(specs), folder) if ref is not None else given
+            # The build reports each page as a deploy log would; a server keeps only its one-line result.
             with contextlib.redirect_stdout(io.StringIO()):
-                return build_checkout(root, out, walkthroughs, base, repo)
+                return build_checkout(root, out, summaries, base, repo)
 
     command = prepare_command(root, arguments)
     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
@@ -762,7 +764,7 @@ def run_site(arguments: argparse.Namespace) -> int:
             f"{counts['files']} files, +{counts['adds']} -{counts['dels']}"
         )
     elif command == "status":
-        url, reason = walkthrough.hosting(arguments.repo)
+        url, reason = summary.hosting(arguments.repo)
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
@@ -780,9 +782,9 @@ def run_site(arguments: argparse.Namespace) -> int:
 
 def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
     projects_dir = configured_projects_dir(root)
-    return walkthrough.workflow_text(
+    return summary.workflow_text(
         action_ref,
-        branch or walkthrough.default_branch(root=root),
+        branch or summary.default_branch(root=root),
         projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
     )
 
@@ -809,7 +811,7 @@ class NotOnGitHub(ProjectorError):
 def other_pages_deployers(root: Path) -> list[str]:
     """Workflows in the checkout, other than Projector's, that deploy a GitHub Pages site."""
     folder = root / ".github" / "workflows"
-    ours = {Path(WORKFLOW_PATH).name, *(Path(path).name for path in walkthrough.LEGACY_WORKFLOW_PATHS)}
+    ours = {Path(WORKFLOW_PATH).name, *(Path(path).name for path in summary.LEGACY_WORKFLOW_PATHS)}
     found = []
     for path in sorted(folder.glob("*.y*ml")) if folder.is_dir() else []:
         if path.name not in ours and "actions/deploy-pages" in path.read_text(encoding="utf-8", errors="replace"):
@@ -826,28 +828,28 @@ def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict
     from a branch or from another workflow, keeps it.
     """
     try:
-        repo = walkthrough.repo_slug(walkthrough.git("-C", str(root), "remote", "get-url", "origin"))
-    except walkthrough.SpecError:
+        repo = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
+    except summary.SpecError:
         repo = ""
     if not repo:
         raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
     deployers = other_pages_deployers(root)
     if deployers and not takeover:
-        raise walkthrough.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
+        raise summary.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
                                     "add the Projector site's workflow beside it")
     if shutil.which("gh") is None:
-        raise walkthrough.SpecError("the gh CLI is not installed, and setting up Pages needs it")
-    details = json.loads(walkthrough.gh("api", f"repos/{repo}"))
+        raise summary.SpecError("the gh CLI is not installed, and setting up Pages needs it")
+    details = json.loads(summary.gh("api", f"repos/{repo}"))
     # Only an admin can change Pages or the website link. Without admin, a site
     # already set up still gets its workflow, which needs no admin to propose.
     admin = bool((details.get("permissions") or {}).get("admin"))
-    pages = walkthrough.enable_pages(repo, admin, takeover)
+    pages = summary.enable_pages(repo, admin, takeover)
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:
-        pages["website"], note = walkthrough.set_homepage(
+        pages["website"], note = summary.set_homepage(
             repo, pages["url"], details.get("homepage") or "", admin
         ) if pages["url"] else ("unchanged", "")
-    except walkthrough.SpecError as error:
+    except summary.SpecError as error:
         pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
     if note:
         print(f"project: {note}", file=sys.stderr)
@@ -878,8 +880,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_config(arguments)
     if arguments.command == "upgrade":
         return run_upgrade(arguments.target)
-    if arguments.command == "walkthrough":
-        return run_walkthrough(arguments)
+    if arguments.command == "summary":
+        return run_summary(arguments)
     if arguments.command == "site":
         return run_site(arguments)
 

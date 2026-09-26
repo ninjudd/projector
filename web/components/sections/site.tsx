@@ -19,7 +19,7 @@ const parts: { title: string; body: ReactNode }[] = [
     title: "Reviews",
     body: (
       <>
-        Guided walkthroughs of large pull requests, which the <Code>walkthrough-pr</Code> skill
+        Guided summaries of large pull requests, which the <Code>summarize-changes</Code> skill
         writes and publishes, one for each head the pull request reaches.
       </>
     ),

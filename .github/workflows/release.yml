@@ -84,4 +84,4 @@ jobs:
             *) exit "$status" ;;
           esac
           python3 scripts/release.py tag
-          gh api "repos/$REPO/dispatches" -f event_type=projector-walkthroughs
+          gh api "repos/$REPO/dispatches" -f event_type=projector-summaries

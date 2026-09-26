@@ -13,8 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `plan`, `implement`, `finish`, `start-review-loop`,
-`start-fix-loop`, and `walkthrough-pr`, which builds a guided walkthrough
-page for reviewing a large pull request. Claude invokes a plugin skill as
+`start-fix-loop`, and `summarize-changes`, which summarizes a pull request's
+changes as a guided review page. Claude invokes a plugin skill as
 `/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop inspects
 each head by the method in `skills/start-review-loop/method.md`, and the fix
 loop verifies findings by the same protocol. All three of `implement`, the

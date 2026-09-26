@@ -57,15 +57,15 @@ query time. Projector never writes a tracked status index.
 
 The plugin gives Claude Code and Codex the same skills: `plan`, `implement`,
 and `finish` a project; `start-review-loop` and `start-fix-loop` to review and
-fix pull requests continuously; and `walkthrough-pr`, which builds a guided
-walkthrough for reviewing a large pull request. Claude invokes a skill as
+fix pull requests continuously; and `summarize-changes`, which summarizes a
+pull request's changes as a guided review page. Claude invokes a skill as
 `/projector:<skill>` and Codex as `$<skill>`. See
 [Install Projector](docs/plugins.md) for how the skills work together.
 
 ## Publish a site
 
 Every repository can serve a site on GitHub Pages with its projects, its pull
-request walkthroughs, and its docs. `project init` sets it up, and
+request summaries, and its docs. `project init` sets it up, and
 `project site serve` shows it locally without Pages. See
 [Set up the Projector site](docs/site.md).
 

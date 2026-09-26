@@ -3,16 +3,16 @@
 Projector can host a site for a repository on GitHub Pages, built from content
 Projector keeps in the repository itself. Its menu has three sections:
 **Projects**, the home page, lists the projects under `docs/projects`;
-**Reviews** lists the pull request walkthroughs the `walkthrough-pr` skill
+**Reviews** lists the pull request summaries the `summarize-changes` skill
 publishes; and **Docs** renders `README.md` beside a sidebar of every other
 document under `docs/`. A document is Markdown, which the site renders, or an
 HTML page, which it shows as it is inside the site, with the files beside it,
 so an interactive explorer or a WebAssembly playground works there as it does
-from disk. Walkthroughs sit
-on hidden refs such as `refs/projector/walkthroughs`, which are not branches,
+from disk. Summaries sit
+on hidden refs such as `refs/projector/summaries`, which are not branches,
 so publishing one adds no branch, no pull request banner, and nothing to
 anyone's clone. One workflow on the default branch builds and deploys the
-site when a walkthrough is published or `README.md` or `docs/` changes. Set a
+site when a summary is published or `README.md` or `docs/` changes. Set a
 repository up once, with admin rights, from a checkout of it whose `origin`
 is the GitHub repository:
 
@@ -43,7 +43,7 @@ is the GitHub repository:
    name: Projector site
    on:
      repository_dispatch:
-       types: [projector-walkthroughs]
+       types: [projector-summaries]
      push:
        branches: [main]
        paths: [README.md, 'docs/**']
@@ -101,11 +101,11 @@ is the GitHub repository:
    you have not read never runs its code unasked.
 
 3. Publish something. Once the workflow is on the default branch, the
-   `walkthrough-pr` skill publishes to the site by default: ask your agent
-   for a walkthrough of a pull request and it pushes the spec to the hidden
+   `summarize-changes` skill publishes to the site by default: ask your agent
+   for a summary of a pull request and it pushes the spec to the hidden
    ref, starts the workflow, and hands you the link. Ask for a Claude
    Artifact instead when you want a private page. The site's Reviews section
-   lists every walkthrough, and each pull request's newest version is at
+   lists every summary, and each pull request's newest version is at
    `reviews/<number>/`. The projects and the docs appear on the first
    deploy, without publishing anything.
 
@@ -119,9 +119,32 @@ rebuilding it whenever `README.md`, `docs/`, or the plans change:
 project site serve
 ```
 
-It fetches the published walkthroughs from `origin` first, so the Reviews menu
-matches what the repository has published. Publish a walkthrough without
-starting a deploy with `project walkthrough publish --no-dispatch`. To host
+It fetches the published summaries from `origin` first, so the Reviews menu
+matches what the repository has published. Publish a summary without
+starting a deploy with `project summary publish --no-dispatch`. To host
 the site somewhere other than GitHub Pages, run `project site build --out
 DIR --base PATH` and serve `DIR` from any static host that answers a missing
 path with `404.html`.
+
+## Update a site set up for walkthroughs
+
+Summaries were once called walkthroughs, and a repository set up then has a
+workflow that listens for the `projector-walkthroughs` event and specs on
+`refs/projector/walkthroughs`. It keeps working: `project summary publish`
+sends both `projector-summaries` and `projector-walkthroughs`, and the site
+action reads the old ref until the new one exists. The first
+`project summary publish` creates `refs/projector/summaries` from the old
+ref's specs and history, and leaves the old ref in place.
+
+To finish moving, regenerate the workflow so it listens for the new event,
+and commit it to the default branch through a pull request:
+
+```sh
+project site workflow --write
+```
+
+Once `refs/projector/summaries` exists, delete the old ref:
+
+```sh
+git push origin :refs/projector/walkthroughs
+```
