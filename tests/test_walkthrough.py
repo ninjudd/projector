@@ -411,5 +411,77 @@ class RepoSlugTests(unittest.TestCase):
         self.assertEqual("", walkthrough.repo_slug("https://gitlab.com/o/r.git"))
 
 
+class StatusTests(unittest.TestCase):
+    def status(self, answers: dict[str, str | None], *args: str) -> tuple[int, str, str]:
+        def lookup(*gh_args: str) -> str | None:
+            endpoint = gh_args[1]
+            if endpoint not in answers:
+                raise walkthrough.SpecError(f"gh api {endpoint} failed: connection refused")
+            return answers[endpoint]
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(walkthrough, "gh_lookup", side_effect=lookup), redirect_stdout(out), redirect_stderr(err):
+            code = walkthrough.main(["status", "--repo", "o/r", *args])
+        return code, out.getvalue(), err.getvalue()
+
+    WORKFLOW = "repos/o/r/contents/.github/workflows/walkthroughs.yml"
+    PAGES = "repos/o/r/pages"
+    REPO = "repos/o/r"
+    PRESENT = ".github/workflows/walkthroughs.yml\n"
+
+    @staticmethod
+    def pages(**fields: object) -> str:
+        return json.dumps({"html_url": "https://o.example/r/", "public": True, **fields})
+
+    def test_a_repository_with_the_workflow_and_a_site_prints_the_walkthrough_url(self) -> None:
+        answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "false\n"}
+        self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
+        self.assertEqual((0, "https://o.example/r/66/\n", ""), self.status(answers, "--pr", "66"))
+
+    def test_a_certified_custom_domain_is_handed_over_as_https(self) -> None:
+        custom = self.pages(html_url="http://o.example/r/", https_enforced=False,
+                            https_certificate={"state": "approved"})
+        uncertified = self.pages(html_url="http://o.example/r/", https_enforced=False)
+        self.assertEqual((0, "https://o.example/r/\n", ""),
+                         self.status({self.WORKFLOW: self.PRESENT, self.PAGES: custom, self.REPO: "false\n"}))
+        self.assertEqual((0, "http://o.example/r/\n", ""),
+                         self.status({self.WORKFLOW: self.PRESENT, self.PAGES: uncertified, self.REPO: "false\n"}))
+
+    def test_a_private_repository_with_a_public_site_is_not_hosting(self) -> None:
+        code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "true\n"})
+        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual("not hosted: o/r is private but its GitHub Pages site is public\n", out)
+
+    def test_a_private_repository_with_a_private_site_is_hosting(self) -> None:
+        answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(public=False)}
+        self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
+
+    def test_a_pages_site_without_the_workflow_is_not_hosting(self) -> None:
+        code, out, _ = self.status({self.WORKFLOW: None, self.PAGES: self.pages()}, "--pr", "66")
+        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertEqual("not hosted: o/r has no .github/workflows/walkthroughs.yml on its default branch\n", out)
+
+    def test_the_workflow_without_a_pages_site_is_not_hosting(self) -> None:
+        code, out, _ = self.status({self.WORKFLOW: self.PRESENT, self.PAGES: None})
+        self.assertEqual(walkthrough.NOT_HOSTED, code)
+        self.assertIn("has the walkthroughs workflow but no GitHub Pages site", out)
+
+    def test_a_failed_lookup_is_an_error_rather_than_not_hosting(self) -> None:
+        code, out, err = self.status({})
+        self.assertEqual(1, code)
+        self.assertEqual("", out)
+        self.assertIn("connection refused", err)
+
+    def test_gh_lookup_reads_only_a_404_as_absent(self) -> None:
+        def failing(stderr: str):
+            return mock.patch.object(walkthrough.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                1, ["gh"], output="", stderr=stderr))
+
+        with failing("gh: Not Found (HTTP 404)\n"):
+            self.assertIsNone(walkthrough.gh_lookup("api", "repos/o/r/pages"))
+        with failing("gh: Bad credentials (HTTP 401)\n"), self.assertRaisesRegex(walkthrough.SpecError, "HTTP 401"):
+            walkthrough.gh_lookup("api", "repos/o/r/pages")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -232,6 +232,41 @@ def gh(*args: str) -> str:
         raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
+def gh_lookup(*args: str) -> str | None:
+    """Run gh, returning None when GitHub answers 404 and raising on any other failure."""
+    try:
+        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+    except FileNotFoundError as exc:
+        raise SpecError("the gh CLI is not installed") from exc
+    except subprocess.CalledProcessError as exc:
+        if "HTTP 404" in exc.stderr:
+            return None
+        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+
+
+def hosting(repo: str) -> tuple[str | None, str]:
+    """Return the repository's walkthroughs site URL, or None and why it is not set up.
+
+    Both halves are required. The workflow on the default branch is the reviewed
+    decision to host walkthroughs; a Pages site alone may serve something else.
+    """
+    if gh_lookup("api", f"repos/{repo}/contents/{WORKFLOW_PATH}", "--jq", ".path") is None:
+        return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
+    raw = gh_lookup("api", f"repos/{repo}/pages")
+    if raw is None:
+        return None, f"{repo} has the walkthroughs workflow but no GitHub Pages site"
+    pages = json.loads(raw)
+    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
+        return None, f"{repo} is private but its GitHub Pages site is public"
+    site = pages["html_url"]
+    # GitHub reports an http:// URL for a custom domain that does not enforce
+    # HTTPS, even once its certificate is issued and https:// serves the site.
+    certified = (pages.get("https_certificate") or {}).get("state") == "approved"
+    if site.startswith("http:") and (pages.get("https_enforced") or certified):
+        site = "https:" + site.removeprefix("http:")
+    return site.rstrip("/") + "/", ""
+
+
 def merge_base(repo: str, base_ref: str, head: str) -> str:
     return gh("api", f"repos/{repo}/compare/{base_ref}...{head}", "--jq", ".merge_base_commit.sha").strip()
 
@@ -659,6 +694,18 @@ def cmd_publish(args: argparse.Namespace) -> None:
     publish(Path(args.spec), args.remote, send_dispatch=not args.no_dispatch)
 
 
+NOT_HOSTED = 3
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    site, reason = hosting(args.repo)
+    if site is None:
+        print(f"not hosted: {reason}")
+        return NOT_HOSTED
+    print(f"{site}{args.pr}/" if args.pr else site)
+    return 0
+
+
 def cmd_workflow(args: argparse.Namespace) -> None:
     text = workflow_text(args.action_ref)
     if not args.write:
@@ -694,17 +741,20 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--remote", default="origin")
     u.add_argument("--no-dispatch", action="store_true", help="push the spec without starting the workflow")
     u.set_defaults(func=cmd_publish)
+    t = sub.add_parser("status", help="say whether a repository hosts walkthroughs, and print its site URL if so")
+    t.add_argument("--repo", required=True)
+    t.add_argument("--pr", type=int, help="print the URL of this pull request's walkthrough")
+    t.set_defaults(func=cmd_status)
     w = sub.add_parser("workflow", help="print or write the workflow file for the default branch")
     w.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
     w.add_argument("--write", action="store_true", help="write .github/workflows/walkthroughs.yml in this checkout")
     w.set_defaults(func=cmd_workflow)
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        return args.func(args) or 0
     except SpecError as exc:
         print(f"walkthrough: {exc}", file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":
