@@ -1,15 +1,17 @@
 // Projector site: three sections, drawn from site.json. Projects lists the projects
 // and renders each one's files beside a sidebar of its folder; Reviews lists the
 // pull request walkthroughs; Docs renders the README and everything else under
-// docs/ beside a sidebar of that tree. Every view has a real path under the site's
-// base; links between views update the address without a page load.
+// docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
+// shown as it is in a frame. Every view has a real path under the site's base;
+// links between views update the address without a page load.
 (function () {
   'use strict';
 
   var STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
   var PRIORITY_ORDER = ['now', 'next', 'later'];
   var site = null;
-  var markdownFiles = {};
+  var pageFiles = {};
+  var fitFrame = null;
   var siteFiles = {};
   var routes = {};
   var searchIndex = null;
@@ -94,7 +96,7 @@
       if (href.charAt(0) === '#' || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.charAt(0) === '/') return;
       var hash = href.indexOf('#') >= 0 ? href.slice(href.indexOf('#')) : '';
       var target = resolve(path, href.split('#')[0]);
-      if (markdownFiles[target]) a.setAttribute('href', routeFor(target) + hash);
+      if (pageFiles[target]) a.setAttribute('href', routeFor(target) + hash);
       else if (siteFiles[target]) a.setAttribute('href', contentUrl(target));
       else a.setAttribute('href', repoUrl('blob', target));
     });
@@ -129,14 +131,20 @@
       '<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form></header>';
   }
 
+  function isHtml(path) { return /\.html$/i.test(path); }
+
   // Draw the page around `body`, with `side` as a sidebar when given, and return
-  // the element the body went into.
-  function frame(active, title, body, side) {
+  // the element the body went into. A wide page, an HTML page's frame, takes the
+  // whole width and starts with its sidebar collapsed behind the toggle.
+  function frame(active, title, body, side, wide) {
     document.title = title ? title + ' · ' + site.repo : site.repo;
+    fitFrame = null;
+    var classes = 'sitemain' + (side ? ' withside' : '') + (wide ? ' wide' : '') + (side && wide ? ' collapsed' : '');
     root.innerHTML =
       header(active) +
-      '<main class="sitemain' + (side ? ' withside' : '') + '">' +
-      (side ? '<nav class="side" aria-label="Section">' + side + '</nav>' : '') +
+      '<main class="' + classes + '">' +
+      (side ? '<nav class="side" aria-label="Section"><button type="button" class="sidetoggle" aria-expanded="' + !wide + '" ' +
+        'title="Show or hide this section\'s pages">☰</button><div class="sidetree">' + side + '</div></nav>' : '') +
       '<div class="sidebody" id="sidebody"></div></main>' +
       '<footer class="sitefoot">Built by <a href="https://github.com/ninjudd/projector">Projector</a> from ' +
       '<a href="' + esc(repoUrl()) + '">' + esc(site.repo) + '</a>.</footer>';
@@ -183,6 +191,42 @@
     });
   }
 
+  // An HTML page as it is, in a frame of its copy under content/, so the files it
+  // loads by relative path resolve beside it. The address's hash passes into the
+  // frame and follows it back out, so a deep link into a hash-routed page works.
+  function showHtml(active, path, title, before, side) {
+    var main = frame(active, title, '', side, true);
+    if (before) main.appendChild(before);
+    var src = contentUrl(path) + location.hash;
+    var bar = document.createElement('div');
+    bar.className = 'htmlbar';
+    bar.innerHTML = '<a class="note" href="' + esc(src) + '" target="_blank" rel="noopener">Open full page</a>';
+    var page = document.createElement('iframe');
+    page.className = 'htmlpage';
+    page.title = title;
+    page.src = src;
+    main.appendChild(bar);
+    main.appendChild(page);
+    fitFrame = function () {
+      page.style.height = Math.max(320, window.innerHeight - page.getBoundingClientRect().top - 16) + 'px';
+    };
+    fitFrame();
+    page.addEventListener('load', function () {
+      try {
+        var inner = page.contentWindow;
+        if (inner.document.title) document.title = inner.document.title + ' · ' + site.repo;
+        inner.addEventListener('hashchange', function () {
+          history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
+          bar.firstChild.setAttribute('href', contentUrl(path) + inner.location.hash);
+        });
+      } catch (e) { /* a page that navigated elsewhere is no longer ours to read */ }
+    });
+  }
+
+  function showPage(active, path, title, before, side) {
+    return (isHtml(path) ? showHtml : showDocument)(active, path, title, before, side);
+  }
+
   function showDocument(active, path, title, before, side) {
     frame(active, title, '<p class="note">Loading…</p>', side);
     loadMarkdown(path).then(function (text) {
@@ -204,7 +248,7 @@
     if (!path) return frame('docs', 'Docs', '<h1>Docs</h1><p class="note">This repository has no README.md.</p>', side);
     var doc = null;
     site.docs.forEach(function (d) { if (d.path === path) doc = d; });
-    showDocument('docs', path, doc ? doc.title : 'Docs', null, side);
+    showPage('docs', path, doc ? doc.title : 'Docs', null, side);
   }
 
   function depth(name) { return name.split('/').length - 1; }
@@ -283,7 +327,7 @@
           return '<a href="' + esc(base + 'reviews/' + n + '/') + '">#' + n + (r ? ' ' + esc(r.name || r.title) : '') + '</a>';
         }).join(' · ') + '</div>' : '')
         : '<div class="pmeta"><a class="note" href="' + esc(repoUrl('blob', path)) + '">View on GitHub</a></div>');
-    showDocument('projects', path, isReadme ? project.title : (file ? file.title : path.split('/').pop()), head, side);
+    showPage('projects', path, isReadme ? project.title : (file ? file.title : path.split('/').pop()), head, side);
   }
 
   function reviewFor(number) {
@@ -402,6 +446,13 @@
   }
 
   document.addEventListener('click', function (event) {
+    var toggle = event.target.closest && event.target.closest('.sidetoggle');
+    if (toggle) {
+      var collapsed = toggle.closest('.sitemain').classList.toggle('collapsed');
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      if (fitFrame) fitFrame();
+      return;
+    }
     if (!root || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     var a = event.target.closest && event.target.closest('a[href]');
     if (!a || !inSite(a)) return;
@@ -432,15 +483,16 @@
         return;
       }
       (site.files || []).forEach(function (f) { siteFiles[f] = true; });
-      if (site.readme) markdownFiles[site.readme] = true;
-      if (site.projectsReadme) markdownFiles[site.projectsReadme] = true;
-      site.docs.forEach(function (d) { markdownFiles[d.path] = true; routes[d.route] = d.path; });
+      if (site.readme) pageFiles[site.readme] = true;
+      if (site.projectsReadme) pageFiles[site.projectsReadme] = true;
+      site.docs.forEach(function (d) { pageFiles[d.path] = true; routes[d.route] = d.path; });
       site.projects.forEach(function (p) {
-        markdownFiles[p.path] = true;
+        pageFiles[p.path] = true;
         routes['projects/' + p.name + '/'] = p.path;
-        p.files.forEach(function (f) { markdownFiles[f.path] = true; routes[f.route] = f.path; });
+        p.files.forEach(function (f) { pageFiles[f.path] = true; routes[f.route] = f.path; });
       });
       window.addEventListener('popstate', route);
+      window.addEventListener('resize', function () { if (fitFrame) fitFrame(); });
       route();
     }, function (error) {
       root.textContent = 'This site could not load its data: ' + error.message;

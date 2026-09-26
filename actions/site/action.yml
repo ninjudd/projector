@@ -7,6 +7,9 @@ inputs:
   root:
     description: Directory inside the ref that holds the specs.
     default: walkthroughs
+  prepare:
+    description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module. Set up any toolchain it needs in earlier steps.
+    default: ''
 outputs:
   page_url:
     description: The deployed site's URL.
@@ -28,6 +31,14 @@ runs:
           git worktree add --detach "$RUNNER_TEMP/walkthrough-specs" "$REF"
           echo "WALKTHROUGHS=$RUNNER_TEMP/walkthrough-specs/$ROOT" >> "$GITHUB_ENV"
         fi
+    # After this action's own checkout, which removes untracked files, so what the
+    # command generates is still there when the build copies it.
+    - name: Prepare generated files
+      if: inputs.prepare != ''
+      shell: bash
+      env:
+        PREPARE: ${{ inputs.prepare }}
+      run: bash -euo pipefail -c "$PREPARE"
     - id: pages
       uses: actions/configure-pages@v5
     - name: Build the Projector site

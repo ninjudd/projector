@@ -517,6 +517,66 @@ class RouteTests(SiteRepoCase):
             self.assertTrue((self.out / route.removeprefix("/projector/") / "index.html").is_file(), route)
 
 
+class HtmlPageTests(SiteRepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        files = {
+            "docs/explorer/README.md": "# Explorer\n",
+            "docs/explorer/explorer.html": "<!doctype html><title>EP5000 &amp; wire</title>"
+                                           "<script>var secret = 'zzz';</script><h1>Wire map</h1>",
+            "docs/explorer/template.html.in": "<title>__TITLE__</title>",
+            "docs/demo/index.html": "<title>Demo</title><p>Try it.</p>",
+            "docs/projects/alpha/playground/readme.md": plan("Name playground", "completed", None),
+            "docs/projects/alpha/playground/index.html": "<title>Name matcher</title>",
+            "docs/projects/alpha/playground/cases.json": "[]",
+        }
+        for path, text in files.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+        (self.repo / "docs/projects/alpha/playground/dist").mkdir()
+        (self.repo / "docs/projects/alpha/playground/dist/namematch.wasm").write_bytes(b"\0asm\1\0\0\0")
+
+    def build(self) -> dict:
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo)]))
+        return json.loads((self.out / "site.json").read_text())
+
+    def test_an_html_page_is_a_doc_with_its_title_and_a_route(self) -> None:
+        manifest = self.build()
+
+        docs = {d["path"]: (d["title"], d["route"]) for d in manifest["docs"]}
+        self.assertEqual(("EP5000 & wire", "docs/explorer/explorer/"), docs["docs/explorer/explorer.html"])
+        self.assertEqual(("Explorer", "docs/explorer/"), docs["docs/explorer/README.md"])
+        self.assertEqual(("Demo", "docs/demo/"), docs["docs/demo/index.html"], "an index.html takes a free folder route")
+        self.assertNotIn("docs/explorer/template.html.in", docs, "only .md and .html files are pages")
+        for route in ("docs/explorer/explorer/", "docs/explorer/", "docs/demo/"):
+            self.assertTrue((self.out / route / "index.html").is_file(), route)
+        self.assertEqual((self.repo / "docs/explorer/explorer.html").read_bytes(),
+                         (self.out / "content/docs/explorer/explorer.html").read_bytes(), "the frame loads this copy")
+
+    def test_a_playground_in_a_project_is_served_with_the_files_it_loads(self) -> None:
+        manifest = self.build()
+
+        playground = next(p for p in manifest["projects"] if p["name"] == "alpha/playground")
+        self.assertEqual([{"path": "docs/projects/alpha/playground/index.html", "title": "Name matcher",
+                           "route": "projects/alpha/playground/index/"}], playground["files"],
+                         "the readme keeps the folder's route, so the index moves to index/")
+        self.assertTrue((self.out / "projects/alpha/playground/index/index.html").is_file())
+        for path in ("docs/projects/alpha/playground/cases.json", "docs/projects/alpha/playground/dist/namematch.wasm",
+                     "docs/explorer/template.html.in"):
+            self.assertIn(path, manifest["files"])
+            self.assertEqual((self.repo / path).read_bytes(), (self.out / "content" / path).read_bytes(), path)
+
+    def test_search_reads_an_html_page_s_visible_text(self) -> None:
+        self.build()
+
+        index = {e["route"]: e for e in json.loads((self.out / "search.json").read_text())}
+        page = index["docs/explorer/explorer/"]
+        self.assertEqual(("EP5000 & wire", "doc"), (page["title"], page["kind"]))
+        self.assertIn("Wire map", page["text"])
+        self.assertNotIn("zzz", page["text"], "a script is not searchable text")
+
+
 class FakeGitHub:
     """The slice of the GitHub API `init` uses to set up the site, for one repository."""
 
@@ -749,6 +809,14 @@ class InitSiteTests(SiteRepoCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_the_action_prepares_generated_files_after_its_checkout_and_before_the_build(self) -> None:
+        action = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text()
+
+        self.assertIn("  prepare:\n", action)
+        checkout, prepare, build = (action.index(s) for s in ("actions/checkout", '"$PREPARE"', "site build"))
+        self.assertLess(checkout, prepare, "the checkout would remove what the command generated")
+        self.assertLess(prepare, build)
+
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = walkthrough.workflow_text("v0", "trunk")
         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**']\n", text)
