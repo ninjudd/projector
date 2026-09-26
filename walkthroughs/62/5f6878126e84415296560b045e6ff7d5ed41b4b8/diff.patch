@@ -1,0 +1,1284 @@
+diff --git a/README.md b/README.md
+index f500210..8796f88 100644
+--- a/README.md
++++ b/README.md
+@@ -66,10 +66,12 @@ directories or touch user-owned files. Run `./install.sh status` before an
+ upgrade to inspect those paths.
+ 
+ The plugin provides `plan-project`, `work-project`, `finish-project`,
+-`start-review-loop`, and `start-fix-loop`. Claude invokes a plugin skill as
+-`/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop
+-inspects each head by the method in `skills/start-review-loop/method.md`,
+-and the fix loop verifies findings by the same protocol. The core workflows
++`start-review-loop`, `start-fix-loop`, and `walkthrough-pr`, which builds a
++guided walkthrough page for reviewing a large pull request. Claude invokes a
++plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`. The
++review loop inspects each head by the method in
++`skills/start-review-loop/method.md`, and the fix loop verifies findings by
++the same protocol. The core workflows
+ use the local CLI and do not require MCP.
+ 
+ ## Adopt Projector in a repository
+diff --git a/docs/projects/pr-walkthrough/readme.md b/docs/projects/pr-walkthrough/readme.md
+new file mode 100644
+index 0000000..51d4b30
+--- /dev/null
++++ b/docs/projects/pr-walkthrough/readme.md
+@@ -0,0 +1,67 @@
++---
++status: in-progress
++priority: next
++---
++
++# Walk reviewers through large pull requests
++
++## 1. Outcome
++
++A reviewer facing a large pull request opens one page instead of the files
++tab. The page splits the diff into logical groups in reading order. Each group
++opens with what the change does and why, the ideas to hold while reading, and
++a checklist, then shows that group's files with every hunk syntax-highlighted.
++The reviewer marks files viewed and groups reviewed as they go.
++
++The page framework is a fixed renderer that ships with Projector. An agent
++writes only the part that needs judgment, a JSON spec holding the grouping,
++the explanations and the checks, and a script combines the spec with the pull
++request's diff.
++
++## 2. Acceptance criteria
++
++- The `walkthrough-pr` skill builds a page from a spec and the diff, and
++  refuses a spec that leaves a changed file out, repeats one, names one
++  outside the diff, or describes a head the pull request has moved past.
++- The page works from disk in any browser and publishes unchanged as a Claude
++  Artifact, with the renderer passed as supporting files.
++- The build script uses only the Python standard library and the `gh` CLI,
++  and the renderer loads remote scripts only from cdnjs.
++- A GitHub Pages publisher serves each repository's walkthroughs to the people
++  who can read that repository (section 4).
++
++## 3. Hosting
++
++Three hosts were weighed.
++
++- **Claude Artifacts.** No infrastructure, private by default, and available
++  now. Sharing is a manual step per artifact because there is no sharing API,
++  and only claude.ai users can open the page. This change ships this path.
++- **GitHub Pages per repository.** Fully inside GitHub, and access can follow
++  the repository's own permissions. It needs private Pages, which GitHub
++  offers only on Enterprise Cloud; on any other plan a private repository's
++  Pages site is public, so the publisher must refuse to run there.
++- **An external Projector site.** Rejected: it would host other people's code
++  and would need a GitHub App to enforce repository permissions, which Pages
++  provides without either.
++
++## 4. GitHub Pages publisher
++
++Deferred until a repository with private Pages is available to test against.
++The design: the agent commits the renderer and one data file per pull request
++head, such as `walkthroughs/<number>/<head>.json`, to an orphan branch through
++the Git Data API, so no checkout is needed. Pages serves that branch directly
++and the renderer loads the data file in the browser, so no Actions workflow
++runs. Other stores do not fit: Actions artifacts expire and need a login to
++fetch, Pages cannot read Git notes, secret gists are unlisted rather than
++private, and a pull request comment holds 65,536 characters while a large diff
++runs to megabytes. Open questions: squashing the branch so generated history
++does not grow without bound, keeping CI off pushes to it, and an index page
++per repository.
++
++## 5. Status log
++
++- **2026-09-25** The skill, renderer, build script and tests land with the
++  Artifacts path. The renderer began as a hand-built page for a 66-file pull
++  request in another repository, reviewed in eleven groups, then was split
++  into the fixed renderer and the spec format.
+diff --git a/skills/walkthrough-pr/SKILL.md b/skills/walkthrough-pr/SKILL.md
+new file mode 100644
+index 0000000..81a16b3
+--- /dev/null
++++ b/skills/walkthrough-pr/SKILL.md
+@@ -0,0 +1,111 @@
++---
++name: walkthrough-pr
++description: Build a guided, grouped walkthrough page for reviewing a large GitHub pull request, with each logical change explained, a checklist per group, and every hunk syntax-highlighted in reading order. Use when the user asks for help walking through, understanding, or reviewing a big PR diff.
++---
++
++# Pull Request Walkthrough
++
++Turn a pull request into one page a reviewer reads top to bottom: the diff
++split into logical groups in reading order, each group opened by what it
++does and why, what to hold in mind, and a checklist, followed by that
++group's files with every hunk. The page framework is fixed. Your job is the
++judgment: the grouping, the explanations, and the checks.
++
++Reading a pull request does not authorize changing it. Do not comment on,
++push to, or approve the pull request unless the user asks.
++
++## Build the spec
++
++1. Resolve the repository (`owner/name`) and pull request number from the
++   user's request or the current checkout.
++2. Write a skeleton spec. It records the pull request's head and lists every
++   changed file with its line counts:
++
++   ```sh
++   python3 <skill-dir>/scripts/walkthrough.py init \
++     --repo OWNER/NAME --pr NUMBER --spec WORKDIR/walkthrough.json
++   ```
++
++   Keep `WORKDIR` somewhere you can reach again this session, and put it in
++   the host's scratch directory when you will publish to Claude Artifacts,
++   which accepts supporting files only from the working directory or the
++   scratch directory. The spec is what you edit when the pull request moves.
++3. Read enough to explain the change: the pull request body, the full diff
++   (`gh pr diff NUMBER --repo OWNER/NAME`), plan or design documents the
++   change touches, and the review threads. For a large diff, delegate the
++   reading to subagents and keep only their conclusions.
++4. Fill the spec as `spec.md` describes. The groups decide whether the page
++   helps:
++   - **Order groups from the contract outward.** API and schema first, then
++     the shared core, then persistence and configuration, then adapters, then
++     the callers that drive it all, then tooling and documentation.
++   - **Put every changed file in exactly one group.** `build` refuses a spec
++     that misses a file, repeats one, or names one that is not in the diff.
++   - **Explain why, not only what.** Cite the plan decisions or review
++     threads behind a design choice.
++   - **Write checks a reviewer can act on.** A `verify` check names an
++     invariant worth tracing. A `flag` check is your own observation that
++     needs a decision; confirm it against the code before you write it, and
++     say plainly what is wrong or risky.
++   - **Collapse noise.** Generated code, tests and documentation start
++     collapsed unless a file's `collapsed` says otherwise. Give the files a
++     reviewer must read a one-line `note`.
++   - **Use the overview for the few facts every group depends on**, such as
++     a decision table, the configuration surface, what earlier review rounds
++     settled, and what the pull request leaves for later.
++
++## Build the page
++
++```sh
++python3 <skill-dir>/scripts/walkthrough.py build \
++  --spec WORKDIR/walkthrough.json --out WORKDIR/site
++```
++
++`build` refuses to run when the pull request's head is no longer the spec's
++`pr.head`, so the page never describes a diff it does not show. When GitHub
++cannot serve the diff because the pull request is too large, produce it
++locally and pass it with `--diff`:
++
++```sh
++git fetch origin BASE HEAD_SHA
++git diff "$(git merge-base origin/BASE HEAD_SHA)" HEAD_SHA > WORKDIR/pr.diff
++```
++
++The output directory holds `index.html` with the data embedded, plus the
++shared renderer, `walkthrough.js` and `walkthrough.css`. Opening
++`index.html` from disk works in any browser.
++
++## Publish the page
++
++With Claude Artifacts, publish `index.html` and pass the two renderer files
++through `files`, so the page loads them by relative path:
++
++- `file_path`: `WORKDIR/site/index.html`
++- `files`: `{"walkthrough.js": "WORKDIR/site/walkthrough.js", "walkthrough.css": "WORKDIR/site/walkthrough.css"}`
++- `icon`: `code` on the first publish
++- `description`: one sentence naming the pull request
++
++The renderer already meets the Artifact page contract: a named `<title>`,
++light and dark themes from tokens, scripts only from cdnjs, fonts only from
++Google Fonts, and a layout that works at phone width. An artifact starts
++private, and only its owner can share it, from the page's Share menu. Tell
++the user that when you hand over the link.
++
++Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
++
++## Update the page when the pull request moves
++
++1. List what changed since the spec's head:
++   `git log --oneline OLD_HEAD..NEW_HEAD` and
++   `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
++   compare against the new merge base instead.
++2. Read the new commits and any new review threads, then revise the spec:
++   set `pr.head`, move new files into groups, drop files that left the diff,
++   and rewrite every note, check and overview card the change made untrue.
++   Resolve or remove `flag` checks the new commits fixed.
++3. Rebuild, then republish to the same artifact: publish the same file path
++   again in the conversation that created it, or pass the artifact's URL as
++   `url` after reading it from any other conversation.
++
++Summarize for the user what changed in the pull request and which parts of
++the page moved.
+diff --git a/skills/walkthrough-pr/assets/walkthrough.css b/skills/walkthrough-pr/assets/walkthrough.css
+new file mode 100644
+index 0000000..43d04f9
+--- /dev/null
++++ b/skills/walkthrough-pr/assets/walkthrough.css
+@@ -0,0 +1,213 @@
++:root {
++  --bg: #F3F5F8; --surface: #FFFFFF; --surface-2: #EAEFF4; --text: #172230; --muted: #5D6B7A;
++  --border: #D6DDE5; --accent: #1F5F8B; --accent-soft: #E4EEF6; --on-accent: #FFFFFF;
++  --add-bg: #E4F5EA; --add-ln: #CBEAD6; --add-text: #0F5A2A;
++  --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
++  --hunk-bg: #EAF1F7; --hunk-text: #35597A; --ctx-ln: #8A96A3;
++  --warn: #9A6700; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA;
++  --code-bg: #EEF2F6;
++  --shadow: 0 1px 2px rgba(23,34,48,.06), 0 4px 16px rgba(23,34,48,.05);
++  --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
++  --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
++}
++@media (prefers-color-scheme: dark) {
++  :root:not([data-theme="light"]) {
++    color-scheme: dark;
++    --bg: #0E1318; --surface: #151C24; --surface-2: #1B242E; --text: #E4EAF1; --muted: #93A1B0;
++    --border: #27323E; --accent: #6FB1E0; --accent-soft: #17303F; --on-accent: #0E1318;
++    --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
++    --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
++    --hunk-bg: #16222E; --hunk-text: #8FB3D6; --ctx-ln: #5F6E7D;
++    --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
++    --code-bg: #1B242E;
++    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
++    --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%230E1318' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
++  }
++}
++:root[data-theme="dark"] {
++  color-scheme: dark;
++  --bg: #0E1318; --surface: #151C24; --surface-2: #1B242E; --text: #E4EAF1; --muted: #93A1B0;
++  --border: #27323E; --accent: #6FB1E0; --accent-soft: #17303F; --on-accent: #0E1318;
++  --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
++  --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
++  --hunk-bg: #16222E; --hunk-text: #8FB3D6; --ctx-ln: #5F6E7D;
++  --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
++  --code-bg: #1B242E;
++  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
++  --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%230E1318' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
++}
++* { box-sizing: border-box; }
++body {
++  margin: 0; background: var(--bg); color: var(--text);
++  font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.55;
++  -webkit-font-smoothing: antialiased;
++}
++code, pre, .mono, .fpath, .diff { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
++code { background: var(--code-bg); border-radius: 4px; padding: .05em .35em; font-size: .92em; }
++a { color: var(--accent); }
++h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
++.wrap { max-width: 1440px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
++.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 32px; align-items: start; }
++@media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
++
++/* top */
++.top { padding-block: 28px 8px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
++.top h1 { font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
++.top .sub { color: var(--muted); font-size: 14px; }
++.top .sub a { color: inherit; }
++.eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--muted); font-weight: 600; }
++
++/* sidebar */
++.side { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; }
++@media (max-width: 980px) { .side { position: static; } }
++.nav { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
++.prblock { padding: 4px 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
++.prref { display: inline; font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500; font-size: 14px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
++.prref:hover { text-decoration: underline; }
++.prtitle { margin-top: 4px; font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
++.prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
++.prmeta a { color: var(--accent); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
++.prmeta a:hover { text-decoration: underline; }
++.prbar { display: none; }
++@media (max-width: 980px) {
++  .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
++  .prbar .prref { font-size: 13px; }
++  .prbar .prname { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++  .fhead { top: calc(env(safe-area-inset-top, 0px) + 40px); }
++  .group, .file { scroll-margin-top: 56px; }
++}
++.nav .progress { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 6px 10px; font-size: 13px; color: var(--muted); }
++.nav .progress b { color: var(--text); font-variant-numeric: tabular-nums; }
++.nav .bar { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; margin: 0 6px 10px; }
++.nav .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
++.nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
++.nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
++.nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
++.prblock a { display: inline; padding: 0; }
++.nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
++.nav .ncheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
++.nav .ncheck.done { background: var(--ok) var(--check-icon) center / 9px 9px no-repeat; border-color: var(--ok); }
++.nav .extra { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
++.nav .extra a { grid-template-columns: 1fr; font-size: 13px; color: var(--muted); }
++@media (max-width: 980px) { .nav ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
++
++/* overview */
++.overview { display: flex; flex-direction: column; gap: 20px; }
++.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; box-shadow: var(--shadow); }
++.card h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
++.prose p { margin: 0 0 12px; max-width: 72ch; }
++.prose p:last-child { margin-bottom: 0; }
++.statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; }
++.stat-tile .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
++.stat-tile .l { color: var(--muted); font-size: 12.5px; }
++.plus { color: var(--add-text); font-variant-numeric: tabular-nums; } .minus { color: var(--del-text); font-variant-numeric: tabular-nums; }
++table.tbl { border-collapse: collapse; width: 100%; font-size: 14px; }
++table.tbl th, table.tbl td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
++table.tbl th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
++table.tbl td.r { font-weight: 600; }
++.tblwrap { overflow-x: auto; }
++.twocol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; align-items: start; }
++ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.tight li:last-child { margin-bottom: 0; }
++.count { color: var(--muted); font-size: 12.5px; margin-left: 4px; }
++.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; color: var(--muted); align-items: center; }
++
++/* groups */
++.groups { display: flex; flex-direction: column; gap: 36px; margin-top: 36px; }
++.group { scroll-margin-top: 16px; }
++.ghead { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: start; padding-bottom: 14px; border-bottom: 2px solid var(--border); }
++.gnum { width: 44px; height: 44px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 600; font-size: 18px; font-variant-numeric: tabular-nums; }
++.gtitle h2 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
++.kicker { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
++.gstats { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
++.reviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
++.reviewed input { accent-color: var(--ok); width: 16px; height: 16px; margin: 0; }
++.group.done .reviewed { background: var(--ok-bg); border-color: var(--ok); }
++@media (max-width: 640px) { .ghead { grid-template-columns: 44px 1fr; } .ghead .reviewed { grid-column: 2; justify-self: start; } }
++.group > .prose { margin-top: 18px; }
++.concepts, .checks { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--surface); }
++.concepts h4, .checks h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
++.concepts ul, .checks ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
++.concepts li { padding-left: 14px; position: relative; max-width: 80ch; }
++.concepts li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
++.checks li { display: grid; grid-template-columns: 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
++.chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; }
++.chip.verify { background: var(--surface-2); color: var(--muted); }
++.chip.flag { background: var(--warn-bg); color: var(--warn); }
++@media (max-width: 480px) { .checks li { grid-template-columns: 1fr; gap: 4px; } }
++
++/* file bar */
++.filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }
++.filebar-label { font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
++.filelist { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
++.filelist a { color: var(--accent); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
++.filelist a:hover { text-decoration: underline; }
++.filebar-actions { margin-left: auto; display: flex; gap: 12px; }
++.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
++.linkbtn:hover { text-decoration: underline; }
++
++/* files */
++.files { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
++.file { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: clip; box-shadow: var(--shadow); scroll-margin-top: 16px; }
++.fsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
++.fhead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; background: transparent; border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
++/* The header's surface is painted by ::after so that ::before can lay a page-background strip
++   under its rounded top corners: when the header is stuck mid-file, the tinted rows scrolling
++   beneath would otherwise show through the corner squares outside the radius. */
++.fhead::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 12px; background: var(--bg); z-index: -2; }
++.fhead::after { content: ""; position: absolute; inset: 0; background: var(--surface-2); border-radius: inherit; z-index: -1; }
++.file.collapsed .fhead { border-bottom: 0; border-radius: 9px; position: relative; }
++/* Pinned mid-file: square corners so the card's side borders run straight into the header, and a little depth. */
++.file.stuck .fhead { border-radius: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
++.file.stuck .fhead::before { display: none; }
++.ftoggle { display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; padding: 2px 0; color: var(--text); cursor: pointer; font: inherit; text-align: left; min-width: 0; flex: 0 1 auto; }
++.copypath { flex: none; margin-right: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; padding: 0; }
++.copypath:hover { background: var(--surface); border-color: var(--border); color: var(--text); }
++.copypath .ic-ok { display: none; } .copypath.copied .ic-copy { display: none; } .copypath.copied .ic-ok { display: inline; } .copypath.copied { color: var(--ok); }
++.chev { width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); transition: transform .15s; flex: none; margin-left: 2px; }
++.file.collapsed .chev { transform: rotate(-45deg); }
++.fpath { font-size: 13px; overflow-wrap: anywhere; }
++.fpath .dir { color: var(--muted); } .fpath .base { font-weight: 600; }
++.fmeta { display: inline-flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12.5px; color: var(--muted); margin-left: auto; }
++.badge { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
++.badge.new { color: var(--ok); border-color: var(--ok); }
++.badge.generated { color: var(--warn); border-color: var(--warn); }
++.stat { font-variant-numeric: tabular-nums; }
++.flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--accent); background: var(--surface); }
++.flink:hover { border-color: var(--accent); }
++.viewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
++.viewed input { accent-color: var(--ok); margin: 0; }
++.fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
++.file.collapsed .fnote { border-bottom: 0; }
++.file.collapsed .fbody { display: none; }
++.fbody { max-height: none; }
++table.diff { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.45; table-layout: fixed; }
++table.diff + table.diff { border-top: 1px solid var(--border); }
++table.diff td { padding: 0 8px; vertical-align: top; }
++table.diff td.ln { width: 46px; text-align: right; color: var(--ctx-ln); user-select: none; font-variant-numeric: tabular-nums; font-size: 11.5px; padding-top: 1px; }
++table.diff td.code { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
++table.diff .sign { display: inline-block; width: 1ch; margin-right: .5ch; color: var(--ctx-ln); }
++table.diff tr.add td { background: var(--add-bg); } table.diff tr.add td.ln { background: var(--add-ln); color: var(--add-text); }
++table.diff tr.del td { background: var(--del-bg); } table.diff tr.del td.ln { background: var(--del-ln); color: var(--del-text); }
++table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff tr.del .sign { color: var(--del-text); font-weight: 600; }
++table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
++table.diff tr.meta td { color: var(--muted); font-style: italic; }
++/* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
++.hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
++.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }
++.hljs-string, .hljs-regexp, .hljs-addition, .hljs-subst { color: var(--tk-str); }
++.hljs-number, .hljs-symbol, .hljs-bullet { color: var(--tk-num); }
++.hljs-type, .hljs-built_in, .hljs-title.class_, .hljs-class .hljs-title, .hljs-selector-class { color: var(--tk-type); }
++.hljs-title, .hljs-title.function_, .hljs-function .hljs-title, .hljs-section { color: var(--tk-fn); font-weight: 500; }
++.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property, .hljs-params { color: var(--tk-attr); }
++.hljs-meta, .hljs-meta .hljs-keyword, .hljs-meta .hljs-string { color: var(--tk-meta); }
++.hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; } .hljs-link { text-decoration: underline; }
++.hljs-deletion { color: inherit; }
++
++footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
++:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
++@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
++.chip.inline { margin-top: 0; }
++.badge.deleted { color: var(--del-text); border-color: var(--del-text); }
++.card .note { margin: 10px 0 0; color: var(--muted); font-size: 13.5px; max-width: 72ch; }
++.card pre { margin: 0; background: var(--code-bg); padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; white-space: pre; }
++.card h3 + p.note { margin-top: 0; margin-bottom: 12px; }
+diff --git a/skills/walkthrough-pr/assets/walkthrough.js b/skills/walkthrough-pr/assets/walkthrough.js
+new file mode 100644
+index 0000000..5748e4c
+--- /dev/null
++++ b/skills/walkthrough-pr/assets/walkthrough.js
+@@ -0,0 +1,312 @@
++// Projector PR walkthrough renderer: builds the page from the JSON in #walkthrough-data,
++// then wires collapsing, viewed and reviewed state, highlighting, and sticky headers.
++(function () {
++  'use strict';
++
++  var node = document.getElementById('walkthrough-data');
++  if (!node) return;
++  var data = JSON.parse(node.textContent);
++  var pr = data.pr;
++  var repoUrl = 'https://github.com/' + pr.repo;
++  var prUrl = repoUrl + '/pull/' + pr.number;
++  var prRef = pr.repo.split('/').pop() + '#' + pr.number;
++  var filesByPath = {};
++  data.files.forEach(function (f) { filesByPath[f.path] = f; });
++
++  function esc(s) {
++    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
++  }
++  function num(n) { return Number(n).toLocaleString('en-US'); }
++  function short(sha) { return String(sha || '').slice(0, 9); }
++  function ext(href, text, cls) {
++    return '<a' + (cls ? ' class="' + cls + '"' : '') + ' href="' + esc(href) + '" target="_blank" rel="noopener">' + text + '</a>';
++  }
++
++  var COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
++
++  function renderFile(spec) {
++    var f = filesByPath[spec.path];
++    var collapsed = spec.collapsed != null ? spec.collapsed : (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
++    var slash = f.path.lastIndexOf('/');
++    var dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
++    var base = f.path.slice(slash + 1);
++    var badges = '';
++    if (f.new) badges += '<span class="badge new">new</span>';
++    if (f.deleted) badges += '<span class="badge deleted">deleted</span>';
++    if (f.kind) badges += '<span class="badge ' + f.kind + '">' + f.kind + '</span>';
++    var hunks = f.hunks.map(function (h) {
++      var rows = ['<tr class="hunk"><td class="ln" colspan="2"></td><td class="code">' + esc(h.header) + '</td></tr>'];
++      h.lines.forEach(function (l) {
++        var t = l[0];
++        if (t === 'm') { rows.push('<tr class="meta"><td class="ln" colspan="2"></td><td class="code">' + esc(l[3]) + '</td></tr>'); return; }
++        var cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
++        var sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
++        rows.push('<tr class="' + cls + '"><td class="ln">' + (l[1] || '') + '</td><td class="ln">' + (l[2] || '') + '</td><td class="code"><span class="sign">' + sign + '</span><span class="src">' + esc(l[3]) + '</span></td></tr>');
++      });
++      return '<table class="diff">' + rows.join('') + '</table>';
++    }).join('') || '<p class="fnote">No content changes.</p>';
++    return '<article class="file' + (collapsed ? ' collapsed' : '') + '" id="' + f.id + '" data-fid="' + f.id + '" data-lang="' + esc(f.lang) + '">' +
++      '<div class="fsentinel" aria-hidden="true"></div>' +
++      '<header class="fhead">' +
++        '<button class="ftoggle" type="button" aria-expanded="' + (collapsed ? 'false' : 'true') + '" aria-controls="' + f.id + '-body" title="Collapse or expand">' +
++          '<span class="chev" aria-hidden="true"></span>' +
++          '<span class="fpath"><span class="dir">' + esc(dir) + '</span><span class="base">' + esc(base) + '</span></span>' +
++        '</button>' +
++        '<button class="copypath" type="button" data-path="' + esc(f.path) + '" title="Copy file path" aria-label="Copy file path">' + COPY_ICON + '</button>' +
++        '<span class="fmeta">' + badges +
++          '<span class="stat"><span class="plus">+' + f.adds + '</span> <span class="minus">−' + f.dels + '</span></span>' +
++          ext(prUrl + '/files#' + f.anchor, 'PR', 'flink') +
++          ext(repoUrl + '/blob/' + pr.head + '/' + f.path, 'file', 'flink') +
++          '<label class="viewed"><input type="checkbox" class="viewed-box" id="' + f.id + '-viewed"> viewed</label>' +
++        '</span>' +
++      '</header>' +
++      (spec.note ? '<p class="fnote">' + spec.note + '</p>' : '') +
++      '<div class="fbody" id="' + f.id + '-body">' + hunks + '</div>' +
++    '</article>';
++  }
++
++  function renderGroup(g, i) {
++    var adds = 0, dels = 0;
++    g.files.forEach(function (s) { adds += filesByPath[s.path].adds; dels += filesByPath[s.path].dels; });
++    var intro = (g.intro || []).map(function (p) { return '<p>' + p + '</p>'; }).join('');
++    var concepts = (g.concepts && g.concepts.length) ? '<div class="concepts"><h4>Hold these in mind</h4><ul>' + g.concepts.map(function (c) { return '<li>' + c + '</li>'; }).join('') + '</ul></div>' : '';
++    var checks = (g.checks && g.checks.length) ? '<div class="checks"><h4>What to check</h4><ul>' + g.checks.map(function (c) {
++      var k = c.kind === 'flag' ? 'flag' : 'verify';
++      return '<li class="' + k + '"><span class="chip ' + k + '">' + (k === 'flag' ? 'look here' : 'verify') + '</span><span>' + c.text + '</span></li>';
++    }).join('') + '</ul></div>' : '';
++    var list = g.files.map(function (s) { var f = filesByPath[s.path]; return '<li><a href="#' + f.id + '">' + esc(f.path.split('/').pop()) + '</a></li>'; }).join('');
++    return '<section class="group" id="' + esc(g.id) + '" data-gid="' + esc(g.id) + '">' +
++      '<header class="ghead"><div class="gnum">' + (i + 1) + '</div><div class="gtitle"><h2>' + g.title + '</h2>' +
++        (g.kicker ? '<p class="kicker">' + g.kicker + '</p>' : '') +
++        '<p class="gstats">' + g.files.length + ' file' + (g.files.length === 1 ? '' : 's') + ' · <span class="plus">+' + num(adds) + '</span> <span class="minus">−' + num(dels) + '</span></p></div>' +
++        '<label class="reviewed"><input type="checkbox" class="reviewed-box" id="' + esc(g.id) + '-reviewed"> Reviewed</label></header>' +
++      '<div class="prose">' + intro + '</div>' + concepts + checks +
++      '<div class="filebar"><span class="filebar-label">Files in this group</span><ul class="filelist">' + list + '</ul>' +
++        '<span class="filebar-actions"><button type="button" class="linkbtn expand-all">Expand all</button><button type="button" class="linkbtn collapse-all">Collapse all</button></span></div>' +
++      '<div class="files">' + g.files.map(renderFile).join('') + '</div>' +
++    '</section>';
++  }
++
++  function renderOverview() {
++    var o = data.overview || {};
++    var s = data.stats;
++    var summary = (o.summary || []).map(function (p) { return '<p>' + p + '</p>'; }).join('');
++    var out = '<div class="card prose"><h3>What this PR does</h3>' + summary +
++      '<p><b>How to read this.</b> Each group opens with what it does and why, things to hold in mind, and a checklist. Items marked <span class="chip flag inline">look here</span> deserve a decision; <span class="chip verify inline">verify</span> items are invariants worth tracing. Checkboxes and collapsed files are remembered in this browser only.</p></div>';
++    out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
++      [[num(s.files), 'files'], ['<span class="plus">+' + num(s.adds) + '</span> <span class="minus">−' + num(s.dels) + '</span>', 'lines'],
++       [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']]
++        .map(function (t) { return '<div class="stat-tile"><div class="v">' + t[0] + '</div><div class="l">' + t[1] + '</div></div>'; }).join('') +
++      '</div></div>';
++    var cards = o.cards || [];
++    if (cards.length) {
++      out += '<div class="twocol">' + cards.map(function (c) {
++        return '<div class="card"' + (c.id ? ' id="' + esc(c.id) + '"' : '') + '><h3>' + c.title + '</h3>' + c.html + '</div>';
++      }).join('') + '</div>';
++    }
++    out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file header to expand or collapse it; "viewed" collapses it and remembers that.</span></div>';
++    return out;
++  }
++
++  function renderPage() {
++    var nav = data.groups.map(function (g, i) {
++      return '<li><a href="#' + esc(g.id) + '"><span class="nnum">' + (i + 1) + '</span><span class="ntitle">' + g.title + '</span><span class="ncheck" data-gid="' + esc(g.id) + '"></span></a></li>';
++    }).join('');
++    var extra = '<a href="#overview">Overview</a>' + (data.overview && data.overview.cards || []).filter(function (c) { return c.id; }).map(function (c) {
++      return '<a href="#' + esc(c.id) + '">' + c.title + '</a>';
++    }).join('');
++    var title = esc(data.name || ('Walkthrough of ' + prRef));
++    return '<div class="wrap">' +
++      '<div class="prbar">' + ext(prUrl, esc(prRef), 'prref') + '<span class="prname">' + title + '</span></div>' +
++      '<header class="top"><div><div class="eyebrow">' + ext(prUrl, esc(prRef)) + ' · head <span class="mono">' + short(pr.head) + '</span> on ' + esc(pr.baseRef || 'base') + '</div><h1>' + title + '</h1></div>' +
++        '<div class="sub">' + ext(prUrl, 'Open the PR') + ' · ' + ext(prUrl + '/files', 'Files tab') + ' · ' + ext(repoUrl + '/compare/' + encodeURIComponent(pr.baseRef || 'main') + '...' + pr.head, 'Compare') + '</div></header>' +
++      '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
++        '<div class="prblock">' + ext(prUrl, esc(prRef), 'prref') +
++          '<div class="prtitle" title="' + esc(pr.title) + '">' + esc(pr.title) + '</div>' +
++          '<div class="prmeta">' + ext(repoUrl + '/commit/' + pr.head, short(pr.head)) + ' → ' + esc(pr.baseRef || 'base') + ' · ' + ext(prUrl + '/files', 'files') + '</div></div>' +
++        '<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ' + data.groups.length + '</b></div><div class="bar"><i id="progress-bar"></i></div>' +
++        '<ol>' + nav + '</ol><div class="extra">' + extra + '</div></nav></aside>' +
++      '<main><div class="overview" id="overview">' + renderOverview() + '</div>' +
++        '<div class="groups">' + data.groups.map(renderGroup).join('') + '</div>' +
++        '<footer>Generated from the diff at head <span class="mono">' + short(pr.head) + '</span> on ' + esc(data.generatedAt || '') + ' by Projector\'s <span class="mono">walkthrough-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>' +
++      '</main></div></div>';
++  }
++
++  var root = document.getElementById('walkthrough') || document.body;
++  root.innerHTML = renderPage();
++  window.__WALKTHROUGH_KEY__ = 'walkthrough:' + pr.repo + '#' + pr.number + ':';
++})();
++
++(function () {
++  var KEY = window.__WALKTHROUGH_KEY__ || 'walkthrough:';
++  function get(k) { try { return localStorage.getItem(KEY + k); } catch (e) { return null; } }
++  function set(k, v) { try { if (v) localStorage.setItem(KEY + k, '1'); else localStorage.removeItem(KEY + k); } catch (e) {} }
++
++  var groups = Array.prototype.slice.call(document.querySelectorAll('.group'));
++  var progressEl = document.getElementById('progress-count');
++  var barEl = document.getElementById('progress-bar');
++
++  function refreshProgress() {
++    var done = 0;
++    groups.forEach(function (g) {
++      var isDone = g.classList.contains('done');
++      if (isDone) done++;
++      var dot = document.querySelector('.ncheck[data-gid="' + g.dataset.gid + '"]');
++      if (dot) dot.classList.toggle('done', isDone);
++    });
++    if (progressEl) progressEl.textContent = done + ' / ' + groups.length;
++    if (barEl) barEl.style.width = (groups.length ? (100 * done / groups.length) : 0) + '%';
++  }
++
++  groups.forEach(function (g) {
++    var box = g.querySelector('.reviewed-box');
++    var saved = get('g:' + g.dataset.gid) === '1';
++    box.checked = saved; g.classList.toggle('done', saved);
++    box.addEventListener('change', function () {
++      g.classList.toggle('done', box.checked);
++      set('g:' + g.dataset.gid, box.checked);
++      refreshProgress();
++    });
++    g.querySelector('.expand-all').addEventListener('click', function () {
++      g.querySelectorAll('.file').forEach(function (f) { setCollapsed(f, false); });
++    });
++    g.querySelector('.collapse-all').addEventListener('click', function () {
++      g.querySelectorAll('.file').forEach(function (f) { setCollapsed(f, true); });
++    });
++  });
++
++  function setCollapsed(f, collapsed) {
++    f.classList.toggle('collapsed', collapsed);
++    if (collapsed) f.classList.remove('stuck');
++    var btn = f.querySelector('.ftoggle');
++    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
++    if (!collapsed) highlightFile(f);
++  }
++
++  document.querySelectorAll('.file').forEach(function (f) {
++    var fid = f.dataset.fid;
++    var box = f.querySelector('.viewed-box');
++    var viewed = get('f:' + fid) === '1';
++    box.checked = viewed;
++    if (viewed) setCollapsed(f, true);
++    box.addEventListener('change', function () {
++      set('f:' + fid, box.checked);
++      var wasStuck = f.getBoundingClientRect().top < 0;
++      setCollapsed(f, box.checked);
++      // Marked viewed from a header stuck at the top of a long file: bring
++      // the collapsed card into view instead of landing on what followed it.
++      if (box.checked && wasStuck) f.scrollIntoView({ block: 'start' });
++    });
++    f.querySelector('.ftoggle').addEventListener('click', function () {
++      setCollapsed(f, !f.classList.contains('collapsed'));
++    });
++  });
++
++  document.querySelectorAll('.copypath').forEach(function (b) {
++    b.addEventListener('click', function (ev) {
++      ev.stopPropagation();
++      var path = b.dataset.path;
++      function done() { b.classList.add('copied'); b.title = 'Copied'; setTimeout(function () { b.classList.remove('copied'); b.title = 'Copy file path'; }, 1500); }
++      function fallback() {
++        var ta = document.createElement('textarea'); ta.value = path; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
++        document.body.appendChild(ta); ta.select();
++        try { if (document.execCommand('copy')) done(); } catch (e) {}
++        document.body.removeChild(ta);
++      }
++      try { navigator.clipboard.writeText(path).then(done, fallback); } catch (e) { fallback(); }
++    });
++  });
++
++  // Pinned-header detection: a 1px sentinel sits at the top of each card; once
++  // it has scrolled above the header's sticky offset, the header is pinned and
++  // its corners go square so the card's side borders run straight into it.
++  var stuckObserver = null;
++  function setupStuck() {
++    if (!('IntersectionObserver' in window)) return;
++    if (stuckObserver) stuckObserver.disconnect();
++    var sample = document.querySelector('.file:not(.collapsed) .fhead') || document.querySelector('.fhead');
++    var offset = sample ? (parseFloat(getComputedStyle(sample).top) || 0) : 0;
++    stuckObserver = new IntersectionObserver(function (entries) {
++      entries.forEach(function (e) {
++        var f = e.target.parentElement;
++        var pinned = !e.isIntersecting && e.boundingClientRect.top < offset + 1 && !f.classList.contains('collapsed');
++        f.classList.toggle('stuck', pinned);
++      });
++    }, { rootMargin: (-(offset + 1)) + 'px 0px 0px 0px', threshold: 0 });
++    document.querySelectorAll('.fsentinel').forEach(function (el) { stuckObserver.observe(el); });
++  }
++  setupStuck();
++  var resizeTimer = null;
++  window.addEventListener('resize', function () {
++    clearTimeout(resizeTimer);
++    resizeTimer = setTimeout(setupStuck, 200);
++  });
++
++  // Syntax highlighting: each hunk is highlighted as two whole texts (the
++  // old side: context + removed lines; the new side: context + added lines)
++  // so tokens that span lines survive, then split back into rows. Files that
++  // start collapsed are highlighted when first opened.
++  function splitLines(s) {
++    var out = [], open = [], cur = '';
++    var re = /<span class="[^"]*">|<\/span>|\n|[^<\n]+|</g, m;
++    while ((m = re.exec(s)) !== null) {
++      var t = m[0];
++      if (t === '\n') {
++        for (var i = 0; i < open.length; i++) cur += '</span>';
++        out.push(cur);
++        cur = open.join('');
++      } else if (t === '</span>') {
++        open.pop(); cur += t;
++      } else if (t.length > 1 && t.charAt(0) === '<') {
++        open.push(t); cur += t;
++      } else {
++        cur += t;
++      }
++    }
++    for (var j = 0; j < open.length; j++) cur += '</span>';
++    out.push(cur);
++    return out;
++  }
++  function hl(text, lang) {
++    try { return splitLines(hljs.highlight(text, { language: lang, ignoreIllegals: true }).value); }
++    catch (e) { return null; }
++  }
++  function highlightFile(f) {
++    if (f.dataset.hl || !window.hljs) return;
++    var lang = f.dataset.lang;
++    if (!lang || !hljs.getLanguage(lang)) { f.dataset.hl = '1'; return; }
++    f.querySelectorAll('table.diff').forEach(function (tbl) {
++      var rows = Array.prototype.slice.call(tbl.querySelectorAll('tr.add, tr.del, tr.ctx'));
++      var oldT = [], newT = [], oldR = [], newR = [];
++      rows.forEach(function (r) {
++        var src = r.querySelector('.src'); var text = src ? src.textContent : '';
++        if (r.classList.contains('add')) { newR.push(src); newT.push(text); }
++        else if (r.classList.contains('del')) { oldR.push(src); oldT.push(text); }
++        else { newR.push(src); newT.push(text); oldR.push(null); oldT.push(text); }
++      });
++      var newH = newT.length ? hl(newT.join('\n'), lang) : [];
++      var oldH = oldT.length ? hl(oldT.join('\n'), lang) : [];
++      if (newH && newH.length === newR.length) newR.forEach(function (s, k) { if (s) s.innerHTML = newH[k]; });
++      if (oldH && oldH.length === oldR.length) oldR.forEach(function (s, k) { if (s) s.innerHTML = oldH[k]; });
++    });
++    f.dataset.hl = '1';
++  }
++  var hlQueue = Array.prototype.slice.call(document.querySelectorAll('.file:not(.collapsed)'));
++  function pump() {
++    var t0 = Date.now();
++    while (hlQueue.length && Date.now() - t0 < 24) highlightFile(hlQueue.shift());
++    if (hlQueue.length) setTimeout(pump, 0);
++  }
++  if (window.hljs) setTimeout(pump, 0);
++
++  // A hash pointing at a collapsed file opens it.
++  function openHashTarget() {
++    var h = location.hash.replace('#', '');
++    if (!h) return;
++    var el = document.getElementById(h);
++    if (el && el.classList.contains('file')) setCollapsed(el, false);
++  }
++  window.addEventListener('hashchange', openHashTarget);
++  openHashTarget();
++  refreshProgress();
++})();
+diff --git a/skills/walkthrough-pr/scripts/walkthrough.py b/skills/walkthrough-pr/scripts/walkthrough.py
+new file mode 100755
+index 0000000..0f33a29
+--- /dev/null
++++ b/skills/walkthrough-pr/scripts/walkthrough.py
+@@ -0,0 +1,279 @@
++#!/usr/bin/env python3
++"""Build a pull request walkthrough page from a spec and the PR's diff.
++
++    walkthrough.py init  --repo OWNER/NAME --pr N --spec SPEC [--diff FILE]
++    walkthrough.py build --spec SPEC --out DIR [--diff FILE]
++
++`init` writes a skeleton spec with the PR's metadata and every changed file
++in one unassigned group. You then group the files and write the notes.
++`build` checks that every changed file sits in exactly one group, that the
++spec's head is still the PR's head, and writes DIR/index.html with the
++renderer's walkthrough.js and walkthrough.css beside it.
++
++Without --diff the diff comes from `gh pr diff`. Pass --diff for a PR too
++large for GitHub's diff endpoint, or to build offline.
++"""
++
++from __future__ import annotations
++
++import argparse
++import datetime
++import hashlib
++import json
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++ASSETS = Path(__file__).resolve().parents[1] / "assets"
++SPEC_VERSION = 1
++HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1"
++FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
++
++LANGS = {
++    ".go": "go", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
++    ".mjs": "javascript", ".py": "python", ".rb": "ruby", ".rs": "rust", ".java": "java", ".kt": "kotlin",
++    ".swift": "swift", ".proto": "protobuf", ".sh": "bash", ".bash": "bash", ".zsh": "bash", ".md": "markdown",
++    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "ini", ".sql": "sql", ".css": "css",
++    ".scss": "scss", ".html": "xml", ".xml": "xml", ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp",
++    ".cs": "csharp", ".php": "php", ".tf": "ini", ".dockerfile": "dockerfile",
++}
++GENERATED_SUFFIXES = (".pb.go", "_grpc.pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
++GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
++
++
++class SpecError(Exception):
++    pass
++
++
++def lang_of(path: str) -> str:
++    name = path.rsplit("/", 1)[-1].lower()
++    if name == "dockerfile":
++        return "dockerfile"
++    if name == "makefile":
++        return "makefile"
++    dot = name.rfind(".")
++    return LANGS.get(name[dot:], "") if dot >= 0 else ""
++
++
++def kind_of(path: str) -> str:
++    lower = path.lower()
++    if lower.endswith(GENERATED_SUFFIXES) or any(part in "/" + lower for part in GENERATED_PARTS):
++        return "generated"
++    name = lower.rsplit("/", 1)[-1]
++    if (
++        name.endswith(("_test.go", "_test.py", ".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.js", "_spec.rb"))
++        or name.startswith("test_")
++        or "/tests/" in "/" + lower
++        or "/__tests__/" in lower
++    ):
++        return "test"
++    if lower.endswith((".md", ".mdx", ".rst", ".adoc")):
++        return "docs"
++    return ""
++
++
++def parse_diff(text: str) -> list[dict]:
++    files: list[dict] = []
++    cur = hunk = None
++    old_no = new_no = 0
++    for raw in text.split("\n"):
++        if raw.startswith("diff --git "):
++            path = raw.split(" b/", 1)[-1]
++            cur = {"path": path, "new": False, "deleted": False, "adds": 0, "dels": 0, "hunks": []}
++            files.append(cur)
++            hunk = None
++            continue
++        if cur is None:
++            continue
++        if raw.startswith("new file mode"):
++            cur["new"] = True
++        elif raw.startswith("deleted file mode"):
++            cur["deleted"] = True
++        elif raw.startswith("rename to "):
++            cur["path"] = raw[len("rename to "):]
++        elif raw.startswith("@@"):
++            head = raw.split("@@")[1].split()
++            old_no = int(head[0].lstrip("-").split(",")[0])
++            new_no = int(head[1].lstrip("+").split(",")[0])
++            hunk = {"header": raw, "lines": []}
++            cur["hunks"].append(hunk)
++        elif hunk is None:
++            continue
++        elif raw.startswith("\\"):
++            hunk["lines"].append(["m", "", "", raw])
++        elif raw.startswith("+"):
++            hunk["lines"].append(["a", "", new_no, raw[1:]])
++            new_no += 1
++            cur["adds"] += 1
++        elif raw.startswith("-"):
++            hunk["lines"].append(["d", old_no, "", raw[1:]])
++            old_no += 1
++            cur["dels"] += 1
++        elif raw.startswith(" "):
++            hunk["lines"].append(["c", old_no, new_no, raw[1:]])
++            old_no += 1
++            new_no += 1
++    for f in files:
++        f["lang"] = lang_of(f["path"])
++        f["kind"] = kind_of(f["path"])
++        f["id"] = "f-" + hashlib.sha1(f["path"].encode()).hexdigest()[:10]
++        f["anchor"] = "diff-" + hashlib.sha256(f["path"].encode()).hexdigest()
++    return files
++
++
++def gh(*args: str) -> str:
++    try:
++        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
++    except FileNotFoundError as exc:
++        raise SpecError("the gh CLI is not installed; pass --diff and fill the PR fields by hand") from exc
++    except subprocess.CalledProcessError as exc:
++        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
++
++
++def pr_metadata(repo: str, number: int) -> dict:
++    raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,baseRefName,url"))
++    return {"repo": repo, "number": number, "title": raw["title"], "head": raw["headRefOid"], "baseRef": raw["baseRefName"]}
++
++
++def read_diff(args: argparse.Namespace, repo: str, number: int) -> str:
++    if args.diff:
++        return Path(args.diff).read_text(encoding="utf-8")
++    return gh("pr", "diff", str(number), "--repo", repo)
++
++
++def validate(spec: dict, files: list[dict]) -> None:
++    if spec.get("version") != SPEC_VERSION:
++        raise SpecError(f"spec version must be {SPEC_VERSION}")
++    for key in ("repo", "number", "head", "title"):
++        if not spec.get("pr", {}).get(key):
++            raise SpecError(f"pr.{key} is required")
++    groups = spec.get("groups") or []
++    if not groups:
++        raise SpecError("the spec has no groups")
++    known = {f["path"] for f in files}
++    seen: dict[str, str] = {}
++    problems: list[str] = []
++    ids: set[str] = set()
++    for g in groups:
++        gid = g.get("id")
++        if not gid or not g.get("title"):
++            problems.append("every group needs an id and a title")
++            continue
++        if gid in ids:
++            problems.append(f"group id {gid!r} is used twice")
++        ids.add(gid)
++        for fs in g.get("files") or []:
++            path = fs.get("path")
++            if path not in known:
++                problems.append(f"{gid}: {path} is not in the diff")
++            elif path in seen:
++                problems.append(f"{path} is in both {seen[path]} and {gid}")
++            else:
++                seen[path] = gid
++        for c in g.get("checks") or []:
++            if c.get("kind") not in ("verify", "flag") or not c.get("text"):
++                problems.append(f"{gid}: each check needs kind verify or flag and a text")
++    for path in sorted(known - set(seen)):
++        problems.append(f"{path} is in no group")
++    if problems:
++        raise SpecError("the spec does not match the diff:\n  " + "\n  ".join(problems))
++
++
++def stats(files: list[dict]) -> dict:
++    out = {"files": len(files), "adds": 0, "dels": 0, "hand": 0, "test": 0, "generated": 0, "docs": 0}
++    for f in files:
++        out["adds"] += f["adds"]
++        out["dels"] += f["dels"]
++        out[f["kind"] or "hand"] += f["adds"] + f["dels"]
++    return out
++
++
++def page(title: str, payload: dict) -> str:
++    blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
++    return f"""<title>{escape(title)}</title>
++<meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
++<link rel="stylesheet" href="{FONTS}">
++<link rel="stylesheet" href="walkthrough.css">
++<div id="walkthrough"></div>
++<script id="walkthrough-data" type="application/json">{blob}</script>
++<script src="{HLJS}/highlight.min.js"></script>
++<script src="{HLJS}/languages/protobuf.min.js"></script>
++<script src="walkthrough.js"></script>
++"""
++
++
++def escape(s: str) -> str:
++    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
++
++
++def cmd_init(args: argparse.Namespace) -> None:
++    meta = pr_metadata(args.repo, args.pr)
++    files = parse_diff(read_diff(args, args.repo, args.pr))
++    spec = {
++        "version": SPEC_VERSION,
++        "name": "",
++        "pr": meta,
++        "overview": {"summary": [], "cards": []},
++        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "concepts": [], "checks": [],
++                    "files": [{"path": f["path"]} for f in files]}],
++    }
++    Path(args.spec).write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
++    print(f"wrote {args.spec}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
++    for f in files:
++        flag = f" [{f['kind']}]" if f["kind"] else ""
++        print(f"  +{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}")
++
++
++def cmd_build(args: argparse.Namespace) -> None:
++    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
++    pr = spec.get("pr") or {}
++    if not args.diff:
++        live = pr_metadata(pr["repo"], int(pr["number"]))
++        if live["head"] != pr.get("head"):
++            raise SpecError(f"the PR head moved from {str(pr.get('head'))[:9]} to {live['head'][:9]}; update the spec for the new head before building")
++    files = parse_diff(read_diff(args, pr["repo"], int(pr["number"])))
++    validate(spec, files)
++    payload = {
++        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} walkthrough",
++        "pr": pr,
++        "overview": spec.get("overview") or {},
++        "groups": spec["groups"],
++        "files": files,
++        "stats": stats(files),
++        "generatedAt": datetime.date.today().isoformat(),
++    }
++    out = Path(args.out)
++    out.mkdir(parents=True, exist_ok=True)
++    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
++    for asset in ("walkthrough.js", "walkthrough.css"):
++        shutil.copyfile(ASSETS / asset, out / asset)
++    s = payload["stats"]
++    print(f"wrote {out}/index.html: {len(spec['groups'])} groups, {s['files']} files, +{s['adds']} -{s['dels']}")
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    sub = parser.add_subparsers(dest="command", required=True)
++    p = sub.add_parser("init", help="write a skeleton spec for a PR")
++    p.add_argument("--repo", required=True)
++    p.add_argument("--pr", required=True, type=int)
++    p.add_argument("--spec", required=True)
++    p.add_argument("--diff")
++    p.set_defaults(func=cmd_init)
++    b = sub.add_parser("build", help="build the page from a spec")
++    b.add_argument("--spec", required=True)
++    b.add_argument("--out", required=True)
++    b.add_argument("--diff")
++    b.set_defaults(func=cmd_build)
++    args = parser.parse_args(argv)
++    try:
++        args.func(args)
++    except SpecError as exc:
++        print(f"walkthrough: {exc}", file=sys.stderr)
++        return 1
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/skills/walkthrough-pr/spec.md b/skills/walkthrough-pr/spec.md
+new file mode 100644
+index 0000000..961ab23
+--- /dev/null
++++ b/skills/walkthrough-pr/spec.md
+@@ -0,0 +1,71 @@
++# Walkthrough spec
++
++`walkthrough.py init` writes the skeleton and `walkthrough.py build` reads
++it. The spec is JSON:
++
++```json
++{
++  "version": 1,
++  "name": "Card Name Check Walkthrough",
++  "pr": {
++    "repo": "owner/name",
++    "number": 2062,
++    "title": "The pull request title",
++    "head": "full head commit SHA",
++    "baseRef": "main"
++  },
++  "overview": {
++    "summary": ["<p>-level HTML paragraph", "..."],
++    "cards": [
++      {"id": "history", "title": "Review history so far", "html": "<ul class=\"tight\">...</ul>"}
++    ]
++  },
++  "groups": [
++    {
++      "id": "core",
++      "title": "The shared decision core",
++      "kicker": "One line on what the group covers",
++      "intro": ["Paragraph", "Paragraph"],
++      "concepts": ["Idea the reviewer must hold while reading"],
++      "checks": [
++        {"kind": "verify", "text": "An invariant worth tracing"},
++        {"kind": "flag", "text": "An observation that needs a decision"}
++      ],
++      "files": [
++        {"path": "src/core/check.go", "note": "What to look at in this file"},
++        {"path": "src/core/check_test.go", "collapsed": true}
++      ]
++    }
++  ]
++}
++```
++
++## Fields
++
++- `name` is the page title: a short name for the change, not a sentence.
++  It becomes the browser tab and gallery title.
++- `pr.head` is the commit the page describes. `build` stops when the pull
++  request has moved past it.
++- `overview.summary` is what the pull request does, in a few paragraphs.
++  The page adds the line counts and a legend itself.
++- `overview.cards` lay out two per row. A card with an `id` also gets a
++  link at the bottom of the sidebar.
++- `groups[].id` must be unique; it is the section anchor and the key for the
++  reader's "Reviewed" checkbox.
++- `groups[].files[].collapsed` overrides the default, which collapses
++  generated, test and documentation files.
++
++## HTML in text fields
++
++Every text field except `name`, `pr` and the file paths is inserted as HTML,
++so write `<code>`, `<b>` and links directly and escape a literal `<` as
++`&lt;`. These classes are styled for cards:
++
++| Class | Use |
++| --- | --- |
++| `tblwrap` around `table.tbl` | A table that scrolls on narrow screens |
++| `td.r` | A bold result column |
++| `note` on a `p` | Muted explanatory text |
++| `tight` on a `ul` | A compact list |
++| `count` on a `span` | A muted count after a label |
++| `pre` | A command block |
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 872c483..af5adbb 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -14,6 +14,7 @@
+     "start-review-loop",
+     "start-fix-loop",
+     "gh-stack",
++    "walkthrough-pr",
+ }
+ 
+ 
+diff --git a/tests/test_walkthrough.py b/tests/test_walkthrough.py
+new file mode 100644
+index 0000000..e447467
+--- /dev/null
++++ b/tests/test_walkthrough.py
+@@ -0,0 +1,156 @@
++from __future__ import annotations
++
++import importlib.util
++import io
++import json
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from pathlib import Path
++
++ROOT = Path(__file__).parents[1]
++SCRIPT = ROOT / "skills" / "walkthrough-pr" / "scripts" / "walkthrough.py"
++
++spec = importlib.util.spec_from_file_location("walkthrough", SCRIPT)
++walkthrough = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(walkthrough)
++
++DIFF = """diff --git a/src/core.go b/src/core.go
++index 1111111..2222222 100644
++--- a/src/core.go
+++++ b/src/core.go
++@@ -10,3 +10,4 @@ func Check() {
++     a := 1
++-    b := 2
+++    b := 3
+++    c := "</script>"
++     return
++diff --git a/src/core_test.go b/src/core_test.go
++new file mode 100644
++index 0000000..3333333
++--- /dev/null
+++++ b/src/core_test.go
++@@ -0,0 +1,2 @@
+++package core
+++func TestCheck() {}
++diff --git a/gen/api.pb.go b/gen/api.pb.go
++index 4444444..5555555 100644
++--- a/gen/api.pb.go
+++++ b/gen/api.pb.go
++@@ -1 +1 @@
++-old
+++new
++\\ No newline at end of file
++"""
++
++
++def make_spec(groups: list[dict]) -> dict:
++    return {
++        "version": 1,
++        "name": "Core Walkthrough",
++        "pr": {"repo": "owner/repo", "number": 7, "title": "Change the core", "head": "a" * 40, "baseRef": "main"},
++        "overview": {"summary": ["It changes <code>Check</code>."], "cards": []},
++        "groups": groups,
++    }
++
++
++GOOD_GROUPS = [
++    {"id": "core", "title": "Core", "checks": [{"kind": "flag", "text": "Look at <code>c</code>."}],
++     "files": [{"path": "src/core.go", "note": "The change."}, {"path": "src/core_test.go"}]},
++    {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}]},
++]
++
++
++class ParseDiffTests(unittest.TestCase):
++    def test_parses_files_counts_line_numbers_and_kinds(self) -> None:
++        files = {f["path"]: f for f in walkthrough.parse_diff(DIFF)}
++
++        core = files["src/core.go"]
++        self.assertEqual((2, 1), (core["adds"], core["dels"]))
++        self.assertEqual("go", core["lang"])
++        self.assertEqual("", core["kind"])
++        lines = core["hunks"][0]["lines"]
++        self.assertEqual(["c", 10, 10, "    a := 1"], lines[0])
++        self.assertEqual(["d", 11, "", "    b := 2"], lines[1])
++        self.assertEqual(["a", "", 11, "    b := 3"], lines[2])
++        self.assertEqual(["c", 12, 13, "    return"], lines[4])
++
++        self.assertTrue(files["src/core_test.go"]["new"])
++        self.assertEqual("test", files["src/core_test.go"]["kind"])
++        self.assertEqual("generated", files["gen/api.pb.go"]["kind"])
++        self.assertEqual("m", files["gen/api.pb.go"]["hunks"][0]["lines"][-1][0])
++
++    def test_anchor_matches_github_files_tab(self) -> None:
++        core = walkthrough.parse_diff(DIFF)[0]
++        # GitHub anchors a file on the files tab by the SHA-256 of its path.
++        self.assertEqual(
++            "diff-" + __import__("hashlib").sha256(b"src/core.go").hexdigest(),
++            core["anchor"],
++        )
++
++
++class BuildTests(unittest.TestCase):
++    def build(self, groups: list[dict]) -> tuple[int, Path, str]:
++        tmp = Path(tempfile.mkdtemp())
++        (tmp / "pr.diff").write_text(DIFF)
++        (tmp / "spec.json").write_text(json.dumps(make_spec(groups)))
++        err = io.StringIO()
++        with redirect_stdout(io.StringIO()), redirect_stderr(err):
++            code = walkthrough.main(["build", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
++        return code, tmp / "site", err.getvalue()
++
++    def test_writes_the_page_and_the_renderer(self) -> None:
++        code, site, err = self.build(GOOD_GROUPS)
++
++        self.assertEqual(0, code, err)
++        html = (site / "index.html").read_text()
++        self.assertTrue(html.startswith("<title>Core Walkthrough</title>"))
++        self.assertTrue((site / "walkthrough.js").is_file())
++        self.assertTrue((site / "walkthrough.css").is_file())
++        # A literal </script> inside the diff must not end the data block.
++        self.assertNotIn('"</script>"', html)
++        start = html.index('type="application/json">') + len('type="application/json">')
++        data = json.loads(html[start:html.index("</script>", start)])
++        self.assertEqual(3, data["stats"]["files"])
++        self.assertEqual({"files": 3, "adds": 5, "dels": 2, "hand": 3, "test": 2, "generated": 2, "docs": 0}, data["stats"])
++        self.assertEqual(["core", "gen"], [g["id"] for g in data["groups"]])
++
++    def test_refuses_a_file_in_no_group(self) -> None:
++        code, _, err = self.build([GOOD_GROUPS[0]])
++        self.assertEqual(1, code)
++        self.assertIn("gen/api.pb.go is in no group", err)
++
++    def test_refuses_a_file_in_two_groups(self) -> None:
++        groups = [GOOD_GROUPS[0], {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}, {"path": "src/core.go"}]}]
++        code, _, err = self.build(groups)
++        self.assertEqual(1, code)
++        self.assertIn("src/core.go is in both core and gen", err)
++
++    def test_refuses_a_path_outside_the_diff_and_a_bad_check(self) -> None:
++        groups = [dict(GOOD_GROUPS[0], checks=[{"kind": "maybe", "text": "x"}]),
++                  {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}, {"path": "src/gone.go"}]}]
++        code, _, err = self.build(groups)
++        self.assertEqual(1, code)
++        self.assertIn("gen: src/gone.go is not in the diff", err)
++        self.assertIn("core: each check needs kind verify or flag", err)
++
++    def test_refuses_a_duplicate_group_id(self) -> None:
++        groups = [GOOD_GROUPS[0], dict(GOOD_GROUPS[1], id="core")]
++        code, _, err = self.build(groups)
++        self.assertEqual(1, code)
++        self.assertIn("group id 'core' is used twice", err)
++
++
++class RendererTests(unittest.TestCase):
++    def test_renderer_ships_only_allowlisted_remote_scripts(self) -> None:
++        # Claude Artifacts load scripts only from a CDN allowlist; the page
++        # template and renderer must not reach anywhere else.
++        html = walkthrough.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
++        for src in __import__("re").findall(r'src="(https?://[^"]+)"', html):
++            self.assertTrue(src.startswith("https://cdnjs.cloudflare.com/"), src)
++        js = (ROOT / "skills" / "walkthrough-pr" / "assets" / "walkthrough.js").read_text()
++        self.assertNotIn("fetch(", js)
++
++
++if __name__ == "__main__":
++    unittest.main()
