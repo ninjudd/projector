@@ -141,3 +141,20 @@ routing on real paths rather than the URL's hash, a decision in section 4,
 and the composite action's rename from `actions/walkthroughs` to
 `actions/site`, which `pr-walkthrough` section 7 records (#82). The three
 items in section 5 remain deferred; none was part of the promised outcome.
+
+## 7. Projector's own site runs the action from `main`
+
+Projector's `.github/workflows/projector-site.yml` uses
+`ninjudd/projector/actions/site@main`, so a merged change to the action or
+the site code reaches `https://ninjudd.com/projector/` before a release moves
+`v0`. The workflow's push trigger watches `actions/site/**` and
+`src/projector/**` as well as `README.md` and `docs/**`, so merging such a
+change rebuilds the site without waiting for a docs edit.
+
+Other repositories keep `@v0`, which `project site workflow` still generates
+by default, so a release remains the only change that reaches them.
+
+The cost is that a bad merge to the action or the site code breaks
+Projector's own site until someone fixes or reverts it. Finding that break
+here, before a release carries it to other repositories, is the purpose of
+the preview.

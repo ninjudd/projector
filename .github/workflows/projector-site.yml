@@ -4,7 +4,9 @@ on:
     types: [projector-walkthroughs]
   push:
     branches: [main]
-    paths: [README.md, 'docs/**']
+    # Rebuild when the action or the site code changes too, since this site
+    # runs both from main.
+    paths: [README.md, 'docs/**', 'actions/site/**', 'src/projector/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,4 +24,6 @@ jobs:
       url: ${{ steps.site.outputs.page_url }}
     steps:
       - id: site
-        uses: ninjudd/projector/actions/site@v0
+        # Projector's own site runs the action from main to preview unreleased
+        # changes; `project site workflow` generates @v0 for other repositories.
+        uses: ninjudd/projector/actions/site@main
