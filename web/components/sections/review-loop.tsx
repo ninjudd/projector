@@ -11,7 +11,7 @@ const steps = [
   },
   {
     title: "The review loop reviews it",
-    body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last.",
+    body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
   },
   {
     title: "The fix loop fixes it",
