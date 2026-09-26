@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import configparser
 import json
 import os
 import shlex
 import stat
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -1080,17 +1080,16 @@ class SelfReportingTests(unittest.TestCase):
         self.assertEqual(Path(cli.__file__).resolve().parent, reported)
         self.assertTrue((reported / "cli.py").is_file())
 
-    def test_the_queried_distribution_is_the_one_setup_cfg_installs(self) -> None:
+    def test_the_queried_distribution_is_the_one_pyproject_installs(self) -> None:
         # A wrong name here is invisible: `version()` raises, the unknown
         # branch answers, and every install reports `cli-stale installed
         # version unknown` while the suite stays green.
-        configuration = configparser.ConfigParser()
-        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+        project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]
 
         with mock.patch.object(metadata, "version", return_value="9.9.9") as version:
             self.assertEqual("9.9.9", distribution_version())
 
-        version.assert_called_once_with(configuration["metadata"]["name"])
+        version.assert_called_once_with(project["name"])
 
     def test_an_uninstalled_distribution_reports_unknown(self) -> None:
         with mock.patch.object(
@@ -1168,12 +1167,11 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual("", stdout)
         self.assertIn(shlex.join([str(self.checkout / "install.sh"), "all"]), stderr)
         # Every lookup -- `--version` makes one too -- asks for the distribution
-        # setup.cfg installs; a wrong name here would report every command as
-        # not installed and exit 69 while the suite stayed green.
-        configuration = configparser.ConfigParser()
-        configuration.read(Path(__file__).parents[1] / "setup.cfg")
+        # pyproject.toml installs; a wrong name here would report every command
+        # as not installed and exit 69 while the suite stayed green.
+        project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]
         self.assertEqual(
-            {configuration["metadata"]["name"]},
+            {project["name"]},
             {call.args[0] for call in distribution.call_args_list},
         )
 

@@ -547,7 +547,7 @@ class InstallTests(unittest.TestCase):
 
     def test_status_reports_a_cli_left_behind_by_the_checkout(self) -> None:
         # The case a version comparison misses: the CLI changed and nobody
-        # bumped setup.cfg, so the installed copy still calls itself current.
+        # bumped the version, so the installed copy still calls itself current.
         self.fake_project(self.installed_copy(diverge=True))
 
         result = self.install("status")

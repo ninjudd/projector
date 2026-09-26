@@ -13,7 +13,7 @@ on:
         default: patch
   push:
     branches: [main]
-    paths: [setup.cfg]
+    paths: [pyproject.toml]
 permissions:
   contents: write
 concurrency:
@@ -44,7 +44,7 @@ jobs:
           # but could not open the pull request replaces it.
           git push --quiet --force origin "$branch"
           cat > "$RUNNER_TEMP/body.md" <<EOF
-          Raises Projector's version to $version in \`setup.cfg\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes.
+          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes.
 
           ## Testing
 
@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # A setup.cfg change that leaves the version alone, or one whose version is
+      # A pyproject.toml change that leaves the version alone, or one whose version is
       # already tagged, releases nothing. A release moves the major tag the site
       # action runs at, and a release merge touches no docs, so the job asks the
       # site workflow to rebuild with the released action.

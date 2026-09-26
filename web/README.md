@@ -29,5 +29,5 @@ so it passes on a fresh checkout where no build has produced them yet.
 
 The site is a directory inside the Projector repository. Point the hosting
 project's root directory at `web`. The footer reads the CLI and plugin versions
-from `../setup.cfg` and `../.claude-plugin/plugin.json` at build time and omits
+from `../pyproject.toml` and `../.claude-plugin/plugin.json` at build time and omits
 them when those files are not present.
