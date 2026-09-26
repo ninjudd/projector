@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import configparser
 import json
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -42,15 +42,14 @@ class PackagingTests(unittest.TestCase):
     def test_one_version_covers_the_cli_and_both_plugin_manifests(self) -> None:
         claude = self.manifest("claude")
         codex = self.manifest("codex")
-        configuration = configparser.ConfigParser()
-        configuration.read(ROOT / "setup.cfg")
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 
         # A host caches an installed plugin under a directory named by this
         # string, so a one-sided bump updates one host and leaves the other on
         # a stale copy with nothing reporting it. One release tag also names
         # the CLI and the plugin together, so all three must agree.
         self.assertEqual(claude["version"], codex["version"])
-        self.assertEqual(claude["version"], configuration["metadata"]["version"])
+        self.assertEqual(claude["version"], project["version"])
         self.assertRegex(str(claude["version"]), r"^\d+\.\d+\.\d+$")
 
     def test_host_marketplaces_resolve_the_root_plugin(self) -> None:
@@ -69,13 +68,10 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue((ROOT / ".codex-plugin" / "plugin.json").exists())
 
     def test_the_installed_command_is_project(self) -> None:
-        configuration = configparser.ConfigParser()
-        configuration.read(ROOT / "setup.cfg")
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 
-        scripts = configuration["options.entry_points"]["console_scripts"].strip()
-
-        self.assertEqual("project = projector.cli:main", scripts)
-        self.assertEqual("projector-cli", configuration["metadata"]["name"])
+        self.assertEqual({"project": "projector.cli:main"}, project["scripts"])
+        self.assertEqual("projector-cli", project["name"])
 
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:

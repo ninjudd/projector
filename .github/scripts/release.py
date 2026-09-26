@@ -8,7 +8,7 @@
 
 The Release workflow runs these. Started by hand with patch, minor, or major,
 it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
-When a change to setup.cfg reaches main, it runs `released`, and when that
+When a change to pyproject.toml reaches main, it runs `released`, and when that
 exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, force-moves the
 major tag that marketplaces and the site action follow, and creates the
 GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
@@ -17,11 +17,11 @@ GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
 from __future__ import annotations
 
 import argparse
-import configparser
 import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,9 +42,7 @@ def parse(version: str) -> tuple[int, int, int]:
 
 def versions(root: Path, read=lambda path: path.read_text()) -> dict[str, str]:
     found = {}
-    config = configparser.ConfigParser()
-    config.read_string(read(root / "setup.cfg"))
-    found["setup.cfg"] = config["metadata"]["version"]
+    found["pyproject.toml"] = tomllib.loads(read(root / "pyproject.toml"))["project"]["version"]
     for manifest in MANIFESTS:
         found[manifest] = json.loads(read(root / manifest))["version"]
     return found
@@ -60,11 +58,11 @@ def current(root: Path, read=lambda path: path.read_text()) -> str:
 def set_version(root: Path, version: str) -> None:
     if parse(version) <= parse(current(root)):
         raise ReleaseError(f"{version} is not above the current version {current(root)}")
-    setup = root / "setup.cfg"
-    text, count = re.subn(r"(?m)^version\s*=.*$", f"version = {version}", setup.read_text(), count=1)
+    pyproject = root / "pyproject.toml"
+    text, count = re.subn(r'(?m)^version\s*=\s*"[^"]*"', f'version = "{version}"', pyproject.read_text(), count=1)
     if count != 1:
-        raise ReleaseError("setup.cfg has no version line")
-    setup.write_text(text)
+        raise ReleaseError("pyproject.toml has no version line")
+    pyproject.write_text(text)
     for manifest in MANIFESTS:
         path = root / manifest
         text, count = re.subn(r'("version":\s*")[^"]*(")', rf"\g<1>{version}\g<2>", path.read_text(), count=1)
@@ -163,7 +161,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     try:
         if args.command == "set":
             set_version(root, args.version)
-            print(f"set {args.version} in setup.cfg and both plugin manifests")
+            print(f"set {args.version} in pyproject.toml and both plugin manifests")
         elif args.command == "bump":
             print(bump(root, args.part))
         elif args.command == "released":
