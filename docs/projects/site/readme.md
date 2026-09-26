@@ -159,3 +159,30 @@ The cost is that a bad merge to the action or the site code breaks
 Projector's own site until someone fixes or reverts it. Finding that break
 here, before a release carries it to other repositories, is the purpose of
 the preview.
+
+## 8. Serve the site without GitHub Pages
+
+A repository that cannot turn on GitHub Pages yet, or does not want to, can
+still read its site. `project site serve` builds the site a deploy builds
+into a temporary directory and serves it over HTTP from the standard
+library's `http.server`, so it adds no dependency. It fetches the
+walkthroughs ref into the copy `walkthrough publish` keeps, extracts it with
+`git archive`, and dates each spec by the commit that last changed it,
+because the build orders a pull request's walkthroughs by that date and an
+archive stamps every file with the ref's newest commit.
+
+- **Rebuild on change by polling.** The server checks the README, `docs/`,
+  the projects directory, and the walkthroughs ref every second and builds a
+  fresh directory when any changed. The standard library has no
+  cross-platform file watcher, and a second of latency costs a reader
+  nothing. A request in flight keeps its directory, which the next rebuild
+  removes.
+- **Answer like GitHub Pages.** A missing path gets `404.html` with status
+  404, and `--base` serves the site under a path, so what works locally
+  works on Pages.
+- **Listen on loopback by default.** The site copies the README, docs,
+  plans and diffs. A wider `--host` is the user's decision, and the server
+  warns when it is made.
+- **Host elsewhere with `site build`.** Any static host that answers a
+  missing path with `404.html` can serve `project site build --out DIR`;
+  no host-specific packaging was added.

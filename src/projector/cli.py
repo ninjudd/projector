@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import importlib.metadata as metadata
+import io
 import json
 import os
 import shlex
 import subprocess
 import sys
+import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -219,7 +223,7 @@ def parser() -> argparse.ArgumentParser:
         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
     )
 
-    site = subcommands.add_parser("site", help="build the Projector site a repository serves from GitHub Pages")
+    site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
     site_build = site_commands.add_parser(
         "build", help="build the site from the README, docs, project plans, and published walkthroughs"
@@ -249,6 +253,23 @@ def parser() -> argparse.ArgumentParser:
     )
     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
     site_status.add_argument("--pr", type=int, help="print the URL of this pull request's walkthrough")
+    site_serve = site_commands.add_parser(
+        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change"
+    )
+    site_serve.add_argument("--port", type=int, default=8000, help="the port to listen on (default: 8000; 0 picks one)")
+    site_serve.add_argument(
+        "--host", default="127.0.0.1", help="the address to listen on (default: 127.0.0.1, this machine only)"
+    )
+    site_serve.add_argument("--base", default="/", help="the path to serve the site under (default: /)")
+    site_serve.add_argument(
+        "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
+    )
+    site_serve.add_argument(
+        "--walkthroughs", help="directory holding <number>/<head>/spec.json files, instead of the walkthroughs ref"
+    )
+    site_serve.add_argument("--remote", default="origin", help="the remote to fetch walkthroughs from (default: origin)")
+    site_serve.add_argument("--no-fetch", action="store_true", help="serve the walkthroughs already fetched")
+    site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
     site_workflow = site_commands.add_parser(
         "workflow", help="print or write the workflow file for the default branch"
     )
@@ -471,6 +492,22 @@ def site_branch(root: Path) -> str:
     return branch if branch and branch != "HEAD" else "main"
 
 
+def build_checkout(root: Path, out: Path, walkthroughs: Optional[Path], base: str, repo: str) -> str:
+    """Build the site from a checkout, and summarize what it holds."""
+    projects, projects_dir = site_projects(root)
+    entries, failures = site.build_site(
+        out,
+        walkthroughs=walkthroughs,
+        repo_root=root,
+        projects=projects,
+        projects_dir=projects_dir,
+        repo=repo,
+        branch=site_branch(root),
+        base=base,
+    )
+    return f"{len(projects)} projects, {len(entries)} pull requests, {len(failures)} walkthroughs skipped"
+
+
 def run_site_build(arguments: argparse.Namespace) -> int:
     root = Path(arguments.repo_root).resolve() if arguments.repo_root else discover_git_root(Path.cwd())
     repo = site_repo(root)
@@ -478,21 +515,70 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         if not repo:
             raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
         walkthrough.require_private_site(repo)
-    projects, projects_dir = site_projects(root)
-    entries, failures = site.build_site(
-        Path(arguments.out),
-        walkthroughs=Path(arguments.walkthroughs) if arguments.walkthroughs else None,
-        repo_root=root,
-        projects=projects,
-        projects_dir=projects_dir,
-        repo=repo,
-        branch=site_branch(root),
-        base=arguments.base,
-    )
-    print(
-        f"wrote {arguments.out}/index.html: {len(projects)} projects, {len(entries)} pull requests, "
-        f"{len(failures)} walkthroughs skipped"
-    )
+    walkthroughs = Path(arguments.walkthroughs) if arguments.walkthroughs else None
+    summary = build_checkout(root, Path(arguments.out), walkthroughs, arguments.base, repo)
+    print(f"wrote {arguments.out}/index.html: {summary}")
+    return 0
+
+
+def run_site_serve(arguments: argparse.Namespace) -> int:
+    from .site import serve
+
+    root = Path(arguments.repo_root).resolve() if arguments.repo_root else discover_git_root(Path.cwd())
+    repo = site_repo(root)
+    base = "/" + arguments.base.strip("/") + "/" if arguments.base.strip("/") else "/"
+    given = Path(arguments.walkthroughs).resolve() if arguments.walkthroughs else None
+    ref = None
+    if given is None:
+        if not arguments.no_fetch:
+            reason = serve.fetch_walkthroughs(root, arguments.remote)
+            if reason:
+                print(f"serving the walkthroughs already fetched; {arguments.remote} has none to fetch: {reason}",
+                      file=sys.stderr)
+        ref = serve.walkthroughs_ref(root, arguments.remote)
+    projects_dir = configured_projects_dir(root)
+    watched = [root / "README.md", root / "docs"]
+    if projects_dir is not None:
+        watched.append(projects_dir if projects_dir.is_absolute() else root / projects_dir)
+    if given is not None:
+        watched.append(given)
+
+    def sources() -> tuple:
+        return serve.fingerprint([path for path in watched if path.exists()]), serve.ref_commit(root, ref)
+
+    def build(out: Path) -> str:
+        # The build copies what it needs from the specs, so they outlive it only as long as it runs.
+        with tempfile.TemporaryDirectory(prefix="projector-specs-") as specs:
+            walkthroughs = serve.extract_walkthroughs(root, ref, Path(specs)) if ref is not None else given
+            # The build reports each walkthrough as a deploy log would; a server keeps its summary.
+            with contextlib.redirect_stdout(io.StringIO()):
+                return build_checkout(root, out, walkthroughs, base, repo)
+
+    site_state = serve.Site(build, sources)
+    try:
+        print(f"built the site: {site_state.refresh(force=True)}")
+        server = serve.ThreadingHTTPServer((arguments.host, arguments.port), serve.handler(site_state, base))
+    except BaseException:
+        site_state.close()
+        raise
+    host, port = server.server_address[:2]
+    shown = f"[{host}]" if ":" in host else host
+    if arguments.host not in serve.LOOPBACK:
+        print(f"listening on {arguments.host}: anyone who can reach it can read this repository's site",
+              file=sys.stderr)
+    print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
+    stop = threading.Event()
+    if not arguments.no_watch:
+        report = lambda message: print(message, flush=True)
+        threading.Thread(target=serve.watch, args=(site_state, stop, 1.0, report), daemon=True).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        server.server_close()
+        site_state.close()
     return 0
 
 
@@ -500,6 +586,8 @@ def run_site(arguments: argparse.Namespace) -> int:
     command = arguments.site_command
     if command == "build":
         return run_site_build(arguments)
+    elif command == "serve":
+        return run_site_serve(arguments)
     elif command == "page":
         spec = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))
         diff = Path(arguments.diff).read_text(encoding="utf-8") if arguments.diff else None

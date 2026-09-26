@@ -184,9 +184,27 @@ repository up once, with admin rights, from a checkout of it; `gh` fills in
    `prs/<number>/`. The README, the plans and the docs appear on the first
    deploy, without publishing anything.
 
+### Serve the site without GitHub Pages
+
+You don't need GitHub Pages to read the site. From a checkout, `project site
+serve` builds the same site a deploy builds and serves it on your machine,
+rebuilding it whenever `README.md`, `docs/`, or the plans change:
+
+```sh
+project site serve
+```
+
+It fetches the published walkthroughs from `origin` first, so the PRs menu
+matches what the repository has published. Publish a walkthrough without
+starting a deploy with `project walkthrough publish --no-dispatch`. To host
+the site somewhere other than GitHub Pages, run `project site build --out
+DIR --base PATH` and serve `DIR` from any static host that answers a missing
+path with `404.html`.
+
 ## Use the CLI
 
 ```sh
+project init [--json]
 project list [--status <status>] [--priority now|next|later] [--json]
 project show <project> [--json]
 project search <query> [--status <status>] [--priority <priority>] [--json]
@@ -198,6 +216,13 @@ project done <project>
 project check [--json]
 project config get <key> [--default <value>] [--json]
 project upgrade [all|cli|claude|codex|status]
+project walkthrough init --repo OWNER/NAME --pr <number> --spec <file>
+project walkthrough publish --spec <file> [--no-dispatch]
+project site build --out <dir> [--base <path>] [--walkthroughs <dir>]
+project site serve [--port 8000] [--host 127.0.0.1] [--base <path>]
+project site page --spec <file> --out <dir>
+project site status --repo OWNER/NAME [--pr <number>]
+project site workflow [--write]
 ```
 
 Use `--json` when an agent or script consumes output. Every JSON response has

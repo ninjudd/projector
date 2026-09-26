@@ -4,14 +4,20 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from projector import cli, walkthrough
+from projector.site import serve
 
 
 def plan(title: str, status: str, priority: str | None) -> str:
@@ -283,6 +289,150 @@ class HighlightTests(unittest.TestCase):
 
     def test_the_text_is_escaped_and_matching_ignores_case(self) -> None:
         self.assertEqual("&lt;b&gt;<mark>Plan</mark>&lt;/b&gt;", self.highlight("<b>Plan</b>", ["plan"]))
+
+
+def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+    if when is not None:
+        env.update(GIT_AUTHOR_DATE=f"{when} +0000", GIT_COMMITTER_DATE=f"{when} +0000")
+    return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class ServeTests(SiteRepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.sites: list[serve.Site] = []
+
+    def tearDown(self) -> None:
+        for site in self.sites:
+            site.close()
+
+    def site(self, walkthroughs: Path | None = None, base: str = "/") -> serve.Site:
+        def build(out: Path) -> str:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                return cli.build_checkout(self.repo.resolve(), out, walkthroughs, base, "owner/example")
+
+        site = serve.Site(build, lambda: serve.fingerprint([self.repo]))
+        self.sites.append(site)
+        site.refresh(force=True)
+        return site
+
+    def fetch(self, site: serve.Site, base: str, path: str) -> tuple[int, str]:
+        server = serve.ThreadingHTTPServer(("127.0.0.1", 0), serve.handler(site, base))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}{path}"
+            try:
+                with urllib.request.urlopen(url) as response:
+                    return response.status, response.read().decode()
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code, error.read().decode()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_serves_every_view_and_answers_a_missing_path_with_the_not_found_page(self) -> None:
+        site = self.site()
+
+        for path in ("/", "/projects/", "/projects/alpha/beta/", "/docs/guide/", "/site.json", "/assets/site.js"):
+            self.assertEqual(200, self.fetch(site, "/", path)[0], path)
+        code, body = self.fetch(site, "/", "/no/such/page/")
+        self.assertEqual(404, code)
+        self.assertEqual((site.current / "404.html").read_text(), body)
+
+    def test_serves_the_site_under_its_base_and_nothing_outside_it(self) -> None:
+        site = self.site(base="/example/")
+
+        self.assertEqual(200, self.fetch(site, "/example/", "/example/projects/alpha/")[0])
+        self.assertEqual(404, self.fetch(site, "/example/", "/projects/alpha/")[0])
+        self.assertEqual(404, self.fetch(site, "/example/", "/examples/")[0])
+
+    def test_rebuilds_only_when_a_source_changes_and_removes_old_builds(self) -> None:
+        site = self.site()
+        first = site.current
+
+        self.assertIsNone(site.refresh(), "nothing changed")
+        (self.repo / "docs/added.md").write_text("# Added later\n")
+        self.assertIsNotNone(site.refresh())
+        self.assertEqual(200, self.fetch(site, "/", "/docs/added/")[0])
+        self.assertTrue(first.is_dir(), "a request may still be reading the build it replaced")
+        (self.repo / "docs/added.md").unlink()
+        site.refresh()
+        self.assertFalse(first.exists())
+        self.assertEqual(404, self.fetch(site, "/", "/docs/added/")[0])
+
+    def test_a_failed_rebuild_keeps_serving_the_last_build_until_the_next_change(self) -> None:
+        site = self.site()
+        good = site.current
+        site.build = mock.Mock(side_effect=RuntimeError("broken"))
+        (self.repo / "docs/added.md").write_text("# Added later\n")
+
+        with self.assertRaises(RuntimeError):
+            site.refresh()
+
+        self.assertEqual(good, site.current)
+        self.assertEqual([good.name], [path.name for path in site.scratch.iterdir()], "the partial build is removed")
+        self.assertIsNone(site.refresh(), "retried on the next change, not every poll")
+
+    def test_serves_walkthroughs_from_the_fetched_ref_newest_head_first(self) -> None:
+        remote = Path(tempfile.mkdtemp())
+        run_git(remote, "init", "--quiet")
+        for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
+            folder = remote / "walkthroughs" / "9" / head
+            folder.mkdir(parents=True)
+            spec = {"version": 1, "name": "Walkthrough 9", "overview": {"summary": [], "cards": []},
+                    "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": head,
+                           "base": "b" * 40, "baseRef": "main"},
+                    "groups": [{"id": "all", "title": "All", "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
+            (folder / "spec.json").write_text(json.dumps(spec))
+            (folder / "diff.patch").write_text(PLAN_DIFF)
+            run_git(remote, "add", ".")
+            run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
+        run_git(remote, "update-ref", walkthrough.PAGES_REF, "HEAD")
+        run_git(self.repo, "init", "--quiet")
+        run_git(self.repo, "remote", "add", "origin", str(remote))
+
+        self.assertEqual("", serve.fetch_walkthroughs(self.repo, "origin"))
+        ref = serve.walkthroughs_ref(self.repo, "origin")
+        self.assertEqual("refs/projector/remotes/origin/walkthroughs", ref)
+        specs = serve.extract_walkthroughs(self.repo, ref, Path(tempfile.mkdtemp()))
+        site = self.site(walkthroughs=specs)
+
+        manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+        self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["walkthroughs"]],
+                         "each spec is dated by its own commit, not the ref's newest")
+        self.assertEqual(200, self.fetch(site, "/", f"/prs/9/{'c' * 40}/")[0])
+
+    def test_a_checkout_without_the_ref_serves_no_walkthroughs(self) -> None:
+        run_git(self.repo, "init", "--quiet")
+
+        self.assertNotEqual("", serve.fetch_walkthroughs(self.repo, "origin"))
+        self.assertIsNone(serve.walkthroughs_ref(self.repo, "origin"))
+
+    @unittest.skipIf(os.name == "nt", "SIGINT is how a terminal stops the server on POSIX")
+    def test_ctrl_c_stops_the_server_and_removes_its_builds(self) -> None:
+        scratch = Path(tempfile.mkdtemp())
+        env = dict(os.environ, PYTHONPATH=str(Path(cli.__file__).parents[1]), TMPDIR=str(scratch))
+        process = subprocess.Popen(
+            [sys.executable, "-m", "projector", "site", "serve", "--port", "0", "--no-fetch",
+             "--repo-root", str(self.repo)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        try:
+            for line in process.stdout:
+                if line.startswith("serving http://127.0.0.1:"):
+                    break
+            self.assertTrue(any(scratch.glob("projector-site-*")))
+            process.send_signal(signal.SIGINT)
+            _, err = process.communicate(timeout=10)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+        self.assertEqual(0, process.returncode, err)
+        self.assertEqual([], list(scratch.glob("projector-site-*")))
 
 
 class WorkflowTests(unittest.TestCase):
