@@ -121,7 +121,8 @@ Projector's own repository dogfoods the design. Its workflow file lands with
 this change, pinned to `@v0`, and runs once the first `v0` tag exists. Until
 then its site serves a walkthrough of #62 deployed by the earlier
 branch-based design, whose `projector-pages` branch is deleted once the hidden
-ref deploys.
+ref deploys. The workflow later moves to `@main`, which `site` section 7
+records.
 
 Open: squashing the ref's history once it grows large.
 
