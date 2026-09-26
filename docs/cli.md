@@ -346,6 +346,43 @@ missing, or when the checkout or its `install.sh` no longer exists.
 
 `upgrade` has no `--json` mode because the installer owns the output.
 
+## Build the Projector site
+
+A repository that sets up the Projector site serves it from GitHub Pages,
+built from content Projector keeps in the repository. Today that content is
+the pull request walkthroughs on the hidden ref `refs/projector/walkthroughs`;
+browsing `docs/projects` joins it later. The `walkthrough-pr` skill writes a
+walkthrough's data, a spec, and these commands do everything else:
+
+```sh
+project walkthrough init --repo OWNER/NAME --pr 66 --spec walkthrough.json
+project walkthrough publish --spec walkthrough.json
+project site page --spec walkthrough.json --out site
+project site build --walkthroughs specs/walkthroughs --out _site
+project site status --repo OWNER/NAME --pr 66
+project site workflow --write
+```
+
+`walkthrough init` writes a skeleton spec with every changed file in one
+unassigned group. `walkthrough publish` checks that the spec builds, commits
+it to the hidden ref without touching the checkout, and starts the
+repository's site workflow; pass `--no-dispatch` to skip the workflow.
+
+`site page` builds one walkthrough into a directory you can open from disk or
+publish as a Claude Artifact. It refuses when the pull request has moved past
+the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
+when GitHub cannot serve a diff that large. `site build` builds every
+`<number>/<head>/spec.json` under a directory into the whole site, skipping
+and reporting any spec that fails; the site workflow runs it through
+Projector's composite action.
+
+`site status` exits 0 and prints the site's URL, or with `--pr` the pull
+request's walkthrough URL, when the repository has the site workflow on its
+default branch and a GitHub Pages site. It exits 3 and says why when either is
+missing, or when a private repository's site is public. `site workflow`
+prints the workflow file a repository adds to its default branch once, or
+writes it with `--write`.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
@@ -396,6 +433,7 @@ Projector uses these exit codes:
 | ---: | --- |
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
+| `3` | `project site status` found no Projector site for the repository. |
 | `65` | Project data is invalid or a mutation is unsafe. |
 | `66` | The requested project or the projects directory does not exist. |
 | `67` | The requested project is ambiguous. |
