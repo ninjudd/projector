@@ -282,11 +282,28 @@ SITE_JS = Path(__file__).parents[1] / "src" / "projector" / "site" / "assets" / 
 
 
 def js_function(name: str) -> str:
-    """One top-level function of site.js, from its signature to the brace that closes it."""
+    """One function of the compiled site.js, from its signature to the brace that closes it."""
     lines = SITE_JS.read_text().splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"  function {name}("))
-    end = next(i for i in range(start, len(lines)) if lines[i] == "  }")
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"    function {name}("))
+    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     return "\n".join(lines[start:end + 1])
+
+
+TSC = Path(__file__).parents[1] / "node_modules" / ".bin" / "tsc"
+
+
+@unittest.skipUnless(TSC.exists(), "the compiled-script check needs `npm ci`")
+class CompiledScriptTests(unittest.TestCase):
+    def test_the_committed_javascript_is_what_the_typescript_compiles_to(self) -> None:
+        assets = SITE_JS.parent
+        with tempfile.TemporaryDirectory() as out:
+            subprocess.run([str(TSC), "-p", str(assets.parent / "ts"), "--outDir", out],
+                           check=True, capture_output=True, text=True)
+            built = sorted(p.name for p in Path(out).glob("*.js"))
+            self.assertEqual(["site.js", "walkthrough.js"], built)
+            for name in built:
+                self.assertEqual((Path(out) / name).read_text(), (assets / name).read_text(),
+                                 f"{name} is stale: run `npm run build` and commit it")
 
 
 @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")

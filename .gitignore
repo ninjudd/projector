@@ -7,3 +7,4 @@ auth.json
 *.egg-info/
 __pycache__/
 .DS_Store
+node_modules/

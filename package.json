@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "description": "Compiles the Projector site's TypeScript into the JavaScript the site serves. The compiled files are committed, because every repository's deploy and every CLI install reads them from a Git tree.",
+  "scripts": {
+    "build": "tsc -p src/projector/site/ts",
+    "check": "tsc -p src/projector/site/ts --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}
