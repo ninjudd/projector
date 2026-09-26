@@ -1,0 +1,22 @@
+name: Walkthroughs
+on:
+  repository_dispatch:
+    types: [projector-walkthroughs]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.walkthroughs.outputs.page_url }}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@v0

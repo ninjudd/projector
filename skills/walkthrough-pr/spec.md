@@ -12,6 +12,7 @@ it. The spec is JSON:
     "number": 2062,
     "title": "The pull request title",
     "head": "full head commit SHA",
+    "base": "full merge-base commit SHA",
     "baseRef": "main"
   },
   "overview": {
@@ -45,7 +46,9 @@ it. The spec is JSON:
 - `name` is the page title: a short name for the change, not a sentence.
   It becomes the browser tab and gallery title.
 - `pr.head` is the commit the page describes. `build` stops when the pull
-  request has moved past it.
+  request has moved past it, unless `--at-head` asks for that head exactly.
+- `pr.base` is the merge base the diff is taken from. `init` records it; the
+  page shows the diff from `pr.base` to `pr.head`.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
 - `overview.cards` lay out two per row. A card with an `id` also gets a
@@ -59,7 +62,13 @@ it. The spec is JSON:
 
 Every text field except `name`, `pr` and the file paths is inserted as HTML,
 so write `<code>`, `<b>` and links directly and escape a literal `<` as
-`&lt;`. These classes are styled for cards:
+`&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
+page, because a Pages site deploys whatever spec is on its ref: the tags
+`a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
+`span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
+classes below; and `href` only for `http`, `https` and `#` links. Anything
+else, such as `style`, an event handler or a `<script>`, is dropped. These
+classes are styled for cards:
 
 | Class | Use |
 | --- | --- |
@@ -68,4 +77,5 @@ so write `<code>`, `<b>` and links directly and escape a literal `<` as
 | `note` on a `p` | Muted explanatory text |
 | `tight` on a `ul` | A compact list |
 | `count` on a `span` | A muted count after a label |
+| `mono` on a `span` | Monospace text outside `<code>` |
 | `pre` | A command block |

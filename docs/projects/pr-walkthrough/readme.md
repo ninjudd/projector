@@ -29,7 +29,7 @@ request's diff.
 - The build script uses only the Python standard library and the `gh` CLI,
   and the renderer loads remote scripts only from cdnjs.
 - A GitHub Pages publisher serves each repository's walkthroughs to the people
-  who can read that repository (section 4).
+  who can read that repository, from specs on a hidden ref (section 4).
 
 ## 3. Hosting
 
@@ -48,17 +48,80 @@ Three hosts were weighed.
 
 ## 4. GitHub Pages publisher
 
-Deferred until a repository with private Pages is available to test against.
-The design: the agent commits the renderer and one data file per pull request
-head, such as `walkthroughs/<number>/<head>.json`, to an orphan branch through
-the Git Data API, so no checkout is needed. Pages serves that branch directly
-and the renderer loads the data file in the browser, so no Actions workflow
-runs. Other stores do not fit: Actions artifacts expire and need a login to
-fetch, Pages cannot read Git notes, secret gists are unlisted rather than
-private, and a pull request comment holds 65,536 characters while a large diff
-runs to megabytes. Open questions: squashing the branch so generated history
-does not grow without bound, keeping CI off pushes to it, and an index page
-per repository.
+A repository hosts its own walkthroughs. Specs, not built pages, live on the
+hidden ref `refs/projector/walkthroughs` at
+`walkthroughs/<number>/<head>/spec.json`. `walkthrough.py publish` commits a
+spec there through Git plumbing, so it never touches the checkout, and then
+sends a `repository_dispatch` event. A workflow on the default branch, added
+once with `walkthrough.py workflow --write`, answers that event by calling
+Projector's composite action, `ninjudd/projector/actions/walkthroughs`. The
+action fetches the ref, runs `walkthrough.py site`, which rebuilds every spec
+at its recorded head (`build --at-head`, the diff from the compare API for
+`pr.base` and `pr.head`), writes an index, points `/<number>/` at each pull
+request's newest head, and deploys the result to Pages.
+
+A hidden ref rather than a branch, because a branch intrudes on the
+repository's users: every push to one makes GitHub offer "had recent pushes,
+compare and pull request" to its pusher, and the branch shows up in branch
+lists and in every clone. A ref outside `refs/heads` and `refs/tags` does
+none of that; a probe on Projector's repository confirmed GitHub accepts it,
+lists no branch for it, and a default clone does not fetch it. The cost is
+that a push to it triggers no workflow, hence the explicit dispatch, and that
+GitHub runs dispatched workflows only from the default branch, hence the one
+workflow file there. That file is a reviewed part of the repository rather
+than something that appears on a side branch, and because the workflow runs
+from the default branch, the `github-pages` environment's default rule
+already allows it to deploy.
+
+Committing specs rather than built pages keeps the ref small, because the
+diff comes from GitHub at build time, and makes the spec, the part that needs
+judgment, the only thing an agent writes. The spec on the ref is also the
+durable copy a later session starts from when the pull request moves.
+
+The shared piece is a composite action rather than a reusable workflow
+because a composite action is downloaded at the ref the caller names, with
+the renderer beside it, while a reusable workflow cannot tell which ref it was
+called at. Each repository's workflow names the ref, and that choice decides
+what code runs with a token that can read the repository:
+
+- `@v0`, the moving major-version tag of Projector's one version, is the
+  default. Repositories get fixes from deliberate releases, never from an
+  unreviewed commit. The spec's `version` is the compatibility contract:
+  every renderer on a major tag accepts every spec of the version it
+  shipped with.
+- A full commit SHA locks the renderer for organizations that want it, as
+  GitHub's security hardening guide recommends; Dependabot keeps such pins
+  current.
+- `@main` is rejected. With it, the next publish in every adopting
+  repository would run whatever is on Projector's `main` at that moment, with
+  read access to that repository's code, so a half-finished or compromised
+  commit would reach every adopter without anyone releasing it.
+
+Nothing runs when Projector changes. A repository's workflow runs only when
+that repository publishes a spec, so a release reaches each site on that
+site's next publish, which rebuilds all of its walkthroughs with the new
+renderer, and a bad release breaks no live site until then. Releases follow
+`docs/plugins.md`: an immutable `vX.Y.Z` tag per release and a major tag that
+moves to it.
+
+Setup is once and needs admin rights: enable Pages with the GitHub Actions
+source and merge the workflow file. For a private repository the site must be
+private, which needs GitHub Enterprise Cloud; the skill stops if GitHub
+refuses. The built renderer ships inside the site, so a viewer's browser only
+runs the version that built the page.
+
+Other stores do not fit. Actions artifacts expire and need a login to fetch,
+Pages cannot read Git notes, secret gists are unlisted rather than private,
+and a pull request comment holds 65,536 characters while a large diff runs
+to megabytes.
+
+Projector's own repository dogfoods the design. Its workflow file lands with
+this change, pinned to `@v0`, and runs once the first `v0` tag exists. Until
+then its site serves a walkthrough of #62 deployed by the earlier
+branch-based design, whose `projector-pages` branch is deleted once the hidden
+ref deploys.
+
+Open: squashing the ref's history once it grows large.
 
 ## 5. Status log
 
@@ -66,3 +129,21 @@ per repository.
   Artifacts path. The renderer began as a hand-built page for a 66-file pull
   request in another repository, reviewed in eleven groups, then was split
   into the fixed renderer and the spec format.
+- **2026-09-26** The Pages publisher lands (section 4): `publish`, `site`,
+  `build --at-head`, the composite action, and Projector's own site with a
+  walkthrough of #62. The specs first lived on a `projector-pages` branch;
+  GitHub's "had recent pushes" banner for it moved them to the hidden ref
+  `refs/projector/walkthroughs`, with a dispatched workflow on the default
+  branch. The shared piece became a composite action instead of
+  the reusable workflow first proposed, so the ref a repository names also
+  picks the renderer. Section 6 records browsing `docs/projects` on the same
+  site as later work.
+
+## 6. Browsing projects on the same site
+
+The same Pages site should become a way to browse `docs/projects`
+interactively: each plan with its status, priority, nested projects and
+sections, beside the walkthroughs of the pull requests that implement it.
+This is a later pull request. The site layout leaves room for it:
+walkthroughs sit under their own paths, and the root index can grow a
+projects view.
