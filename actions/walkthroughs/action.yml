@@ -29,7 +29,9 @@ runs:
         GH_TOKEN: ${{ github.token }}
         PYTHONPATH: ${{ github.action_path }}/../../src
         ROOT: ${{ inputs.root }}
-      run: python3 -m projector site build --walkthroughs "$RUNNER_TEMP/walkthrough-specs/$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
+      # -P keeps the caller's checkout, the working directory, off sys.path, so a
+      # repository with its own top-level projector module cannot shadow this one.
+      run: python3 -P -m projector site build --walkthroughs "$RUNNER_TEMP/walkthrough-specs/$ROOT" --out "$RUNNER_TEMP/walkthrough-site"
     - uses: actions/upload-pages-artifact@v3
       with:
         path: ${{ runner.temp }}/walkthrough-site

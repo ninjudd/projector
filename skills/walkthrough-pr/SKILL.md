@@ -13,7 +13,9 @@ walkthrough spec. The Projector CLI renders it and the repository's Projector
 site serves it, so your job is the judgment: the grouping, the explanations,
 and the checks. Every command below is the `project` CLI that ships beside
 this skill; install it as Projector's README describes when `project` is
-missing.
+missing. The CLI updates separately from this skill, so when `project`
+rejects a command below as an invalid choice, run `project upgrade` and
+retry.
 
 Reading a pull request does not authorize changing it. Do not comment on,
 push to, or approve the pull request unless the user asks.
