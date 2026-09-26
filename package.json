@@ -1,11 +1,16 @@
 {
   "private": true,
-  "description": "Compiles the Projector site's TypeScript into the JavaScript the site serves. The compiled files are committed, because every repository's deploy and every CLI install reads them from a Git tree.",
+  "type": "module",
+  "description": "Compiles and lints the Projector site's TypeScript. The compiled JavaScript is committed, because every repository's deploy and every CLI install reads it from a Git tree.",
   "scripts": {
     "build": "tsc -p src/projector/site/ts",
-    "check": "tsc -p src/projector/site/ts --noEmit"
+    "lint": "eslint --max-warnings 0 src/projector/site/ts",
+    "check": "tsc -p src/projector/site/ts --noEmit && eslint --max-warnings 0 src/projector/site/ts"
   },
   "devDependencies": {
-    "typescript": "7.0.2"
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1"
   }
 }
