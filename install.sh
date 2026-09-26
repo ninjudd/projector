@@ -77,6 +77,58 @@ checkout_plugin_version() {
   sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/.claude-plugin/plugin.json" | head -1
 }
 
+# Where the plugin installs from: the repository this checkout was cloned
+# from, read off its `origin` remote, so a fork installs from the fork and a
+# clone of the upstream installs from the upstream. A host refreshes a
+# marketplace from its source, so one that reads this checkout installs
+# whatever commit happens to be checked out and then reports itself current
+# until someone pulls, while one that reads the repository moves with every
+# release. The CLI still installs from the checkout, because pipx copies
+# source and has no remote to read.
+#
+# A GitHub remote is reduced to owner/repo, which Claude Code records as a
+# `github` marketplace and Codex takes as an HTTPS Git URL. Any other remote
+# URL is handed to both hosts as it is. A checkout with no `origin` -- an
+# unpacked archive, say -- has nothing but itself to install from.
+plugin_repo() {
+  local url
+  url="$(git -C "$REPO" remote get-url origin 2>/dev/null)" || return 1
+  [ -n "$url" ] || return 1
+  case "$url" in
+    git@github.com:*)       url="${url#git@github.com:}" ;;
+    ssh://git@github.com/*) url="${url#ssh://git@github.com/}" ;;
+    https://github.com/*)   url="${url#https://github.com/}" ;;
+    http://github.com/*)    url="${url#http://github.com/}" ;;
+    *) printf '%s\n' "$url"; return 0 ;;
+  esac
+  url="${url%/}"
+  printf '%s\n' "${url%.git}"
+}
+
+# The source to hand a host: owner/repo to Claude Code, the HTTPS URL to
+# Codex, a non-GitHub remote as it came, or the checkout itself when the
+# checkout has no remote to name.
+plugin_source() {
+  local repo
+  repo="$(plugin_repo)" || { printf '%s\n' "$REPO"; return; }
+  case "$repo" in
+    *:*|*/*/*) printf '%s\n' "$repo" ;;
+    *)
+      case "$1" in
+        codex) printf 'https://github.com/%s.git\n' "$repo" ;;
+        *)     printf '%s\n' "$repo" ;;
+      esac ;;
+  esac
+}
+
+# True when a host's projector marketplace reads a local path -- Claude
+# Code's `directory`, Codex's `local` -- which is the kind that installs
+# whatever this checkout has checked out, and the one the installer moves.
+marketplace_is_local() {
+  case "$1" in directory\ *|local\ *) return 0 ;; esac
+  return 1
+}
+
 # What a host already has. Each host lists its marketplaces and plugins as
 # JSON, which python3 -- required by the CLI anyway -- reads. A host that
 # cannot answer reads as having nothing, and the first-install commands that
@@ -116,11 +168,13 @@ for entry in json.load(sys.stdin).get("installed", []):
   esac
 }
 
-# A marketplace the host already has is refreshed from wherever it points,
-# this checkout or the GitHub repository. Adding it again changes nothing
-# when the source matches and is refused when it does not. Likewise
-# `install` leaves an installed plugin exactly as it is; `update` is the
-# command that moves it.
+# A marketplace that reads a local path is moved to the repository: removed,
+# then added from the source above, with a row saying so. One that already
+# reads a remote is refreshed from wherever it points, because a user who
+# pointed it at a fork meant to. Adding a marketplace the host already has
+# changes nothing when the source matches and is refused when it does not,
+# which is why the local one is removed first. Likewise `install` leaves an
+# installed plugin exactly as it is; `update` is the command that moves it.
 install_claude() {
   command -v "$CLAUDE_COMMAND" >/dev/null 2>&1 || {
     echo "install.sh: Claude Code is not installed" >&2
@@ -128,10 +182,17 @@ install_claude() {
   }
   mkdir -p "$CLAUDE_DIR"
   remove_legacy_links claude
-  if [ -n "$(host_marketplace claude)" ]; then
-    run_claude plugin marketplace update projector
+  local marketplace source
+  marketplace="$(host_marketplace claude)"
+  source="$(plugin_source claude)"
+  if [ -z "$marketplace" ]; then
+    run_claude plugin marketplace add "$source" --scope user
+  elif marketplace_is_local "$marketplace" && [ "$source" != "$REPO" ]; then
+    run_claude plugin marketplace remove projector
+    run_claude plugin marketplace add "$source" --scope user
+    printf '%-14s %s\n' "moved" "claude marketplace ${marketplace#* } -> $source"
   else
-    run_claude plugin marketplace add "$REPO" --scope user
+    run_claude plugin marketplace update projector
   fi
   if [ -n "$(host_plugin_version claude)" ]; then
     run_claude plugin update projector@projector
@@ -140,10 +201,12 @@ install_claude() {
   fi
 }
 
-# Codex reads a local marketplace live and snapshots a Git one, so only a
-# Git marketplace has anything to refresh. `add` installs the plugin, and
-# installs it again from the marketplace when it is already there, so it is
-# the upgrade as well.
+# Codex reads a local marketplace live and snapshots a Git one. A local
+# marketplace is moved to the repository the same way, a Git one is
+# refreshed, and a local one with nowhere to move to is left as it is, since
+# asking Codex to upgrade it is an error rather than a no-op. `add` installs
+# the plugin, and installs it again from the marketplace when it is already
+# there, so it is the upgrade as well.
 install_codex() {
   command -v "$CODEX_COMMAND" >/dev/null 2>&1 || {
     echo "install.sh: Codex is not installed" >&2
@@ -151,10 +214,18 @@ install_codex() {
   }
   mkdir -p "$CODEX_DIR"
   remove_legacy_links codex
-  case "$(host_marketplace codex)" in
-    "") run_codex plugin marketplace add "$REPO" ;;
-    git*) run_codex plugin marketplace upgrade projector ;;
-  esac
+  local marketplace source
+  marketplace="$(host_marketplace codex)"
+  source="$(plugin_source codex)"
+  if [ -z "$marketplace" ]; then
+    run_codex plugin marketplace add "$source"
+  elif marketplace_is_local "$marketplace" && [ "$source" != "$REPO" ]; then
+    run_codex plugin marketplace remove projector
+    run_codex plugin marketplace add "$source"
+    printf '%-14s %s\n' "moved" "codex marketplace ${marketplace#* } -> $source"
+  else
+    case "$marketplace" in git*) run_codex plugin marketplace upgrade projector ;; esac
+  fi
   run_codex plugin add projector@projector
 }
 
@@ -200,7 +271,12 @@ report_plugin() {
     return
   }
   marketplace="$(host_marketplace "$host")"
-  [ -n "$marketplace" ] && printf '%-14s %s\n' "marketplace" "$host $marketplace"
+  if [ -n "$marketplace" ]; then
+    printf '%-14s %s\n' "marketplace" "$host $marketplace"
+    if marketplace_is_local "$marketplace" && [ "$(plugin_source "$host")" != "$REPO" ]; then
+      warn_row "from-checkout" "$host installs from a checkout and goes stale with it -- run ./install.sh $host to move it to $(plugin_source "$host")"
+    fi
+  fi
   installed="$(host_plugin_version "$host")"
   expected="$(checkout_plugin_version)"
   if [ -z "$installed" ]; then

@@ -1,7 +1,7 @@
 {
   "name": "projector",
   "displayName": "Projector",
-  "version": "0.2.6",
+  "version": "0.2.8",
   "description": "Git-native project plans and agent workflows for any repository",
   "author": {
     "name": "Justin Balthrop",
