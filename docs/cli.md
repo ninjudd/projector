@@ -385,8 +385,9 @@ groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the walkthroughs. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
-projects directory, which Projects covers. A repository with no projects opens
-on Docs instead. A document, in Docs or in a project, is a Markdown file or an
+projects directory, which Projects covers. Each sidebar lists its readme as
+**Overview** and appears only when there is more than that readme to list. A
+repository with no projects opens on Docs instead. A document, in Docs or in a project, is a Markdown file or an
 HTML page. The build copies those files under `content/` and describes them in
 `site.json`; the page renders Markdown in the browser and shows an HTML page
 as it is, titled by its `<title>`, in a frame the width of the window with the
