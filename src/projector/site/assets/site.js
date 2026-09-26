@@ -1,7 +1,7 @@
 "use strict";
 // Projector site: three sections, drawn from site.json. Projects lists the projects
 // and renders each one's files beside a sidebar of its folder; Reviews lists the
-// pull request walkthroughs; Docs renders the README and everything else under
+// pull request summaries; Docs renders the README and everything else under
 // docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
 // shown as it is in a frame. Every view has a real path under the site's base;
 // links between views update the address without a page load.
@@ -391,7 +391,7 @@
                     `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
                     `<td>${String(r.heads)}</td><td>${esc(r.updated)}</td></tr>`;
             }).join('') + '</table></div>' +
-            '<p class="note">Built by Projector\'s <span class="mono">walkthrough-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
+            '<p class="note">Built by Projector\'s <span class="mono">summarize-changes</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
     }
     // Centered on the whole query where the text holds it, else on the earliest word.
     function snippet(text, words) {

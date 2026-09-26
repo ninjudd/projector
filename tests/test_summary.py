@@ -10,7 +10,7 @@ from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from projector import cli, site, walkthrough
+from projector import cli, site, summary
 
 ROOT = Path(__file__).parents[1]
 
@@ -46,7 +46,7 @@ index 4444444..5555555 100644
 def make_spec(groups: list[dict]) -> dict:
     return {
         "version": 1,
-        "name": "Core Walkthrough",
+        "name": "Core Summary",
         "pr": {"repo": "owner/repo", "number": 7, "title": "Change the core", "head": "a" * 40, "base": "b" * 40, "baseRef": "main"},
         "overview": {"summary": ["It changes <code>Check</code>."], "cards": []},
         "groups": groups,
@@ -62,7 +62,7 @@ GOOD_GROUPS = [
 
 class ParseDiffTests(unittest.TestCase):
     def test_parses_files_counts_line_numbers_and_kinds(self) -> None:
-        files = {f["path"]: f for f in walkthrough.parse_diff(DIFF)}
+        files = {f["path"]: f for f in summary.parse_diff(DIFF)}
 
         core = files["src/core.go"]
         self.assertEqual((2, 1), (core["adds"], core["dels"]))
@@ -108,13 +108,13 @@ class ParseDiffTests(unittest.TestCase):
             "rename to new name.txt",
             "",
         ])
-        files = walkthrough.parse_diff(diff)
+        files = summary.parse_diff(diff)
         self.assertEqual(['café "x".md', "docs/a b/c.md", "gone.txt", "new name.txt"], [f["path"] for f in files])
         self.assertEqual((1, 1), (files[0]["adds"], files[0]["dels"]), "a removed line starting with -- stays a removed line")
         self.assertTrue(files[2]["deleted"])
 
     def test_anchor_matches_github_files_tab(self) -> None:
-        core = walkthrough.parse_diff(DIFF)[0]
+        core = summary.parse_diff(DIFF)[0]
         # GitHub anchors a file on the files tab by the SHA-256 of its path.
         self.assertEqual(
             "diff-" + __import__("hashlib").sha256(b"src/core.go").hexdigest(),
@@ -128,7 +128,7 @@ class BuildTests(unittest.TestCase):
         (tmp / "pr.diff").write_text(DIFF)
         (tmp / "spec.json").write_text(json.dumps(make_spec(groups)))
         err = io.StringIO()
-        lookup = mock.patch.object(walkthrough, "pr_metadata", side_effect=live or walkthrough.SpecError("gh pr view failed: offline"))
+        lookup = mock.patch.object(summary, "pr_metadata", side_effect=live or summary.SpecError("gh pr view failed: offline"))
         with lookup, redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = cli.main(["site", "page", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
         return code, tmp / "site", err.getvalue()
@@ -138,9 +138,9 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(0, code, err)
         html = (site / "index.html").read_text()
-        self.assertTrue(html.startswith("<title>Core Walkthrough</title>"))
-        self.assertTrue((site / "walkthrough.js").is_file())
-        self.assertTrue((site / "walkthrough.css").is_file())
+        self.assertTrue(html.startswith("<title>Core Summary</title>"))
+        self.assertTrue((site / "summary.js").is_file())
+        self.assertTrue((site / "summary.css").is_file())
         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
         # A literal </script> inside the diff must not end the data block.
         self.assertNotIn('"</script>"', html)
@@ -199,17 +199,17 @@ class RendererTests(unittest.TestCase):
 class AtHeadTests(unittest.TestCase):
     def test_at_head_fetches_the_recorded_merge_base_and_head_without_checking_the_live_pr(self) -> None:
         out = Path(tempfile.mkdtemp()) / "site"
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF) as fetch, \
-             mock.patch.object(walkthrough, "pr_metadata", side_effect=AssertionError("must not check the live PR")):
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF) as fetch, \
+             mock.patch.object(summary, "pr_metadata", side_effect=AssertionError("must not check the live PR")):
             site.build_page(make_spec(GOOD_GROUPS), out, at_head=True)
         fetch.assert_called_once_with("owner/repo", "b" * 40, "a" * 40)
         self.assertTrue((out / "index.html").is_file())
 
     def test_default_build_refuses_a_moved_head(self) -> None:
         live = dict(make_spec([])["pr"], head="c" * 40)
-        with mock.patch.object(walkthrough, "pr_metadata", return_value=live), \
-             mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF):
-            with self.assertRaisesRegex(walkthrough.SpecError, "moved from aaaaaaaaa to ccccccccc"):
+        with mock.patch.object(summary, "pr_metadata", return_value=live), \
+             mock.patch.object(summary, "fetch_diff", return_value=DIFF):
+            with self.assertRaisesRegex(summary.SpecError, "moved from aaaaaaaaa to ccccccccc"):
                 site.build_page(make_spec(GOOD_GROUPS), Path(tempfile.mkdtemp()))
 
 
@@ -226,13 +226,13 @@ class SiteTests(unittest.TestCase):
 
     def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        old = self.write_spec(tmp / "walkthroughs", "a" * 40, "Old")
-        new = self.write_spec(tmp / "walkthroughs", "c" * 40, "New")
+        old = self.write_spec(tmp / "summaries", "a" * 40, "Old")
+        new = self.write_spec(tmp / "summaries", "c" * 40, "New")
         times = {old: 100, new: 200}
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "spec_time", side_effect=lambda p: times[p]), \
              redirect_stdout(io.StringIO()):
-            _, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual([], failures)
         built_site = tmp / "site"
@@ -243,7 +243,7 @@ class SiteTests(unittest.TestCase):
         self.assertEqual([(7, "New", "c" * 40, 2)], [(w["number"], w["name"], w["head"], w["heads"]) for w in listed])
         self.assertTrue((built_site / ".nojekyll").exists())
         page = (built_site / "reviews" / "7" / ("a" * 40) / "index.html").read_text()
-        self.assertNotIn("walkthrough-data", page)
+        self.assertNotIn("summary-data", page)
         self.assertIn('<div id="sitebar" data-base="/"></div>', page, "a site page carries the site's menu")
         self.assertIn('src="/assets/site.js"', page)
         self.assertIn('<meta charset="utf-8">', page)
@@ -256,13 +256,13 @@ class SiteTests(unittest.TestCase):
 
     def test_a_spec_published_with_its_diff_builds_without_github(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        spec_path = self.write_spec(tmp / "walkthroughs", "a" * 40, "Stored")
+        spec_path = self.write_spec(tmp / "summaries", "a" * 40, "Stored")
         spec_path.with_name("diff.patch").write_text(DIFF)
-        offline = walkthrough.SpecError("gh api failed: offline")
-        with mock.patch.object(walkthrough, "fetch_diff", side_effect=offline), \
-             mock.patch.object(walkthrough, "merge_base", side_effect=offline), \
+        offline = summary.SpecError("gh api failed: offline")
+        with mock.patch.object(summary, "fetch_diff", side_effect=offline), \
+             mock.patch.object(summary, "merge_base", side_effect=offline), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual(([], 1), (failures, len(entries)))
         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
@@ -270,13 +270,13 @@ class SiteTests(unittest.TestCase):
 
     def test_a_spec_without_a_stored_diff_is_skipped_rather_than_fetched(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        self.write_spec(tmp / "walkthroughs", "a" * 40, "Stored")
-        bare = self.write_spec(tmp / "walkthroughs", "c" * 40, "Bare")
+        self.write_spec(tmp / "summaries", "a" * 40, "Stored")
+        bare = self.write_spec(tmp / "summaries", "c" * 40, "Bare")
         bare.with_name("diff.patch").unlink()
-        with mock.patch.object(walkthrough, "fetch_diff", side_effect=AssertionError("must not fetch")), \
-             mock.patch.object(walkthrough, "merge_base", side_effect=AssertionError("must not fetch")), \
+        with mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+             mock.patch.object(summary, "merge_base", side_effect=AssertionError("must not fetch")), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual(1, entries[0]["heads"])
         self.assertEqual(1, len(failures))
@@ -287,25 +287,25 @@ class SiteTests(unittest.TestCase):
         spec = make_spec(GOOD_GROUPS)
         spec["pr"]["head"] = "a" * 40
         spec["groups"][0]["intro"] = ['<script>alert(1)</script><b onclick="x()">bold</b>']
-        folder = tmp / "walkthroughs" / "7" / ("a" * 40)
+        folder = tmp / "summaries" / "7" / ("a" * 40)
         folder.mkdir(parents=True)
         (folder / "spec.json").write_text(json.dumps(spec))
         (folder / "diff.patch").write_text(DIFF)
         with redirect_stdout(io.StringIO()):
-            site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
         self.assertEqual(["<b>bold</b>"], data["groups"][0]["intro"])
 
     def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        self.write_spec(tmp / "walkthroughs", "a" * 40, "Good")
-        wrong = tmp / "walkthroughs" / "8" / ("d" * 40) / "spec.json"
+        self.write_spec(tmp / "summaries", "a" * 40, "Good")
+        wrong = tmp / "summaries" / "8" / ("d" * 40) / "spec.json"
         wrong.parent.mkdir(parents=True)
         wrong.write_text(json.dumps(make_spec(GOOD_GROUPS)))
         out = io.StringIO()
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(out):
-            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(out):
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual([7], [e["number"] for e in entries])
         self.assertEqual(1, len(failures))
         self.assertIn("must sit at <pr.number>/<pr.head>/spec.json", failures[0])
@@ -314,15 +314,15 @@ class SiteTests(unittest.TestCase):
 
     def test_one_spec_that_does_not_match_its_diff_costs_only_its_own_page(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        good = self.write_spec(tmp / "walkthroughs", "a" * 40, "Good")
-        bad = self.write_spec(tmp / "walkthroughs", "c" * 40, "Bad")
+        good = self.write_spec(tmp / "summaries", "a" * 40, "Good")
+        bad = self.write_spec(tmp / "summaries", "c" * 40, "Bad")
         spec = json.loads(bad.read_text())
         spec["groups"] = spec["groups"][:1]
         bad.write_text(json.dumps(spec))
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual(1, len(failures))
         self.assertIn("gen/api.pb.go is in no group", failures[0])
         self.assertFalse((tmp / "site" / "reviews" / "7" / ("c" * 40)).exists())
@@ -332,10 +332,10 @@ class SiteTests(unittest.TestCase):
 
     def test_skips_a_spec_for_another_repository_when_the_workflow_names_its_own(self) -> None:
         tmp = Path(tempfile.mkdtemp())
-        self.write_spec(tmp / "walkthroughs", "a" * 40, "Theirs")
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
+        self.write_spec(tmp / "summaries", "a" * 40, "Theirs")
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", walkthroughs=tmp / "walkthroughs")
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual([], entries)
         self.assertIn("it is for owner/repo, not this repository", failures[0])
         self.assertTrue((tmp / "site" / "index.html").is_file(), "the rest of the site still deploys")
@@ -343,7 +343,7 @@ class SiteTests(unittest.TestCase):
 
 class SanitizeTests(unittest.TestCase):
     def test_keeps_the_documented_markup_and_drops_everything_else(self) -> None:
-        clean = walkthrough.sanitize_html
+        clean = summary.sanitize_html
         self.assertEqual('<code>a &lt; b</code> &amp; <b>c</b>', clean('<code>a &lt; b</code> &amp; <b>c</b>'))
         self.assertEqual('<p class="note">x</p>', clean('<p class="note evil" style="color:red" onclick="x()">x</p>'))
         self.assertEqual('', clean('<img src=x onerror=alert(1)>'))
@@ -360,7 +360,7 @@ class SanitizeTests(unittest.TestCase):
         spec["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
         spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
         out = Path(tempfile.mkdtemp())
-        with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF):
+        with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
             site.build_page(spec, out, at_head=True)
         page = (out / "index.html").read_text()
         for bad in ("onerror", "alert(2)", "javascript:"):
@@ -396,9 +396,9 @@ class PublishTests(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.repo)
         try:
-            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
-                return walkthrough.publish(self.spec, "origin", **kwargs)
+            with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
+                return summary.publish(self.spec, "origin", **kwargs)
         finally:
             os.chdir(cwd)
 
@@ -411,16 +411,16 @@ class PublishTests(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.repo)
         try:
-            with mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(walkthrough, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+            with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                 mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
                  redirect_stdout(io.StringIO()):
-                walkthrough.publish(self.spec, "origin", diff_path=diff_file)
+                summary.publish(self.spec, "origin", diff_path=diff_file)
         finally:
             os.chdir(cwd)
-        self.assertIn(f"walkthroughs/7/{'a' * 40}/diff.patch", self.ref_files())
+        self.assertIn(f"summaries/7/{'a' * 40}/diff.patch", self.ref_files())
 
     def ref_files(self) -> list[str]:
-        return run(self.remote, "git", "ls-tree", "-r", "--name-only", "refs/projector/walkthroughs").splitlines()
+        return run(self.remote, "git", "ls-tree", "-r", "--name-only", "refs/projector/summaries").splitlines()
 
     def test_first_publish_creates_the_hidden_ref_dispatches_and_leaves_the_checkout_alone(self) -> None:
         (self.repo / "README.md").write_text("dirty\n")
@@ -429,13 +429,16 @@ class PublishTests(unittest.TestCase):
 
         self.assertIsNotNone(self.publish("a" * 40))
 
-        self.assertEqual([f"walkthroughs/7/{'a' * 40}/diff.patch", f"walkthroughs/7/{'a' * 40}/spec.json"],
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json"],
                          self.ref_files())
-        self.assertEqual(DIFF, run(self.remote, "git", "show", f"refs/projector/walkthroughs:walkthroughs/7/{'a' * 40}/diff.patch")
+        self.assertEqual(DIFF, run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{'a' * 40}/diff.patch")
                          + "\n")
-        self.assertEqual("", run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/walkthroughs"), "orphan")
+        self.assertEqual("", run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"), "orphan")
         self.assertEqual(["trunk"], run(self.remote, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines(),
                          "no branch is created")
+        self.assertEqual(["refs/projector/summaries"],
+                         run(self.remote, "git", "for-each-ref", "--format=%(refname)", "refs/projector").splitlines(),
+                         "with no old walkthroughs ref, nothing is seeded or created beside the new ref")
         self.assertEqual(["owner/repo"], self.dispatches)
         self.assertEqual(before, run(self.repo, "git", "rev-parse", "HEAD"))
         self.assertEqual("dirty\n", (self.repo / "README.md").read_text())
@@ -444,11 +447,73 @@ class PublishTests(unittest.TestCase):
     def test_later_publishes_add_heads_and_an_unchanged_spec_neither_pushes_nor_dispatches(self) -> None:
         first = self.publish("a" * 40)
         second = self.publish("c" * 40)
-        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/walkthroughs"))
-        self.assertIn(f"walkthroughs/7/{'c' * 40}/spec.json", self.ref_files())
+        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"))
+        self.assertIn(f"summaries/7/{'c' * 40}/spec.json", self.ref_files())
         self.assertIsNone(self.publish("c" * 40))
-        self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/walkthroughs"))
+        self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
         self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
+
+    def publish_legacy(self, head: str, when: str | None = None) -> str:
+        """Publish `head` the way a release from before the rename did, to the old ref and root, dated `when`."""
+        dates = {"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when} if when else {}
+        with mock.patch.dict(os.environ, dates):
+            old = self.publish(head, ref=summary.LEGACY_PAGES_REF, root=summary.LEGACY_PAGES_ROOT)
+        self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF))
+        self.dispatches.clear()
+        return old
+
+    def test_first_publish_seeds_the_summaries_ref_from_the_old_walkthroughs_ref(self) -> None:
+        old = self.publish_legacy("a" * 40)
+
+        new = self.publish("c" * 40)
+
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json",
+                          f"summaries/7/{'c' * 40}/diff.patch", f"summaries/7/{'c' * 40}/spec.json"], self.ref_files())
+        seed = run(self.remote, "git", "log", "--format=%P", "-1", new)
+        self.assertEqual(run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", old),
+                         run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", seed),
+                         "the old commit is replayed with its author, dates, and message")
+        self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
+                         run(self.remote, "git", "rev-parse", f"{seed}:summaries"), "the old specs move unchanged")
+        self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF), "the old ref is left in place")
+        self.assertEqual(["owner/repo"], self.dispatches)
+
+        self.publish("d" * 40)
+        self.assertEqual(new, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"),
+                         "later publishes build on the new ref without seeding again")
+
+    def test_seeding_pushes_the_new_ref_even_when_the_old_ref_already_has_the_spec(self) -> None:
+        old = self.publish_legacy("a" * 40)
+
+        seed = self.publish("a" * 40)
+
+        self.assertEqual(seed, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
+                         run(self.remote, "git", "rev-parse", f"{seed}:summaries"))
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json"], self.ref_files())
+        self.assertIsNone(self.publish("a" * 40), "once seeded, an unchanged spec publishes nothing")
+
+    def test_seeding_keeps_each_spec_dated_when_it_was_published(self) -> None:
+        # Two heads of one pull request, published a month apart under the old
+        # names. The site dates a spec by the last commit that touched its
+        # path, so a seed that moved both in one commit would tie them.
+        self.publish_legacy("a" * 40, when="2026-01-01T12:00:00+02:00")
+        self.publish_legacy("b" * 40, when="2026-02-01T12:00:00+02:00")
+
+        self.publish("c" * 40)
+
+        def dated(head: str) -> str:
+            return run(self.remote, "git", "log", "-1", "--format=%cI", "refs/projector/summaries", "--",
+                       f"summaries/7/{head}/spec.json")
+        self.assertEqual("2026-01-01T12:00:00+02:00", dated("a" * 40))
+        self.assertEqual("2026-02-01T12:00:00+02:00", dated("b" * 40), "the newer head stays newer")
+
+    def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(summary, "gh", side_effect=lambda *args: calls.append(args) or ""):
+            summary.dispatch("owner/repo")
+        self.assertEqual([("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-summaries"),
+                          ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")], calls)
 
     def test_refuses_to_push_a_spec_that_does_not_build(self) -> None:
         spec = make_spec(GOOD_GROUPS[:1])
@@ -456,10 +521,10 @@ class PublishTests(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.repo)
         try:
-            with mock.patch.object(walkthrough, "fetch_diff", return_value=DIFF), \
-                 mock.patch.object(walkthrough, "dispatch", side_effect=self.dispatches.append):
-                with self.assertRaisesRegex(walkthrough.SpecError, "gen/api.pb.go is in no group"):
-                    walkthrough.publish(self.spec, "origin")
+            with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+                 mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append):
+                with self.assertRaisesRegex(summary.SpecError, "gen/api.pb.go is in no group"):
+                    summary.publish(self.spec, "origin")
         finally:
             os.chdir(cwd)
         self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
@@ -472,15 +537,15 @@ class PublishTests(unittest.TestCase):
 
     def test_refuses_a_spec_for_another_repository(self) -> None:
         run(self.repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
-        with self.assertRaisesRegex(walkthrough.SpecError, "origin is someone/else, but the spec is for owner/repo"):
+        with self.assertRaisesRegex(summary.SpecError, "origin is someone/else, but the spec is for owner/repo"):
             self.publish("a" * 40)
 
 
 class RepoSlugTests(unittest.TestCase):
     def test_repo_slug_reads_github_remotes(self) -> None:
         for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
-            self.assertEqual("o/r", walkthrough.repo_slug(url), url)
-        self.assertEqual("", walkthrough.repo_slug("https://gitlab.com/o/r.git"))
+            self.assertEqual("o/r", summary.repo_slug(url), url)
+        self.assertEqual("", summary.repo_slug("https://gitlab.com/o/r.git"))
 
 
 class StatusTests(unittest.TestCase):
@@ -488,11 +553,11 @@ class StatusTests(unittest.TestCase):
         def lookup(*gh_args: str) -> str | None:
             endpoint = gh_args[1]
             if endpoint not in answers:
-                raise walkthrough.SpecError(f"gh api {endpoint} failed: connection refused")
+                raise summary.SpecError(f"gh api {endpoint} failed: connection refused")
             return answers[endpoint]
 
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(walkthrough, "gh_lookup", side_effect=lookup), redirect_stdout(out), redirect_stderr(err):
+        with mock.patch.object(summary, "gh_lookup", side_effect=lookup), redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["site", "status", "--repo", "o/r", *args])
         return code, out.getvalue(), err.getvalue()
 
@@ -551,13 +616,13 @@ class StatusTests(unittest.TestCase):
 
     def test_gh_lookup_reads_only_a_404_as_absent(self) -> None:
         def failing(stderr: str):
-            return mock.patch.object(walkthrough.subprocess, "run", side_effect=subprocess.CalledProcessError(
+            return mock.patch.object(summary.subprocess, "run", side_effect=subprocess.CalledProcessError(
                 1, ["gh"], output="", stderr=stderr))
 
         with failing("gh: Not Found (HTTP 404)\n"):
-            self.assertIsNone(walkthrough.gh_lookup("api", "repos/o/r/pages"))
-        with failing("gh: Bad credentials (HTTP 401)\n"), self.assertRaisesRegex(walkthrough.SpecError, "HTTP 401"):
-            walkthrough.gh_lookup("api", "repos/o/r/pages")
+            self.assertIsNone(summary.gh_lookup("api", "repos/o/r/pages"))
+        with failing("gh: Bad credentials (HTTP 401)\n"), self.assertRaisesRegex(summary.SpecError, "HTTP 401"):
+            summary.gh_lookup("api", "repos/o/r/pages")
 
 
 if __name__ == "__main__":

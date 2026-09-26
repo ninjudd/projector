@@ -16,7 +16,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from projector import cli, walkthrough
+from projector import cli, summary
 from projector.site import serve
 
 
@@ -82,7 +82,7 @@ class SiteBuildTests(SiteRepoCase):
         for needed in ('src="/assets/site.js"', "marked", "purify.min.js", 'href="/assets/site.css"', 'rel="icon"',
                        'data-base="/"'):
             self.assertIn(needed, home)
-        for asset in ("site.js", "site.css", "walkthrough.js", "walkthrough.css"):
+        for asset in ("site.js", "site.css", "summary.js", "summary.css"):
             self.assertTrue((self.out / "assets" / asset).is_file(), asset)
 
     def test_every_view_has_a_real_path_with_the_same_shell(self) -> None:
@@ -140,12 +140,12 @@ class VisibilityTests(SiteRepoCase):
         def lookup(*gh_args: str) -> str | None:
             endpoint = gh_args[1]
             if endpoint not in answers:
-                raise walkthrough.SpecError(f"gh api {endpoint} failed: connection refused")
+                raise summary.SpecError(f"gh api {endpoint} failed: connection refused")
             return answers[endpoint]
 
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
-             mock.patch.object(walkthrough, "gh_lookup", side_effect=lookup), \
+             mock.patch.object(summary, "gh_lookup", side_effect=lookup), \
              redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
                              "--check-visibility"])
@@ -198,7 +198,7 @@ class SiteContentTests(SiteRepoCase):
     def publish(self, number: int, head: str, projects: list[str] | None = None) -> None:
         spec = {
             "version": 1,
-            "name": f"Walkthrough {number}",
+            "name": f"Summary {number}",
             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
                    "base": "b" * 40, "baseRef": "main"},
             "overview": {"summary": [], "cards": []},
@@ -219,7 +219,7 @@ class SiteContentTests(SiteRepoCase):
         hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
         hidden.parent.mkdir()
         self.repo = Path(shutil.move(str(self.repo), str(hidden)))
-        self.specs = Path(tempfile.mkdtemp()) / "walkthroughs"
+        self.specs = Path(tempfile.mkdtemp()) / "summaries"
         (self.repo / "docs/images").mkdir(parents=True)
         (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
         (self.repo / "docs/.hidden").write_text("not served")
@@ -228,7 +228,7 @@ class SiteContentTests(SiteRepoCase):
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
-                             "--walkthroughs", str(self.specs)])
+                             "--summaries", str(self.specs)])
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
 
@@ -300,7 +300,7 @@ class CompiledScriptTests(unittest.TestCase):
             subprocess.run([str(TSC), "-p", str(assets.parent / "ts"), "--outDir", out],
                            check=True, capture_output=True, text=True)
             built = sorted(p.name for p in Path(out).glob("*.js"))
-            self.assertEqual(["site.js", "walkthrough.js"], built)
+            self.assertEqual(["site.js", "summary.js"], built)
             for name in built:
                 self.assertEqual((Path(out) / name).read_text(), (assets / name).read_text(),
                                  f"{name} is stale: run `npm run build` and commit it")
@@ -341,10 +341,10 @@ class ServeTests(SiteRepoCase):
         for site in self.sites:
             site.close()
 
-    def site(self, walkthroughs: Path | None = None, base: str = "/") -> serve.Site:
+    def site(self, summaries: Path | None = None, base: str = "/") -> serve.Site:
         def build(out: Path) -> str:
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                return cli.build_checkout(self.repo.resolve(), out, walkthroughs, base, "owner/example")
+                return cli.build_checkout(self.repo.resolve(), out, summaries, base, "owner/example")
 
         site = serve.Site(build, lambda: serve.fingerprint([self.repo]))
         self.sites.append(site)
@@ -427,13 +427,14 @@ class ServeTests(SiteRepoCase):
         self.assertEqual([good.name], [path.name for path in site.scratch.iterdir()], "the partial build is removed")
         self.assertIsNone(site.refresh(), "retried on the next change, not every poll")
 
-    def test_serves_walkthroughs_from_the_fetched_ref_newest_head_first(self) -> None:
+    def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT) -> Path:
+        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`."""
         remote = Path(tempfile.mkdtemp())
         run_git(remote, "init", "--quiet")
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
-            folder = remote / "walkthroughs" / "9" / head
+            folder = remote / root / "9" / head
             folder.mkdir(parents=True)
-            spec = {"version": 1, "name": "Walkthrough 9", "overview": {"summary": [], "cards": []},
+            spec = {"version": 1, "name": "Summary 9", "overview": {"summary": [], "cards": []},
                     "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": head,
                            "base": "b" * 40, "baseRef": "main"},
                     "groups": [{"id": "all", "title": "All", "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
@@ -441,26 +442,48 @@ class ServeTests(SiteRepoCase):
             (folder / "diff.patch").write_text(PLAN_DIFF)
             run_git(remote, "add", ".")
             run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
-        run_git(remote, "update-ref", walkthrough.PAGES_REF, "HEAD")
+        run_git(remote, "update-ref", ref, "HEAD")
         run_git(self.repo, "init", "--quiet")
         run_git(self.repo, "remote", "add", "origin", str(remote))
+        return remote
 
-        self.assertEqual("", serve.fetch_walkthroughs(self.repo, "origin"))
-        ref = serve.walkthroughs_ref(self.repo, "origin")
-        self.assertEqual("refs/projector/remotes/origin/walkthroughs", ref)
-        specs = serve.extract_walkthroughs(self.repo, ref, Path(tempfile.mkdtemp()))
-        site = self.site(walkthroughs=specs)
-
+    def assert_serves_both_heads(self, ref: str, root: str) -> None:
+        site = self.site(summaries=serve.extract_summaries(self.repo, ref, Path(tempfile.mkdtemp()), root))
         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
         self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
                          "each spec is dated by its own commit, not the ref's newest")
         self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
 
-    def test_a_checkout_without_the_ref_serves_no_walkthroughs(self) -> None:
+    def test_serves_summaries_from_the_fetched_ref_newest_head_first(self) -> None:
+        self.published_remote()
+
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        found = serve.summaries_ref(self.repo, "origin")
+        self.assertEqual(("refs/projector/remotes/origin/summaries", "summaries"), found)
+        self.assert_serves_both_heads(*found)
+
+    def test_serves_the_old_walkthroughs_ref_while_the_summaries_ref_does_not_exist(self) -> None:
+        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT)
+
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        found = serve.summaries_ref(self.repo, "origin")
+        self.assertEqual(("refs/projector/remotes/origin/walkthroughs", "walkthroughs"), found)
+        self.assert_serves_both_heads(*found)
+
+    def test_the_summaries_ref_wins_over_the_old_walkthroughs_ref(self) -> None:
+        remote = self.published_remote()
+        run_git(remote, "update-ref", summary.LEGACY_PAGES_REF, "HEAD~1")
+
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assertEqual(("refs/projector/remotes/origin/summaries", "summaries"), serve.summaries_ref(self.repo, "origin"))
+        old = serve.run_git(self.repo, "rev-parse", "--verify", "--quiet", "refs/projector/remotes/origin/walkthroughs")
+        self.assertNotEqual(0, old.returncode, "the old ref is not fetched once the new one exists")
+
+    def test_a_checkout_without_the_ref_serves_no_summaries(self) -> None:
         run_git(self.repo, "init", "--quiet")
 
-        self.assertNotEqual("", serve.fetch_walkthroughs(self.repo, "origin"))
-        self.assertIsNone(serve.walkthroughs_ref(self.repo, "origin"))
+        self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
 
     @unittest.skipIf(os.name == "nt", "SIGINT is how a terminal stops the server on POSIX")
     def test_ctrl_c_or_a_termination_signal_stops_the_server_and_removes_its_builds(self) -> None:
@@ -719,7 +742,7 @@ class FakeGitHub:
             return None if self.pages is None else json.dumps(self.pages)
         if endpoint == "repos/owner/example":
             return "true\n" if self.private else "false\n"
-        raise walkthrough.SpecError(f"unexpected lookup {args}")
+        raise summary.SpecError(f"unexpected lookup {args}")
 
     def gh(self, *args: str) -> str:
         self.calls.append(args)
@@ -729,7 +752,7 @@ class FakeGitHub:
             return json.dumps({"private": self.private, "homepage": self.homepage or None,
                                "permissions": {"admin": self.admin, "push": True, "pull": True}})
         if not self.admin:
-            raise walkthrough.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
+            raise summary.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
         if args == ("api", "-X", "DELETE", "repos/owner/example/pages"):
             self.pages = None
             return ""
@@ -741,12 +764,12 @@ class FakeGitHub:
             self.pages["build_type"] = "workflow"
         elif (method, endpoint, field) == ("PUT", "repos/owner/example/pages", "public=false"):
             if not self.private_pages:
-                raise walkthrough.SpecError("gh api failed: HTTP 422 private Pages are not available")
+                raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
             self.pages["public"] = False
         elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
             self.homepage = field.removeprefix("homepage=")
         else:
-            raise walkthrough.SpecError(f"unexpected call {args}")
+            raise summary.SpecError(f"unexpected call {args}")
         return "{}"
 
     def writes(self) -> list[tuple[str, ...]]:
@@ -768,15 +791,15 @@ class InitSiteTests(SiteRepoCase):
 
     def init(self, github: FakeGitHub, *extra: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(walkthrough, "gh_lookup", side_effect=github.lookup), \
-             mock.patch.object(walkthrough, "gh", side_effect=github.gh), \
+        with mock.patch.object(summary, "gh_lookup", side_effect=github.lookup), \
+             mock.patch.object(summary, "gh", side_effect=github.gh), \
              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
              redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["--root", str(self.repo), "init", *extra])
         return code, out.getvalue(), err.getvalue()
 
     def workflow(self) -> Path:
-        return self.repo / walkthrough.WORKFLOW_PATH
+        return self.repo / summary.WORKFLOW_PATH
 
     def test_sets_up_the_site_by_default_then_changes_nothing_on_a_rerun(self) -> None:
         github = FakeGitHub()
@@ -787,11 +810,11 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual([("POST", "repos/owner/example/pages", "-f", "build_type=workflow"),
                           ("PATCH", "repos/owner/example", "-f", "homepage=https://owner.github.io/example/")],
                          github.writes())
-        self.assertIn(f"created {walkthrough.WORKFLOW_PATH}\n", out)
+        self.assertIn(f"created {summary.WORKFLOW_PATH}\n", out)
         self.assertIn("created GitHub Pages site https://owner.github.io/example/\n", out)
         self.assertIn("updated repository website https://owner.github.io/example/\n", out)
         self.assertIn("through a pull request", err)
-        self.assertEqual(walkthrough.workflow_text("v0", "main"), self.workflow().read_text())
+        self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
 
         github.calls.clear()
         code, out, _ = self.init(github, "--json")
@@ -799,7 +822,7 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual(0, code)
         self.assertEqual([], github.writes())
         report = json.loads(out)
-        self.assertIn({"path": walkthrough.WORKFLOW_PATH, "action": "unchanged"}, report["files"])
+        self.assertIn({"path": summary.WORKFLOW_PATH, "action": "unchanged"}, report["files"])
         self.assertEqual({"pages": "unchanged", "visibility": "unchanged", "url": "https://owner.github.io/example/",
                           "public": True, "website": "unchanged"}, report["site"])
 
@@ -918,7 +941,7 @@ class InitSiteTests(SiteRepoCase):
 
         self.assertEqual(0, code)
         self.assertEqual([], github.writes())
-        self.assertIn(f"created {walkthrough.WORKFLOW_PATH}", out)
+        self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
         self.assertIn("you are not an admin of owner/example, so its website does not link", err)
 
         self.workflow().unlink()
@@ -944,14 +967,67 @@ class WorkflowTests(unittest.TestCase):
         self.assertLess(checkout, build, "the checkout would remove what the command generated")
         self.assertIn('${PREPARE:+--prepare "$PREPARE"}', action[build:action.index("upload-pages-artifact")])
 
+    def fetch_step(self) -> str:
+        """The shell script of the action's step that fetches the specs."""
+        lines = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text().splitlines()
+        start = lines.index("    - name: Fetch the summary specs")
+        start = lines.index("      run: |", start) + 1
+        end = next(i for i in range(start, len(lines)) if not lines[i].startswith("        "))
+        return "\n".join(line[8:] for line in lines[start:end]) + "\n"
+
+    @unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
+    def test_the_action_reads_the_old_walkthroughs_ref_while_the_summaries_ref_does_not_exist(self) -> None:
+        script = self.fetch_step()
+        for refs, expected in (
+            ((summary.LEGACY_PAGES_REF,), summary.LEGACY_PAGES_ROOT),
+            ((summary.PAGES_REF, summary.LEGACY_PAGES_REF), summary.PAGES_ROOT),
+            ((summary.PAGES_REF,), summary.PAGES_ROOT),
+            ((), None),
+        ):
+            with self.subTest(refs=refs):
+                tmp = Path(tempfile.mkdtemp())
+                remote = tmp / "remote"
+                run_git(tmp, "init", "--quiet", str(remote))
+                (remote / "README.md").write_text("main\n")
+                run_git(remote, "add", ".")
+                run_git(remote, "commit", "--quiet", "-m", "main")
+                for ref in refs:
+                    root = summary.PAGES_ROOT if ref == summary.PAGES_REF else summary.LEGACY_PAGES_ROOT
+                    def git_in(*args: str, text: str) -> str:
+                        return subprocess.run(["git", *args], cwd=remote, check=True, capture_output=True, text=True,
+                                              input=text).stdout.strip()
+
+                    blob = git_in("hash-object", "-w", "--stdin", text="spec\n")
+                    tree = git_in("mktree", text=f"100644 blob {blob}\t{root}\n")
+                    run_git(remote, "update-ref", ref, run_git(remote, "commit-tree", tree, "-m", root))
+                checkout = tmp / "checkout"
+                run_git(tmp, "clone", "--quiet", str(remote), str(checkout))
+                env_file = tmp / "github_env"
+                env_file.write_text("")
+                env = dict(os.environ, REF=summary.PAGES_REF, ROOT=summary.PAGES_ROOT, RUNNER_TEMP=str(tmp),
+                           GITHUB_ENV=str(env_file))
+                subprocess.run(["bash", "-e", "-c", script], cwd=checkout, env=env, check=True, capture_output=True)
+
+                written = env_file.read_text()
+                if expected is None:
+                    self.assertEqual("", written, "no ref: the site builds without reviews")
+                else:
+                    self.assertEqual(f"SUMMARIES={tmp}/summary-specs/{expected}\n", written)
+                    self.assertTrue((tmp / "summary-specs" / expected).is_file())
+
+    def test_the_workflow_listens_only_for_the_summaries_event(self) -> None:
+        text = summary.workflow_text("v0", "main")
+        self.assertIn("    types: [projector-summaries]\n", text)
+        self.assertNotIn(summary.LEGACY_DISPATCH_EVENT, text)
+
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
-        text = walkthrough.workflow_text("v0", "trunk")
+        text = summary.workflow_text("v0", "trunk")
         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**']\n", text)
         self.assertIn("uses: ninjudd/projector/actions/site@v0", text)
 
     def test_a_projects_directory_outside_docs_is_watched_too(self) -> None:
-        self.assertIn("paths: [README.md, 'docs/**', 'plans/**']", walkthrough.workflow_text("v0", "main", "plans"))
-        self.assertIn("paths: [README.md, 'docs/**']\n", walkthrough.workflow_text("v0", "main", "docs/projects"))
+        self.assertIn("paths: [README.md, 'docs/**', 'plans/**']", summary.workflow_text("v0", "main", "plans"))
+        self.assertIn("paths: [README.md, 'docs/**']\n", summary.workflow_text("v0", "main", "docs/projects"))
 
 
 if __name__ == "__main__":

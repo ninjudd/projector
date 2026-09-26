@@ -1,14 +1,14 @@
-// Projector PR walkthrough renderer: builds the page from walkthrough data, embedded in
-// #walkthrough-data or fetched from data.json beside the page, then wires collapsing,
+// Projector PR summary renderer: builds the page from summary data, embedded in
+// #summary-data or fetched from data.json beside the page, then wires collapsing,
 // viewed and reviewed state, highlighting, and sticky headers.
 (function (): void {
-function renderWalkthrough(data: WalkthroughData): void {
+function renderSummary(data: SummaryData): void {
   const pr = data.pr;
   const repoUrl = `https://github.com/${pr.repo}`;
   const prUrl = `${repoUrl}/pull/${String(pr.number)}`;
   const prRef = `${pr.repo.slice(pr.repo.lastIndexOf('/') + 1)}#${String(pr.number)}`;
   const baseRef = pr.baseRef !== undefined && pr.baseRef !== '' ? pr.baseRef : null;
-  const filesByPath: Record<string, WalkthroughFile> = {};
+  const filesByPath: Record<string, SummaryFile> = {};
   data.files.forEach(function (f) { filesByPath[f.path] = f; });
 
   function esc(s: string | number | null | undefined): string {
@@ -21,15 +21,15 @@ function renderWalkthrough(data: WalkthroughData): void {
     return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
   }
   // The build checks every file a group names against the diff.
-  function fileAt(path: string): WalkthroughFile {
+  function fileAt(path: string): SummaryFile {
     const f = filesByPath[path];
-    if (f === undefined) throw new Error(`The walkthrough names ${path}, which is not in its diff`);
+    if (f === undefined) throw new Error(`The summary names ${path}, which is not in its diff`);
     return f;
   }
 
   const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
 
-  function renderFile(spec: WalkthroughGroup['files'][number]): string {
+  function renderFile(spec: SummaryGroup['files'][number]): string {
     const f = fileAt(spec.path);
     const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
     const slash = f.path.lastIndexOf('/');
@@ -70,7 +70,7 @@ function renderWalkthrough(data: WalkthroughData): void {
     '</article>';
   }
 
-  function renderGroup(g: WalkthroughGroup, i: number): string {
+  function renderGroup(g: SummaryGroup, i: number): string {
     let adds = 0, dels = 0;
     g.files.forEach(function (s) { const f = fileAt(s.path); adds += f.adds; dels += f.dels; });
     const intro = (g.intro ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
@@ -151,18 +151,18 @@ function renderWalkthrough(data: WalkthroughData): void {
         `<ol>${nav}</ol><div class="extra">${extra}</div></nav></aside>` +
       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
         `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
-        `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">walkthrough-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+        `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-changes</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
       '</main></div></div>';
   }
 
-  const root = document.getElementById('walkthrough') ?? document.body;
+  const root = document.getElementById('summary') ?? document.body;
   root.innerHTML = renderPage();
-  window.__WALKTHROUGH_KEY__ = `walkthrough:${pr.repo}#${String(pr.number)}:`;
+  window.__SUMMARY_KEY__ = `summary:${pr.repo}#${String(pr.number)}:`;
 }
 
-function wireWalkthrough(): void {
-  const storedKey = window.__WALKTHROUGH_KEY__;
-  const KEY = storedKey !== undefined && storedKey !== '' ? storedKey : 'walkthrough:';
+function wireSummary(): void {
+  const storedKey = window.__SUMMARY_KEY__;
+  const KEY = storedKey !== undefined && storedKey !== '' ? storedKey : 'summary:';
   function get(k: string): string | null { try { return localStorage.getItem(KEY + k); } catch { return null; } }
   function set(k: string, v: boolean): void { try { if (v) localStorage.setItem(KEY + k, '1'); else localStorage.removeItem(KEY + k); } catch { /* without storage the state lasts only this visit */ } }
 
@@ -369,23 +369,23 @@ function wireWalkthrough(): void {
   refreshProgress();
 }
 
-const node = document.getElementById('walkthrough-data');
+const node = document.getElementById('summary-data');
 if (node !== null) {
-  renderWalkthrough(JSON.parse(node.textContent !== '' ? node.textContent : '{}') as WalkthroughData);
-  wireWalkthrough();
+  renderSummary(JSON.parse(node.textContent !== '' ? node.textContent : '{}') as SummaryData);
+  wireSummary();
 } else {
-  const src = document.getElementById('walkthrough')?.dataset.src;
+  const src = document.getElementById('summary')?.dataset.src;
   fetch(src !== undefined && src !== '' ? src : 'data.json')
     .then(function (response) {
       if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
-      return response.json() as Promise<WalkthroughData>;
+      return response.json() as Promise<SummaryData>;
     })
     .then(function (data) {
-      renderWalkthrough(data);
-      wireWalkthrough();
+      renderSummary(data);
+      wireSummary();
     }, function (error: unknown) {
-      (document.getElementById('walkthrough') ?? document.body).textContent =
-        `This walkthrough could not load its data: ${error instanceof Error ? error.message : String(error)}`;
+      (document.getElementById('summary') ?? document.body).textContent =
+        `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
     });
 }
 })();

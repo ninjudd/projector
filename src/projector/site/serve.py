@@ -1,8 +1,8 @@
 """Serve the Projector site from a checkout, without GitHub Pages.
 
 `project site serve` builds the same static site a deploy does into a
-temporary directory and serves it over HTTP. It reads walkthroughs from the
-checkout's copy of the hidden walkthroughs ref, so it needs no GitHub Pages
+temporary directory and serves it over HTTP. It reads summaries from the
+checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
 site, no workflow, and no network once the ref is fetched. While it runs it
 watches the files the site is built from and rebuilds when they change.
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
-from ..walkthrough import PAGES_REF, PAGES_ROOT
+from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, PAGES_REF, PAGES_ROOT
 
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
@@ -33,25 +33,45 @@ def run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
-    """Where `walkthrough publish` keeps its copy of the remote's walkthroughs ref."""
+    """Where `summary publish` keeps its copy of the remote's summaries ref."""
     return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
 
 
-def fetch_walkthroughs(root: Path, remote: str, ref: str = PAGES_REF) -> str:
-    """Update the local copy of the remote's walkthroughs ref, and say why when it cannot."""
+def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF) -> str:
+    """Update the local copy of the remote's summaries ref, and say why when it cannot.
+
+    A repository that has not published since walkthroughs were renamed
+    summaries has only the old walkthroughs ref, so that ref is fetched in the
+    new one's place, and `summaries_ref` reads it until the new ref exists.
+    """
     local = tracking_ref(remote, ref)
     fetched = run_git(root, "fetch", "--quiet", "--no-tags", remote, f"+{ref}:{local}")
     if fetched.returncode == 0:
         return ""
+    if ref == PAGES_REF:
+        legacy = run_git(root, "fetch", "--quiet", "--no-tags", remote,
+                         f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}")
+        if legacy.returncode == 0:
+            return ""
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
     return reason[-1] if reason else f"git fetch exited {fetched.returncode}"
 
 
-def walkthroughs_ref(root: Path, remote: str, ref: str = PAGES_REF) -> str | None:
-    """The local ref holding published walkthroughs, preferring the remote's copy."""
-    for candidate in (tracking_ref(remote, ref), ref):
-        if run_git(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}").returncode == 0:
-            return candidate
+def summaries_ref(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> tuple[str, str] | None:
+    """The local ref holding published summaries and the folder in it that holds the specs.
+
+    The remote's copy is preferred to a local ref of the same name. The old
+    walkthroughs ref, with its specs under walkthroughs/, is read only when no
+    copy of the summaries ref exists, as in a repository that has not
+    published since the rename.
+    """
+    candidates = [(ref, folder)]
+    if ref == PAGES_REF:
+        candidates.append((LEGACY_PAGES_REF, LEGACY_PAGES_ROOT))
+    for name, inside in candidates:
+        for candidate in (tracking_ref(remote, name), name):
+            if run_git(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}").returncode == 0:
+                return candidate, inside
     return None
 
 
@@ -62,10 +82,10 @@ def ref_commit(root: Path, ref: str | None) -> str:
     return found.stdout.decode().strip() if found.returncode == 0 else ""
 
 
-def extract_walkthroughs(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT) -> Path | None:
+def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT) -> Path | None:
     """Write the specs on `ref` under `dest`, each dated by the commit that last changed it.
 
-    The build orders a pull request's walkthroughs by when each spec was
+    The build orders a pull request's summaries by when each spec was
     committed. An archive stamps every file with the ref's newest commit, so
     each spec's time is set from its own history instead.
     """

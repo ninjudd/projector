@@ -73,7 +73,7 @@ export function Agents() {
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
         In Codex the same skills are <Code>$plan</Code>, <Code>$implement</Code>, and{" "}
         <Code>$finish</Code>. The plugin also carries the two review skills described next;{" "}
-        <Code>walkthrough-pr</Code>, which writes a guided walkthrough of a large pull request for
+        <Code>summarize-changes</Code>, which summarizes the changes in a large pull request as a guided page for
         its reviewers; and <Code>gh-stack</Code>, for splitting a large change into a chain of
         dependent pull requests.{" "}
         <a
