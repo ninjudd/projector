@@ -1,0 +1,101 @@
+{
+ "version": 1,
+ "name": "Automatic GitHub Releases",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 66,
+  "title": "Have the release script publish the GitHub release after tagging",
+  "head": "8b3c855a1821f95923dfc304bd5a6486d0901f57",
+  "base": "e41ca453354bd107ac25848de83cdeefb9b390ea",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Cutting 0.5.0 took two commands: <code>scripts/release.py tag</code> pushed <code>v0.5.0</code> and moved <code>v0</code>, and the Releases page stayed empty until someone ran <code>gh release create</code> by hand. This pull request makes <code>tag</code> finish the job.",
+   "After both tags are pushed, <code>tag</code> runs <code>gh release create vX.Y.Z --repo &lt;owner/repo&gt; --verify-tag --generate-notes</code>, with the repository read off the git remote. <code>--no-release</code> pushes only the tags. If the release step fails, the error says the tags are already pushed and prints the command that finishes the release."
+  ],
+  "cards": [
+   {
+    "id": "order",
+    "title": "Order of operations in tag",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Step</th><th>What happens</th><th>If it fails</th></tr></thead><tbody><tr><td>1</td><td>Fetch <code>origin/main</code> and read the version from it</td><td>Nothing pushed</td></tr><tr><td>2</td><td>Refuse if <code>vX.Y.Z</code> already exists</td><td>Nothing pushed</td></tr><tr><td>3</td><td>Push <code>vX.Y.Z</code>, then force-push <code>v0</code></td><td>Tags may be partly pushed</td></tr><tr><td>4</td><td><code>gh release create</code>, new in this PR</td><td class=\"r\">Tags stay; error prints the finishing command</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review loop approved head <code>8b3c855</code> with no findings.</li><li>Two suggestions are open in the review body and appear below as <b>look here</b> checks.</li><li>The real <code>gh release create</code> was not run, because <code>v0.5.0</code> already has its release; the tests stub that call.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "release",
+   "title": "The release step in scripts/release.py",
+   "kicker": "Two new functions and one new flag.",
+   "intro": [
+    "<code>repo_slug</code> turns a git remote URL into <code>owner/repo</code>, and <code>create_release</code> uses it to call <code>gh release create</code> with <code>--verify-tag</code>, so GitHub refuses rather than inventing a tag if the push did not land.",
+    "<code>tag</code> calls <code>create_release</code> last, after both tag pushes. The tags are what the marketplaces and the walkthroughs action follow, so they must not wait on the release. A failure is re-raised with a message naming the pushed tags and the command to finish."
+   ],
+   "concepts": [
+    "Once the tags are pushed, rerunning <code>tag</code> refuses with \"already exists\", so the printed command is the only path to finishing a failed release.",
+    "The release step needs an authenticated <code>gh</code>; the tag steps need only git."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>create_release</code> runs only after both <code>git push</code> calls succeed, so a failure there never leaves the release ahead of its tag."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>--no-release</code> reaches <code>tag</code> as <code>github_release=False</code> and returns before any <code>gh</code> call."
+    },
+    {
+     "kind": "flag",
+     "text": "The finishing command in the error omits <code>--repo</code>, so it works only when run from inside the checkout; adding <code>--repo &lt;owner/repo&gt;</code> when the slug is known makes it work anywhere."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>repo_slug</code> duplicates the function of the same name in <code>skills/walkthrough-pr/scripts/walkthrough.py</code>; a fix to remote parsing would have to land in both."
+    }
+   ],
+   "files": [
+    {
+     "path": "scripts/release.py",
+     "note": "Read <code>create_release</code> and the new tail of <code>tag</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The release call is stubbed; tags still go to a temporary bare remote.",
+   "intro": [
+    "<code>TagTests.setUp</code> patches <code>create_release</code> to record calls, so no test reaches GitHub. Three new tests cover the release for the exact tag, <code>--no-release</code>, and the failure message with the tags left in place, and a new class covers <code>repo_slug</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The failure test asserts both the message and that <code>v0.5.0</code> is still on the remote afterwards."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_release.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Release guide",
+   "kicker": "docs/plugins.md describes the new step.",
+   "intro": [
+    "The \"Release an update\" section now says <code>tag</code> also creates the GitHub release with generated notes, that this needs an authenticated <code>gh</code>, how <code>--no-release</code> skips it, and what a failure prints."
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
