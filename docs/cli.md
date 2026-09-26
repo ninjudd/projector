@@ -367,8 +367,9 @@ project site workflow --write
 unassigned group. `walkthrough publish` fetches the pull request's diff, checks
 that the spec builds against it, commits the spec and the diff to the hidden
 ref without touching the checkout, and starts the repository's site workflow.
-Pass `--diff` to publish a diff you produced instead of fetching one, and
-`--no-dispatch` to skip the workflow.
+Pass `--diff` to publish a diff you produced instead of fetching one; it must
+run from the spec's `pr.base` to its `pr.head`, because every later deploy
+serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
 
 `site page` builds one walkthrough into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
