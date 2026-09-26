@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: next
 ---
 
@@ -198,3 +198,25 @@ the plans, the walkthroughs and the other docs, and the projects view
 itself. Walkthroughs keep their pages and URLs; the root index that listed
 them became the site's PRs view. Linking a plan to the walkthroughs of the
 pull requests that implement it stays open, in `site` section 5.
+
+## 10. Outcome
+
+Shipped. A reviewer opens one page per pull request, grouped and explained,
+at `prs/<number>/` on the repository's Projector site, or as a Claude
+Artifact or a page on disk. Every acceptance criterion in section 2 holds,
+with two deviations from the original design:
+
+- The build script left the skill. The skill writes the spec, and the
+  Projector CLI does the rest: `project walkthrough init|publish` for the
+  spec and `project site page|build|status|workflow` for pages (section 7).
+  The refusals in section 2 are the CLI's, tested in
+  `tests/test_walkthrough.py`.
+- Publishing stores the diff beside the spec, and the site deploy builds from
+  it without asking GitHub for anything (section 8). The walkthroughs of #62
+  and #66, published before diffs were stored, were republished with them on
+  2026-09-26, and #81 removes the fallback that fetched their diffs.
+
+The skill publishes to the repository's site by default whenever the
+repository hosts one, and refuses a private repository whose Pages site is
+public. The site itself, and the work it deferred, continue in the `site`
+project (section 9).

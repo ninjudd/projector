@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -124,3 +124,20 @@ step instead of failing. The workflow `project site workflow` writes gains a
 - Search across documents, rather than filtering the projects view by name.
 - Non-Markdown files under `docs/`, such as images, which the site does not
   copy; a relative image resolves to GitHub instead.
+
+## 6. Outcome
+
+Shipped in releases 0.5.4 and 0.5.5. The home page, the menu, the projects
+view, the docs, and the walkthroughs are live at
+`https://ninjudd.com/projector/`, each at its own path, and a push to `main`
+that changes `README.md` or `docs/` rebuilds the site, as does a release. Every acceptance criterion in
+section 2 holds: the builds without walkthroughs or plans, the broken-plan
+fallback, the link rewriting, and the visibility refusal are tested in
+`tests/test_site.py`, and the views, in-place navigation, and direct loads of
+each path were checked in a browser against a build of this repository.
+
+Two deviations from the first design are recorded in section 4: routing on
+real paths rather than the URL's hash, and the composite action's rename from
+`actions/walkthroughs` to `actions/site` (#82). The three items in section 5
+remain deferred; none was part of the promised outcome, and each needs its own
+plan before it starts.
