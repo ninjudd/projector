@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
+import hashlib
 import importlib.metadata as metadata
 import io
 import json
@@ -255,6 +256,15 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="refuse to build when a private repository's Pages site is public, as a deploy must",
     )
+    site_build.add_argument(
+        "--prepare", metavar="COMMAND",
+        help="run this shell command in the checkout before building, instead of site.prepare",
+    )
+    site_build.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
+    site_build.add_argument(
+        "--allow-prepare", action="store_true",
+        help="allow this checkout's site.prepare command, and remember it until the command changes",
+    )
     site_page = site_commands.add_parser("page", help="build one walkthrough page from a spec")
     site_page.add_argument("--spec", required=True)
     site_page.add_argument("--out", required=True)
@@ -284,6 +294,15 @@ def parser() -> argparse.ArgumentParser:
     site_serve.add_argument("--remote", default="origin", help="the remote to fetch walkthroughs from (default: origin)")
     site_serve.add_argument("--no-fetch", action="store_true", help="serve the walkthroughs already fetched")
     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
+    site_serve.add_argument(
+        "--prepare", metavar="COMMAND",
+        help="run this shell command in the checkout before building, instead of site.prepare",
+    )
+    site_serve.add_argument("--no-prepare", action="store_true", help="skip site.prepare")
+    site_serve.add_argument(
+        "--allow-prepare", action="store_true",
+        help="allow this checkout's site.prepare command, and remember it until the command changes",
+    )
     site_workflow = site_commands.add_parser(
         "workflow", help="print or write the workflow file for the default branch"
     )
@@ -457,6 +476,68 @@ def configured_projects_dir(root: Path) -> Optional[Path]:
     return Path(configured)
 
 
+def configured_prepare(root: Path) -> Optional[str]:
+    """`site.prepare` from configuration: the command that generates what the site copies."""
+
+    configured = load_config(root).get("site.prepare")
+    if configured is None or configured == "":
+        return None
+    if not isinstance(configured, str):
+        raise ConfigError(f"site.prepare must be a string, not {type(configured).__name__}")
+    return configured
+
+
+def allowed_prepare_file() -> Path:
+    """Where the commands a user allowed are remembered: user state, not a checkout or its config."""
+    state = os.environ.get("XDG_STATE_HOME")
+    return (Path(state) if state else Path.home() / ".local" / "state") / "projector" / "allowed-prepare"
+
+
+def prepare_key(root: Path, command: str) -> str:
+    return hashlib.sha256(f"{root.resolve()}\n{command}".encode()).hexdigest()
+
+
+def prepare_command(root: Path, arguments: argparse.Namespace) -> Optional[str]:
+    """The command to run before building, or None.
+
+    site.prepare comes from the checkout, so a branch someone else wrote, or a
+    clone of a repository you have never looked at, would otherwise run its
+    own shell command as you the moment you preview its docs. Locally it runs
+    only once you allow that exact command for that checkout; a changed
+    command needs allowing again. A deploy runs it unasked, since the workflow
+    builds only what was merged to the default branch, and a --prepare given
+    on the command line is already your choice.
+    """
+    if arguments.no_prepare:
+        return None
+    if arguments.prepare:
+        return arguments.prepare
+    command = configured_prepare(root)
+    if not command or os.environ.get("GITHUB_ACTIONS") == "true":
+        return command
+    key = prepare_key(root, command)
+    allowed = allowed_prepare_file()
+    if allowed.is_file() and key in allowed.read_text(encoding="utf-8").split():
+        return command
+    if arguments.allow_prepare:
+        allowed.parent.mkdir(parents=True, exist_ok=True)
+        with allowed.open("a", encoding="utf-8") as remembered:
+            remembered.write(key + "\n")
+        return command
+    print(f"site.prepare is not allowed for this checkout, so the site is built without it:\n  {command}\n"
+          f"Rerun with --allow-prepare to allow this exact command here.", file=sys.stderr)
+    return None
+
+
+def run_prepare(root: Path, command: str) -> None:
+    """Run the prepare command in the checkout, through the system shell, as a Makefile target would run."""
+    # The command comes from the repository, so say what runs before it runs.
+    print(f"preparing the site: {command}", file=sys.stderr, flush=True)
+    result = subprocess.run(command, shell=True, cwd=root)
+    if result.returncode:
+        raise walkthrough.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
+
+
 NOT_HOSTED = 3
 
 
@@ -530,6 +611,9 @@ def run_site_build(arguments: argparse.Namespace) -> int:
         if not repo:
             raise walkthrough.SpecError("cannot check the site's visibility without knowing the repository")
         walkthrough.require_private_site(repo)
+    command = prepare_command(root, arguments)
+    if command:
+        run_prepare(root, command)
     walkthroughs = Path(arguments.walkthroughs) if arguments.walkthroughs else None
     summary = build_checkout(root, Path(arguments.out), walkthroughs, arguments.base, repo)
     print(f"wrote {arguments.out}/index.html: {summary}")
@@ -569,7 +653,8 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             with contextlib.redirect_stdout(io.StringIO()):
                 return build_checkout(root, out, walkthroughs, base, repo)
 
-    site_state = serve.Site(build, sources)
+    command = prepare_command(root, arguments)
+    site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
     try:
         print(f"built the site: {site_state.refresh(force=True)}")
         server = serve.ThreadingHTTPServer(
