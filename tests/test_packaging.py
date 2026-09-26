@@ -37,17 +37,18 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(PUBLISHED_SKILLS, discovered)
         self.assertFalse((ROOT / ".mcp.json").exists())
 
-    def test_both_manifests_declare_one_installable_version(self) -> None:
+    def test_one_version_covers_the_cli_and_both_plugin_manifests(self) -> None:
         claude = self.manifest("claude")
         codex = self.manifest("codex")
+        configuration = configparser.ConfigParser()
+        configuration.read(ROOT / "setup.cfg")
 
         # A host caches an installed plugin under a directory named by this
-        # string, so the version is what a release actually delivers: leave it
-        # unchanged and an update resolves to the copy already on disk and
-        # ships nothing. Assert the two manifests move together, because a
-        # one-sided bump updates one host and leaves the other on the stale
-        # cache entry with nothing reporting it.
+        # string, so a one-sided bump updates one host and leaves the other on
+        # a stale copy with nothing reporting it. One release tag also names
+        # the CLI and the plugin together, so all three must agree.
         self.assertEqual(claude["version"], codex["version"])
+        self.assertEqual(claude["version"], configuration["metadata"]["version"])
         self.assertRegex(str(claude["version"]), r"^\d+\.\d+\.\d+$")
 
     def test_host_marketplaces_resolve_the_root_plugin(self) -> None:

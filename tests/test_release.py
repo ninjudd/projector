@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+spec = importlib.util.spec_from_file_location("release", ROOT / "scripts" / "release.py")
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
+
+FILES = ("setup.cfg", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+
+
+def copy_version_files(dest: Path) -> None:
+    for name in FILES:
+        (dest / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / name, dest / name)
+
+
+def run(cwd: Path, *args: str) -> str:
+    return subprocess.run(list(args), cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class SetTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        copy_version_files(self.root)
+        self.start = release.current(self.root)
+
+    def test_writes_the_version_to_all_three_files_and_nothing_else(self) -> None:
+        major, minor, patch = release.parse(self.start)
+        new = f"{major}.{minor + 1}.0"
+        before = (self.root / ".codex-plugin/plugin.json").read_text()
+
+        release.set_version(self.root, new)
+
+        self.assertEqual({name: new for name in FILES}, release.versions(self.root))
+        after = (self.root / ".codex-plugin/plugin.json").read_text()
+        self.assertEqual(before.replace(f'"{self.start}"', f'"{new}"'), after)
+        self.assertEqual(json.loads(after)["name"], "projector")
+
+    def test_refuses_a_version_that_does_not_go_up(self) -> None:
+        with self.assertRaisesRegex(release.ReleaseError, "not above the current version"):
+            release.set_version(self.root, self.start)
+        with self.assertRaisesRegex(release.ReleaseError, "not X.Y.Z"):
+            release.set_version(self.root, "1.0")
+
+    def test_refuses_files_that_disagree(self) -> None:
+        path = self.root / ".codex-plugin/plugin.json"
+        path.write_text(path.read_text().replace(f'"{self.start}"', '"9.9.9"'))
+        with self.assertRaisesRegex(release.ReleaseError, "the version files disagree"):
+            release.current(self.root)
+
+
+class TagTests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.remote = tmp / "remote.git"
+        run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
+        self.repo = tmp / "repo"
+        run(tmp, "git", "clone", "--quiet", str(self.remote), str(self.repo))
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.com"),
+                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false")):
+            run(self.repo, "git", "config", key, value)
+        copy_version_files(self.repo)
+        self.commit("0.5.0")
+
+    def commit(self, version: str) -> str:
+        for name in FILES:
+            path = self.repo / name
+            if name == "setup.cfg":
+                path.write_text("[metadata]\nname = projector-cli\nversion = %s\n" % version)
+            else:
+                data = json.loads(path.read_text())
+                data["version"] = version
+                path.write_text(json.dumps(data, indent=2) + "\n")
+        run(self.repo, "git", "add", "-A")
+        run(self.repo, "git", "commit", "--quiet", "-m", version)
+        # The branch is not main: a developer's pre-push hook may refuse pushes to main.
+        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+        return run(self.repo, "git", "rev-parse", "HEAD")
+
+    def remote_tag(self, name: str) -> str:
+        return run(self.remote, "git", "rev-parse", f"{name}^{{commit}}")
+
+    def test_tags_the_release_and_moves_the_major_tag(self) -> None:
+        first = run(self.repo, "git", "rev-parse", "HEAD")
+        release.tag(self.repo, branch="trunk")
+        self.assertEqual(first, self.remote_tag("v0.5.0"))
+        self.assertEqual(first, self.remote_tag("v0"))
+
+        second = self.commit("0.5.1")
+        release.tag(self.repo, branch="trunk")
+        self.assertEqual(first, self.remote_tag("v0.5.0"), "a release tag never moves")
+        self.assertEqual(second, self.remote_tag("v0.5.1"))
+        self.assertEqual(second, self.remote_tag("v0"))
+
+    def test_refuses_to_retag_a_released_version(self) -> None:
+        release.tag(self.repo, branch="trunk")
+        with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
+            release.tag(self.repo, branch="trunk")
+
+    def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None:
+        # An unpushed local bump must not name the release.
+        (self.repo / "setup.cfg").write_text("[metadata]\nname = projector-cli\nversion = 0.9.0\n")
+        release.tag(self.repo, branch="trunk")
+        self.assertTrue(self.remote_tag("v0.5.0"))
+
+
+if __name__ == "__main__":
+    unittest.main()
