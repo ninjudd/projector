@@ -12,13 +12,15 @@ manifest at `.claude-plugin/plugin.json` and the Codex manifest at
 instructions and supporting scripts without a generated copy or host-specific
 fork.
 
-The plugin provides `plan`, `implement`, `finish`, `start-review-loop`,
-`start-fix-loop`, and `summarize-changes`, which summarizes a pull request's
-changes as a guided review page. Claude invokes a plugin skill as
-`/projector:<skill>`; Codex invokes it as `$<skill>`. The review loop inspects
-each head by the method in `skills/start-review-loop/method.md`, and the fix
-loop verifies findings by the same protocol. All three of `implement`, the
-review loop, and the fix loop share the code guidelines in
+The plugin provides `plan`, `implement`, `finish`, `review-changes`,
+`start-review-loop`, `start-fix-loop`, and `summarize-changes`, which
+summarizes a pull request's changes as a guided review page. Claude invokes a
+plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
+`review-changes` reviews a pull request's current head once, by the method in
+`skills/review-changes/method.md`, and publishes one labeled review;
+`start-review-loop` runs it on every new head of your pull requests, and the
+fix loop verifies findings by the same protocol. All three of `implement`,
+`review-changes`, and the fix loop share the code guidelines in
 `skills/guidelines.md`, so the rules one writes to are the rules the others
 review and fix against. The core workflows use the local CLI and do not
 require MCP.

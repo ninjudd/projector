@@ -361,8 +361,8 @@ These are the keys Projector reads today:
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
-| `review.username` | string | the authenticated user | `start-review-loop`, as the GitHub login that posts reviews |
-| `review.allow_approve` | boolean | `false` | `start-review-loop`, to permit a real `APPROVE` on a clean cross-author review |
+| `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
+| `review.allow_approve` | boolean | `false` | `review-changes`, to permit a real `APPROVE` on a clean cross-author review |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

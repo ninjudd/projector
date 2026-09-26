@@ -56,9 +56,10 @@ query time. Projector never writes a tracked status index.
 ## Work with coding agents
 
 The plugin gives Claude Code and Codex the same skills: `plan`, `implement`,
-and `finish` a project; `start-review-loop` and `start-fix-loop` to review and
-fix pull requests continuously; and `summarize-changes`, which summarizes a
-pull request's changes as a guided review page. Claude invokes a skill as
+and `finish` a project; `review-changes` to review a pull request once;
+`start-review-loop` and `start-fix-loop` to review and fix pull requests
+continuously; and `summarize-changes`, which summarizes a pull request's
+changes as a guided review page. Claude invokes a skill as
 `/projector:<skill>` and Codex as `$<skill>`. See
 [Install Projector](docs/plugins.md) for how the skills work together.
 
