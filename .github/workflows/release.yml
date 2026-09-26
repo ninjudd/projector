@@ -16,7 +16,6 @@ on:
     paths: [setup.cfg]
 permissions:
   contents: write
-  pull-requests: write
 concurrency:
   group: release
   cancel-in-progress: false
@@ -24,6 +23,9 @@ jobs:
   propose:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - name: Open the release pull request
@@ -55,11 +57,18 @@ jobs:
         with:
           fetch-depth: 0
       # A setup.cfg change that leaves the version alone, or one whose version is
-      # already tagged, releases nothing.
+      # already tagged, releases nothing. A release moves the major tag the site
+      # action runs at, and a release merge touches no docs, so the job asks the
+      # site workflow to rebuild with the released action.
       - name: Tag and publish the merged version
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          python3 scripts/release.py tag --if-untagged
+          result=$(python3 scripts/release.py tag --if-untagged)
+          echo "$result"
+          case "$result" in *"already released"*) exit 0 ;; esac
+          gh api "repos/$REPO/dispatches" -f event_type=projector-walkthroughs
