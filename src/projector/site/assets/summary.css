@@ -1,48 +1,51 @@
+/* Projector's palette, shared with projector.bot: warm paper neutrals and an
+   orange accent. --brand is the logo's orange; --accent is the same hue, darkened
+   in light mode so links and badge text keep 4.5:1 contrast. */
 :root {
-  --bg: #F3F5F8; --surface: #FFFFFF; --surface-2: #EAEFF4; --text: #172230; --muted: #5D6B7A;
-  --border: #D6DDE5; --accent: #1F5F8B; --accent-soft: #E4EEF6; --on-accent: #FFFFFF;
+  --bg: #F6F4EE; --surface: #FDFCF8; --surface-2: #EEEBE2; --text: #17150F; --muted: #5F5B50;
+  --border: #DEDAD0; --brand: #D4580F; --accent: #B54A0C; --accent-soft: #F9ECE1; --on-accent: #FFF7F0;
   --add-bg: #E4F5EA; --add-ln: #CBEAD6; --add-text: #0F5A2A;
   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
-  --hunk-bg: #EAF1F7; --hunk-text: #35597A; --ctx-ln: #8A96A3;
+  --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
   --warn: #9A6700; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA;
-  --code-bg: #EEF2F6;
-  --shadow: 0 1px 2px rgba(23,34,48,.06), 0 4px 16px rgba(23,34,48,.05);
+  --code-bg: #EFECE3;
+  --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
-  --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%23FFF7F0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0E1318; --surface: #151C24; --surface-2: #1B242E; --text: #E4EAF1; --muted: #93A1B0;
-    --border: #27323E; --accent: #6FB1E0; --accent-soft: #17303F; --on-accent: #0E1318;
+    --bg: #100F0C; --surface: #171510; --surface-2: #1E1C16; --text: #ECE8DD; --muted: #A5A094;
+    --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03;
     --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
-    --hunk-bg: #16222E; --hunk-text: #8FB3D6; --ctx-ln: #5F6E7D;
+    --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
     --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
-    --code-bg: #1B242E;
+    --code-bg: #1E1C16;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
-    --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%230E1318' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0E1318; --surface: #151C24; --surface-2: #1B242E; --text: #E4EAF1; --muted: #93A1B0;
-  --border: #27323E; --accent: #6FB1E0; --accent-soft: #17303F; --on-accent: #0E1318;
+  --bg: #100F0C; --surface: #171510; --surface-2: #1E1C16; --text: #ECE8DD; --muted: #A5A094;
+  --border: #2B2924; --brand: #F27C2E; --accent: #F27C2E; --accent-soft: #362314; --on-accent: #1A0C03;
   --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
-  --hunk-bg: #16222E; --hunk-text: #8FB3D6; --ctx-ln: #5F6E7D;
+  --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
   --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
-  --code-bg: #1B242E;
+  --code-bg: #1E1C16;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
-  --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%230E1318' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.55;
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 15px; line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
-code, pre, .mono, .fpath, .diff { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code, pre, .mono, .fpath, .diff { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 code { background: var(--code-bg); border-radius: 4px; padding: .05em .35em; font-size: .92em; }
 a { color: var(--accent); }
 h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
@@ -62,11 +65,11 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 @media (max-width: 980px) { .side { position: static; } }
 .nav { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
 .prblock { padding: 4px 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
-.prref { display: inline; font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500; font-size: 14px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
 .prref:hover { text-decoration: underline; }
 .prtitle { margin-top: 4px; font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.prmeta a { color: var(--accent); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.prmeta a { color: var(--accent); text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 .prmeta a:hover { text-decoration: underline; }
 .prbar { display: none; }
 @media (max-width: 980px) {
@@ -139,7 +142,7 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }
 .filebar-label { font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
 .filelist { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
-.filelist a { color: var(--accent); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+.filelist a { color: var(--accent); text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
 .filelist a:hover { text-decoration: underline; }
 .filebar-actions { margin-left: auto; display: flex; gap: 12px; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
@@ -165,7 +168,7 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .copypath .ic-ok { display: none; } .copypath.copied .ic-copy { display: none; } .copypath.copied .ic-ok { display: inline; } .copypath.copied { color: var(--ok); }
 /* Shown beside the button, selected, where the clipboard refused the path. */
 .copypath:has(+ .copyfield) { margin-right: 0; }
-.copyfield { flex: none; margin-right: auto; min-width: 0; max-width: 40%; padding: 2px 6px; font: 12.5px "IBM Plex Mono", ui-monospace, monospace; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; }
+.copyfield { flex: none; margin-right: auto; min-width: 0; max-width: 40%; padding: 2px 6px; font: 12.5px "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; }
 .chev { width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); transition: transform .15s; flex: none; margin-left: 2px; }
 .file.collapsed .chev { transform: rotate(-45deg); }
 .fpath { font-size: 13px; overflow-wrap: anywhere; }

@@ -22,6 +22,9 @@
 
   const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
   const PRIORITY_ORDER = ['now', 'next', 'later'];
+  // Projector's mark, as projector.bot draws it: an orange beam from a lens.
+  const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
+    '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
   // Set once site.json loads, before any view draws.
   let site!: SiteData;
   const pageFiles = new Set<string>();
@@ -147,7 +150,7 @@
 
   function header(active: Section, extra?: string): string {
     return `<header class="sitebar${extra !== undefined && extra !== '' ? ` ${extra}` : ''}"><a class="sitename" href="${esc(base)}">` +
-      `${esc(site.repo !== '' ? site.repo : 'Projector')}</a><nav class="sitenav" aria-label="Site">${nav(active)}</nav>` +
+      `${MARK}${esc(site.repo !== '' ? site.repo : 'Projector')}</a><nav class="sitenav" aria-label="Site">${nav(active)}</nav>` +
       `<form class="sitesearch" role="search" action="${esc(`${base}search/`)}">` +
       '<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form></header>';
   }

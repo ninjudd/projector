@@ -4,13 +4,19 @@
 .sitebar {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px;
-  padding: 12px max(16px, calc((100% - 1040px) / 2));
-  background: var(--surface); border-bottom: 1px solid var(--border);
+  min-height: 60px; padding: 10px max(16px, calc((100% - 1040px) / 2));
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
 }
 /* On a summary page the bar scrolls away; the summary's own headers stick. */
 .sitebar.scrolls { position: static; }
-.sitename { font-weight: 600; color: var(--text); text-decoration: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
-.sitenav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.sitename {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text); text-decoration: none;
+}
+.sitemark { width: 20px; height: 20px; flex: none; }
+.sitenav { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 14px; }
 .sitenav a { color: var(--muted); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }
 .sitenav a:hover { color: var(--text); }
 .sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -54,8 +60,8 @@ iframe.htmlpage { display: block; width: 100%; border: 1px solid var(--border); 
 .note { color: var(--muted); font-size: 13.5px; }
 
 .markdown { overflow-wrap: anywhere; }
-.markdown h1 { font-size: 30px; line-height: 1.2; margin: 0 0 16px; }
-.markdown h2 { font-size: 22px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.markdown h1 { font-size: 30px; line-height: 1.2; letter-spacing: -.02em; margin: 0 0 16px; }
+.markdown h2 { font-size: 22px; letter-spacing: -.01em; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .markdown h3 { font-size: 17px; margin: 24px 0 8px; }
 .markdown h4, .markdown h5, .markdown h6 { font-size: 15px; margin: 20px 0 6px; }
 .markdown pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
