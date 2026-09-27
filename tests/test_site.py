@@ -222,12 +222,12 @@ index 3333333..4444444 100644
 
 
 class SiteContentTests(SiteRepoCase):
-    def publish(self, number: int, head: str, projects: list[str] | None = None) -> None:
+    def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
         spec = {
             "version": 1,
             "name": f"Summary {number}",
             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
-                   "base": "b" * 40, "baseRef": "main"},
+                   "base": "b" * 40, "baseRef": "main", **pr},
             "overview": {"summary": [], "cards": []},
             "groups": [{"id": "all", "title": "All",
                         "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
@@ -258,6 +258,44 @@ class SiteContentTests(SiteRepoCase):
                              "--summaries", str(self.specs)])
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
+
+    def stacks(self) -> dict[int, tuple]:
+        return {r["number"]: (r["stackedOn"], r["baseRef"]) for r in self.build()["reviews"]}
+
+    def test_a_review_names_the_review_its_pull_request_is_stacked_on(self) -> None:
+        self.publish(9, "c" * 40, headRef="feature-a")
+        self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a", base="e" * 40)
+
+        self.assertEqual({9: (None, None), 10: (9, "feature-a")}, self.stacks())
+
+    def test_an_older_spec_without_head_branches_is_stacked_by_its_merge_base(self) -> None:
+        self.publish(9, "c" * 40)
+        self.publish(9, "f" * 40)
+        self.publish(10, "d" * 40, baseRef="feature-a", base="c" * 40)
+
+        self.assertEqual(9, self.stacks()[10][0], "the merge base is one of #9's heads, not only its newest")
+
+    def test_a_base_branch_no_review_covers_is_named_without_a_link(self) -> None:
+        self.publish(10, "d" * 40, baseRef="release")
+
+        self.assertEqual({10: (None, "release")}, self.stacks())
+
+    def test_a_pull_request_on_the_default_branch_is_never_stacked(self) -> None:
+        self.publish(9, "c" * 40)
+        self.publish(10, "d" * 40, base="c" * 40)
+
+        self.assertEqual({9: (None, None), 10: (None, None)}, self.stacks(),
+                         "a merge base that happens to be another head does not stack a pull request on main")
+
+    def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -> None:
+        subprocess.run(["git", "init", "-q", "-b", "feature", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "symbolic-ref", "refs/remotes/origin/HEAD",
+                        "refs/remotes/origin/trunk"], check=True)
+        self.publish(9, "c" * 40, baseRef="trunk")
+        self.publish(10, "d" * 40, baseRef="feature")
+
+        self.assertEqual({9: (None, None), 10: (None, "feature")}, self.stacks(),
+                         "a checkout on a feature branch still knows trunk is the default")
 
     def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
         self.publish(9, "c" * 40)
