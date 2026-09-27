@@ -591,17 +591,17 @@ class PublishCase(ReviewCase):
 
 
 class PublishTests(PublishCase):
-    def test_publishes_an_approved_self_review_marks_it_ready_and_cleans_up_in_order(self) -> None:
+    def test_publishes_a_clean_self_review_marks_it_ready_and_cleans_up_in_order(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        code, out, err = self.publish("approved", cwd=Path(tempfile.mkdtemp()))
+        code, out, err = self.publish("clean", cwd=Path(tempfile.mkdtemp()))
 
         self.assertEqual(0, code, err)
         review_body = self.posted()["body"]
         self.assertEqual(
-            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · **APPROVED** · took 12m 34s",
+            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · **CLEAN** · took 12m 34s",
             review_body.splitlines()[0])
-        self.assertIn(f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 "
+        self.assertIn(f"<!-- projector-review v=1 verdict=clean model=claude-opus-5-5 "
                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
         self.assertEqual(("COMMENT", self.head, "token-operator"),
@@ -610,7 +610,7 @@ class PublishTests(PublishCase):
         self.assertEqual({}, self.github.comments, "the start comment is gone")
         self.assertFalse(self.lock(self.head).exists(), "the lock is released")
         record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
-        self.assertEqual([(REPO, 1, self.head, 901, "approved")],
+        self.assertEqual([(REPO, 1, self.head, 901, "clean")],
                          [(r["repo"], r["number"], r["sha"], r["review_id"], r["verdict"]) for r in record])
         steps = [" ".join(args) for args, _ in self.github.calls]
         ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
@@ -653,12 +653,12 @@ class PublishTests(PublishCase):
         self.github.permissions = {"teammate": "write"}
         self.github.commit_authors = ["teammate"]
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.publish("clean")[0])
         self.assertEqual("COMMENT", self.posted()["event"])
 
         (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
         self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
-        code, _, err = self.publish("approved")
+        code, _, err = self.publish("clean")
 
         self.assertEqual(0, code, err)
         self.assertEqual("APPROVE", self.posted()["event"])
@@ -673,11 +673,20 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual([], self.github.reviews, "nothing was posted")
         self.assertTrue(self.lock(self.head).exists(), "a refused publish keeps the lock")
 
+    def test_approved_is_not_a_verdict(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        with self.assertRaises(SystemExit) as refused, redirect_stderr(io.StringIO()):
+            self.publish("approved")
+
+        self.assertEqual(2, refused.exception.code)
+        self.assertEqual([], self.github.reviews, "nothing was posted")
+
     def test_the_duration_and_seconds_are_always_present_and_agree(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.clock = self.START + timedelta(hours=1, minutes=4, seconds=9)
 
-        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.publish("clean")[0])
 
         first = self.posted()["body"].splitlines()[0]
         self.assertTrue(first.endswith("· took 1h 04m"), first)
@@ -687,20 +696,20 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
 
-        self.refused(self.publish("approved"), "project review move 1")
+        self.refused(self.publish("clean"), "project review move 1")
 
     def test_a_missing_or_empty_body_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        self.refused(self.publish("approved", body=self.dir / "nowhere.md"), "does not exist")
-        self.refused(self.publish("approved", body=self.body("   \n")), "empty")
+        self.refused(self.publish("clean", body=self.dir / "nowhere.md"), "does not exist")
+        self.refused(self.publish("clean", body=self.body("   \n")), "empty")
 
     def test_a_body_cannot_carry_its_own_signature_so_took_is_never_stale(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        stale = (f"{review.MARK} **Projector review** · model `m` · **APPROVED** · took 3m 00s\n\n"
+        stale = (f"{review.MARK} **Projector review** · model `m` · **CLEAN** · took 3m 00s\n\n"
                  "{census}\n")
 
-        self.refused(self.publish("approved", body=self.body(stale)), "signature line")
+        self.refused(self.publish("clean", body=self.body(stale)), "signature line")
 
     def test_an_anchor_outside_the_diff_or_without_a_line_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -725,10 +734,10 @@ class PublishRefusalTests(PublishCase):
 
     def test_a_second_publish_on_the_same_head_is_refused_without_rereview(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.publish("clean")[0])
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        code, _, err = self.publish("approved")
+        code, _, err = self.publish("clean")
 
         self.assertEqual(1, code)
         self.assertIn("--rereview", err)
@@ -736,20 +745,20 @@ class PublishRefusalTests(PublishCase):
 
     def test_a_rereview_publishes_a_second_verdict_on_the_same_head(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.publish("clean")[0])
         self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
 
-        code, _, err = self.publish("approved")
+        code, _, err = self.publish("clean")
 
         self.assertEqual(0, code, err)
         self.assertEqual(2, len(self.github.reviews))
 
     def test_another_loops_verdict_on_the_head_is_a_collision(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "a")[0])
-        self.assertEqual(0, self.publish("approved", loop="a")[0])
+        self.assertEqual(0, self.publish("clean", loop="a")[0])
         self.assertEqual(0, self.setup_review("--loop", "b", "--rereview")[0])
 
-        code, _, err = self.publish("approved", loop="b")
+        code, _, err = self.publish("clean", loop="b")
 
         self.assertEqual(1, code)
         self.assertIn("another loop", err)
@@ -760,7 +769,7 @@ class PublishRefusalTests(PublishCase):
         with mock.patch.dict(os.environ, environment):
             self.assertEqual(0, self.setup_review("--loop", "l1")[0])
             start = self.github.comments[101]
-            self.assertEqual(0, self.publish("approved", loop="l1")[0])
+            self.assertEqual(0, self.publish("clean", loop="l1")[0])
         signature, marker = self.posted()["body"].split("\n\n", 2)[:2]
         return start, signature, marker
 
@@ -768,7 +777,7 @@ class PublishRefusalTests(PublishCase):
         start, signature, marker = self.written("xhigh")
 
         self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
-        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · **APPROVED** ·", signature)
+        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · **CLEAN** ·", signature)
         self.assertIn("model=claude-opus-5-5 effort=xhigh sha=", marker)
         self.assertNotIn("effort", json.dumps(self.read_state()), "read live, never stored")
 
@@ -793,19 +802,19 @@ class PublishRefusalTests(PublishCase):
         })
         self.assertEqual(0, self.setup_review("--loop", "b")[0])
 
-        code, _, err = self.publish("approved", loop="b")
+        code, _, err = self.publish("clean", loop="b")
 
         self.assertEqual(1, code)
         self.assertIn("another loop", err)
 
     def test_outside_a_loop_a_second_verdict_needs_its_id_named_in_the_body(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
-        self.assertEqual(0, self.publish("approved", loop=None)[0])
+        self.assertEqual(0, self.publish("clean", loop=None)[0])
         self.assertEqual(0, self.setup_review()[0])
 
-        refused = self.publish("approved", loop=None)
-        uncited = self.publish("approved", "--second-verdict", "901", loop=None)
-        cited = self.publish("approved", "--second-verdict", "901", loop=None,
+        refused = self.publish("clean", loop=None)
+        uncited = self.publish("clean", "--second-verdict", "901", loop=None)
+        cited = self.publish("clean", "--second-verdict", "901", loop=None,
                              body=self.body("A second verdict beside review 901.\n\n{census}\n"))
 
         self.assertEqual((1, 1, 0), (refused[0], uncited[0], cited[0]), cited[2])
@@ -816,9 +825,9 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.github.fail = "pr ready"
 
-        failed = self.publish("approved")
+        failed = self.publish("clean")
         self.github.fail = None
-        retried = self.publish("approved")
+        retried = self.publish("clean")
 
         self.assertEqual(1, failed[0])
         self.assertIn("HTTP 502", failed[2])
@@ -827,11 +836,11 @@ class PublishRefusalTests(PublishCase):
         self.assertFalse(self.github.pr["draft"])
         self.assertFalse(self.lock(self.head).exists())
 
-    def test_approved_is_refused_while_a_finding_is_open(self) -> None:
+    def test_clean_is_refused_while_a_finding_is_open(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.open_finding()
 
-        self.refused(self.publish("approved"), "needs no open finding")
+        self.refused(self.publish("clean"), "needs no open finding")
 
     def test_changes_requested_is_refused_on_a_clean_head(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -841,13 +850,13 @@ class PublishRefusalTests(PublishCase):
     def test_a_body_without_the_census_in_prose_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        self.refused(self.publish("approved", body=self.body("No census here.\n")), "{census}")
-        self.refused(self.publish("approved", body=self.body("Only quoted: `{census}`.\n")), "{census}")
+        self.refused(self.publish("clean", body=self.body("No census here.\n")), "{census}")
+        self.refused(self.publish("clean", body=self.body("Only quoted: `{census}`.\n")), "{census}")
 
     def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        self.assertEqual(0, self.publish("approved", body=self.body("{census}\n\nChecked {checks}.\n"))[0])
+        self.assertEqual(0, self.publish("clean", body=self.body("{census}\n\nChecked {checks}.\n"))[0])
 
         self.assertIn("Checked {checks}.", self.posted()["body"])
 
@@ -855,7 +864,7 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         body = self.body("{census}\n\nReviewed {short_sha} ({sha}) in {took}, {seconds} seconds.\n")
-        self.assertEqual(0, self.publish("approved", body=body)[0])
+        self.assertEqual(0, self.publish("clean", body=body)[0])
 
         self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
 
@@ -881,8 +890,8 @@ class PublishRefusalTests(PublishCase):
     def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        self.refused(self.publish("approved", body=self.body(
-            "{census}\n\n<!-- projector-review v=1 verdict=approved -->\n")), "signature line")
+        self.refused(self.publish("clean", body=self.body(
+            "{census}\n\n<!-- projector-review v=1 verdict=clean -->\n")), "signature line")
 
     def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -891,13 +900,13 @@ class PublishRefusalTests(PublishCase):
         state["model"] = "has space"
         path.write_text(json.dumps(state))
 
-        self.refused(self.publish("approved"), "does not match review-changes/SKILL.md")
+        self.refused(self.publish("clean"), "does not match review-changes/SKILL.md")
 
     def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.assertEqual(0, self.later("release", "--repo", REPO)[0])
 
-        code, _, err = self.publish("approved")
+        code, _, err = self.publish("clean")
 
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)

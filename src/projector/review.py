@@ -551,15 +551,15 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · (?:effort `[^`\n]+` · )?"
-    r"\*\*(APPROVED|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+    r"\*\*(CLEAN|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
 MARKER = re.compile(
-    r"^<!-- projector-review v=1 verdict=(approved|changes-requested) model=\S+ (?:effort=\S+ )?"
+    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) model=\S+ (?:effort=\S+ )?"
     r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
-VERDICT_WORDS = {"approved": "APPROVED", "changes-requested": "CHANGES REQUESTED"}
+VERDICT_WORDS = {"clean": "CLEAN", "changes-requested": "CHANGES REQUESTED"}
 
 
 def duration(seconds: int, heads: int) -> str:
@@ -731,7 +731,7 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
     loop = loop if loop is not None else state.get("loop")
     repo, sha = state["repo"], state["sha"]
     if verdict not in VERDICT_WORDS:
-        raise ReviewError(f"--verdict must be approved or changes-requested, not {verdict}")
+        raise ReviewError(f"--verdict must be clean or changes-requested, not {verdict}")
     if not re.fullmatch(r"\d+/\d+", covered or ""):
         raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
     if not paths.lock(sha).exists():
@@ -754,8 +754,8 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
         check_threads(threads, diff_lines(repo, number) if threads else {})
         tally = census(repo, number)
         open_now = tally["open"] + len(threads)
-        if verdict == "approved" and open_now:
-            raise ReviewError(f"an approved verdict needs no open finding, and {tally['open']} are open and "
+        if verdict == "clean" and open_now:
+            raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
                               f"{len(threads)} are being posted; settle them or request changes")
         if verdict == "changes-requested" and not open_now:
             raise ReviewError("changes-requested needs an open finding or a new one; with none open the head is clean")
@@ -764,10 +764,10 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
         census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
         text = compose(state, verdict, body, covered, len(threads), census_line, now())
         mine = self_review(repo, number, state["reviewer"])
-        if mine or (verdict == "approved" and not allow_approve):
+        if mine or (verdict == "clean" and not allow_approve):
             event = "COMMENT"
         else:
-            event = "APPROVE" if verdict == "approved" else "REQUEST_CHANGES"
+            event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
         draft_wanted = (verdict == "changes-requested") if mine else None
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
