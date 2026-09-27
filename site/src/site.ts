@@ -404,12 +404,13 @@
     }).join('<br>');
   }
 
-  // Where a stacked pull request sits: on another review's pull request, or on a branch no review covers.
+  // The pull request a stacked one sits on: its review here when the site has one, else the pull request on GitHub.
   function stackNote(r: SiteReview): string {
-    if (r.stackedOn != null) {
-      return `<div class="stack">Stacked on <a href="${esc(`${base}reviews/${String(r.stackedOn)}/`)}">#${String(r.stackedOn)}</a></div>`;
-    }
-    return r.baseRef != null ? `<div class="stack">Stacked on <span class="mono">${esc(r.baseRef)}</span></div>` : '';
+    const beneath = r.stackedOn;
+    if (beneath == null) return '';
+    const reviewed = site.reviews.some(function (other) { return other.number === beneath; });
+    const href = reviewed ? `${base}reviews/${String(beneath)}/` : `${repoUrl()}/pull/${String(beneath)}`;
+    return `<div class="stack">Stacked on <a href="${esc(href)}">#${String(beneath)}</a></div>`;
   }
 
   function showReviews(): void {

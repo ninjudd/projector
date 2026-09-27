@@ -427,9 +427,17 @@ def merge_base(repo: str, base_ref: str, head: str) -> str:
     return gh("api", f"repos/{repo}/compare/{base_ref}...{head}", "--jq", ".merge_base_commit.sha").strip()
 
 
+def base_pr(repo: str, base_ref: str) -> int | None:
+    """The pull request whose head is `base_ref`, which a pull request based on it is stacked on."""
+    owner = repo.split("/", 1)[0]
+    found = gh_lookup("api", "-X", "GET", f"repos/{repo}/pulls", "-f", f"head={owner}:{base_ref}",
+                      "-f", "state=all", "-f", "per_page=1", "--jq", ".[0].number // empty")
+    return int(found) if found and found.strip().isdigit() else None
+
+
 def pr_metadata(repo: str, number: int) -> dict:
     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
-    return {
+    meta = {
         "repo": repo,
         "number": number,
         "title": raw["title"],
@@ -438,6 +446,10 @@ def pr_metadata(repo: str, number: int) -> dict:
         "base": merge_base(repo, raw["baseRefName"], raw["headRefOid"]),
         "baseRef": raw["baseRefName"],
     }
+    stacked_on = base_pr(repo, raw["baseRefName"])
+    if stacked_on is not None and stacked_on != number:
+        meta["basePr"] = stacked_on
+    return meta
 
 
 def fetch_diff(repo: str, base: str, head: str) -> str:

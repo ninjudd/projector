@@ -548,6 +548,29 @@ class RepoSlugTests(unittest.TestCase):
         self.assertEqual("", summary.repo_slug("https://gitlab.com/o/r.git"))
 
 
+class PrMetadataTests(unittest.TestCase):
+    def metadata(self, base_ref: str, pulls: dict[str, str]) -> dict:
+        view = json.dumps({"title": "T", "headRefOid": "d" * 40, "headRefName": "feature-b", "baseRefName": base_ref})
+
+        def lookup(*args: str) -> str:
+            self.assertIn("state=all", args)
+            head = next(a for a in args if a.startswith("head=")).removeprefix("head=")
+            return pulls.get(head, "") + "\n"
+
+        with mock.patch.object(summary, "gh", return_value=view), \
+             mock.patch.object(summary, "merge_base", return_value="c" * 40), \
+             mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+            return summary.pr_metadata("owner/example", 10)
+
+    def test_records_the_pull_request_its_base_branch_belongs_to(self) -> None:
+        meta = self.metadata("feature-a", {"owner:feature-a": "9"})
+
+        self.assertEqual(("feature-b", "feature-a", 9), (meta["headRef"], meta["baseRef"], meta["basePr"]))
+
+    def test_records_none_for_a_base_branch_no_pull_request_uses(self) -> None:
+        self.assertNotIn("basePr", self.metadata("main", {}))
+
+
 class StatusTests(unittest.TestCase):
     def status(self, answers: dict[str, str | None], *args: str) -> tuple[int, str, str]:
         def lookup(*gh_args: str) -> str | None:
