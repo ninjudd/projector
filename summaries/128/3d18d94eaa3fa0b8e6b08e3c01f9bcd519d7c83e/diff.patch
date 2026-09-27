@@ -1,0 +1,1249 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 727357d..4fea093 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -598,6 +598,58 @@ when a summary is published, when a push to the default branch changes
+ `.projector.toml`, or the workflow itself, and on demand; `--branch` names the
+ default branch when `origin` does not record it.
+ 
++## Review a pull request
++
++`project review` runs the mechanical steps of the `review-changes` skill, so
++a review loop does not rebuild them as helpers of its own:
++
++```sh
++project review setup 66 --model claude-opus-5-5 --effort low --loop main-loop
++project review move 66
++project review census 66 --json
++project review release 66
++```
++
++`setup` checks that pull request 66 is open, fetches its head into the
++checkout — from its branch, or from `pull/66/head` when the head is in a fork —
++and fetches the base. It creates a scratch worktree at the exact SHA GitHub
++reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
++start comment the skill describes as the reviewer. It records the SHA, the
++merge base, the worktree, whether the head is trusted, and the start comment's
++id and `created_at` in a state file, and prints them. A head is trusted when it
++is a branch in this repository, the pull request's author is you or has write
++access, and no commit names another author; a fork's head, or an untrusted
++one, is recorded so and reviewed by reading. `--rereview` records a re-review
++of a head the loop already published a verdict on.
++
++`move` follows a head that moved mid-review: it creates a worktree for the new
++head, rechecks trust, edits the start comment in place to name it, re-reads the
++comment to confirm the edit, and updates the state file. `census` lists every
++thread whose first comment carries the `projector-finding` marker, reading
++every page, and prints how many are resolved and open and each open thread's
++`path:line`; with `--json` each thread also carries its comments. `release`
++clears the pull request's review lock.
++
++No command takes a SHA: each comes from GitHub or the state file. `setup` works
++from the checkout containing the working directory, or `--checkout`, and
++refuses outside one; the repository is that checkout's `origin`, and `--repo`
++must name the same one. Every later command reads the checkout, worktree, and
++repository from the state file, finding it by `--repo` or by the pull request's
++number, so it runs from any directory. A command that posts runs `gh` as the
++reviewer, `--reviewer` or `review.username` or else the authenticated user,
++with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
++so the account the rest of the session uses is left alone.
++
++A review holds a lock for its pull request and head from `setup` until it is
++published, recording the host, the loop, and when it was taken, so a second
++instance for the same head exits. A refused `setup` releases it, a lock older
++than a day is stale, and `release` clears one left by a session that stopped.
++`--loop <id>` names the review loop; each loop keeps its record of published
++reviews under that id. State, locks, loop records, and scratch worktrees live
++under `$XDG_STATE_HOME/projector/reviews`, or
++`~/.local/state/projector/reviews`, and `--state-dir` moves them. Every refusal
++exits 1 and says what to do.
++
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+diff --git a/docs/projects/review-scripts/readme.md b/docs/projects/review-scripts/readme.md
+index f6ebe67..141a5a5 100644
+--- a/docs/projects/review-scripts/readme.md
++++ b/docs/projects/review-scripts/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ owner: ninjudd
+ ---
+diff --git a/skills/review-changes/SKILL.md b/skills/review-changes/SKILL.md
+index ab83f02..a9ff38c 100644
+--- a/skills/review-changes/SKILL.md
++++ b/skills/review-changes/SKILL.md
+@@ -133,17 +133,28 @@ transition is the sign-off a reader sees in the pull-request list.
+ 
+ ## Review an exact head
+ 
+-For the head under review:
++For the head under review, steps 1 to 4 are one command, run from a checkout
++of the repository or given one with `--checkout`:
+ 
+-1. Confirm the pull request remains open and record its full SHA.
+-2. Fetch that commit and create a scratch worktree at it. Never run a
++```sh
++project review setup <number> --model <model-id> --effort <effort> [--loop <id>] [--rereview]
++```
++
++It refuses, exiting non-zero with the reason, unless each step holds, and it
++takes every SHA from GitHub, never from an argument:
++
++1. The pull request is open. A head from a fork is set up too, fetched from
++   `pull/<number>/head`.
++2. It fetches that commit into the checkout and creates a scratch worktree at
++   it under its state directory, never inside the checkout. Never run a
+    reproducer that writes inside the operator's checkout. Never discard,
+    restore, or overwrite the operator's dirty or uncommitted work while
+    preparing or cleaning up a review.
+-3. Confirm the scratch worktree's `HEAD` equals GitHub's recorded SHA.
+-4. Only then post a concise start comment naming the short SHA, carrying the
+-   review signature line's `⚬◀` mark and its model and effort segments and a
+-   start marker, and keep the comment id and `created_at` the call returns:
++3. The fetched commit and the scratch worktree's `HEAD` both equal GitHub's
++   recorded SHA.
++4. Only then it posts, as the reviewer, a concise start comment naming the
++   short SHA, carrying the review signature line's `⚬◀` mark and its model and
++   effort segments and a start marker:
+ 
+    ```
+    ⚬◀ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
+@@ -151,10 +162,21 @@ For the head under review:
+    <!-- projector-start v=1 sha=<full-sha> -->
+    ```
+ 
+-   ```sh
+-   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> \
+-     --jq '"\(.id) \(.created_at)"'
+-   ```
++It prints the SHA, the merge base, the worktree, whether the head is trusted by
++the next section's rule, and the start comment's id and `created_at`, and
++records them in the review's state file, from which every later command reads
++the checkout, the worktree, and the repository. An untrusted head is reviewed
++by reading. It posts with a token for the reviewer from `review.username` or
++the authenticated user, set for that call alone; `--reviewer` passes explicit
++user input. `start-review-loop` passes its loop id as `--loop` to every
++command, and `--rereview` marks a re-review of a head the loop already
++published a verdict on, the case `RESPONDED` asks for.
++
++The review holds a lock for the pull request and head from `setup` until it is
++published, so a second instance for the same head exits without posting. A
++refused `setup` releases it. A lock older than a day is stale and cleared;
++`project review release <number>` clears one left by a session that stopped,
++and only when no review of that pull request is running.
+ 
+ 5. Inspect the head by the method in `method.md`, next to this file: state
+    the change's intent, sort the changed files, run the passes, follow every
+@@ -168,9 +190,10 @@ For the head under review:
+    is trusted as the next section defines. A candidate the protocol cannot
+    verify is dropped, never posted.
+ 7. Re-fetch the head before publishing. If it moved, the review in progress is
+-   of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
+-   comment as described next instead of repeating step 4, and revalidate every
+-   prospective finding against the new head.
++   of a stale head: run `project review move <number>`, which repeats steps 1
++   to 3 for the replacement SHA and edits the start comment as described next
++   instead of posting another, and revalidate every prospective finding against
++   the new head.
+ 
+ ### Run a head's code only when the head is trusted
+ 
+@@ -224,17 +247,14 @@ the head was reviewed without running its code and why.
+ A start comment belongs to the review it opens, not to the SHA it first named,
+ and it lives only until that review is published. When the head moves before
+ publication — step 7 catches it, or `start-review-loop` reports `NEW HEAD`
+-while inspection is still running — do not post a second start comment. Edit the
+-existing one so it names the new short SHA, says the head moved from the old
+-one, and says the review is being updated for the new changes, keeping its
+-`⚬◀` signature line, and set its marker's `sha=` to the new full SHA:
+-
+-```sh
+-gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
+-```
+-
+-`-F` reads the body from the file; `-f` would post the literal path. Re-read
+-the comment afterwards and confirm it names the new SHA.
++while inspection is still running — do not post a second start comment. Run
++`project review move <number>`, from any directory. It creates a worktree for
++the new head, rechecks whether the head is trusted, moves the lock to it, and
++edits the existing comment in place so it names the new short SHA, says the
++head moved from the old one, and says the review is being updated for the new
++changes, keeping its `⚬◀` signature line and setting its marker's `sha=` to the
++new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
++edit took; it also refuses when the head has not moved.
+ 
+ Once the review is published and verified, delete the start comment. The
+ review's signature line carries how long the review took, so the comment has
+@@ -351,23 +371,19 @@ is marked resolved is a hint, not the answer: an author may resolve a thread
+ before the fix works, and another may fix the code and never resolve it. So
+ before choosing a verdict, verify every Projector finding thread on the pull
+ request, resolved or not, against this head, and settle each one yourself.
+-You are the only party whose resolution is final. This query lists them,
+-paging so that a pull request with more than a hundred threads is read to the
+-end; it keys on the finding marker, never on a login:
++You are the only party whose resolution is final. This command lists them,
++reading every page so that a pull request with more than a hundred threads is
++read to the end; it keys on the finding marker, never on a login:
+ 
+ ```sh
+-gh api graphql --paginate -f query='
+-  query($o:String!,$r:String!,$n:Int!,$endCursor:String){ repository(owner:$o,name:$r){
+-    pullRequest(number:$n){ reviewThreads(first:100, after:$endCursor){
+-      pageInfo{hasNextPage endCursor}
+-      nodes{ id isResolved isOutdated path line originalLine
+-        comments(first:50){nodes{databaseId body}} } } } } }' \
+-  -f o=<owner> -f r=<repo> -F n=<number> \
+-  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+-        | select(.comments.nodes[0].body | test("projector-finding"))
+-        | "\(.id) \(if .isResolved then "resolved" else "open" end) \(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
++project review census <number> --json
+ ```
+ 
++Each thread carries its id, whether it is resolved, its `path` and `line`,
++whether it is outdated, and its comments, the finding first and then the
++replies. Without `--json` it prints the count the review body states, such as
++`6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
++
+ An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
+ keeps `originalLine`. Outdated says the code changed, not that the finding was
+ addressed, so verify it like any other.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index df256f5..801402c 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -21,7 +21,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import site, summary
++from . import review, site, summary
+ from .summary import WORKFLOW_PATH
+ from .config import ConfigError
+ from .config import load as load_config
+@@ -298,6 +298,35 @@ def parser() -> argparse.ArgumentParser:
+         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
+     )
+ 
++    review_parser = subcommands.add_parser("review", help="the mechanical steps of a pull request review")
++    review_commands = review_parser.add_subparsers(dest="review_command", required=True)
++    review_setup = review_commands.add_parser(
++        "setup", help="fetch a pull request's head into a scratch worktree and post the start comment"
++    )
++    review_move = review_commands.add_parser(
++        "move", help="follow a head that moved mid-review and update the start comment in place"
++    )
++    review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
++    review_release = review_commands.add_parser(
++        "release", help="clear a pull request's review lock when no review is running"
++    )
++    for command in (review_setup, review_move, review_census, review_release):
++        command.add_argument("pr", type=int, help="the pull request number")
++        command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
++                             "later: default the review set up for this pull request)")
++        command.add_argument("--state-dir", type=Path,
++                             help="where review state and locks live (default: $XDG_STATE_HOME/projector/reviews)")
++        command.add_argument("--loop", help="the review loop's id, which keys its record of published reviews")
++        add_output(command)
++    review_setup.add_argument("--checkout", type=Path,
++                              help="the source checkout to fetch into (default: the repository containing "
++                                   "this directory)")
++    review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
++    review_setup.add_argument("--model", required=True, help="the model id the start comment names")
++    review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
++    review_setup.add_argument("--rereview", action="store_true",
++                              help="a re-review of a head this loop already published a verdict on")
++
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+     site_build = site_commands.add_parser(
+@@ -603,6 +632,47 @@ def run_prepare(root: Path, command: str) -> None:
+ NOT_HOSTED = 3
+ 
+ 
++def run_review(arguments: argparse.Namespace) -> int:
++    root = review.state_dir(arguments.state_dir)
++    loop = review.valid_loop(arguments.loop)
++    command = arguments.review_command
++    if command == "setup":
++        checkout = arguments.checkout or Path.cwd()
++        try:
++            configured = load_config(review.checkout_root(checkout)).get("review.username")
++        except review.ReviewError:
++            configured = None
++        state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
++                             configured if isinstance(configured, str) else None,
++                             arguments.model, arguments.effort, loop, arguments.rereview)
++    else:
++        repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++        if command == "census":
++            result = review.census(repo, arguments.pr)
++            if arguments.json_output:
++                print(json.dumps(result, indent=2))
++            else:
++                print("\n".join(review.census_lines(result)))
++            return 0
++        if command == "release":
++            released = review.release(review.Paths(root, repo, arguments.pr))
++            if arguments.json_output:
++                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
++            else:
++                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}")
++            return 0
++        state = review.move(root, arguments.pr, repo, loop)
++    if arguments.json_output:
++        print(json.dumps(state, indent=2))
++    else:
++        print(f"reviewing {state['repo']}#{state['number']} at {state['sha']} (head {state['heads']})")
++        print(f"merge base {state['base']}")
++        print(f"worktree {state['worktree']}")
++        print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
++        print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
++    return 0
++
++
+ def run_summary(arguments: argparse.Namespace) -> int:
+     if arguments.summary_command == "init":
+         summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
+@@ -916,6 +986,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_summary(arguments)
+     if arguments.command == "site":
+         return run_site(arguments)
++    if arguments.command == "review":
++        return run_review(arguments)
+ 
+     # Resolved once and passed down, so configuration and the store agree on
+     # the repository without asking git for it twice.
+diff --git a/src/projector/review.py b/src/projector/review.py
+new file mode 100644
+index 0000000..8b5ce06
+--- /dev/null
++++ b/src/projector/review.py
+@@ -0,0 +1,490 @@
++"""The mechanical steps of a review: set up a head, follow a moved head, count findings.
++
++`review-changes` does its judgment in prose and its bookkeeping here, so the
++checks a hand-built helper kept skipping run every time. Every SHA comes from
++GitHub or the review's state file, never from an argument; the repository is
++passed to `gh` explicitly, so a command runs from any directory; a comment is
++posted as the reviewer with a token for that call alone, never by switching
++the account the rest of the session uses; and every refusal raises
++`ReviewError`, which exits non-zero with what to do about it.
++
++Layout of the state directory:
++
++    prs/<owner>/<repo>/<pr>.json         the review's state
++    prs/<owner>/<repo>/<pr>-<sha>.lock   the lock a review holds from setup until publish
++    worktrees/<owner>/<repo>/<pr>/<sha>  scratch worktrees, never inside the checkout
++    loops/<id>/published.json            a loop's record of the review ids it published
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import re
++import socket
++import subprocess
++from dataclasses import dataclass
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++from typing import Optional
++
++from .core import ProjectorError
++from .summary import repo_slug
++
++FINDING_MARKER = "projector-finding"
++START_MARK = "⚬◀"
++SHORT = 12
++STALE_AFTER = timedelta(days=1)
++LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
++
++
++class ReviewError(ProjectorError):
++    """A review step refused; its message says why and what to do."""
++
++    exit_code = 1
++
++
++class NotFound(ReviewError):
++    pass
++
++
++# GitHub and git
++
++def run_gh(args: list[str], token: Optional[str] = None) -> str:
++    """Run gh, with GH_TOKEN set for this call alone when `token` is given."""
++    env = None
++    if token is not None:
++        env = dict(os.environ, GH_TOKEN=token)
++    try:
++        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, env=env).stdout
++    except FileNotFoundError as exc:
++        raise ReviewError("the gh CLI is not installed") from exc
++    except subprocess.CalledProcessError as exc:
++        detail = exc.stderr.strip()
++        if "HTTP 404" in detail or "Could not resolve to a" in detail:
++            raise NotFound(detail) from exc
++        raise ReviewError(f"gh {' '.join(args)} failed: {detail}") from exc
++
++
++def gh_json(args: list[str], token: Optional[str] = None):
++    return json.loads(run_gh(args, token) or "null")
++
++
++def git(*args: str) -> str:
++    try:
++        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
++    except subprocess.CalledProcessError as exc:
++        raise ReviewError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
++
++
++def checkout_root(path: Path) -> Path:
++    try:
++        return Path(git("-C", str(path), "rev-parse", "--show-toplevel")).resolve()
++    except ReviewError as exc:
++        raise ReviewError(f"{path} is not inside a Git checkout; run this in a checkout of the repository "
++                          "or pass --checkout") from exc
++
++
++def origin_repo(checkout: Path) -> str:
++    """The repository origin names, read as configured: `remote get-url` applies a user's
++    `insteadOf` rewrites, which can turn the GitHub URL into a mirror's."""
++    try:
++        repo = repo_slug(git("-C", str(checkout), "config", "--get", "remote.origin.url"))
++    except ReviewError:
++        repo = ""
++    if not repo:
++        raise ReviewError(f"{checkout} has no GitHub origin; review from a checkout whose origin is the repository")
++    return repo
++
++
++# Identity
++
++def authenticated_login() -> str:
++    login = run_gh(["api", "user", "--jq", ".login"]).strip()
++    if not login:
++        raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
++    return login
++
++
++def reviewer_login(explicit: Optional[str], configured: Optional[str], operator: str) -> str:
++    """The reviewer: explicit input, then review.username, then the authenticated user."""
++    for login in (explicit, configured):
++        if login:
++            return login
++    return operator
++
++
++def reviewer_token(login: str) -> str:
++    """A token for the reviewer, for one call; the session's active account is left alone."""
++    try:
++        token = run_gh(["auth", "token", "--user", login]).strip()
++    except ReviewError as exc:
++        raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account") from exc
++    if not token:
++        raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account")
++    return token
++
++
++# Trust
++
++def trusted_head(repo: str, pr: dict, operator: str) -> tuple[bool, str]:
++    """Whether the head's code may run, by review-changes § Run a head's code only when the
++    head is trusted, and why not when it may not."""
++    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
++    if head_repo != repo:
++        return False, f"its head is in {head_repo or 'a deleted fork'}, not {repo}"
++    permissions: dict[str, bool] = {}
++
++    def trusted(login: str) -> bool:
++        if not login:
++            return False
++        if login == operator:
++            return True
++        if login.endswith("[bot]"):
++            return False
++        if login not in permissions:
++            try:
++                level = run_gh(["api", f"repos/{repo}/collaborators/{login}/permission",
++                                "--jq", ".permission"]).strip()
++            except ReviewError:
++                level = ""
++            permissions[login] = level in ("admin", "maintain", "write")
++        return permissions[login]
++
++    author = (pr.get("user") or {}).get("login") or ""
++    if not trusted(author):
++        return False, f"its author {author or '(unknown)'} has no write access to {repo}"
++    number = pr["number"]
++    try:
++        authors = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/commits",
++                          "--jq", '.[] | (.author.login // "")']).splitlines()
++    except ReviewError:
++        return False, "its commits could not be read"
++    for login in authors:
++        if not trusted(login.strip()):
++            return False, f"a commit names {login.strip() or 'no GitHub user'} as its author"
++    return True, ""
++
++
++# State
++
++def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -> Path:
++    if explicit is not None:
++        return explicit
++    environ = os.environ if environ is None else environ
++    base = environ.get("XDG_STATE_HOME")
++    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "reviews"
++
++
++@dataclass
++class Paths:
++    root: Path
++    repo: str
++    number: int
++
++    @property
++    def folder(self) -> Path:
++        return self.root / "prs" / self.repo
++
++    @property
++    def state(self) -> Path:
++        return self.folder / f"{self.number}.json"
++
++    def lock(self, sha: str) -> Path:
++        return self.folder / f"{self.number}-{sha}.lock"
++
++    def locks(self) -> list[Path]:
++        return sorted(self.folder.glob(f"{self.number}-*.lock")) if self.folder.is_dir() else []
++
++    def worktree(self, sha: str) -> Path:
++        return self.root / "worktrees" / self.repo / str(self.number) / sha[:SHORT]
++
++
++def loop_record(root: Path, loop: str) -> Path:
++    return root / "loops" / loop / "published.json"
++
++
++def ensure_loop(root: Path, loop: Optional[str]) -> None:
++    if loop is None:
++        return
++    record = loop_record(root, loop)
++    if not record.exists():
++        record.parent.mkdir(parents=True, exist_ok=True)
++        record.write_text("[]\n", encoding="utf-8")
++
++
++def read_state(paths: Paths) -> dict:
++    if not paths.state.is_file():
++        raise ReviewError(f"no review of {paths.repo}#{paths.number} is set up here; "
++                          f"run `project review setup {paths.number}`")
++    return json.loads(paths.state.read_text(encoding="utf-8"))
++
++
++def write_state(paths: Paths, state: dict) -> None:
++    paths.folder.mkdir(parents=True, exist_ok=True)
++    tmp = paths.state.with_suffix(".tmp")
++    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
++    tmp.replace(paths.state)
++
++
++def now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def lock_age(lock: Path) -> timedelta:
++    try:
++        taken = datetime.fromisoformat(json.loads(lock.read_text(encoding="utf-8"))["taken_at"])
++    except (OSError, ValueError, KeyError, TypeError):
++        taken = datetime.fromtimestamp(lock.stat().st_mtime, timezone.utc)
++    return now() - taken
++
++
++def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
++    """Claim the review of this pull request at this head until publish finishes.
++
++    A lock older than a day is stale and cleared; any other refuses the second instance."""
++    lock = paths.lock(sha)
++    lock.parent.mkdir(parents=True, exist_ok=True)
++    if lock.exists() and lock_age(lock) > STALE_AFTER:
++        lock.unlink(missing_ok=True)
++    try:
++        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
++    except FileExistsError as exc:
++        holder = ""
++        try:
++            held = json.loads(lock.read_text(encoding="utf-8"))
++            holder = f" (taken by loop {held.get('loop') or '-'} on {held.get('host')} at {held.get('taken_at')})"
++        except (OSError, ValueError):
++            pass
++        raise ReviewError(
++            f"another review of {paths.repo}#{paths.number} at {sha[:7]} holds its lock{holder}; let it finish, "
++            f"or run `project review release {paths.number}` if no review is running"
++        ) from exc
++    with os.fdopen(fd, "w") as handle:
++        json.dump({"sha": sha, "host": socket.gethostname(), "loop": loop, "pid": os.getpid(),
++                   "taken_at": now().isoformat()}, handle)
++        handle.write("\n")
++    return lock
++
++
++def release(paths: Paths) -> list[Path]:
++    """Clear every lock this pull request's reviews hold; returns what was cleared."""
++    released = paths.locks()
++    for lock in released:
++        lock.unlink(missing_ok=True)
++    return released
++
++
++# The pull request
++
++def pull_request(repo: str, number: int) -> dict:
++    """The open pull request, or a refusal saying why it cannot be reviewed."""
++    try:
++        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
++    except NotFound as exc:
++        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++    if pr.get("state") != "open":
++        raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is reviewed")
++    return pr
++
++
++def fetch(checkout: Path, ref: str) -> str:
++    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", ref)
++    return git("-C", str(checkout), "rev-parse", "FETCH_HEAD")
++
++
++def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
++    """Fetch the head — its branch in this repository, or `pull/<n>/head` from a fork — and
++    the base into the checkout, verify the head, and return the merge base."""
++    sha = pr["head"]["sha"]
++    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
++    ref = f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
++    fetched = fetch(checkout, ref)
++    if fetched != sha:
++        raise ReviewError(f"the head moved to {fetched[:7]} while it was fetched; run the command again")
++    fetch(checkout, f"refs/heads/{pr['base']['ref']}")
++    return git("-C", str(checkout), "merge-base", sha, pr["base"]["sha"])
++
++
++def add_worktree(checkout: Path, path: Path, sha: str) -> None:
++    if path.exists():
++        git("-C", str(checkout), "worktree", "remove", "--force", str(path))
++    path.parent.mkdir(parents=True, exist_ok=True)
++    git("-C", str(checkout), "worktree", "add", "--quiet", "--detach", str(path), sha)
++    head = git("-C", str(path), "rev-parse", "HEAD")
++    if head != sha:
++        raise ReviewError(f"the scratch worktree {path} is at {head[:7]}, not {sha[:7]}; remove it and run again")
++
++
++# Start comments
++
++def start_comment(model: str, effort: str, sha: str, moved_from: Optional[str] = None) -> str:
++    lines = [f"{START_MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
++             f"reviewing `{sha[:7]}`", ""]
++    if moved_from:
++        lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
++                  "for the new changes.", ""]
++    lines.append(f"<!-- projector-start v=1 sha={sha} -->")
++    return "\n".join(lines) + "\n"
++
++
++# Resolving which review a command means
++
++def valid_loop(loop: Optional[str]) -> Optional[str]:
++    if loop is not None and not LOOP_ID.match(loop):
++        raise ReviewError(f"--loop {loop!r} is not a usable id; use letters, digits, '.', '_' and '-'")
++    return loop
++
++
++def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
++    """The repository a command after setup means: --repo, else the review set up here for
++    this pull request, else the origin of the checkout the command runs in."""
++    if repo:
++        return repo
++    found = sorted((root / "prs").glob(f"*/*/{number}.json")) if (root / "prs").is_dir() else []
++    if len(found) == 1:
++        return f"{found[0].parent.parent.name}/{found[0].parent.name}"
++    if len(found) > 1:
++        names = ", ".join(f"{p.parent.parent.name}/{p.parent.name}" for p in found)
++        raise ReviewError(f"reviews of #{number} are set up in {names}; pass --repo to pick one")
++    try:
++        return origin_repo(checkout_root(cwd))
++    except ReviewError as exc:
++        raise ReviewError(f"no review of #{number} is set up here; pass --repo owner/name") from exc
++
++
++# Commands
++
++def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
++          configured_reviewer: Optional[str], model: str, effort: str, loop: Optional[str],
++          rereview: bool) -> dict:
++    checkout = checkout_root(checkout)
++    origin = origin_repo(checkout)
++    if repo and repo.lower() != origin.lower():
++        raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
++    repo = origin
++    paths = Paths(root, repo, number)
++    pr = pull_request(repo, number)
++    sha = pr["head"]["sha"]
++    lock = take_lock(paths, sha, loop)
++    try:
++        operator = authenticated_login()
++        reviewer = reviewer_login(reviewer, configured_reviewer, operator)
++        merge_base = fetch_head(checkout, repo, pr)
++        worktree = paths.worktree(sha)
++        add_worktree(checkout, worktree, sha)
++        trusted, why = trusted_head(repo, pr, operator)
++        token = reviewer_token(reviewer)
++        posted = gh_json(["api", f"repos/{repo}/issues/{number}/comments",
++                          "-f", f"body={start_comment(model, effort, sha)}"], token)
++    except BaseException:
++        lock.unlink(missing_ok=True)
++        raise
++    ensure_loop(root, loop)
++    state = {
++        "repo": repo,
++        "number": number,
++        "sha": sha,
++        "base": merge_base,
++        "base_ref": pr["base"]["ref"],
++        "cross_repository": ((pr["head"].get("repo") or {}).get("full_name")) != repo,
++        "trusted": trusted,
++        "untrusted_because": why or None,
++        "checkout": str(checkout),
++        "worktree": str(worktree),
++        "worktrees": [str(worktree)],
++        "operator": operator,
++        "reviewer": reviewer,
++        "model": model,
++        "effort": effort,
++        "loop": loop,
++        "rereview": rereview,
++        "start_comment": {"id": posted["id"], "created_at": posted["created_at"]},
++        "heads": 1,
++    }
++    write_state(paths, state)
++    return state
++
++
++def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
++    paths = Paths(root, repo, number)
++    state = read_state(paths)
++    checkout = Path(state["checkout"])
++    pr = pull_request(state["repo"], number)
++    sha, old = pr["head"]["sha"], state["sha"]
++    if sha == old:
++        raise ReviewError(f"the head of {state['repo']}#{number} is still {old[:7]}; there is nothing to move")
++    lock = take_lock(paths, sha, loop if loop is not None else state.get("loop"))
++    try:
++        merge_base = fetch_head(checkout, state["repo"], pr)
++        worktree = paths.worktree(sha)
++        add_worktree(checkout, worktree, sha)
++        trusted, why = trusted_head(state["repo"], pr, state["operator"])
++        token = reviewer_token(state["reviewer"])
++        comment = state["start_comment"]["id"]
++        body = start_comment(state["model"], state["effort"], sha, moved_from=old)
++        run_gh(["api", "-X", "PATCH", f"repos/{state['repo']}/issues/comments/{comment}",
++                "-f", f"body={body}"], token)
++        reread = gh_json(["api", f"repos/{state['repo']}/issues/comments/{comment}"])
++        if f"sha={sha}" not in (reread or {}).get("body", ""):
++            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; "
++                              "edit it by hand")
++    except BaseException:
++        lock.unlink(missing_ok=True)
++        raise
++    paths.lock(old).unlink(missing_ok=True)
++    state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
++                 trusted=trusted, untrusted_because=why or None,
++                 cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
++                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
++    write_state(paths, state)
++    return state
++
++
++THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){
++  pullRequest(number:$n){ reviewThreads(first:100, after:$after){
++    pageInfo{ hasNextPage endCursor }
++    nodes{ id isResolved isOutdated path line originalLine
++      comments(first:50){ nodes{ databaseId body } } } } } } }"""
++
++
++def census(repo: str, number: int) -> dict:
++    """Every Projector finding thread on the pull request, read to the last page, with its
++    replies, so the review can verify and settle each one from this one list."""
++    owner, name = repo.split("/", 1)
++    threads, after = [], None
++    while True:
++        args = ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
++                "-F", f"n={number}"]
++        if after:
++            args += ["-f", f"after={after}"]
++        page = gh_json(args)
++        pr = ((page or {}).get("data") or {}).get("repository", {}).get("pullRequest")
++        if pr is None:
++            raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account")
++        connection = pr["reviewThreads"]
++        for node in connection["nodes"]:
++            comments = (node.get("comments") or {}).get("nodes") or []
++            if comments and FINDING_MARKER in (comments[0].get("body") or ""):
++                threads.append({
++                    "id": node["id"],
++                    "path": node.get("path"),
++                    "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
++                    "outdated": bool(node.get("isOutdated")),
++                    "resolved": bool(node.get("isResolved")),
++                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
++                })
++        if not connection["pageInfo"]["hasNextPage"]:
++            break
++        after = connection["pageInfo"]["endCursor"]
++    resolved = sum(1 for t in threads if t["resolved"])
++    return {"total": len(threads), "resolved": resolved, "open": len(threads) - resolved, "threads": threads}
++
++
++def census_lines(result: dict) -> list[str]:
++    noun = "thread" if result["total"] == 1 else "threads"
++    lines = [f"{result['total']} finding {noun}: {result['resolved']} resolved, {result['open']} open"]
++    for t in result["threads"]:
++        if not t["resolved"]:
++            lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
++    return lines
+diff --git a/tests/test_review.py b/tests/test_review.py
+new file mode 100644
+index 0000000..406513d
+--- /dev/null
++++ b/tests/test_review.py
+@@ -0,0 +1,428 @@
++"""The `project review` commands, against a real Git remote and a fake GitHub.
++
++Git runs for real: a bare origin holds `trunk`, the head branch `feature`, and
++GitHub's `refs/pull/<n>/head`, and the checkout is a clone of it. `gh` is
++replaced by `FakeGitHub`, which answers the calls the commands make and
++records each one with the token it carried, so a test can see who posted what.
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import subprocess
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, review
++from projector.review import NotFound, ReviewError
++
++REPO = "acme/app"
++
++
++def git(cwd: Path, *args: str) -> str:
++    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
++               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
++    return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
++
++
++class FakeGitHub:
++    """The slice of GitHub the review commands use, for one pull request."""
++
++    def __init__(self, head: str, base_sha: str) -> None:
++        self.pr = {"number": 1, "state": "open", "user": {"login": "operator"},
++                   "head": {"sha": head, "ref": "feature", "repo": {"full_name": REPO}},
++                   "base": {"ref": "trunk", "sha": base_sha, "repo": {"full_name": REPO}}}
++        self.commit_authors = ["operator"]
++        self.permissions: dict[str, str] = {}
++        self.calls: list[tuple[list[str], str | None]] = []
++        self.comments: dict[int, str] = {}
++        self.pages: list[dict] = []
++        self.missing = False
++
++    def __call__(self, args: list[str], token: str | None = None) -> str:
++        self.calls.append((list(args), token))
++        if args[:2] == ["auth", "token"]:
++            return f"token-{args[-1]}\n"
++        if args == ["api", "user", "--jq", ".login"]:
++            return "operator\n"
++        if args[:2] == ["api", "graphql"]:
++            after = next((a.split("=", 1)[1] for a in args if a.startswith("after=")), None)
++            return json.dumps(self.pages[0 if after is None else int(after)])
++        if args == ["api", f"repos/{REPO}/pulls/1"]:
++            if self.missing:
++                raise NotFound("gh: Not Found (HTTP 404)")
++            return json.dumps(self.pr)
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/commits"]:
++            return "".join(f"{login}\n" for login in self.commit_authors)
++        if len(args) >= 2 and args[1].startswith(f"repos/{REPO}/collaborators/"):
++            login = args[1].split("/")[4]
++            if login not in self.permissions:
++                raise NotFound("gh: Not Found (HTTP 404)")
++            return self.permissions[login] + "\n"
++        if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]:
++            comment_id = 100 + len(self.comments) + 1
++            self.comments[comment_id] = args[3].removeprefix("body=")
++            return json.dumps({"id": comment_id, "created_at": "2026-09-27T01:02:03Z"})
++        if args[:3] == ["api", "-X", "PATCH"]:
++            comment_id = int(args[3].rsplit("/", 1)[1])
++            self.comments[comment_id] = args[5].removeprefix("body=")
++            return "{}"
++        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/issues/comments/"):
++            return json.dumps({"body": self.comments[int(args[1].rsplit("/", 1)[1])]})
++        raise AssertionError(f"unexpected gh call: {args}")
++
++    def posts(self) -> list[tuple[list[str], str | None]]:
++        return [(args, token) for args, token in self.calls if any(a.startswith("body=") for a in args)]
++
++
++class ReviewCase(unittest.TestCase):
++    def setUp(self) -> None:
++        tmp = Path(tempfile.mkdtemp())
++        self.origin = tmp / "origin.git"
++        git(tmp, "init", "--quiet", "--bare", "-b", "trunk", str(self.origin))
++        work = tmp / "work"
++        git(tmp, "init", "--quiet", "-b", "trunk", str(work))
++        (work / "README.md").write_text("trunk\n")
++        git(work, "add", ".")
++        git(work, "commit", "--quiet", "-m", "trunk")
++        self.base = git(work, "rev-parse", "HEAD")
++        git(work, "remote", "add", "origin", str(self.origin))
++        git(work, "push", "--quiet", "origin", "trunk")
++        self.work = work
++        self.head = self.push_head("first head")
++        self.checkout = tmp / "checkout"
++        git(tmp, "clone", "--quiet", str(self.origin), str(self.checkout))
++        # The clone's origin is a local path; the commands read the repository from
++        # origin's GitHub URL, so point the URL there and keep fetching locally.
++        git(self.checkout, "remote", "set-url", "origin", f"https://github.com/{REPO}.git")
++        git(self.checkout, "config", f"url.{self.origin}.insteadOf", f"https://github.com/{REPO}.git")
++        self.state = tmp / "state"
++        self.github = FakeGitHub(self.head, self.base)
++        patcher = mock.patch.object(review, "run_gh", self.github)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def push_head(self, text: str) -> str:
++        (self.work / "change.txt").write_text(text + "\n")
++        git(self.work, "add", ".")
++        git(self.work, "commit", "--quiet", "-m", text)
++        git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/feature", "HEAD:refs/pull/1/head")
++        return git(self.work, "rev-parse", "HEAD")
++
++    def project(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with mock.patch.object(cli.Path, "cwd", return_value=cwd or self.checkout), \
++             redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["review", *args])
++        return code, out.getvalue(), err.getvalue()
++
++    def setup_review(self, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        return self.project("setup", "1", "--state-dir", str(self.state), "--model", "claude-opus-5-5",
++                            "--effort", "low", *extra, cwd=cwd)
++
++    def later(self, command: str, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        return self.project(command, "1", "--state-dir", str(self.state), *extra, cwd=cwd)
++
++    def read_state(self) -> dict:
++        return json.loads((self.state / "prs" / REPO / "1.json").read_text())
++
++    def lock(self, sha: str) -> Path:
++        return self.state / "prs" / REPO / f"1-{sha}.lock"
++
++
++class SetupTests(ReviewCase):
++    def test_sets_up_the_exact_head_and_posts_the_start_comment_as_the_reviewer(self) -> None:
++        code, out, err = self.setup_review("--loop", "starkey-loop")
++
++        self.assertEqual(0, code, err)
++        state = self.read_state()
++        self.assertEqual((self.head, self.base, 1), (state["sha"], state["base"], state["heads"]))
++        self.assertEqual(REPO, state["repo"])
++        self.assertEqual(str(self.checkout.resolve()), state["checkout"])
++        worktree = Path(state["worktree"])
++        self.assertEqual(self.state / "worktrees" / REPO / "1" / self.head[:12], worktree)
++        self.assertEqual(self.head, git(worktree, "rev-parse", "HEAD"))
++        self.assertFalse(worktree.is_relative_to(self.checkout), "never inside the checkout")
++        self.assertTrue(state["trusted"])
++        self.assertEqual({"id": 101, "created_at": "2026-09-27T01:02:03Z"}, state["start_comment"])
++        self.assertEqual(("starkey-loop", False), (state["loop"], state["rereview"]))
++        self.assertEqual([], json.loads((self.state / "loops" / "starkey-loop" / "published.json").read_text()))
++        self.assertEqual(
++            f"{review.START_MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
++            f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
++            self.github.comments[101],
++        )
++        self.assertIn(f"reviewing {REPO}#1 at {self.head}", out)
++
++    def test_holds_the_lock_after_setup_recording_who_took_it(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        held = json.loads(self.lock(self.head).read_text())
++        self.assertEqual(("l1", self.head), (held["loop"], held["sha"]))
++        self.assertIn("host", held)
++        self.assertIn("taken_at", held)
++
++    def test_posts_with_a_token_for_that_call_and_never_switches_accounts(self) -> None:
++        code, _, err = self.setup_review()
++
++        self.assertEqual(0, code, err)
++        posts = self.github.posts()
++        self.assertEqual(1, len(posts))
++        self.assertEqual("token-operator", posts[0][1])
++        for args, token in self.github.calls:
++            self.assertNotIn("switch", args)
++            if not any(a.startswith("body=") for a in args):
++                self.assertIsNone(token, f"only posting carries the reviewer's token: {args}")
++
++    def test_the_reviewer_comes_from_review_username(self) -> None:
++        (self.checkout / ".projector.toml").write_text('[review]\nusername = "review-bot"\n')
++
++        code, _, err = self.setup_review()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("token-review-bot", self.github.posts()[0][1])
++        self.assertEqual(("review-bot", "operator"), (self.read_state()["reviewer"], self.read_state()["operator"]))
++
++    def test_sets_up_a_fork_head_from_its_pull_ref_and_records_it_untrusted(self) -> None:
++        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
++        self.github.pr["head"]["ref"] = "does-not-exist-here"
++
++        code, out, err = self.setup_review()
++
++        self.assertEqual(0, code, err)
++        state = self.read_state()
++        self.assertEqual(self.head, git(Path(state["worktree"]), "rev-parse", "HEAD"))
++        self.assertTrue(state["cross_repository"])
++        self.assertFalse(state["trusted"])
++        self.assertIn("someone/app", state["untrusted_because"])
++        self.assertIn("review it by reading", out)
++
++    def test_an_author_without_write_access_or_a_foreign_commit_is_untrusted(self) -> None:
++        cases = {
++            "author": ({"user": {"login": "stranger"}}, ["operator"], {}),
++            "commit": ({}, ["operator", "stranger"], {}),
++            "anonymous commit": ({}, ["operator", ""], {}),
++            "bot": ({"user": {"login": "renovate[bot]"}}, ["operator"], {"renovate[bot]": "write"}),
++        }
++        for name, (pr, authors, permissions) in cases.items():
++            with self.subTest(name):
++                self.github.pr.update(pr)
++                self.github.commit_authors = authors
++                self.github.permissions = permissions
++                trusted, why = review.trusted_head(REPO, self.github.pr, "operator")
++                self.assertFalse(trusted)
++                self.assertTrue(why)
++                self.github.pr["user"] = {"login": "operator"}
++
++    def test_a_collaborator_with_write_access_is_trusted(self) -> None:
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.commit_authors = ["teammate", "operator"]
++        self.github.permissions = {"teammate": "write"}
++
++        self.assertEqual((True, ""), review.trusted_head(REPO, self.github.pr, "operator"))
++
++    def test_refuses_a_closed_or_missing_pull_request_and_releases_the_lock(self) -> None:
++        self.github.pr["state"] = "closed"
++        closed = self.setup_review()
++        self.github.pr["state"] = "open"
++        self.github.missing = True
++        missing = self.setup_review()
++
++        self.assertEqual((1, 1), (closed[0], missing[0]))
++        self.assertIn("is closed", closed[2])
++        self.assertIn("does not exist", missing[2])
++        self.assertEqual([], self.github.posts())
++        self.assertEqual([], list((self.state / "prs" / REPO).glob("*.lock")) if (self.state / "prs").exists() else [])
++
++    def test_a_refusal_after_the_lock_releases_it(self) -> None:
++        # GitHub's answer and the fetched ref disagree when the head moves in
++        # between; the SHA is never taken on trust from either alone.
++        self.github.pr["head"]["sha"] = self.base
++
++        code, _, err = self.setup_review()
++
++        self.assertEqual(1, code)
++        self.assertIn("moved", err)
++        self.assertEqual([], self.github.posts())
++        self.assertFalse(self.lock(self.base).exists())
++
++    def test_a_second_instance_for_the_same_head_exits_without_posting(self) -> None:
++        first = self.setup_review("--loop", "a")
++        second = self.setup_review("--loop", "b")
++
++        self.assertEqual(0, first[0], first[2])
++        self.assertEqual(1, second[0])
++        self.assertIn("loop a", second[2])
++        self.assertIn("project review release 1", second[2])
++        self.assertEqual(1, len(self.github.posts()))
++
++    def test_a_lock_older_than_a_day_is_stale(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        held = json.loads(self.lock(self.head).read_text())
++        held["taken_at"] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
++        self.lock(self.head).write_text(json.dumps(held))
++
++        code, _, err = self.setup_review("--rereview")
++
++        self.assertEqual(0, code, err)
++        self.assertTrue(self.read_state()["rereview"])
++
++    def test_release_clears_the_lock_so_a_rereview_can_set_up(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++
++        code, out, err = self.later("release", "--repo", REPO)
++        again = self.setup_review("--rereview")
++
++        self.assertEqual(0, code, err)
++        self.assertIn("released 1 lock", out)
++        self.assertEqual(0, again[0], again[2])
++        self.assertTrue(self.read_state()["rereview"])
++
++    def test_refuses_outside_a_checkout(self) -> None:
++        code, _, err = self.setup_review(cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(1, code)
++        self.assertIn("--checkout", err)
++        self.assertEqual([], self.github.posts())
++
++    def test_repo_must_match_the_checkouts_origin(self) -> None:
++        code, _, err = self.setup_review("--repo", "other/app")
++
++        self.assertEqual(1, code)
++        self.assertIn(REPO, err)
++        self.assertEqual([], self.github.posts())
++
++    def test_checkout_can_be_named_from_anywhere(self) -> None:
++        code, _, err = self.setup_review("--checkout", str(self.checkout), cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++
++    def test_refuses_an_unusable_loop_id(self) -> None:
++        code, _, err = self.setup_review("--loop", "../escape")
++
++        self.assertEqual(1, code)
++        self.assertIn("--loop", err)
++
++
++class MoveTests(ReviewCase):
++    def test_follows_a_moved_head_from_anywhere_and_edits_the_start_comment_in_place(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        old = self.head
++        new = self.push_head("second head")
++        self.github.pr["head"]["sha"] = new
++
++        code, _, err = self.later("move", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++        state = self.read_state()
++        self.assertEqual((new, 2), (state["sha"], state["heads"]))
++        self.assertEqual(new, git(Path(state["worktree"]), "rev-parse", "HEAD"))
++        body = self.github.comments[101]
++        self.assertEqual([101], list(self.github.comments), "edited in place, not a second comment")
++        self.assertIn(f"reviewing `{new[:7]}`", body)
++        self.assertIn(f"moved from `{old[:7]}`", body)
++        self.assertIn(f"sha={new}", body)
++        self.assertFalse(self.lock(old).exists())
++        self.assertTrue(self.lock(new).exists())
++
++    def test_rechecks_trust_on_the_new_head(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++        self.github.commit_authors = ["operator", "stranger"]
++
++        self.assertEqual(0, self.later("move")[0])
++
++        self.assertFalse(self.read_state()["trusted"])
++
++    def test_refuses_a_head_that_did_not_move(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++
++        code, _, err = self.later("move")
++
++        self.assertEqual(1, code)
++        self.assertIn("nothing to move", err)
++
++    def test_refuses_without_a_review_set_up(self) -> None:
++        code, _, err = self.later("move", "--repo", REPO)
++
++        self.assertEqual(1, code)
++        self.assertIn("project review setup 1", err)
++
++
++def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
++           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
++    return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
++            "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
++
++
++def page(nodes: list[dict], next_cursor: str | None) -> dict:
++    return {"data": {"repository": {"pullRequest": {"reviewThreads": {
++        "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor}, "nodes": nodes}}}}}
++
++
++class CensusTests(ReviewCase):
++    FINDING = "<!-- projector-finding v=1 priority=P2 --> **P2 · A nil deref**"
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.github.pages = [
++            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True),
++                  thread("T3", "Could this be a constant?")], "1"),
++            page([thread("T4", self.FINDING, outdated=True, line=None, original=7, path="src/y.py")], None),
++        ]
++
++    def test_counts_finding_threads_across_pages_and_marks_outdated_ones(self) -> None:
++        code, out, err = self.later("census", "--repo", REPO)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["3 finding threads: 1 resolved, 2 open", "src/x.py:3", "src/y.py:7 outdated"],
++                         out.splitlines())
++        graphql = [args for args, _ in self.github.calls if args[:2] == ["api", "graphql"]]
++        self.assertEqual(2, len(graphql))
++        self.assertIn("after=1", graphql[1])
++
++    def test_prints_json_with_each_threads_comments(self) -> None:
++        code, out, err = self.later("census", "--repo", REPO, "--json")
++
++        self.assertEqual(0, code, err)
++        result = json.loads(out)
++        self.assertEqual((3, 1, 2), (result["total"], result["resolved"], result["open"]))
++        self.assertEqual(["T1", "T2", "T4"], [t["id"] for t in result["threads"]])
++        self.assertEqual(self.FINDING, result["threads"][0]["comments"][0]["body"])
++
++    def test_finds_the_repository_from_the_review_set_up_for_the_pull_request(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++
++        code, out, err = self.later("census", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++        self.assertTrue(out.startswith("3 finding threads"))
++
++    def test_outside_a_checkout_with_no_review_set_up_says_to_pass_repo(self) -> None:
++        code, _, err = self.later("census", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(1, code)
++        self.assertIn("--repo", err)
++
++
++class ArgumentTests(unittest.TestCase):
++    def test_no_review_command_takes_a_sha(self) -> None:
++        # Every SHA comes from GitHub or the state file; a typed one is how two
++        # wrong 40-character SHAs reached a publish.
++        for command in ("setup", "move", "census", "release"):
++            with self.subTest(command):
++                help_text = io.StringIO()
++                with redirect_stdout(help_text), self.assertRaises(SystemExit):
++                    cli.main(["review", command, "--help"])
++                self.assertNotIn("sha", help_text.getvalue().lower())
++                self.assertIn("--loop", help_text.getvalue())
++
++
++if __name__ == "__main__":
++    unittest.main()
