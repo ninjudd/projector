@@ -137,7 +137,7 @@ For the head under review, steps 1 to 4 are one command, run from a checkout
 of the repository or given one with `--checkout`:
 
 ```sh
-project review setup <number> --model <model-id> --effort <effort> [--loop <id>] [--rereview]
+project review setup <number> --model <model-id> [--loop <id>] [--rereview]
 ```
 
 It refuses, exiting non-zero with the reason, unless each step holds, and it
@@ -296,11 +296,17 @@ this skill — nothing in GitHub enforces them.
 <!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
 
-State the model and effort **actually running this review** — the model
-identifier the host reports for the running session and its reasoning-effort or
-thinking level — never a default copied from this file. A review whose
-signature misstates what produced it is worse than an unlabeled one: a reader
-weighs a finding by what reviewed it.
+State the model **actually running this review** — the model identifier the
+host reports for the running session — never a default copied from this file.
+A review whose signature misstates what produced it is worse than an unlabeled
+one: a reader weighs a finding by what reviewed it.
+
+The effort segment and `effort=` come only from the host's live value, never
+from your own estimate: on Claude Code that is `$CLAUDE_EFFORT`, which follows a
+mid-session `/effort` change and which `project review` reads itself. When the
+host reports no such value, as on Codex or on a model without effort support,
+leave the segment and `effort=` out entirely. A marker is read the same with or
+without `effort=`.
 
 `<duration>` is how long the review took, measured from the start comment's
 `created_at` to the moment the review is published, in minutes and seconds

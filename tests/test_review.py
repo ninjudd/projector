@@ -158,7 +158,7 @@ class ReviewCase(unittest.TestCase):
 
     def setup_review(self, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
         return self.project("setup", "1", "--state-dir", str(self.state), "--model", "claude-opus-5-5",
-                            "--effort", "low", *extra, cwd=cwd)
+                            *extra, cwd=cwd)
 
     def later(self, command: str, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
         return self.project(command, "1", "--state-dir", str(self.state), *extra, cwd=cwd)
@@ -188,7 +188,7 @@ class SetupTests(ReviewCase):
         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
         self.assertEqual(
-            f"{review.MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
+            f"{review.MARK} **Projector review started** · model `claude-opus-5-5` · "
             f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
             self.github.comments[101],
         )
@@ -599,9 +599,9 @@ class PublishTests(PublishCase):
         self.assertEqual(0, code, err)
         review_body = self.posted()["body"]
         self.assertEqual(
-            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · effort `low` · **APPROVED** · took 12m 34s",
+            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · **APPROVED** · took 12m 34s",
             review_body.splitlines()[0])
-        self.assertIn(f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low "
+        self.assertIn(f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 "
                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
         self.assertEqual(("COMMENT", self.head, "token-operator"),
@@ -697,7 +697,7 @@ class PublishRefusalTests(PublishCase):
 
     def test_a_body_cannot_carry_its_own_signature_so_took_is_never_stale(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        stale = (f"{review.MARK} **Projector review** · model `m` · effort `e` · **APPROVED** · took 3m 00s\n\n"
+        stale = (f"{review.MARK} **Projector review** · model `m` · **APPROVED** · took 3m 00s\n\n"
                  "{census}\n")
 
         self.refused(self.publish("approved", body=self.body(stale)), "signature line")
@@ -748,6 +748,50 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.setup_review("--loop", "a")[0])
         self.assertEqual(0, self.publish("approved", loop="a")[0])
         self.assertEqual(0, self.setup_review("--loop", "b", "--rereview")[0])
+
+        code, _, err = self.publish("approved", loop="b")
+
+        self.assertEqual(1, code)
+        self.assertIn("another loop", err)
+
+    def written(self, effort: str | None) -> tuple[str, str, str]:
+        """The start comment, signature line, and marker a review writes with CLAUDE_EFFORT as given."""
+        environment = {} if effort is None else {"CLAUDE_EFFORT": effort}
+        with mock.patch.dict(os.environ, environment):
+            self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+            start = self.github.comments[101]
+            self.assertEqual(0, self.publish("approved", loop="l1")[0])
+        signature, marker = self.posted()["body"].split("\n\n", 2)[:2]
+        return start, signature, marker
+
+    def test_the_host_effort_names_the_review_when_it_is_set(self) -> None:
+        start, signature, marker = self.written("xhigh")
+
+        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
+        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · **APPROVED** ·", signature)
+        self.assertIn("model=claude-opus-5-5 effort=xhigh sha=", marker)
+        self.assertNotIn("effort", json.dumps(self.read_state()), "read live, never stored")
+
+    def test_the_review_names_no_effort_when_the_host_reports_none(self) -> None:
+        for effort in (None, "", "  "):
+            with self.subTest(effort=effort):
+                self.setUp()
+                for text in self.written(effort):
+                    self.assertNotIn("effort", text)
+
+    def test_effort_is_never_an_argument(self) -> None:
+        with self.assertRaises(SystemExit) as unknown, redirect_stderr(io.StringIO()):
+            self.project("setup", "1", "--state-dir", str(self.state), "--model", "m", "--effort", "low")
+        self.assertEqual(2, unknown.exception.code)
+
+    def test_an_older_verdict_whose_marker_carries_effort_still_collides(self) -> None:
+        self.github.reviews.append({
+            "id": 850, "user": {"login": "operator"}, "event": "COMMENT", "commit_id": self.head, "comments": [],
+            "body": (f"{review.MARK} **Projector review** · model `m` · effort `low` · **APPROVED** · took 1m 00s\n\n"
+                     f"<!-- projector-review v=1 verdict=approved model=m effort=low sha={self.head} "
+                     "findings=0 seconds=60 covered=1/1 -->\n"),
+        })
+        self.assertEqual(0, self.setup_review("--loop", "b")[0])
 
         code, _, err = self.publish("approved", loop="b")
 

@@ -315,7 +315,7 @@ discarding the rest:
 # ~/ninjudd/.projector.toml — every repository in this directory
 [review]
 username = "minjudd"
-effort = "xhigh"
+summarize_min_lines = 800
 model = "sonnet"
 ```
 
@@ -329,14 +329,14 @@ The `[review]` table is where identity and review policy live together, so
 `review.username` sits beside `review.allow_approve` rather than floating at
 the top level as though `operator` might join it.
 
-Together those resolve `review.effort` to `xhigh` and `review.model` to
+Together those resolve `review.summarize_min_lines` to `800` and `review.model` to
 `fable`. Arrays replace rather than append.
 
 Read one value with a dotted key, which reaches into a table:
 
 ```sh
-project config get review.effort
-project config get review.effort --default medium
+project config get review.summarize_min_lines
+project config get review.summarize_min_lines --default 400
 ```
 
 `get` exits `1` when the key is unset and no `--default` is given, so a caller
@@ -353,15 +353,15 @@ each value came from, which is the quickest way to find out why a setting is
 not what you expected:
 
 ```sh
-project config get review.effort --json
+project config get review.summarize_min_lines --json
 ```
 
 ```json
 {
-  "key": "review.effort",
+  "key": "review.summarize_min_lines",
   "schema_version": 2,
   "source": "/Users/you/ninjudd/.projector.toml",
-  "value": "xhigh"
+  "value": 800
 }
 ```
 
@@ -607,7 +607,7 @@ default branch when `origin` does not record it.
 a review loop does not rebuild them as helpers of its own:
 
 ```sh
-project review setup 66 --model claude-opus-5-5 --effort low --loop main-loop
+project review setup 66 --model claude-opus-5-5 --loop main-loop
 project review move 66
 project review census 66 --json
 project review publish 66 --verdict approved --body body.md --covered 12/12 --loop main-loop
@@ -626,6 +626,12 @@ is a branch in this repository, the pull request's author is you or has write
 access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
 of a head the loop already published a verdict on.
+
+The start comment and the review's signature line name the model from `--model`
+and the reasoning effort from `CLAUDE_EFFORT` in the environment, which Claude
+Code sets for the Bash tool and keeps current through a mid-session `/effort`
+change. When `CLAUDE_EFFORT` is unset or empty, as on Codex or on a model
+without effort support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the

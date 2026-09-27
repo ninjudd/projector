@@ -147,7 +147,7 @@ class Config:
         self.paths = paths
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Look a value up by dotted key, so `review.effort` reaches a table."""
+        """Look a value up by dotted key, so `review.username` reaches a table."""
 
         current: Any = self.values
         for part in key.split("."):
