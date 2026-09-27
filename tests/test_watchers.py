@@ -376,7 +376,7 @@ class WatchPrsTests(WatcherCase):
             result.stdout.splitlines(),
         )
         self.assertNotIn(" n=2 ", self.calls())
-        self.assertEqual([["acme/app", "1", SHA_A, "feature-a", SHA_A]], self.state_rows())
+        self.assertEqual([["acme/app", "1", SHA_A, "feature-a", f"{SHA_A}:-"]], self.state_rows())
 
     def test_reports_a_moved_head_then_a_response_once_per_head(self) -> None:
         self.pull_request(1, head=SHA_A, draft=True)
@@ -430,6 +430,84 @@ class WatchPrsTests(WatcherCase):
             ],
             cross_author.stdout.splitlines(),
         )
+
+    def test_reports_an_author_reply_on_an_open_finding_once_per_reply(self) -> None:
+        # A person who declines a finding in a reply, without resolving it or
+        # pushing, is waiting on the reviewer just as surely as one who resolves.
+        finding = {"databaseId": 11, "body": "<!-- projector-finding v=1 priority=P2 --> A nil deref"}
+
+        def finding_thread(*replies):
+            node = thread("T1", body=finding["body"])
+            node["comments"]["nodes"] = [finding, *replies]
+            return node
+
+        self.pull_request(1, head=SHA_A, draft=True, threads=[finding_thread()])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_A} feature {SHA_A}\n")
+
+        unanswered = self.run_watcher(PRS)
+        decline = {"databaseId": 12, "body": "<!-- projector-reply v=1 --> Declined: the caller checks for nil."}
+        self.pull_request(1, head=SHA_A, draft=True, threads=[finding_thread(decline)])
+        replied = self.run_watcher(PRS)
+        quiet = self.run_watcher(PRS)
+        kept = {"databaseId": 13, "body": "<!-- projector-verify v=1 result=kept --> The second caller does not."}
+        self.pull_request(1, head=SHA_A, draft=True, threads=[finding_thread(decline, kept)])
+        after_verify = self.run_watcher(PRS)
+        again = {"databaseId": 14, "body": "Fair, but that caller is dead code."}
+        self.pull_request(1, head=SHA_A, draft=True, threads=[finding_thread(decline, kept, again)])
+        replied_again = self.run_watcher(PRS)
+
+        self.assert_ok(unanswered)
+        self.assertEqual("", unanswered.stdout, "the older state form of an unanswered head stays quiet")
+        self.assert_ok(replied)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft and the author replied on an open "
+             "finding; re-review this head and sign off if clean"],
+            replied.stdout.splitlines(),
+        )
+        self.assert_ok(quiet)
+        self.assertEqual("", quiet.stdout)
+        self.assert_ok(after_verify)
+        self.assertEqual("", after_verify.stdout, "the reviewer's own verify reply is not an answer")
+        self.assert_ok(replied_again)
+        self.assertEqual(1, len(replied_again.stdout.splitlines()))
+        self.assertIn("the author replied on an open finding", replied_again.stdout)
+
+    def test_resolving_a_replied_finding_after_a_push_does_not_re_request_the_head(self) -> None:
+        # The fix loop replies, pushes, then resolves; a poll between the push
+        # and the resolve announces the head with a reply outstanding. Resolving
+        # it next, or the reviewer resolving it during that head's review, must
+        # not ask for the same head again.
+        finding = {"databaseId": 31, "body": "<!-- projector-finding v=1 priority=P2 --> A nil deref"}
+        reply = {"databaseId": 32, "body": "<!-- projector-reply v=1 --> Fixed in aaaaaaa."}
+        node = thread("T1", body=finding["body"])
+        node["comments"]["nodes"] = [finding, reply]
+        self.pull_request(1, head=SHA_A, draft=True, threads=[node])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_B} feature\n")
+
+        moved = self.run_watcher(PRS)
+        node = dict(node, isResolved=True)
+        self.pull_request(1, head=SHA_A, draft=True, threads=[node])
+        resolved = self.run_watcher(PRS)
+
+        self.assert_ok(moved)
+        self.assertEqual(["NEW HEAD acme/app#1 (feature): bbbbbbb -> aaaaaaa — needs an exact-head review"],
+                         moved.stdout.splitlines())
+        self.assert_ok(resolved)
+        self.assertEqual("", resolved.stdout)
+
+    def test_a_reply_on_another_reviewers_thread_is_not_a_response(self) -> None:
+        human = thread("T1", who="alice", body="Should this be a constant?")
+        human["comments"]["nodes"].append({"databaseId": 21, "author": {"login": "operator"}, "body": "Done."})
+        self.pull_request(1, head=SHA_A, draft=True, threads=[human])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_A} feature\n")
+
+        result = self.run_watcher(PRS)
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
 
     def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
         self.pull_request(1)

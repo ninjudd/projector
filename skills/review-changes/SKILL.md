@@ -344,37 +344,59 @@ The visible text of a thread's first comment has three parts, the shape
 **Fix:** <one sentence>
 ```
 
-### Outstanding findings
+### Verify earlier findings
 
-A finding is outstanding while its thread is unresolved, and a head is
-**clean** only when no finding thread is outstanding and this review opens no
-P1 or P2 thread. This query is the thread half of that test, and it pages so
-that a pull request with more than a hundred threads is still read to the end.
-Run it by thread state, not by author, and match the marker to separate
-Projector findings from ordinary review conversation:
+A finding is outstanding until you verify it is addressed. Whether its thread
+is marked resolved is a hint, not the answer: an author may resolve a thread
+before the fix works, and another may fix the code and never resolve it. So
+before choosing a verdict, verify every Projector finding thread on the pull
+request, resolved or not, against this head, and settle each one yourself.
+You are the only party whose resolution is final. This query lists them,
+paging so that a pull request with more than a hundred threads is read to the
+end; it keys on the finding marker, never on a login:
 
 ```sh
 gh api graphql --paginate -f query='
   query($o:String!,$r:String!,$n:Int!,$endCursor:String){ repository(owner:$o,name:$r){
     pullRequest(number:$n){ reviewThreads(first:100, after:$endCursor){
       pageInfo{hasNextPage endCursor}
-      nodes{ isResolved isOutdated path line originalLine
-        comments(first:1){nodes{body}} } } } } }' \
+      nodes{ id isResolved isOutdated path line originalLine
+        comments(first:50){nodes{databaseId body}} } } } } }' \
   -f o=<owner> -f r=<repo> -F n=<number> \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
         | select(.comments.nodes[0].body | test("projector-finding"))
-        | "\(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
+        | "\(.id) \(if .isResolved then "resolved" else "open" end) \(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
 ```
 
-An `outdated` row is a thread whose line the fix moved: GitHub nulls `line`
-and keeps `originalLine`. It is still outstanding — outdated says the code
-changed, not that the finding was addressed — and only the author resolving
-the thread closes it.
+An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
+keeps `originalLine`. Outdated says the code changed, not that the finding was
+addressed, so verify it like any other.
 
-The review and fix skills key on the marker rather than on a login. A reply
-the fix loop posts inside a thread carries `<!-- projector-reply v=1 -->` so it
-is never read back as a new finding.
+Read each thread's replies with the finding, verify by `method.md` § 5 against
+this head, and settle it in one of these ways. Every reply you post opens with
+`<!-- projector-verify v=1 result=<result> sha=<full-sha> -->`, so neither loop
+reads it back as a new finding or as the author answering:
+
+- **Fixed:** the head addresses the finding. Resolve an open thread with
+  `resolveReviewThread`, replying `result=fixed` with what at this head
+  settles it. A thread already resolved and fixed needs nothing more.
+- **Accepted:** the author declined in a reply and the reasoning holds, or the
+  finding was wrong. Resolve it, replying `result=accepted` or
+  `result=withdrawn` with the guard or behavior that settles it.
+- **Kept:** the author declined and the reasoning does not hold. Leave the
+  thread open and reply `result=kept` once, saying what still fails and why.
+  Do not repeat the reply on a later head unless something changed; an open
+  disagreement is the user's merge decision.
+- **Reopened:** the thread is resolved but the finding is not addressed at
+  this head. Unresolve it with `unresolveReviewThread`, and reply
+  `result=reopened` with what still fails.
+- **Still open:** open, not fixed, and not answered. Leave it; the finding
+  already says what to do.
+
+Settle only threads that carry the finding marker. Another reviewer's thread,
+a person's or another tool's, is theirs to resolve, never yours. The fix loop
+answers in a thread with `<!-- projector-reply v=1 -->`; that reply is the
+author speaking, and it is what you weigh when a finding is declined.
 
 ## Publish one review
 
@@ -421,19 +443,19 @@ When `start-review-loop` runs this skill, the loop's record of the reviews it
 published decides instead, as that skill describes, so a re-review the loop
 asked for never trips the check.
 
-A head is *clean* only when the outstanding-findings query above returns
-nothing **and this review posts no P1 or P2 thread**. A `Suggestions` list in
-the body does not count against it: a review whose only output is that list
-is clean. Run the query now, before choosing a branch. Both tests are one-way:
-an open thread makes the head not clean whatever inspection found, and a new
-thread makes it not clean whatever the query returned. The first matters most
-on a fix-cycle head, which arrives with its threads exactly as the author left
-them: the reviewer never resolves threads — only the author does — so a head
-you inspected and found nothing wrong in is still not clean while a finding
-thread is open. Under `start-review-loop` the watcher applies the thread test
-from its side: `RESPONDED` fires only when every thread is resolved.
-`NEW HEAD` cannot, because a push says nothing about threads, so on every head
-the check is yours.
+A head is *clean* only when, after you have settled every earlier finding as
+above, no Projector finding thread is open **and this review posts no P1 or P2
+thread**. A `Suggestions` list in the body does not count against it: a review
+whose only output is that list is clean. Settle the earlier findings now,
+before choosing a branch, and re-run the query to confirm none is open. Both
+tests are one-way: a finding you kept or reopened makes the head not clean
+whatever else inspection found, and a new thread makes it not clean whatever
+the earlier findings came to. Because you resolve what you verify, a clean
+head needs no second pass to notice that someone clicked resolve, and an
+author who fixes a finding without resolving it is not held up. Under
+`start-review-loop` the watcher asks for a re-review on an unmoved head when
+the author answers: `RESPONDED` fires when every thread is resolved, or when
+the newest comment on an open finding thread is the author's.
 
 **Threads open, self-review:** submit a `COMMENT` review, verdict
 `changes-requested`, then convert it to a draft with `gh pr ready <number>
@@ -460,13 +482,13 @@ Report the review as done only after it is published and, on a clean
 self-review, the pull request is ready. Report the SHA, the verdict, the review
 id, how many threads it opened, and the summary's URL when the next section
 publishes one; `start-review-loop` records the SHA and id.
-Verify the input as well as the outputs: before an `approved` verdict, the
-outstanding-findings query returned nothing and the review opens no P1 or P2
-thread; after publishing, re-read the review body and the pull request's
-`isDraft`, and only then delete the start comment, so the pull request is
-never left with neither. Never resolve the author's findings, claim a newer
-SHA was reviewed, or merge. Resolving is the author's act, which is why your
-verification alone never closes a finding.
+Verify the input as well as the outputs: before an `approved` verdict, every
+earlier finding is settled, the query shows no Projector finding thread open,
+and the review opens no P1 or P2 thread; after publishing, re-read the review
+body and the pull request's `isDraft`, and only then delete the start comment,
+so the pull request is never left with neither. Never resolve another
+reviewer's thread, resolve a finding you have not verified at this head, claim
+a newer SHA was reviewed, or merge.
 
 Once the summary below has run or been skipped, remove the scratch worktree,
 which a summary reads for context. A `start-review-loop` subagent may instead
@@ -506,7 +528,7 @@ summary a person asks for:
   update it as the skill's "Update the page when the pull request moves"
   section describes, so a fix-cycle head costs a revision, not a rewrite.
 - **Carry the review into it.** Every finding thread still open after this
-  review, from the outstanding-findings query, becomes a `flag` check in the
+  review, from the query in § Verify earlier findings, becomes a `flag` check in the
   group holding its file, naming the `path:line` and what the finding says,
   so a reader sees what the reviewer flagged beside the code it concerns.
   Drop a `flag` check whose finding thread has since been resolved.

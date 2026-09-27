@@ -77,10 +77,12 @@ nothing open.
    the host's persistent process or monitor facility.
 
 The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, `BRANCH`, and
-`TRACKED`. Treat `RESPONDED` as a re-review request for a still-draft head
-whose threads are all resolved: the author answered without pushing, so no
-head event is coming, and only a re-review can sign off and mark it ready. It
-prevents a body-only response from deadlocking both loops. A `TRACKED` line is
+`TRACKED`. Treat `RESPONDED` as a re-review request for a head still waiting on
+the reviewer: the author answered without pushing, by resolving every thread
+or by replying on an open finding thread, so no head event is coming, and only
+a re-review can settle the findings and sign off. It fires once per answer, and
+the re-review's own replies carry the verify marker, so they never count as
+one. It prevents a response without a push from deadlocking both loops. A `TRACKED` line is
 a problem with the tracked file itself, announced once; fix the file. Keep the
 loop silent while no event needs action.
 

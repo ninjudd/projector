@@ -162,6 +162,18 @@ For every accepted finding, preserve this order:
 4. Resolve the thread only after the push succeeds.
 5. Re-fetch `reviewThreads` and confirm `isResolved: true`.
 
+Resolving says the fix is pushed; it is not the final word on a Projector
+finding. The review loop verifies every one of its findings on the next head,
+resolves any you left open, and reopens one whose fix does not hold, replying
+with `<!-- projector-verify v=1 result=reopened -->`. A reopened thread comes
+back as a `FINDING`: treat it as the recurrence below, not as new work.
+
+Resolve a person's thread the same way once its fix is pushed, so a reviewer
+who never resolves threads does not leave the pull request looking
+unanswered. Where `project config get fix.resolve_human_threads --default
+true` prints `false`, reply to a person's thread and leave resolving it to
+them. A Projector finding or another tool's thread is resolved either way.
+
 Reply before pushing so a reviewer triggered by the push sees the reasoning,
 but push promptly because the named commit is briefly local-only. If a push
 fails, post that fact, leave the thread unresolved, and report the blocker.
