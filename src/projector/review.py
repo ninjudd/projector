@@ -351,9 +351,8 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
 
 # Start comments
 
-def start_comment(model: str, effort: str, sha: str, moved_from: Optional[str] = None) -> str:
-    lines = [f"{MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
-             f"reviewing `{sha[:7]}`", ""]
+def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str:
+    lines = [f"{MARK} **Projector review started** · model `{model}` · reviewing `{sha[:7]}`", ""]
     if moved_from:
         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
                   "for the new changes.", ""]
@@ -389,7 +388,7 @@ def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
 # Commands
 
 def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
-          configured_reviewer: Optional[str], model: str, effort: str, loop: Optional[str],
+          configured_reviewer: Optional[str], model: str, loop: Optional[str],
           rereview: bool) -> dict:
     checkout = checkout_root(checkout)
     origin = origin_repo(checkout)
@@ -409,7 +408,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         trusted, why = trusted_head(repo, pr, operator)
         token = reviewer_token(reviewer)
         posted = gh_json(["api", f"repos/{repo}/issues/{number}/comments",
-                          "-f", f"body={start_comment(model, effort, sha)}"], token)
+                          "-f", f"body={start_comment(model, sha)}"], token)
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
@@ -429,7 +428,6 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "operator": operator,
         "reviewer": reviewer,
         "model": model,
-        "effort": effort,
         "loop": loop,
         "rereview": rereview,
         "start_comment": {"id": posted["id"], "created_at": posted["created_at"]},
@@ -455,7 +453,7 @@ def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
         trusted, why = trusted_head(state["repo"], pr, state["operator"])
         token = reviewer_token(state["reviewer"])
         comment = state["start_comment"]["id"]
-        body = start_comment(state["model"], state["effort"], sha, moved_from=old)
+        body = start_comment(state["model"], sha, moved_from=old)
         run_gh(["api", "-X", "PATCH", f"repos/{state['repo']}/issues/comments/{comment}",
                 "-f", f"body={body}"], token)
         reread = gh_json(["api", f"repos/{state['repo']}/issues/comments/{comment}"])
@@ -532,11 +530,11 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
-    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · effort `[^`\n]+` · "
+    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · "
     r"\*\*(APPROVED|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
 MARKER = re.compile(
-    r"^<!-- projector-review v=1 verdict=(approved|changes-requested) model=\S+ effort=\S+ "
+    r"^<!-- projector-review v=1 verdict=(approved|changes-requested) model=\S+ "
     r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
@@ -692,13 +690,13 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
         last = code.end()
     pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
     filled = "".join(pieces)
-    signature = (f"{MARK} **Projector review** · model `{state['model']}` · effort `{state['effort']}` · "
+    signature = (f"{MARK} **Projector review** · model `{state['model']}` · "
                  f"**{VERDICT_WORDS[verdict]}** · took {took}")
-    marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} effort={state['effort']} "
+    marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} "
               f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
         raise ReviewError("the signature line or marker does not match review-changes/SKILL.md; check the "
-                          f"model and effort in the review's state ({state['model']}, {state['effort']})")
+                          f"model in the review's state ({state['model']})")
     return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
 
 

@@ -262,7 +262,7 @@ def parser() -> argparse.ArgumentParser:
     config_commands = config.add_subparsers(dest="config_command", required=True)
 
     config_get = config_commands.add_parser("get", help="print one value")
-    config_get.add_argument("key", help="dotted key, for example review.effort")
+    config_get.add_argument("key", help="dotted key, for example review.username")
     config_get.add_argument("--default", help="printed when the key is unset")
     add_output(config_get)
 
@@ -329,7 +329,6 @@ def parser() -> argparse.ArgumentParser:
                                    "this directory)")
     review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
     review_setup.add_argument("--model", required=True, help="the model id the start comment names")
-    review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
     review_publish.add_argument("--verdict", required=True, choices=("approved", "changes-requested"),
@@ -661,7 +660,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, arguments.effort, loop, arguments.rereview)
+                             arguments.model, loop, arguments.rereview)
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
