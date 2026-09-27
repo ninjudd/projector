@@ -625,6 +625,12 @@ access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
 of a head the loop already published a verdict on.
 
+The start comment and the review's signature line name the model from `--model`
+and the reasoning effort from `CLAUDE_EFFORT` in the environment, which Claude
+Code sets for the Bash tool and keeps current through a mid-session `/effort`
+change. When `CLAUDE_EFFORT` is unset or empty, as on Codex or on a model
+without effort support, they leave the effort out rather than guess it.
+
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
 comment to confirm the edit, and updates the state file. `census` lists every

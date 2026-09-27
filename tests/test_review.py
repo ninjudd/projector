@@ -754,18 +754,35 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(1, code)
         self.assertIn("another loop", err)
 
-    def test_the_signature_marker_and_start_comment_name_no_effort(self) -> None:
-        # A session cannot read its live effort level, so nothing Projector writes claims one.
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        start, state = self.github.comments[101], self.read_state()
-        self.assertEqual(0, self.publish("approved", loop="l1")[0])
+    def written(self, effort: str | None) -> tuple[str, str, str]:
+        """The start comment, signature line, and marker a review writes with CLAUDE_EFFORT as given."""
+        environment = {} if effort is None else {"CLAUDE_EFFORT": effort}
+        with mock.patch.dict(os.environ, environment):
+            self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+            start = self.github.comments[101]
+            self.assertEqual(0, self.publish("approved", loop="l1")[0])
         signature, marker = self.posted()["body"].split("\n\n", 2)[:2]
+        return start, signature, marker
 
-        for text in (start, json.dumps(state), signature, marker):
-            self.assertNotIn("effort", text)
+    def test_the_host_effort_names_the_review_when_it_is_set(self) -> None:
+        start, signature, marker = self.written("xhigh")
+
+        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
+        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · **APPROVED** ·", signature)
+        self.assertIn("model=claude-opus-5-5 effort=xhigh sha=", marker)
+        self.assertNotIn("effort", json.dumps(self.read_state()), "read live, never stored")
+
+    def test_the_review_names_no_effort_when_the_host_reports_none(self) -> None:
+        for effort in (None, "", "  "):
+            with self.subTest(effort=effort):
+                self.setUp()
+                for text in self.written(effort):
+                    self.assertNotIn("effort", text)
+
+    def test_effort_is_never_an_argument(self) -> None:
         with self.assertRaises(SystemExit) as unknown, redirect_stderr(io.StringIO()):
             self.project("setup", "1", "--state-dir", str(self.state), "--model", "m", "--effort", "low")
-        self.assertEqual(2, unknown.exception.code, "--effort is not an option")
+        self.assertEqual(2, unknown.exception.code)
 
     def test_an_older_verdict_whose_marker_carries_effort_still_collides(self) -> None:
         self.github.reviews.append({

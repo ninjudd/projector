@@ -153,11 +153,11 @@ takes every SHA from GitHub, never from an argument:
 3. The fetched commit and the scratch worktree's `HEAD` both equal GitHub's
    recorded SHA.
 4. Only then it posts, as the reviewer, a concise start comment naming the
-   short SHA, carrying the review signature line's `⚬◀` mark and its model
-   segment and a start marker:
+   short SHA, carrying the review signature line's `⚬◀` mark and its model and
+   effort segments and a start marker:
 
    ```
-   ⚬◀ **Projector review started** · model `<model-id>` · reviewing `<short-sha>`
+   ⚬◀ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
 
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
@@ -291,18 +291,22 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-⚬◀ **Projector review** · model `<model-id>` · **<VERDICT>** · took <duration>
+⚬◀ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
+<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
 
 State the model **actually running this review** — the model identifier the
 host reports for the running session — never a default copied from this file.
 A review whose signature misstates what produced it is worse than an unlabeled
-one: a reader weighs a finding by what reviewed it. That is why the signature
-names no reasoning effort: a session cannot read its own live effort level, so
-any value it wrote would be a guess. An `effort=` field in an older review's
-marker is ignored.
+one: a reader weighs a finding by what reviewed it.
+
+The effort segment and `effort=` come only from the host's live value, never
+from your own estimate: on Claude Code that is `$CLAUDE_EFFORT`, which follows a
+mid-session `/effort` change and which `project review` reads itself. When the
+host reports no such value, as on Codex or on a model without effort support,
+leave the segment and `effort=` out entirely. A marker is read the same with or
+without `effort=`.
 
 `<duration>` is how long the review took, measured from the start comment's
 `created_at` to the moment the review is published, in minutes and seconds
