@@ -1,0 +1,139 @@
+{
+ "version": 1,
+ "name": "Review setup, move, and census",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 128,
+  "title": "Add project review setup, move, and census",
+  "head": "2705222feafffedbc299bb08d9da9685c9ce5787",
+  "base": "457c82e9afb8c762b72b8e38ea2fd882665e28f5",
+  "baseRef": "review-scripts-plan"
+ },
+ "overview": {
+  "summary": [
+   "Adds the first three <code>project review</code> commands from the <code>review-scripts</code> plan, so the mechanical steps of <code>review-changes</code> are tested code instead of <code>gh</code> snippets each loop session rebuilds: <code>setup</code> fetches the exact head into a scratch worktree and posts the start comment, <code>move</code> follows a head that moved mid-review by editing that comment in place, and <code>census</code> counts the Projector finding threads across every page.",
+   "<code>review-changes/SKILL.md</code> now runs these commands in place of its snippets, <code>docs/cli.md</code> documents them, and the plan moves from <code>ready</code> to <code>in-progress</code>. <code>publish</code>, the per-loop record, and <code>review.gate</code> are later delivery steps."
+  ],
+  "cards": [
+   {
+    "id": "rules",
+    "title": "Shared rules the commands enforce",
+    "html": "<ul class=\"tight\"><li>No command takes a SHA; each comes from GitHub or the state file.</li><li>Repository from <code>--repo</code> or the checkout's <code>origin</code>, passed to <code>gh</code> explicitly.</li><li>Posts use <code>GH_TOKEN</code> from <code>gh auth token --user &lt;reviewer&gt;</code> for that call alone.</li><li>Exclusive lock per pull request and head.</li><li>State under <code>$XDG_STATE_HOME/projector/reviews</code>; every refusal exits 1.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Review at <code>2705222</code>: changes requested, 3 open threads — trailing blank line fails <code>git diff --check</code>; lock never released, so a re-review of an unmoved head is refused; fork pull requests refused with no other setup path.</li><li>Base <code>review-scripts-plan</code> (#127) has since moved to <code>1d8e4ce</code>, revising forks, lock lifetime, worktree layout, and the per-loop record.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "The review module",
+   "kicker": "<code>src/projector/review.py</code>: identity, state, lock, setup, move, census",
+   "intro": [
+    "One new module holds the three commands and their helpers. <code>setup</code> checks the pull request is open and same-repository, takes the per-head lock, fetches <code>refs/pull/&lt;n&gt;/head</code> and the base ref, verifies <code>FETCH_HEAD</code> and the worktree's <code>HEAD</code> against GitHub's SHA, then posts the start comment with a reviewer token and writes the state file.",
+    "<code>move</code> reads that state, refuses an unmoved head, locks the new head, edits the start comment, re-reads it to confirm, and hands the lock over. <code>census</code> pages the review-thread GraphQL query and keeps threads whose first comment carries <code>projector-finding</code>."
+   ],
+   "concepts": [
+    "A lock is taken on success and released only on refusal or by <code>move</code> for the old head.",
+    "The state file is one per repository and pull request, not per loop."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every SHA the commands act on comes from <code>pull_request()</code> or the state file."
+    },
+    {
+     "kind": "verify",
+     "text": "The reviewer token is passed only to the posting calls, never to reads or <code>auth switch</code>."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>src/projector/review.py:335</code> — trailing blank line; <code>git diff --check</code> fails."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>src/projector/review.py:228</code> — the lock is never released after a successful setup, so a <code>RESPONDED</code> re-review of the same head is refused."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>src/projector/review.py:162</code> — fork heads are refused, and the skill no longer documents another way to set up their review; #127's revised plan fetches them and records them untrusted."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Read <code>setup</code>, <code>move</code>, and <code>take_lock</code> together for the lock lifecycle."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "CLI wiring",
+   "kicker": "The <code>project review</code> subcommands",
+   "intro": [
+    "Adds the <code>review</code> parser with <code>setup</code>, <code>move</code>, and <code>census</code>, shared <code>--repo</code>, <code>--state-dir</code>, and <code>--json</code>, and <code>--checkout</code> for the two that fetch. <code>run_review</code> discovers the checkout from the working directory and reads <code>review.username</code> from its configuration."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "An empty <code>review.username</code> falls through to the authenticated user."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Real Git against a bare origin, fake <code>gh</code>",
+   "intro": [
+    "Sixteen tests run <code>git</code> for real against a bare origin holding <code>refs/pull/1/head</code> and replace <code>run_gh</code> with a recording fake, covering setup, token scoping, refusals, move, census paging, and that no command takes a SHA."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No test covers a second <code>setup</code> on the same head after the first finished."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill, docs, and plan",
+   "kicker": "Where the commands replace prose",
+   "intro": [
+    "<code>review-changes/SKILL.md</code> replaces its start-comment, moved-head, and thread-query snippets with the commands and keeps their rules as what the commands guarantee. <code>docs/cli.md</code> gains a section on <code>project review</code>, and the plan's status becomes <code>in-progress</code>."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every rule the removed snippets carried survives either in the command or in the prose."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-changes/SKILL.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/review-scripts/readme.md"
+    }
+   ]
+  }
+ ]
+}
