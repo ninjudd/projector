@@ -133,17 +133,28 @@ transition is the sign-off a reader sees in the pull-request list.
 
 ## Review an exact head
 
-For the head under review:
+For the head under review, steps 1 to 4 are one command, run from a checkout
+of the repository or given one with `--checkout`:
 
-1. Confirm the pull request remains open and record its full SHA.
-2. Fetch that commit and create a scratch worktree at it. Never run a
+```sh
+project review setup <number> --model <model-id> --effort <effort> [--loop <id>] [--rereview]
+```
+
+It refuses, exiting non-zero with the reason, unless each step holds, and it
+takes every SHA from GitHub, never from an argument:
+
+1. The pull request is open. A head from a fork is set up too, fetched from
+   `pull/<number>/head`.
+2. It fetches that commit into the checkout and creates a scratch worktree at
+   it under its state directory, never inside the checkout. Never run a
    reproducer that writes inside the operator's checkout. Never discard,
    restore, or overwrite the operator's dirty or uncommitted work while
    preparing or cleaning up a review.
-3. Confirm the scratch worktree's `HEAD` equals GitHub's recorded SHA.
-4. Only then post a concise start comment naming the short SHA, carrying the
-   review signature line's `📽️` mark and its model and effort segments and a
-   start marker, and keep the comment id and `created_at` the call returns:
+3. The fetched commit and the scratch worktree's `HEAD` both equal GitHub's
+   recorded SHA.
+4. Only then it posts, as the reviewer, a concise start comment naming the
+   short SHA, carrying the review signature line's `📽️` mark and its model and
+   effort segments and a start marker:
 
    ```
    📽️ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
@@ -151,10 +162,21 @@ For the head under review:
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
 
-   ```sh
-   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> \
-     --jq '"\(.id) \(.created_at)"'
-   ```
+It prints the SHA, the merge base, the worktree, whether the head is trusted by
+the next section's rule, and the start comment's id and `created_at`, and
+records them in the review's state file, from which every later command reads
+the checkout, the worktree, and the repository. An untrusted head is reviewed
+by reading. It posts with a token for the reviewer from `review.username` or
+the authenticated user, set for that call alone; `--reviewer` passes explicit
+user input. `start-review-loop` passes its loop id as `--loop` to every
+command, and `--rereview` marks a re-review of a head the loop already
+published a verdict on, the case `RESPONDED` asks for.
+
+The review holds a lock for the pull request and head from `setup` until it is
+published, so a second instance for the same head exits without posting. A
+refused `setup` releases it. A lock older than a day is stale and cleared;
+`project review release <number>` clears one left by a session that stopped,
+and only when no review of that pull request is running.
 
 5. Inspect the head by the method in `method.md`, next to this file: state
    the change's intent, sort the changed files, run the passes, follow every
@@ -168,9 +190,10 @@ For the head under review:
    is trusted as the next section defines. A candidate the protocol cannot
    verify is dropped, never posted.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
-   of a stale head: repeat steps 1 to 3 for the replacement SHA, edit the start
-   comment as described next instead of repeating step 4, and revalidate every
-   prospective finding against the new head.
+   of a stale head: run `project review move <number>`, which repeats steps 1
+   to 3 for the replacement SHA and edits the start comment as described next
+   instead of posting another, and revalidate every prospective finding against
+   the new head.
 
 ### Run a head's code only when the head is trusted
 
@@ -224,17 +247,14 @@ the head was reviewed without running its code and why.
 A start comment belongs to the review it opens, not to the SHA it first named,
 and it lives only until that review is published. When the head moves before
 publication — step 7 catches it, or `start-review-loop` reports `NEW HEAD`
-while inspection is still running — do not post a second start comment. Edit the
-existing one so it names the new short SHA, says the head moved from the old
-one, and says the review is being updated for the new changes, keeping its
-`📽️` signature line, and set its marker's `sha=` to the new full SHA:
-
-```sh
-gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
-```
-
-`-F` reads the body from the file; `-f` would post the literal path. Re-read
-the comment afterwards and confirm it names the new SHA.
+while inspection is still running — do not post a second start comment. Run
+`project review move <number>`, from any directory. It creates a worktree for
+the new head, rechecks whether the head is trusted, moves the lock to it, and
+edits the existing comment in place so it names the new short SHA, says the
+head moved from the old one, and says the review is being updated for the new
+changes, keeping its `📽️` signature line and setting its marker's `sha=` to the
+new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
+edit took; it also refuses when the head has not moved.
 
 Once the review is published and verified, delete the start comment. The
 review's signature line carries how long the review took, so the comment has
@@ -351,22 +371,18 @@ is marked resolved is a hint, not the answer: an author may resolve a thread
 before the fix works, and another may fix the code and never resolve it. So
 before choosing a verdict, verify every Projector finding thread on the pull
 request, resolved or not, against this head, and settle each one yourself.
-You are the only party whose resolution is final. This query lists them,
-paging so that a pull request with more than a hundred threads is read to the
-end; it keys on the finding marker, never on a login:
+You are the only party whose resolution is final. This command lists them,
+reading every page so that a pull request with more than a hundred threads is
+read to the end; it keys on the finding marker, never on a login:
 
 ```sh
-gh api graphql --paginate -f query='
-  query($o:String!,$r:String!,$n:Int!,$endCursor:String){ repository(owner:$o,name:$r){
-    pullRequest(number:$n){ reviewThreads(first:100, after:$endCursor){
-      pageInfo{hasNextPage endCursor}
-      nodes{ id isResolved isOutdated path line originalLine
-        comments(first:50){nodes{databaseId body}} } } } } }' \
-  -f o=<owner> -f r=<repo> -F n=<number> \
-  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.comments.nodes[0].body | test("projector-finding"))
-        | "\(.id) \(if .isResolved then "resolved" else "open" end) \(.path):\(.line // .originalLine)\(if .isOutdated then " outdated" else "" end)"'
+project review census <number> --json
 ```
+
+Each thread carries its id, whether it is resolved, its `path` and `line`,
+whether it is outdated, and its comments, the finding first and then the
+replies. Without `--json` it prints the count the review body states, such as
+`6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
 
 An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
 keeps `originalLine`. Outdated says the code changed, not that the finding was
