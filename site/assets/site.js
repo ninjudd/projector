@@ -11,6 +11,11 @@
     // Projector's mark, as projector.bot draws it: an orange beam from a lens.
     const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
         '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
+    // The header's icon buttons: the section menu, and entering and leaving full screen.
+    const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
+    const MENU_ICON = `${ICON}<path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg>`;
+    const FULL_ICON = `${ICON}<path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4"/></svg>`;
+    const EXIT_FULL_ICON = `${ICON}<path d="M7.5 3.5v4h-4M16.5 7.5h-4v-4M12.5 16.5v-4h4M3.5 12.5h4v4"/></svg>`;
     // Set once site.json loads, before any view draws.
     let site;
     const pageFiles = new Set();
@@ -143,16 +148,29 @@
             return `<a href="${esc(item[0])}"${item[2] === active ? ' class="active" aria-current="page"' : ''}>${esc(item[1])}</a>`;
         }).join('');
     }
-    function header(active, extra) {
-        return `<header class="sitebar${extra !== undefined && extra !== '' ? ` ${extra}` : ''}"><a class="sitename" href="${esc(base)}">` +
+    // The site's header. A page with a section sidebar gets the button that shows
+    // and hides it at the header's start, and any other page an empty slot in its
+    // place, so the site name sits in the same spot on every page. A wide page, an
+    // HTML page's frame, gets a full-screen button at its end, which hides the
+    // header so the page has the whole window.
+    function header(active, extra, side, wide) {
+        const menu = side !== undefined
+            ? `<button type="button" class="sitebtn sidetoggle" aria-controls="siteside" aria-expanded="${String(side === 'open')}" ` +
+                `title="Show or hide this section's pages" aria-label="Show or hide this section's pages">${MENU_ICON}</button>`
+            : '<span class="sitebtn menuspace" aria-hidden="true"></span>';
+        const hide = wide === true
+            ? `<button type="button" class="sitebtn barhide" title="Full screen" aria-label="Full screen">${FULL_ICON}</button>`
+            : '';
+        return `<header class="sitebar${extra !== undefined && extra !== '' ? ` ${extra}` : ''}">${menu}<a class="sitename" href="${esc(base)}">` +
             `${MARK}${esc(site.repo !== '' ? site.repo : 'Projector')}</a><nav class="sitenav" aria-label="Site">${nav(active)}</nav>` +
             `<form class="sitesearch" role="search" action="${esc(`${base}search/`)}">` +
-            '<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form></header>';
+            `<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form>${hide}</header>`;
     }
     function isHtml(path) { return /\.html$/i.test(path); }
     // Draw the page around `body`, with `side` as a sidebar when given, and return
-    // the element the body went into. A wide page, an HTML page's frame, takes the
-    // whole width and starts with its sidebar collapsed behind the toggle.
+    // the element the body went into. A wide page, an HTML page's frame, fills the
+    // window below the header, starts with its sidebar hidden, and can go full
+    // screen, hiding the header; a button pinned to the corner leaves full screen.
     function frame(active, title, body, side, wide) {
         if (root === null)
             throw new Error('A view needs the #site element to draw into');
@@ -160,15 +178,17 @@
         fitFrame = null;
         const hasSide = side != null && side !== '';
         const isWide = wide === true;
+        if (!isWide)
+            document.body.classList.remove('barhidden');
         const classes = `sitemain${hasSide ? ' withside' : ''}${isWide ? ' wide' : ''}${hasSide && isWide ? ' collapsed' : ''}`;
         root.innerHTML =
-            header(active) +
+            header(active, undefined, hasSide ? (isWide ? 'closed' : 'open') : undefined, isWide) +
+                (isWide ? `<button type="button" class="sitebtn barshow" title="Exit full screen" aria-label="Exit full screen">${EXIT_FULL_ICON}</button>` : '') +
                 `<main class="${classes}">` +
-                (hasSide ? `<nav class="side" aria-label="Section"><button type="button" class="sidetoggle" aria-expanded="${String(!isWide)}" ` +
-                    `title="Show or hide this section's pages">☰</button><div class="sidetree">${side}</div></nav>` : '') +
+                (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
                 '<div class="sidebody" id="sidebody"></div></main>' +
-                '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
-                `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`;
+                (isWide ? '' : '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
+                    `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`);
         const main = document.getElementById('sidebody');
         if (main === null)
             throw new Error('The page lost the #sidebody element it just drew');
@@ -226,18 +246,13 @@
         const main = frame(active, title, '', side, true);
         if (before !== null)
             main.appendChild(before);
-        const src = contentUrl(path) + location.hash;
-        const bar = document.createElement('div');
-        bar.className = 'htmlbar';
-        bar.innerHTML = `<a class="note" href="${esc(src)}" target="_blank" rel="noopener">Open full page</a>`;
         const page = document.createElement('iframe');
         page.className = 'htmlpage';
         page.title = title;
-        page.src = src;
-        main.appendChild(bar);
+        page.src = contentUrl(path) + location.hash;
         main.appendChild(page);
         fitFrame = function () {
-            page.style.height = `${String(Math.max(320, window.innerHeight - page.getBoundingClientRect().top - 16))}px`;
+            page.style.height = `${String(Math.max(240, window.innerHeight - page.getBoundingClientRect().top))}px`;
         };
         fitFrame();
         page.addEventListener('load', function () {
@@ -249,7 +264,6 @@
                     document.title = `${inner.document.title} · ${site.repo}`;
                 inner.addEventListener('hashchange', function () {
                     history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
-                    bar.firstChild.setAttribute('href', contentUrl(path) + inner.location.hash);
                 });
             }
             catch { /* a page that navigated elsewhere is no longer ours to read */ }
@@ -523,11 +537,19 @@
         const target = event.target instanceof Element ? event.target : null;
         const toggle = target?.closest('.sidetoggle');
         if (toggle != null) {
-            const main = toggle.closest('.sitemain');
+            const main = document.querySelector('.sitemain');
             if (main === null)
-                throw new Error('A section toggle sits outside the page it toggles');
+                throw new Error('A section toggle has no page to toggle');
             const collapsed = main.classList.toggle('collapsed');
             toggle.setAttribute('aria-expanded', String(!collapsed));
+            if (fitFrame !== null)
+                fitFrame();
+            return;
+        }
+        const bar = target?.closest('.barhide, .barshow');
+        if (bar != null) {
+            const hidden = document.body.classList.toggle('barhidden', bar.classList.contains('barhide'));
+            document.querySelector(hidden ? '.barshow' : '.barhide')?.focus();
             if (fitFrame !== null)
                 fitFrame();
             return;
