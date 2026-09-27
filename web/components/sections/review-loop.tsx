@@ -19,7 +19,7 @@ const steps = [
   },
   {
     title: "The draft becomes ready",
-    body: "When a review of the current head finds nothing, the pull request is marked ready for a person to review.",
+    body: "The reviewer verifies each finding on the new head, resolving what is fixed and reopening what is not. When nothing is left open, the pull request is marked ready for a person to review.",
   },
 ];
 

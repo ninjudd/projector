@@ -19,7 +19,10 @@ plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
 `review-changes` reviews a pull request's current head once, by the method in
 `skills/review-changes/method.md`, and publishes one labeled review;
 `start-review-loop` runs it on every new head of your pull requests, and the
-fix loop verifies findings by the same protocol. For a pull request of 400
+fix loop verifies findings by the same protocol. The reviewer settles its own
+findings on every head: it resolves one it verifies fixed, reopens one resolved
+too early, and keeps one whose decline does not hold, so its verdict rests on
+what it checked rather than on who clicked resolve. For a pull request of 400
 changed lines or more, in a repository with a Projector site,
 `review-changes` then runs `summarize-changes` and links the summary from its
 review; `review.summarize` and `review.summarize_min_lines` in
