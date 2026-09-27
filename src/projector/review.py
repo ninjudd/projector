@@ -32,7 +32,7 @@ from .core import ProjectorError
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
-START_MARK = "⚬◀"
+START_MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

@@ -404,16 +404,24 @@
     }).join('<br>');
   }
 
+  // Where a stacked pull request sits: on another review's pull request, or on a branch no review covers.
+  function stackNote(r: SiteReview): string {
+    if (r.stackedOn != null) {
+      return `<div class="stack">Stacked on <a href="${esc(`${base}reviews/${String(r.stackedOn)}/`)}">#${String(r.stackedOn)}</a></div>`;
+    }
+    return r.baseRef != null ? `<div class="stack">Stacked on <span class="mono">${esc(r.baseRef)}</span></div>` : '';
+  }
+
   function showReviews(): void {
     frame('reviews', 'Reviews',
       '<h1>Reviews</h1>' +
-      '<div class="tblwrap"><table class="tbl"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Versions</th><th>Updated</th></tr>' +
+      '<div class="tblwrap"><table class="tbl reviews"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Updated</th></tr>' +
       site.reviews.map(function (r) {
         const url = esc(`${base}reviews/${String(r.number)}/`);
         return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
-          `<div class="note">${esc(r.title)}</div></td><td>${projectLinks(r.projects)}</td>` +
+          `<div class="note">${esc(r.title)}</div>${stackNote(r)}</td><td>${projectLinks(r.projects)}</td>` +
           `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
-          `<td>${String(r.heads)}</td><td>${esc(r.updated)}</td></tr>`;
+          `<td class="date">${esc(r.updated)}</td></tr>`;
       }).join('') + '</table></div>' +
       '<p class="note">Built by Projector\'s <span class="mono">summarize-changes</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
   }

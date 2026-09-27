@@ -727,6 +727,19 @@ def site_branch(root: Path) -> str:
     return branch if branch and branch != "HEAD" else "main"
 
 
+def trunk_branch(root: Path) -> str:
+    """The repository's default branch: origin's recorded HEAD, else the checked-out branch.
+
+    A deploy checks out the default branch, which may not record origin's HEAD,
+    while a local checkout records it but may sit on any branch.
+    """
+    try:
+        head = summary.git("-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    except summary.SpecError:
+        return site_branch(root)
+    return head.split("/", 1)[1] if "/" in head else head
+
+
 def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
     """Build the site from a checkout, and summarize what it holds."""
     projects, projects_dir = site_projects(root)
@@ -738,6 +751,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         projects_dir=projects_dir,
         repo=repo,
         branch=site_branch(root),
+        trunk=trunk_branch(root),
         base=base,
     )
     return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
