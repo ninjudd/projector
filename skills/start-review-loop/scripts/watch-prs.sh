@@ -5,13 +5,15 @@
 #
 #   NEW PR     a tracked pull request the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
-#   RESPONDED  every thread resolved and the head unchanged on a pull request
-#              still waiting for one: a draft (self-review, where the verdict
+#   RESPONDED  the author answered without pushing on a pull request still
+#              waiting for a review: a draft (self-review, where the verdict
 #              never moves) or one at CHANGES_REQUESTED (cross-author, where
-#              draft state is never touched). The author answered without
-#              pushing, so no head event is coming. Once per head, and never
-#              alongside NEW PR or NEW HEAD, which already say to review that
-#              head.
+#              draft state is never touched). Answered means every thread is
+#              resolved, or the newest comment on an open Projector finding
+#              thread is the author's rather than the reviewer's. No head
+#              event is coming, so this asks for a re-review of the same
+#              head. Once per answer, and never alongside NEW PR or NEW HEAD,
+#              which already say to review that head.
 #   CLOSED     a tracked pull request is no longer open
 #   BRANCH     the watched worktree changed branch
 #   TRACKED    a problem with the tracked file: a line that is not
@@ -128,8 +130,12 @@ EOF
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # One row per pull request: state, draft flag, review decision, head SHA,
-# head ref, and how many threads are unresolved. The last three fields are
-# what RESPONDED needs, and both signals are needed because the two review
+# head ref, how many threads are unresolved, and the newest unanswered author
+# reply on an open Projector finding thread ("-" when there is none): the id of
+# a last comment that carries neither the finding marker nor the reviewer's
+# verify marker, so the author spoke last. The draft flag and review decision
+# are what RESPONDED needs to know a head is waiting, and both signals are
+# needed because the two review
 # modes record the wait in different places and neither covers the other.
 # Draft state carries a self-review: GitHub allows only a COMMENT review on
 # your own pull request, so reviewDecision never leaves NONE. reviewDecision
@@ -138,9 +144,17 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
     state isDraft reviewDecision headRefOid headRefName
-    reviewThreads(first:100){ nodes{ isResolved } } } } }'
+    reviewThreads(first:100){ nodes{ isResolved
+      comments(first:1){ nodes{ databaseId body } }
+      lastComment: comments(last:1){ nodes{ databaseId body } } } } } } }'
 PR_JQ='.data.repository.pullRequest
-  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length)"'
+  | ([.reviewThreads.nodes[]
+      | select(.isResolved == false)
+      | select(.comments.nodes[0].body | test("projector-finding"))
+      | ((.lastComment // .comments).nodes[-1])
+      | select(.body | test("projector-(finding|verify)") | not)
+      | .databaseId // 0] | max // "-") as $answer
+  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer)"'
 
 # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
 # can be told apart from a pull request that does not exist.
@@ -243,10 +257,12 @@ EOF
 
     known=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $3}' "$STATE" 2>/dev/null)
     kref=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $4}' "$STATE" 2>/dev/null)
-    # Field 5 is the SHA a RESPONDED line was last emitted for, or "-".
-    # Comparing it against the current head is what makes that fire once per
-    # head: a re-review that requests changes again does not re-announce, and
-    # a new push resets it because the row's SHA changed.
+    # Field 5 is the answer a RESPONDED line was last emitted for, as
+    # <sha>:<reply id>, or "-". Comparing it against the current head and
+    # newest reply is what makes that fire once per answer: a re-review that
+    # requests changes again does not re-announce, a further reply on the same
+    # head does, and a new push resets it because the row's SHA changed. A
+    # bare SHA is the older form of <sha>:-.
     flag=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $5}' "$STATE" 2>/dev/null)
     [ -n "$flag" ] || flag="-"
 
@@ -264,9 +280,12 @@ EOF
 "
       continue
     fi
-    read -r pstate pdraft pdecision sha ref unresolved <<EOF
+    read -r pstate pdraft pdecision sha ref unresolved answer <<EOF
 $row
 EOF
+    [ -n "${answer:-}" ] || answer="-"
+    key="$sha:$answer"
+    [ "$flag" = "$sha" ] && flag="$sha:-"
 
     if [ "$pstate" != "OPEN" ]; then
       [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; drop it from the tracked file"
@@ -280,18 +299,18 @@ EOF
       # guard only defers the duplicate by one cycle: the row rebuild writes
       # this SHA into the state, so next cycle the guard passes and RESPONDED
       # fires about a head whose first review is probably still running.
-      flag="$sha"
+      flag="$key"
     elif [ "$known" != "$sha" ]; then
       echo "NEW HEAD $slug#$n ($ref): ${known:0:7} -> ${sha:0:7} — needs an exact-head review"
-      flag="$sha"
+      flag="$key"
     fi
 
     # Only when the head is known and unchanged — that is, when neither of
     # the two events above fired. RESPONDED exists for the case where nothing
-    # was pushed: a draft, or a pull request at CHANGES_REQUESTED, with every
-    # thread resolved is waiting on *us*. The author answered, and a fix that
-    # produced no push — a body correction, a reply, a declined finding —
-    # creates no new head to notice. Nothing else will ever arrive, so
+    # was pushed: a draft, or a pull request at CHANGES_REQUESTED, whose
+    # author resolved every thread or replied on an open finding is waiting on
+    # *us*. The author answered, and a fix that produced no push — a body
+    # correction, a reply, a declined finding — creates no new head to notice. Nothing else will ever arrive, so
     # watching heads alone deadlocks. Which signal matched decides the
     # wording, and they call for opposite actions: a clean re-review marks a
     # self-reviewed draft ready, while on a cross-author changes request
@@ -299,7 +318,7 @@ EOF
     # recommending a human approval.
     if [ -n "$known" ] && [ "$known" = "$sha" ]; then
       rstate=""
-      if [ "$unresolved" = "0" ]; then
+      if [ "$unresolved" = "0" ] || [ "$answer" != "-" ]; then
         if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
           rstate="changes-requested"
         elif [ "$pdraft" = "true" ]; then
@@ -307,13 +326,18 @@ EOF
         fi
       fi
       if [ -n "$rstate" ]; then
-        if [ "$flag" != "$sha" ]; then
-          if [ "$rstate" = "changes-requested" ]; then
-            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested with every thread resolved; re-review this head, and a clean one is a COMMENT, never an approval"
+        if [ "$flag" != "$key" ]; then
+          if [ "$unresolved" = "0" ]; then
+            how="with every thread resolved"
           else
-            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — still a draft with every thread resolved; re-review this head and sign off if clean"
+            how="and the author replied on an open finding"
           fi
-          flag="$sha"
+          if [ "$rstate" = "changes-requested" ]; then
+            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested $how; re-review this head, and a clean one is a COMMENT, never an approval"
+          else
+            echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — still a draft $how; re-review this head and sign off if clean"
+          fi
+          flag="$key"
         fi
       else
         flag="-"

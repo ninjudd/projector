@@ -261,8 +261,8 @@ change the code is correct without and no written rule requires, and it goes
 in the review body under a `Suggestions` heading, never as a thread.
 
 There is no cap on the number of findings. The rules above are the filter,
-and every thread is one the author must resolve, so post nothing you would
-not defend in the thread.
+and every thread is one the author must answer, so post nothing you would not
+defend in the thread.
 
 ## 7. Write the review
 
@@ -306,7 +306,8 @@ either produced a sequence or the finding did not ship. Keep pass names and
 protocol vocabulary out of anything the author reads. Do not restate the
 change's context; the intent paragraph carries it.
 
-When a re-review shows an open finding was wrong, reply in its thread, open
-the reply with `<!-- projector-reply v=1 -->` so no loop reads it as a
-finding, name the guard or behavior that shows the finding was wrong, and say
-the finding is withdrawn. The author resolves the thread; you never do.
+When a re-review shows an open finding was wrong, withdraw it: reply in its
+thread with `<!-- projector-verify v=1 result=withdrawn sha=<full-sha> -->`,
+name the guard or behavior that shows the finding was wrong, and resolve the
+thread. `SKILL.md` § Verify earlier findings covers the other ways a finding
+is settled.
