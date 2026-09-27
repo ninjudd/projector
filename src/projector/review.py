@@ -1,4 +1,5 @@
-"""The mechanical steps of a review: set up a head, follow a moved head, count findings.
+"""The mechanical steps of a review: set up a head, follow a moved head, count
+findings, run the repository's gate, and publish.
 
 `review-changes` does its judgment in prose and its bookkeeping here, so the
 checks a hand-built helper kept skipping run every time. Every SHA comes from
@@ -275,6 +276,40 @@ def release(paths: Paths) -> list[Path]:
     for lock in released:
         lock.unlink(missing_ok=True)
     return released
+
+
+def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_stderr: bool = False) -> dict:
+    """Run the repository's `review.gate` command in the review's scratch worktree.
+
+    The command runs the head's code, so it runs only on a head the state file
+    records as trusted, and trust is checked first: an untrusted head is refused
+    as untrusted whether or not a command is configured, so no refusal points
+    the review at the head's code. The command gets the worktree and the merge
+    base as `$1` and `$2` and as `PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its
+    output passes through, its standard output going to this process's
+    standard error instead when `output_to_stderr` is set, so a caller printing
+    JSON keeps standard output for that alone. Its exit status, with the
+    command and when it ran, is recorded in the state file and returned.
+    """
+    paths = Paths(root, repo, number)
+    state = read_state(paths)
+    if not state.get("trusted"):
+        raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{number} is untrusted "
+                          f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
+                          "run; review it by reading")
+    if not command:
+        raise ReviewError("review.gate is not set in .projector.toml, so there is nothing to run; run the "
+                          "repository's checks as review-changes describes")
+    worktree = Path(state["worktree"])
+    environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
+    ran_at = now()
+    result = subprocess.run(["sh", "-c", command, "sh", str(worktree), state["base"]],
+                            cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
+    record = {"command": command, "exit_code": result.returncode, "sha": state["sha"],
+              "ran_at": ran_at.isoformat()}
+    state["gate"] = record
+    write_state(paths, state)
+    return record
 
 
 # The pull request

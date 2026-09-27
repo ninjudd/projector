@@ -1,6 +1,5 @@
 ---
-status: in-progress
-priority: now
+status: completed
 owner: ninjudd
 ---
 
@@ -207,3 +206,15 @@ Each step is a pull request, stacked where one needs the last:
 - **After #125.** The census counts findings after the reviewer settles them,
   which is how #125 defines a clean head, so the commands encode that model
   rather than the one before it.
+
+## 7. Resolution
+
+Shipped. The review's mechanical steps are the `project review` commands
+`setup`, `move`, `census`, `release`, `publish`, and `gate`, delivered in the
+stacked pull requests #128 (`setup`, `move`, `census`, and `release`), #132
+(`publish`), and the one that adds `gate` and `review.gate`. Each failure in
+§ 2 has a test in `tests/test_review.py`, and `review-changes/SKILL.md` and
+`start-review-loop/SKILL.md` call the commands in place of their inline `gh`
+snippets. The one departure from the proposal this plan came from is § 4.1:
+the steps are commands in the `project` CLI rather than shell scripts beside
+the skill.
