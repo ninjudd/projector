@@ -76,12 +76,18 @@ processes and parse nothing beyond `gh` output.
 
 ### 4.2 The commands
 
-**`project review setup <pr>`** checks that the pull request is open and comes
-from the same repository, fetches its head, creates a scratch worktree at the
-exact SHA GitHub reports and verifies the worktree's `HEAD`, computes the merge
-base, posts the start comment as the reviewer, and writes the review's state
-file: the SHA, the base, the worktree path, the start comment's id and
-`created_at`, and the number of heads seen.
+**`project review setup <pr>`** checks that the pull request is open, fetches
+its head into the source checkout (§ 4.3) — from the branch for a head in the
+same repository, and from `pull/<n>/head` for one from a fork — creates a
+scratch worktree at the exact SHA GitHub reports and verifies the worktree's
+`HEAD`, computes the merge base, takes the review's lock, posts the start
+comment as the reviewer, and writes the review's state file: the SHA, the base,
+the worktree path, whether the head is trusted by `SKILL.md` § Run a head's
+code only when the head is trusted, the start comment's id and `created_at`,
+and the number of heads seen. A fork's head is reviewed by reading, as the
+skill does today; it is recorded as untrusted, so nothing runs its code.
+`--rereview` marks a re-review of a head this loop already published a verdict
+on, the case `RESPONDED` asks for.
 
 **`project review move <pr>`** handles a head that moved mid-review, the case
 `SKILL.md` § One start comment per review describes. It creates a worktree for
@@ -98,8 +104,12 @@ the earlier findings.
 refuses, with a non-zero exit and the reason, unless:
 
 - the pull request is open and its head is the SHA in the state file;
-- no review this loop did not record already carries a verdict on that SHA,
-  the collision check `SKILL.md` describes, read from the loop's record;
+- the collision check `SKILL.md` describes passes: no verdict on that SHA from
+  the reviewer is missing from this loop's record (§ 4.3), and none in the
+  record either unless `setup` was given `--rereview`. A run outside a loop
+  has no record, so any earlier verdict on the SHA refuses it unless
+  `--second-verdict <review-id>` names that review, which the body then cites,
+  as `SKILL.md` lets the user approve;
 - every thread's `path` and `line` fall inside the pull request's diff hunks,
   and its text opens with the priority header and carries a `**Fix:**` line;
 - for `approved`, the census shows no open finding and no thread is posted.
@@ -108,28 +118,52 @@ It then fills the body template's placeholders — the duration and `seconds=`
 from the start comment's `created_at` to now in UTC, the full SHA, and the
 census line — and refuses a body with a placeholder left, a signature line or
 marker that does not match `SKILL.md` exactly, or nothing below the signature
-line. It submits one review, re-reads the pull request's state and the review
-it posted, appends the review id to the loop's record, and deletes the start
-comment.
+line. It submits one review; on a self-review it then sets draft state to
+match the verdict (`gh pr ready` for `approved`, `gh pr ready --undo` for
+`changes-requested`), and on a cross-author review it leaves draft state alone.
+Only then does it re-read the review it posted and the pull request's
+`isDraft`, append the review id to the loop's record, delete the start
+comment, and release the lock, in the order `SKILL.md` § Publish one review
+gives, so a session that stops partway never leaves a pull request with
+neither a start comment nor its verdict's draft state.
 
 ### 4.3 Shared rules
 
 - Every SHA comes from GitHub or the state file, never from an argument the
   agent types.
-- Every command takes the repository from the worktree's `origin` or `--repo`
-  and passes it to `gh` explicitly, so it runs from any directory.
+- `setup` works from a source checkout of the repository: `--checkout <path>`,
+  defaulting to the root of the repository the current directory is in, and
+  refusing outside one. It creates scratch worktrees from that checkout under
+  the state directory, at `worktrees/<owner>/<repo>/<pr>/<short-sha>`, never
+  inside the checkout. The repository is the checkout's `origin`, and `--repo`,
+  when given, must name the same one. Every later command reads the checkout,
+  the worktree, and the repository from the state file and passes the
+  repository to `gh` explicitly, so it runs from any directory.
 - A command that posts runs `gh` as the reviewer by setting `GH_TOKEN` to
   `gh auth token --user <reviewer>` for that call alone, never by switching
   the global account, so a session that pushes as the operator is unaffected.
   The reviewer comes from `review.username` or the authenticated user, as
   `SKILL.md` § Resolve identity says.
-- `setup` and `publish` take a lock per pull request and SHA, created
-  exclusively in the state directory, so a second instance exits.
+- A review holds a lock for its pull request and SHA from `setup` until
+  `publish` finishes, created exclusively in the state directory, so a second
+  instance's `setup` exits while the first is under way. `setup` releases it
+  when it refuses, and `publish` releases it after deleting the start comment;
+  a refused `publish` keeps it, so the same review can correct its input and
+  publish again. The lock records the host, the loop identity, and when it was
+  taken. A lock older than a day, or `project review release <pr>`, is cleared
+  as stale. A `RESPONDED` re-review re-enters through `setup --rereview` once
+  the first review has released it; without `--rereview`, a second instance
+  that arrives after the first published is refused at `publish` by the record.
 - The state directory is `$XDG_STATE_HOME/projector/reviews`, falling back to
   `~/.local/state/projector/reviews`, with one file per repository and pull
-  request, and `--state-dir` overrides it. The loop's record of published
-  review ids lives beside it, replacing the record `start-review-loop` keeps
-  in its own job directory.
+  request, and `--state-dir` overrides it.
+- The record of published review ids is kept per loop: `start-review-loop`
+  passes `--loop <id>` to every command, a name it chooses once and keeps in
+  its persistent goal, and the record lives in the state directory under that
+  id. Another loop under the same account has another id, so its verdicts are
+  absent from this loop's record and trip the collision check, as they do
+  today. This replaces the record `start-review-loop` now keeps in its
+  persistent recurring goal.
 - Every refusal exits non-zero and says what to do about it.
 
 ### 4.4 `review.gate`
@@ -161,7 +195,8 @@ Each step is a pull request, stacked where one needs the last:
 3. `project review publish`, with its tests, including one per failure in § 2,
    and the `SKILL.md` and `start-review-loop` edits for publishing and the
    record.
-4. `review.gate` and `project review gate`.
+4. `review.gate` and `project review gate`, which runs only on a head the
+   state file records as trusted.
 
 ## 6. Decisions
 
