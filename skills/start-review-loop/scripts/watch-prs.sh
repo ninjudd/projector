@@ -326,12 +326,19 @@ EOF
         fi
       fi
       if [ -n "$rstate" ]; then
-        if [ "$flag" != "$key" ]; then
-          if [ "$unresolved" = "0" ]; then
-            how="with every thread resolved"
-          else
-            how="and the author replied on an open finding"
-          fi
+        # Every thread resolved is one answer per head, so only the head is
+        # compared: a head announced while a reply was outstanding, then
+        # resolved by the fix loop or settled by that head's own review, is
+        # the head already under review. A reply on an open finding is
+        # compared by reply too, so each further reply asks again.
+        if [ "$unresolved" = "0" ]; then
+          seen="${flag%%:*}"; now="$sha"
+          how="with every thread resolved"
+        else
+          seen="$flag"; now="$key"
+          how="and the author replied on an open finding"
+        fi
+        if [ "$seen" != "$now" ]; then
           if [ "$rstate" = "changes-requested" ]; then
             echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested $how; re-review this head, and a clean one is a COMMENT, never an approval"
           else

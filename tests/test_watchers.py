@@ -473,6 +473,30 @@ class WatchPrsTests(WatcherCase):
         self.assertEqual(1, len(replied_again.stdout.splitlines()))
         self.assertIn("the author replied on an open finding", replied_again.stdout)
 
+    def test_resolving_a_replied_finding_after_a_push_does_not_re_request_the_head(self) -> None:
+        # The fix loop replies, pushes, then resolves; a poll between the push
+        # and the resolve announces the head with a reply outstanding. Resolving
+        # it next, or the reviewer resolving it during that head's review, must
+        # not ask for the same head again.
+        finding = {"databaseId": 31, "body": "<!-- projector-finding v=1 priority=P2 --> A nil deref"}
+        reply = {"databaseId": 32, "body": "<!-- projector-reply v=1 --> Fixed in aaaaaaa."}
+        node = thread("T1", body=finding["body"])
+        node["comments"]["nodes"] = [finding, reply]
+        self.pull_request(1, head=SHA_A, draft=True, threads=[node])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_B} feature\n")
+
+        moved = self.run_watcher(PRS)
+        node = dict(node, isResolved=True)
+        self.pull_request(1, head=SHA_A, draft=True, threads=[node])
+        resolved = self.run_watcher(PRS)
+
+        self.assert_ok(moved)
+        self.assertEqual(["NEW HEAD acme/app#1 (feature): bbbbbbb -> aaaaaaa — needs an exact-head review"],
+                         moved.stdout.splitlines())
+        self.assert_ok(resolved)
+        self.assertEqual("", resolved.stdout)
+
     def test_a_reply_on_another_reviewers_thread_is_not_a_response(self) -> None:
         human = thread("T1", who="alice", body="Should this be a constant?")
         human["comments"]["nodes"].append({"databaseId": 21, "author": {"login": "operator"}, "body": "Done."})
