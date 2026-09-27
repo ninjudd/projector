@@ -612,7 +612,7 @@ a review loop does not rebuild them as helpers of its own:
 project review setup 66 --model claude-opus-5-5 --loop main-loop
 project review move 66
 project review census 66 --json
-project review publish 66 --verdict approved --body body.md --covered 12/12 --loop main-loop
+project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
 project review release 66
 project review gate 66
 ```
