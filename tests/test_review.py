@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -42,11 +43,43 @@ class FakeGitHub:
         self.permissions: dict[str, str] = {}
         self.calls: list[tuple[list[str], str | None]] = []
         self.comments: dict[int, str] = {}
-        self.pages: list[dict] = []
+        self.pages: list[dict] = [{"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}}}}}]
         self.missing = False
+        self.pr["draft"] = True
+        # Every review on the pull request, as the REST reviews endpoint returns them.
+        self.reviews: list[dict] = []
+        self.files = [("src/x.py", "@@ -1,2 +1,6 @@\n a\n+b\n+c\n+d\n+e\n f"),
+                      ("src/z.py", "@@ -10,0 +11,2 @@\n+x\n+y")]
+        self.fail: str | None = None
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append((list(args), token))
+        if self.fail and self.fail in " ".join(args):
+            raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
+        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
+            login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
+            sha = re.search(r"sha=([0-9a-f]+)", args[4]).group(1)
+            return "".join(f"{r['id']}\n" for r in self.reviews if r["user"]["login"] == login
+                           and re.search(f"projector-review .* sha={sha}", r["body"]))
+        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
+            return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
+        if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
+            payload = json.loads(Path(args[5]).read_text())
+            review_id = 900 + len(self.reviews) + 1
+            self.reviews.append({"id": review_id, "user": {"login": token.removeprefix("token-")},
+                                 "body": payload["body"], "event": payload["event"],
+                                 "commit_id": payload["commit_id"], "comments": payload["comments"]})
+            return json.dumps({"id": review_id})
+        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/1/reviews/"):
+            review_id = int(args[1].rsplit("/", 1)[1])
+            return json.dumps(next(r for r in self.reviews if r["id"] == review_id))
+        if args[:2] == ["pr", "ready"]:
+            self.pr["draft"] = "--undo" in args
+            return ""
+        if args[:3] == ["api", "-X", "DELETE"]:
+            del self.comments[int(args[3].rsplit("/", 1)[1])]
+            return ""
         if args[:2] == ["auth", "token"]:
             return f"token-{args[-1]}\n"
         if args == ["api", "user", "--jq", ".login"]:
@@ -154,7 +187,7 @@ class SetupTests(ReviewCase):
         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
         self.assertEqual(
-            f"{review.START_MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
+            f"{review.MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
             f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
             self.github.comments[101],
         )
@@ -411,16 +444,331 @@ class CensusTests(ReviewCase):
         self.assertIn("--repo", err)
 
 
+FINDING = "<!-- projector-finding v=1 priority=P2 sha=%s --> **P2 · A nil deref**"
+
+
+def finding(path: str = "src/x.py", line: int = 3, priority: str = "P2",
+            body: str = "**P2 · The cache returns nil after a restart**\n\n`load` skips the warm-up.\n\n"
+                        "**Fix:** warm the cache in `load`.") -> dict:
+    return {"path": path, "line": line, "priority": priority, "body": body}
+
+
+class PublishCase(ReviewCase):
+    START = datetime(2026, 9, 27, 1, 2, 3, tzinfo=timezone.utc)
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.clock = self.START + timedelta(minutes=12, seconds=34)
+        patcher = mock.patch.object(review, "now", lambda: self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.dir = Path(tempfile.mkdtemp())
+
+    def body(self, text: str = "This change warms the cache.\n\n{census}\n\nCovered 3 of 3 changed files.\n") -> Path:
+        path = self.dir / "body.md"
+        path.write_text(text)
+        return path
+
+    def threads(self, *items: dict) -> Path:
+        path = self.dir / "threads.json"
+        path.write_text(json.dumps(list(items)))
+        return path
+
+    def publish(self, verdict: str, *extra: str, body: Path | None = None, loop: str | None = "l1",
+                cwd: Path | None = None) -> tuple[int, str, str]:
+        args = ["--verdict", verdict, "--body", str(body or self.body()), "--covered", "3/3"]
+        if loop:
+            args += ["--loop", loop]
+        return self.later("publish", *args, *extra, cwd=cwd)
+
+    def open_finding(self) -> None:
+        self.github.pages = [{"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": [thread("T1", FINDING % self.head)]}}}}}]
+
+    def posted(self) -> dict:
+        return self.github.reviews[-1]
+
+
+class PublishTests(PublishCase):
+    def test_publishes_an_approved_self_review_marks_it_ready_and_cleans_up_in_order(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, out, err = self.publish("approved", cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(0, code, err)
+        review_body = self.posted()["body"]
+        self.assertEqual(
+            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · effort `low` · **APPROVED** · took 12m 34s",
+            review_body.splitlines()[0])
+        self.assertIn(f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low "
+                      f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
+        self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
+        self.assertEqual(("COMMENT", self.head, "token-operator"),
+                         (self.posted()["event"], self.posted()["commit_id"], "token-" + self.posted()["user"]["login"]))
+        self.assertFalse(self.github.pr["draft"], "a clean self-review marks the pull request ready")
+        self.assertEqual({}, self.github.comments, "the start comment is gone")
+        self.assertFalse(self.lock(self.head).exists(), "the lock is released")
+        record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
+        self.assertEqual([(REPO, 1, self.head, 901, "approved")],
+                         [(r["repo"], r["number"], r["sha"], r["review_id"], r["verdict"]) for r in record])
+        steps = [" ".join(args) for args, _ in self.github.calls]
+        ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
+        reread = next(i for i, c in enumerate(steps) if c == f"api repos/{REPO}/pulls/1/reviews/901")
+        delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
+        self.assertLess(ready, reread)
+        self.assertLess(reread, delete, "the start comment goes only after draft state and the re-read")
+        self.assertIn("published review 901", out)
+
+    def test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_request_to_draft(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.pr["draft"] = False
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding())))
+
+        self.assertEqual(0, code, err)
+        comment = self.posted()["comments"][0]
+        self.assertEqual(("src/x.py", 3, "RIGHT"), (comment["path"], comment["line"], comment["side"]))
+        self.assertTrue(comment["body"].startswith(f"<!-- projector-finding v=1 priority=P2 sha={self.head} -->\n"
+                                                   "**P2 · The cache returns nil"))
+        self.assertIn("findings=1 ", self.posted()["body"])
+        self.assertIn("1 finding thread: 0 resolved, 1 open", self.posted()["body"])
+        self.assertTrue(self.github.pr["draft"])
+
+    def test_a_cross_author_review_requests_changes_and_leaves_draft_state_alone(self) -> None:
+        self.github.pr["user"] = {"login": "teammate"}
+        self.github.permissions = {"teammate": "write"}
+        self.github.commit_authors = ["teammate"]
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding())))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("REQUEST_CHANGES", self.posted()["event"])
+        self.assertTrue(self.github.pr["draft"], "untouched")
+        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
+
+    def test_a_clean_cross_author_review_is_a_comment_unless_approval_is_allowed(self) -> None:
+        self.github.pr["user"] = {"login": "teammate"}
+        self.github.permissions = {"teammate": "write"}
+        self.github.commit_authors = ["teammate"]
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual("COMMENT", self.posted()["event"])
+
+        (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+        code, _, err = self.publish("approved")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("APPROVE", self.posted()["event"])
+
+
+class PublishRefusalTests(PublishCase):
+
+    def refused(self, result: tuple[int, str, str], words: str) -> None:
+        code, _, err = result
+        self.assertEqual(1, code, "a refusal exits non-zero")
+        self.assertIn(words, err)
+        self.assertEqual([], self.github.reviews, "nothing was posted")
+        self.assertTrue(self.lock(self.head).exists(), "a refused publish keeps the lock")
+
+    def test_the_duration_and_seconds_are_always_present_and_agree(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.clock = self.START + timedelta(hours=1, minutes=4, seconds=9)
+
+        self.assertEqual(0, self.publish("approved")[0])
+
+        first = self.posted()["body"].splitlines()[0]
+        self.assertTrue(first.endswith("· took 1h 04m"), first)
+        self.assertIn("seconds=3849 ", self.posted()["body"])
+
+    def test_no_sha_is_ever_typed_and_a_moved_head_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        self.refused(self.publish("approved"), "project review move 1")
+
+    def test_a_missing_or_empty_body_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("approved", body=self.dir / "nowhere.md"), "does not exist")
+        self.refused(self.publish("approved", body=self.body("   \n")), "empty")
+
+    def test_a_body_cannot_carry_its_own_signature_so_took_is_never_stale(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        stale = (f"{review.MARK} **Projector review** · model `m` · effort `e` · **APPROVED** · took 3m 00s\n\n"
+                 "{census}\n")
+
+        self.refused(self.publish("approved", body=self.body(stale)), "signature line")
+
+    def test_an_anchor_outside_the_diff_or_without_a_line_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("changes-requested", "--threads", str(self.threads(finding(line=40)))),
+                     "outside the pull request's diff hunks")
+        no_line = finding()
+        no_line["line"] = None
+        self.refused(self.publish("changes-requested", "--threads", str(self.threads(no_line))), "line number")
+        self.refused(self.publish("changes-requested", "--threads", str(self.threads(finding(path="docs/a.md")))),
+                     "not a file this pull request changes")
+
+    def test_a_finding_needs_its_header_and_fix_and_leaves_the_marker_to_publish(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("changes-requested", "--threads",
+                                  str(self.threads(finding(body="A nil deref.\n\n**Fix:** check it.")))), "must open with")
+        self.refused(self.publish("changes-requested", "--threads",
+                                  str(self.threads(finding(body="**P2 · A nil deref**\n\nNo fix.")))), "**Fix:**")
+        self.refused(self.publish("changes-requested", "--threads",
+                                  str(self.threads(finding(body=FINDING % self.head + "\n\n**Fix:** x")))), "marker")
+
+    def test_a_second_publish_on_the_same_head_is_refused_without_rereview(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("approved")
+
+        self.assertEqual(1, code)
+        self.assertIn("--rereview", err)
+        self.assertEqual(1, len(self.github.reviews))
+
+    def test_a_rereview_publishes_a_second_verdict_on_the_same_head(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("approved")[0])
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+
+        code, _, err = self.publish("approved")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(2, len(self.github.reviews))
+
+    def test_another_loops_verdict_on_the_head_is_a_collision(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "a")[0])
+        self.assertEqual(0, self.publish("approved", loop="a")[0])
+        self.assertEqual(0, self.setup_review("--loop", "b", "--rereview")[0])
+
+        code, _, err = self.publish("approved", loop="b")
+
+        self.assertEqual(1, code)
+        self.assertIn("another loop", err)
+
+    def test_outside_a_loop_a_second_verdict_needs_its_id_named_in_the_body(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.assertEqual(0, self.publish("approved", loop=None)[0])
+        self.assertEqual(0, self.setup_review()[0])
+
+        refused = self.publish("approved", loop=None)
+        uncited = self.publish("approved", "--second-verdict", "901", loop=None)
+        cited = self.publish("approved", "--second-verdict", "901", loop=None,
+                             body=self.body("A second verdict beside review 901.\n\n{census}\n"))
+
+        self.assertEqual((1, 1, 0), (refused[0], uncited[0], cited[0]), cited[2])
+        self.assertIn("--second-verdict", refused[2])
+        self.assertIn("name the earlier review 901", uncited[2])
+
+    def test_a_gh_failure_mid_publish_exits_non_zero_keeps_the_lock_and_a_retry_finishes(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.fail = "pr ready"
+
+        failed = self.publish("approved")
+        self.github.fail = None
+        retried = self.publish("approved")
+
+        self.assertEqual(1, failed[0])
+        self.assertIn("HTTP 502", failed[2])
+        self.assertEqual(0, retried[0], retried[2])
+        self.assertEqual(1, len(self.github.reviews), "the retry did not post a second review")
+        self.assertFalse(self.github.pr["draft"])
+        self.assertFalse(self.lock(self.head).exists())
+
+    def test_approved_is_refused_while_a_finding_is_open(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.open_finding()
+
+        self.refused(self.publish("approved"), "needs no open finding")
+
+    def test_changes_requested_is_refused_on_a_clean_head(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("changes-requested"), "the head is clean")
+
+    def test_a_body_without_the_census_in_prose_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("approved", body=self.body("No census here.\n")), "{census}")
+        self.refused(self.publish("approved", body=self.body("Only quoted: `{census}`.\n")), "{census}")
+
+    def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual(0, self.publish("approved", body=self.body("{census}\n\nChecked {checks}.\n"))[0])
+
+        self.assertIn("Checked {checks}.", self.posted()["body"])
+
+    def test_placeholders_fill_from_state_and_the_same_clock(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        body = self.body("{census}\n\nReviewed {short_sha} ({sha}) in {took}, {seconds} seconds.\n")
+        self.assertEqual(0, self.publish("approved", body=body)[0])
+
+        self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
+
+    def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        body = self.body(
+            "The loop id `example-projector-review-loop` and the `projector-finding` marker both appear here.\n\n"
+            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `{short_sha}` from state.\n"
+            "- Findings are `{path, line}` objects.\n\n```\nprint(f\"{sha} {took}\")\n```\n")
+        item = finding(body="**P2 · The `projector-finding` marker is parsed by substring**\n\n"
+                            "`census` matches `{name}` too loosely.\n\n**Fix:** match the comment.")
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(item)), body=body)
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()["body"]
+        self.assertIn('`f"sha={sha}"` should read `{short_sha}` from state.', posted)
+        self.assertIn("`{path, line}` objects", posted)
+        self.assertIn('print(f"{sha} {took}")', posted)
+        self.assertIn("`example-projector-review-loop`", posted)
+        self.assertIn("matches `{name}` too loosely", self.posted()["comments"][0]["body"])
+
+    def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("approved", body=self.body(
+            "{census}\n\n<!-- projector-review v=1 verdict=approved -->\n")), "signature line")
+
+    def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        path = self.state / "prs" / REPO / "1.json"
+        state = json.loads(path.read_text())
+        state["model"] = "has space"
+        path.write_text(json.dumps(state))
+
+        self.refused(self.publish("approved"), "does not match review-changes/SKILL.md")
+
+    def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.later("release", "--repo", REPO)[0])
+
+        code, _, err = self.publish("approved")
+
+        self.assertEqual(1, code)
+        self.assertIn("project review setup 1", err)
+
+
 class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release"):
+        for command in ("setup", "move", "census", "release", "publish"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
                     cli.main(["review", command, "--help"])
-                self.assertNotIn("sha", help_text.getvalue().lower())
+                self.assertIsNone(re.search(r"--\S*sha|metavar.*SHA|\bSHA\b", help_text.getvalue()))
                 self.assertIn("--loop", help_text.getvalue())
 
 

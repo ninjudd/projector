@@ -32,7 +32,9 @@ from .core import ProjectorError
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
-START_MARK = "📽️"
+# The mark that opens both the start comment and the review's signature line, as
+# review-changes/SKILL.md § Label every review and finding writes it.
+MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -319,7 +321,7 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
 # Start comments
 
 def start_comment(model: str, effort: str, sha: str, moved_from: Optional[str] = None) -> str:
-    lines = [f"{START_MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
+    lines = [f"{MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
              f"reviewing `{sha[:7]}`", ""]
     if moved_from:
         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
@@ -488,3 +490,278 @@ def census_lines(result: dict) -> list[str]:
         if not t["resolved"]:
             lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
     return lines
+
+
+# Publishing
+
+PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
+PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
+# Code the body quotes is left exactly as written: fenced blocks, then inline spans.
+CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
+# A comment of Projector's own at the start of a line, as a review or finding carries it.
+OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
+SIGNATURE = re.compile(
+    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · effort `[^`\n]+` · "
+    r"\*\*(APPROVED|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+)
+MARKER = re.compile(
+    r"^<!-- projector-review v=1 verdict=(approved|changes-requested) model=\S+ effort=\S+ "
+    r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+)
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
+VERDICT_WORDS = {"approved": "APPROVED", "changes-requested": "CHANGES REQUESTED"}
+
+
+def duration(seconds: int, heads: int) -> str:
+    """How long the review took, as the signature line writes it: minutes and seconds
+    under an hour, hours and minutes past it, and how many heads the time covers."""
+    if seconds < 3600:
+        text = f"{seconds // 60}m {seconds % 60:02d}s"
+    else:
+        text = f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+    return text + (f" over {heads} heads" if heads > 1 else "")
+
+
+def elapsed(created_at: str, at: datetime) -> int:
+    """Whole seconds from the start comment's `created_at` to `at`, both in UTC."""
+    start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return max(0, int((at - start).total_seconds()))
+
+
+def diff_lines(repo: str, number: int) -> dict[str, list[tuple[int, int]]]:
+    """Each changed file's right-side hunk ranges, from every page of the pull request's files."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/files",
+                   "--jq", '.[] | [.filename, (.patch // "")] | @json']).splitlines()
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    for row in rows:
+        if not row.strip():
+            continue
+        path, patch = json.loads(row)
+        spans = ranges.setdefault(path, [])
+        for start, count in HUNK.findall(patch):
+            count = 1 if count == "" else int(count)
+            if count:
+                spans.append((int(start), int(start) + count - 1))
+    return ranges
+
+
+def load_threads(path: Optional[Path]) -> list[dict]:
+    if path is None:
+        return []
+    if not path.is_file():
+        raise ReviewError(f"the threads file {path} does not exist; write the findings there first")
+    try:
+        threads = json.loads(path.read_text(encoding="utf-8") or "[]")
+    except ValueError as exc:
+        raise ReviewError(f"the threads file {path} is not JSON: {exc}") from exc
+    if not isinstance(threads, list):
+        raise ReviewError(f"the threads file {path} must hold a list of findings")
+    return threads
+
+
+def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
+    """Refuse a finding GitHub could not anchor or a reader could not act on."""
+    for i, t in enumerate(threads, 1):
+        where = f"finding {i}"
+        if not isinstance(t, dict):
+            raise ReviewError(f"{where} is not an object with path, line, priority, and body")
+        path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
+        if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
+            raise ReviewError(f"{where} needs a path and a line number (got {path!r}:{line!r}); "
+                              "anchor it to a line the diff changes")
+        spans = ranges.get(path)
+        if spans is None:
+            raise ReviewError(f"{where}: {path} is not a file this pull request changes, or GitHub has no "
+                              "patch for it; anchor the finding to a changed line")
+        if not any(a <= line <= b for a, b in spans):
+            listed = ", ".join(f"{a}-{b}" for a, b in spans) or "none"
+            raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
+                              "anchor it to a changed line")
+        if priority not in ("P1", "P2"):
+            raise ReviewError(f"{where}: priority must be P1 or P2; a P3 goes in the body's Suggestions list")
+        if OWN_MARKER.search(body):
+            raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
+                              "the head's SHA")
+        header = PRIORITY_HEADER.match(body)
+        if not header or header.group(1) != priority:
+            raise ReviewError(f"{where}: the body must open with `**{priority} · <what goes wrong>**`")
+        if "**Fix:**" not in body:
+            raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+
+
+def reviewer_verdicts(repo: str, number: int, reviewer: str, sha: str) -> list[int]:
+    """The ids of every Projector verdict the reviewer posted on this exact SHA, from every page."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
+                           f'| select(.body | test("projector-review .* sha={sha}")) | .id']).split()
+    return [int(r) for r in rows]
+
+
+def read_record(root: Path, loop: str) -> list[dict]:
+    record = loop_record(root, loop)
+    return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
+
+
+def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str) -> None:
+    """The collision check review-changes § Publish one review describes, read from the loop's record."""
+    earlier = reviewer_verdicts(state["repo"], state["number"], state["reviewer"], state["sha"])
+    if loop is not None:
+        mine = {r["review_id"] for r in read_record(root, loop)
+                if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
+        others = [i for i in earlier if i not in mine]
+        if others:
+            raise ReviewError(
+                f"the reviewer already has a verdict on {state['sha'][:7]} that loop {loop} did not publish "
+                f"(review {', '.join(map(str, others))}); another loop is reviewing this pull request, so ask "
+                "the user which one continues")
+        if any(i in mine for i in earlier) and not state.get("rereview"):
+            raise ReviewError(
+                f"loop {loop} already published a verdict on {state['sha'][:7]}; a re-review of this head "
+                f"starts with `project review setup {state['number']} --rereview`")
+        return
+    if earlier:
+        if second not in earlier:
+            raise ReviewError(
+                f"the reviewer already has a verdict on {state['sha'][:7]} (review {', '.join(map(str, earlier))}); "
+                "ask the user, and if they want a second one pass --second-verdict with that review's id")
+        if str(second) not in body:
+            raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
+
+
+def self_review(repo: str, number: int, reviewer: str) -> bool:
+    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+    return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
+
+
+def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
+            at: datetime) -> str:
+    """The review's text: the signature line and marker, then the body with its placeholders filled.
+
+    The duration and `seconds=` come from one clock reading, so they cannot disagree."""
+    if not body.strip():
+        raise ReviewError("the body is empty; write the review below the signature line")
+    if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
+        raise ReviewError("leave the signature line and marker out of the body; publish writes them")
+    if not PLACEHOLDER.search(CODE.sub("", body)) or "{census}" not in CODE.sub("", body):
+        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                          "outside code")
+    seconds = elapsed(state["start_comment"]["created_at"], at)
+    took = duration(seconds, state["heads"])
+    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
+              "census": census_line}
+    # Placeholders are filled only in prose, so quoted code keeps its braces; anything else in
+    # braces is the author's text, not a placeholder.
+    pieces, last = [], 0
+    for code in CODE.finditer(body):
+        pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
+        pieces.append(code.group(0))
+        last = code.end()
+    pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
+    filled = "".join(pieces)
+    signature = (f"{MARK} **Projector review** · model `{state['model']}` · effort `{state['effort']}` · "
+                 f"**{VERDICT_WORDS[verdict]}** · took {took}")
+    marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} effort={state['effort']} "
+              f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
+    if not SIGNATURE.match(signature) or not MARKER.match(marker):
+        raise ReviewError("the signature line or marker does not match review-changes/SKILL.md; check the "
+                          f"model and effort in the review's state ({state['model']}, {state['effort']})")
+    return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
+
+
+def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: str, body_path: Path,
+            threads_path: Optional[Path], covered: str, second: Optional[int], allow_approve: bool) -> dict:
+    """Submit the review, then set draft state, re-read, record, delete the start comment, and
+    release the lock, in that order. Every refusal leaves the lock held for this review to retry."""
+    paths = Paths(root, repo, number)
+    state = read_state(paths)
+    loop = loop if loop is not None else state.get("loop")
+    repo, sha = state["repo"], state["sha"]
+    if verdict not in VERDICT_WORDS:
+        raise ReviewError(f"--verdict must be approved or changes-requested, not {verdict}")
+    if not re.fullmatch(r"\d+/\d+", covered or ""):
+        raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
+    if not paths.lock(sha).exists():
+        raise ReviewError(f"no review of {repo}#{number} at {sha[:7]} holds the lock; "
+                          f"run `project review setup {number}` again")
+    published = state.get("published")
+    if published and published.get("sha") == sha and state.get("start_comment"):
+        # A publish that submitted and then stopped: finish it rather than post a second review.
+        review_id, draft_wanted = published["id"], published["draft"]
+    else:
+        if not body_path.is_file():
+            raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
+        body = body_path.read_text(encoding="utf-8")
+        threads = load_threads(threads_path)
+        pr = pull_request(repo, number)
+        if pr["head"]["sha"] != sha:
+            raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
+                              f"run `project review move {number}` and review the new head")
+        check_collision(root, state, loop, second, body)
+        check_threads(threads, diff_lines(repo, number) if threads else {})
+        tally = census(repo, number)
+        open_now = tally["open"] + len(threads)
+        if verdict == "approved" and open_now:
+            raise ReviewError(f"an approved verdict needs no open finding, and {tally['open']} are open and "
+                              f"{len(threads)} are being posted; settle them or request changes")
+        if verdict == "changes-requested" and not open_now:
+            raise ReviewError("changes-requested needs an open finding or a new one; with none open the head is clean")
+        total = tally["total"] + len(threads)
+        noun = "thread" if total == 1 else "threads"
+        census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
+        text = compose(state, verdict, body, covered, len(threads), census_line, now())
+        mine = self_review(repo, number, state["reviewer"])
+        if mine or (verdict == "approved" and not allow_approve):
+            event = "COMMENT"
+        else:
+            event = "APPROVE" if verdict == "approved" else "REQUEST_CHANGES"
+        draft_wanted = (verdict == "changes-requested") if mine else None
+        payload = {"commit_id": sha, "event": event, "body": text,
+                   "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
+                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} -->\n"
+                                         f"{t['body'].strip()}\n"} for t in threads]}
+        token = reviewer_token(state["reviewer"])
+        paths.folder.mkdir(parents=True, exist_ok=True)
+        request = paths.folder / f"{number}-review.json"
+        request.write_text(json.dumps(payload), encoding="utf-8")
+        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", str(request)],
+                         token)
+        request.unlink(missing_ok=True)
+        review_id = posted["id"]
+        # Recorded before anything else can fail, so a retry finishes this review rather than
+        # posting a second one.
+        state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
+                              "draft": draft_wanted}
+        write_state(paths, state)
+    token = reviewer_token(state["reviewer"])
+    if draft_wanted is not None:
+        run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
+    posted = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"])
+    if f"sha={sha}" not in (posted or {}).get("body", ""):
+        raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
+    if draft_wanted is not None:
+        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+        if draft != draft_wanted:
+            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the "
+                              f"{state['published']['verdict']} verdict; set it with `gh pr ready` and retry")
+    if loop is not None:
+        record = read_record(root, loop)
+        if not any(r.get("review_id") == review_id for r in record):
+            record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+                           "verdict": state["published"]["verdict"], "published_at": now().isoformat()})
+            loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
+            loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    comment = (state.get("start_comment") or {}).get("id")
+    if comment:
+        try:
+            run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
+        except NotFound:
+            pass
+        state["start_comment"] = None
+    write_state(paths, state)
+    paths.lock(sha).unlink(missing_ok=True)
+    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+            "verdict": state["published"]["verdict"], "event": state["published"]["event"],
+            "draft": draft_wanted}
