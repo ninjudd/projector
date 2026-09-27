@@ -313,7 +313,10 @@ def parser() -> argparse.ArgumentParser:
     review_publish = review_commands.add_parser(
         "publish", help="check and submit the review, set draft state, and delete the start comment"
     )
-    for command in (review_setup, review_move, review_census, review_release, review_publish):
+    review_gate = review_commands.add_parser(
+        "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
+    )
+    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -684,6 +687,18 @@ def run_review(arguments: argparse.Namespace) -> int:
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0
+        if command == "gate":
+            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            try:
+                configured = load_config(Path(state["checkout"])).get("review.gate")
+            except ProjectorError:
+                configured = None
+            result = review.gate(root, arguments.pr, repo, configured if isinstance(configured, str) else None)
+            if arguments.json_output:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"review.gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
+            return result["exit_code"]
         if command == "release":
             released = review.release(review.Paths(root, repo, arguments.pr))
             if arguments.json_output:

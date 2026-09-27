@@ -378,6 +378,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+| `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
 | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
 | `fix.resolve_human_threads` | boolean | `true` | `start-fix-loop`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
@@ -609,6 +610,7 @@ project review move 66
 project review census 66 --json
 project review publish 66 --verdict approved --body body.md --covered 12/12 --loop main-loop
 project review release 66
+project review gate 66
 ```
 
 `setup` checks that pull request 66 is open, fetches its head into the
@@ -653,6 +655,15 @@ draft state alone. It then re-reads the review and the draft state, adds the
 review id to the loop's record, deletes the start comment, and releases the
 lock. A run that fails after submitting exits non-zero, and running it again
 finishes that review rather than posting another.
+
+`gate` runs the repository's validation gate: the shell command
+`review.gate` names in `.projector.toml`, run with `sh -c` in the scratch
+worktree, with the worktree and the merge base as `$1` and `$2` and as
+`PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its output passes through, `gate`
+exits with the command's status, and the state file records the command, its
+exit status, the head, and when it ran. The command runs the head's code, so
+`gate` refuses, exiting 1 without running anything, on a head `setup` recorded
+as untrusted, and when `review.gate` is unset.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

@@ -388,6 +388,72 @@ class MoveTests(ReviewCase):
         self.assertIn("project review setup 1", err)
 
 
+class GateTests(ReviewCase):
+    GATE = ('printf "%s %s %s %s" "$1" "$2" "$PROJECTOR_WORKTREE" "$PROJECTOR_BASE" > "$1/gate.args"; '
+            'pwd -P > "$1/gate.pwd"; exit 3')
+
+    def configure(self, command: str) -> None:
+        (self.checkout / ".projector.toml").write_text(f"[review]\ngate = {json.dumps(command)}\n")
+
+    def test_runs_the_command_in_the_worktree_and_exits_with_its_status(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure(self.GATE)
+        state = self.read_state()
+        worktree = Path(state["worktree"])
+
+        code, _, err = self.later("gate", cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(3, code, err)
+        self.assertEqual(f"{worktree} {state['base']} {worktree} {state['base']}",
+                         (worktree / "gate.args").read_text())
+        self.assertEqual(str(worktree.resolve()), (worktree / "gate.pwd").read_text().strip())
+        record = self.read_state()["gate"]
+        self.assertEqual((self.GATE, 3, state["sha"]), (record["command"], record["exit_code"], record["sha"]))
+        self.assertIn("exited 3", err)
+
+    def test_a_passing_gate_exits_zero_and_is_recorded(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure("true")
+
+        code, out, err = self.later("gate", "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(0, json.loads(out)["exit_code"])
+        self.assertEqual(0, self.read_state()["gate"]["exit_code"])
+
+    def test_refuses_when_review_gate_is_unset(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("nothing to run", err)
+        self.assertNotIn("gate", self.read_state())
+
+    def test_refuses_an_untrusted_head_without_running_anything(self) -> None:
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure(self.GATE)
+        worktree = Path(self.read_state()["worktree"])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("untrusted", err)
+        self.assertIn("review it by reading", err)
+        self.assertFalse((worktree / "gate.args").exists())
+        self.assertNotIn("gate", self.read_state())
+
+    def test_refuses_without_a_review_set_up(self) -> None:
+        self.configure("true")
+
+        code, _, err = self.later("gate", "--repo", REPO)
+
+        self.assertEqual(1, code)
+        self.assertIn("project review setup 1", err)
+
+
 def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
            path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
@@ -763,7 +829,7 @@ class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release", "publish"):
+        for command in ("setup", "move", "census", "release", "publish", "gate"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
