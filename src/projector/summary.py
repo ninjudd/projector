@@ -401,13 +401,20 @@ def site_url(pages: dict) -> str:
     return site.rstrip("/") + "/"
 
 
+def homepage_url(site: str) -> str:
+    """The site's URL as a website link, without the trailing slash `site_url` keeps for joining paths."""
+    return site.rstrip("/")
+
+
 def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple[str, str]:
     """Point the repository's website link at `url`, unless it already links elsewhere.
 
-    Returns the action, updated, unchanged, or kept, and for kept, why. A
-    link that differs only in scheme or trailing slash already reaches the
-    site, as the one GitHub's "Use your GitHub Pages website" box writes does.
+    The link is written without a trailing slash. Returns the action, updated,
+    unchanged, or kept, and for kept, why. A link that differs only in scheme
+    or trailing slash already reaches the site, as the one GitHub's "Use your
+    GitHub Pages website" box writes does.
     """
+    url = homepage_url(url)
     current = current.strip()
 
     def bare(link: str) -> str:

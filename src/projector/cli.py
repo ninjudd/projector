@@ -1033,7 +1033,7 @@ def emit_site(pages: dict) -> None:
     if pages["visibility"] == "updated":
         print("updated GitHub Pages visibility: private")
     if pages["website"] == "updated":
-        print(f"updated repository website {pages['url']}")
+        print(f"updated repository website {summary.homepage_url(pages['url'])}")
 
 
 def run(arguments: argparse.Namespace) -> int:
