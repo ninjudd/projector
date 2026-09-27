@@ -700,11 +700,18 @@ class PublishRefusalTests(PublishCase):
 
         self.refused(self.publish("changes-requested"), "the head is clean")
 
-    def test_leftover_placeholders_and_a_missing_census_are_refused(self) -> None:
+    def test_a_body_without_the_census_in_prose_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
-        self.refused(self.publish("approved", body=self.body("{census}\n\nChecked {checks}.\n")), "{checks}")
         self.refused(self.publish("approved", body=self.body("No census here.\n")), "{census}")
+        self.refused(self.publish("approved", body=self.body("Only quoted: `{census}`.\n")), "{census}")
+
+    def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual(0, self.publish("approved", body=self.body("{census}\n\nChecked {checks}.\n"))[0])
+
+        self.assertIn("Checked {checks}.", self.posted()["body"])
 
     def test_placeholders_fill_from_state_and_the_same_clock(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -713,6 +720,31 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.publish("approved", body=body)[0])
 
         self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
+
+    def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        body = self.body(
+            "The loop id `starkey-projector-review-loop` and the `projector-finding` marker both appear here.\n\n"
+            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `{short_sha}` from state.\n"
+            "- Findings are `{path, line}` objects.\n\n```\nprint(f\"{sha} {took}\")\n```\n")
+        item = finding(body="**P2 · The `projector-finding` marker is parsed by substring**\n\n"
+                            "`census` matches `{name}` too loosely.\n\n**Fix:** match the comment.")
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(item)), body=body)
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()["body"]
+        self.assertIn('`f"sha={sha}"` should read `{short_sha}` from state.', posted)
+        self.assertIn("`{path, line}` objects", posted)
+        self.assertIn('print(f"{sha} {took}")', posted)
+        self.assertIn("`starkey-projector-review-loop`", posted)
+        self.assertIn("matches `{name}` too loosely", self.posted()["comments"][0]["body"])
+
+    def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.refused(self.publish("approved", body=self.body(
+            "{census}\n\n<!-- projector-review v=1 verdict=approved -->\n")), "signature line")
 
     def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])

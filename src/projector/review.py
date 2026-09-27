@@ -495,7 +495,11 @@ def census_lines(result: dict) -> list[str]:
 # Publishing
 
 PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
-PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
+PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
+# Code the body quotes is left exactly as written: fenced blocks, then inline spans.
+CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
+# A comment of Projector's own at the start of a line, as a review or finding carries it.
+OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · effort `[^`\n]+` · "
     r"\*\*(APPROVED|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
@@ -578,7 +582,7 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
                               "anchor it to a changed line")
         if priority not in ("P1", "P2"):
             raise ReviewError(f"{where}: priority must be P1 or P2; a P3 goes in the body's Suggestions list")
-        if FINDING_MARKER in body:
+        if OWN_MARKER.search(body):
             raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
                               "the head's SHA")
         header = PRIORITY_HEADER.match(body)
@@ -639,20 +643,24 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
     The duration and `seconds=` come from one clock reading, so they cannot disagree."""
     if not body.strip():
         raise ReviewError("the body is empty; write the review below the signature line")
-    if "projector-review" in body or MARK in body.strip().splitlines()[0]:
+    if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
         raise ReviewError("leave the signature line and marker out of the body; publish writes them")
-    if "{census}" not in body:
-        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes")
+    if not PLACEHOLDER.search(CODE.sub("", body)) or "{census}" not in CODE.sub("", body):
+        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                          "outside code")
     seconds = elapsed(state["start_comment"]["created_at"], at)
     took = duration(seconds, state["heads"])
     values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
               "census": census_line}
-    left = sorted({m.group(1) for m in PLACEHOLDER.finditer(body)} - set(PLACEHOLDERS))
-    if left:
-        unknown = ", ".join("{" + n + "}" for n in left)
-        known = ", ".join("{" + n + "}" for n in PLACEHOLDERS)
-        raise ReviewError(f"the body has placeholders publish does not fill: {unknown}; it fills {known}")
-    filled = PLACEHOLDER.sub(lambda m: values[m.group(1)], body)
+    # Placeholders are filled only in prose, so quoted code keeps its braces; anything else in
+    # braces is the author's text, not a placeholder.
+    pieces, last = [], 0
+    for code in CODE.finditer(body):
+        pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
+        pieces.append(code.group(0))
+        last = code.end()
+    pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
+    filled = "".join(pieces)
     signature = (f"{MARK} **Projector review** · model `{state['model']}` · effort `{state['effort']}` · "
                  f"**{VERDICT_WORDS[verdict]}** · took {took}")
     marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} effort={state['effort']} "
