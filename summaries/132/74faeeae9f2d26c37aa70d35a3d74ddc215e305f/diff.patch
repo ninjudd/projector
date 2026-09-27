@@ -1,0 +1,1075 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 4fea093..d5d60aa 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -377,7 +377,7 @@ These are the keys Projector reads today:
+ | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
+-| `review.allow_approve` | boolean | `false` | `review-changes`, to permit a real `APPROVE` on a clean cross-author review |
++| `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+ | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
+ | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
+ | `fix.resolve_human_threads` | boolean | `true` | `start-fix-loop`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+@@ -607,6 +607,7 @@ a review loop does not rebuild them as helpers of its own:
+ project review setup 66 --model claude-opus-5-5 --effort low --loop main-loop
+ project review move 66
+ project review census 66 --json
++project review publish 66 --verdict approved --body body.md --covered 12/12 --loop main-loop
+ project review release 66
+ ```
+ 
+@@ -630,6 +631,29 @@ every page, and prints how many are resolved and open and each open thread's
+ `path:line`; with `--json` each thread also carries its comments. `release`
+ clears the pull request's review lock.
+ 
++`publish` submits the review. `--body` names a file holding the review below
++its signature line, with `{census}` where the census goes and, wherever used,
++`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills only outside
++quoted code; `--threads` names a JSON list
++of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
++files read over the files changed. `publish` writes the signature line and
++marker itself from the review's state and one reading of the clock, and adds
++the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
++when the pull request closed or its head moved, when a finding's line is
++outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
++line, when the body is empty, carries its own signature or marker comment, or
++has no `{census}` outside code, when the verdict disagrees with the finding
++count, or when the reviewer already has a verdict on the head that this loop's
++record does not account for; outside a loop, `--second-verdict <review-id>`
++publishes beside an earlier verdict the body names. On a self-review it
++submits a `COMMENT` and then marks the pull request ready or returns it to
++draft; on another author's pull request it posts `REQUEST_CHANGES` or a
++`COMMENT`, or an `APPROVE` where `review.allow_approve` is `true`, and leaves
++draft state alone. It then re-reads the review and the draft state, adds the
++review id to the loop's record, deletes the start comment, and releases the
++lock. A run that fails after submitting exits non-zero, and running it again
++finishes that review rather than posting another.
++
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+ refuses outside one; the repository is that checkout's `origin`, and `--repo`
+diff --git a/skills/review-changes/SKILL.md b/skills/review-changes/SKILL.md
+index a9ff38c..35d305c 100644
+--- a/skills/review-changes/SKILL.md
++++ b/skills/review-changes/SKILL.md
+@@ -256,14 +256,10 @@ changes, keeping its `⚬◀` signature line and setting its marker's `sha=` to
+ new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
+ edit took; it also refuses when the head has not moved.
+ 
+-Once the review is published and verified, delete the start comment. The
+-review's signature line carries how long the review took, so the comment has
+-nothing left to say, and a pull request that keeps one per review is noise a
+-reader scrolls past:
+-
+-```sh
+-gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
+-```
++Once the review is published and verified, the start comment goes:
++`project review publish` deletes it as its last step. The review's signature
++line carries how long the review took, so the comment has nothing left to say,
++and a pull request that keeps one per review is noise a reader scrolls past.
+ 
+ A start comment on a pull request therefore means a review in progress. A
+ session resuming mid-review looks for one on GitHub rather than in memory and
+@@ -300,18 +296,13 @@ signature misstates what produced it is worse than an unlabeled one: a reader
+ weighs a finding by what reviewed it.
+ 
+ `<duration>` is how long the review took, measured from the start comment's
+-`created_at` to the moment the body is composed, in minutes and seconds under
+-an hour and hours and minutes past it — `took 12m 34s`, `took 1h 04m`. When
+-the head moved during the review, say how many heads the time covers: `took
+-14m 02s over 2 heads`. The marker's `seconds=` carries the same span as a whole
+-number. Compute it in Python rather than with `date`, whose timestamp parsing
+-differs between platforms:
+-
+-```sh
+-python3 -c 'import sys, datetime as d
+-s = d.datetime.fromisoformat(sys.argv[1])
+-print(int((d.datetime.now(d.UTC) - s).total_seconds()))' <created_at>
+-```
++`created_at` to the moment the review is published, in minutes and seconds
++under an hour and hours and minutes past it — `took 12m 34s`, `took 1h 04m`.
++When the head moved during the review, it says how many heads the time covers:
++`took 14m 02s over 2 heads`. The marker's `seconds=` carries the same span as a
++whole number. `project review publish` writes the signature line and marker
++itself, from the review's state and one reading of the clock, so the duration,
++`seconds=`, and `sha=` are never typed and never disagree.
+ 
+ The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
+ marker's `verdict=`. `approved` means no finding thread on the pull request is
+@@ -433,31 +424,53 @@ same code — the CI step, test, or README line that runs it — and name the re
+ `path:line` in the first sentence, so a reader lands on the code rather than on
+ the anchor.
+ 
+-Immediately before submitting, list every verdict the reviewer has already
+-posted on this exact SHA. The endpoint pages at 30 rows, oldest first, and
+-every fix-loop thread reply adds a review object of its own, so the newest
+-verdict is the first row a single page loses:
++Publish with `project review publish`, from any directory:
+ 
+ ```sh
+-gh api --paginate repos/<owner>/<repo>/pulls/<number>/reviews \
+-  --jq '.[] | select(.user.login == "<reviewer>")
+-        | select(.body | test("projector-review .* sha=<full-sha>"))
+-        | "\(.id) \(.submitted_at)"'
++project review publish <number> --verdict <approved|changes-requested> \
++  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>]
+ ```
+ 
+-A verdict this run did not publish means the same account already reviewed
+-this commit, whether an earlier run or another agent reviewing it now. Hold the
+-review and ask the user whether to submit, rather than either submitting or
+-standing down. Two verdicts from one account on one commit read as a single
+-thorough review, so the overlap goes unnoticed unless this check catches it.
+-Standing down silently is no better: a second review is sometimes requested
+-deliberately, and a head both reviews walk away from gets no verdict at all. If
+-the user says to submit, name the earlier review's id in the new body, so a
++The body file is the review below its signature line: the intent paragraph,
++the census, the coverage line, disclosures, `Suggestions`, and what was
++checked. Put `{census}` where the census goes; `publish` fills it with the
++count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
++`{short_sha}` where you use them. It fills them only in prose: code quoted in
++backticks or a fenced block, and any other text in braces, goes out exactly as
++written. The threads file is a JSON list of findings,
++each `{"path", "line", "priority", "body"}`, where `body` is the visible text
++below — `publish` adds the finding marker with the head's SHA. It refuses,
++exiting 1 with what to fix and keeping the lock so you can correct the input
++and run it again, when:
++
++- the pull request is closed or its head moved since `setup`;
++- a finding's line is outside the pull request's diff hunks, it has no line,
++  its text does not open with its priority header or lacks a `**Fix:**` line,
++  or it opens a `<!-- projector-… -->` marker comment of its own;
++- the body is missing or empty, opens with its own signature line or carries
++  a marker comment, or has no `{census}` outside code;
++- the verdict disagrees with the census: `approved` with a finding open or
++  being posted, or `changes-requested` with none;
++- the collision check below trips.
++
++The collision check lists every verdict the reviewer has already posted on
++this exact SHA, reading every page, since each fix-loop thread reply adds a
++review object of its own. A verdict this run did not publish means the same
++account already reviewed this commit, whether an earlier run or another agent
++reviewing it now. Hold the review and ask the user whether to submit, rather
++than either submitting or standing down. Two verdicts from one account on one
++commit read as a single thorough review, so the overlap goes unnoticed unless
++this check catches it. Standing down silently is no better: a second review is
++sometimes requested deliberately, and a head both reviews walk away from gets
++no verdict at all. If the user says to submit, run `publish` again with
++`--second-verdict <earlier-review-id>` and name that review in the body, so a
+ reader sees the second verdict was deliberate.
+ 
+-When `start-review-loop` runs this skill, the loop's record of the reviews it
+-published decides instead, as that skill describes, so a re-review the loop
+-asked for never trips the check.
++When `start-review-loop` runs this skill, it passes `--loop <id>`, and the
++loop's record of the reviews it published decides instead, as that skill
++describes: a verdict another loop posted trips the check, and a second verdict
++on a head this loop already published needs `setup --rereview`, the re-review
++`RESPONDED` asks for.
+ 
+ A head is *clean* only when, after you have settled every earlier finding as
+ above, no Projector finding thread is open **and this review posts no P1 or P2
+@@ -473,38 +486,42 @@ author who fixes a finding without resolving it is not held up. Under
+ the author answers: `RESPONDED` fires when every thread is resolved, or when
+ the newest comment on an open finding thread is the author's.
+ 
+-**Threads open, self-review:** submit a `COMMENT` review, verdict
+-`changes-requested`, then convert it to a draft with `gh pr ready <number>
+---undo`.
++`publish` chooses the review state and draft transition from the mode:
++
++**Threads open, self-review:** a `COMMENT` review, verdict
++`changes-requested`, then the pull request returns to draft with `gh pr ready
++<number> --undo`.
+ 
+-**Threads open, cross-author:** submit a `REQUEST_CHANGES` review, verdict
+-`changes-requested`. Leave draft state alone.
++**Threads open, cross-author:** a `REQUEST_CHANGES` review, verdict
++`changes-requested`. Draft state is left alone.
+ 
+-**Clean head, self-review:** submit a `COMMENT` review naming the exact SHA and
+-what was checked, verdict `approved`, then mark it ready with `gh pr ready
+-<number>`. That transition is the sign-off a reader sees in the pull-request
+-list.
++**Clean head, self-review:** a `COMMENT` review, verdict `approved`, then the
++pull request is marked ready with `gh pr ready <number>`. That transition is
++the sign-off a reader sees in the pull-request list.
+ 
+-**Clean head, cross-author:** submit a `COMMENT` review naming the exact SHA and
+-what was checked, verdict `approved`. Say plainly in the body that the head
+-looks clean and that a human approval is what remains. Post a real `APPROVE`
+-only where configuration explicitly permits it.
++**Clean head, cross-author:** a `COMMENT` review, verdict `approved`; say
++plainly in the body that the head looks clean and that a human approval is
++what remains. It posts a real `APPROVE` only where `review.allow_approve` is
++`true`.
+ 
+ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
+ around a permission failure, and never read GitHub's refusal of a self-review
+ verdict as one.
+ 
+-Report the review as done only after it is published and, on a clean
+-self-review, the pull request is ready. Report the SHA, the verdict, the review
+-id, how many threads it opened, and the summary's URL when the next section
+-publishes one; `start-review-loop` records the SHA and id.
+-Verify the input as well as the outputs: before an `approved` verdict, every
+-earlier finding is settled, the query shows no Projector finding thread open,
+-and the review opens no P1 or P2 thread; after publishing, re-read the review
+-body and the pull request's `isDraft`, and only then delete the start comment,
+-so the pull request is never left with neither. Never resolve another
+-reviewer's thread, resolve a finding you have not verified at this head, claim
+-a newer SHA was reviewed, or merge.
++After submitting, `publish` sets draft state for a self-review, re-reads the
++review it posted and the pull request's `isDraft`, adds the review id to the
++loop's record, deletes the start comment, and releases the lock, in that
++order, so the pull request is never left with neither a start comment nor its
++verdict's draft state. It records the review as submitted before any of those
++steps, so a run that fails partway exits non-zero and running it again
++finishes that review instead of posting a second one.
++
++Report the review as done only after `publish` exits 0. Report the SHA, the
++verdict, the review id, how many threads it opened, and the summary's URL when
++the next section publishes one. Before an `approved` verdict, settle every
++earlier finding first; `publish` refuses one while a finding is open. Never
++resolve another reviewer's thread, resolve a finding you have not verified at
++this head, claim a newer SHA was reviewed, or merge.
+ 
+ Once the summary below has run or been skipped, remove the scratch worktree,
+ which a summary reads for context. A `start-review-loop` subagent may instead
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 41d1065..b0b33a4 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -55,8 +55,11 @@ nothing open.
+    appends the operator's pull requests itself; append one the user assigns,
+    and delete a line when its pull request closes. Start or reuse a
+    persistent recurring goal that records the repository, operator, the
+-   tracked file's path, and every reviewed SHA paired with the id of the
+-   review this loop published for it.
++   tracked file's path, and this loop's id: a name chosen once, such as
++   `<repo>-review-loop`, that the loop passes as `--loop <id>` to every
++   `project review` command. The record of which reviews this loop published
++   lives under that id in the review state directory, where `project review
++   publish` keeps it.
+ 6. Seed the state file with only the SHAs already reviewed, then run one
+    pass:
+ 
+@@ -96,8 +99,8 @@ proves nothing.
+ 
+ Where the host can keep a subagent alive and send it later messages, each
+ tracked pull request gets one reviewing subagent for as long as it stays open.
+-The main loop owns the watcher, the tracked file, and the record of reviewed
+-SHAs; the subagent owns every review of its pull request. Review context that
++The main loop owns the watcher, the tracked file, and the loop's id; the
++subagent owns every review of its pull request. Review context that
+ carries over is the point: on a fix-cycle head the subagent already knows its
+ earlier findings, the author's replies, and what it verified last round, so it
+ reads the new head against that history instead of rediscovering it.
+@@ -105,17 +108,19 @@ reads the new head against that history instead of rediscovering it.
+ - On a pull request's first `NEW PR`, start its subagent with a name that
+   carries the number, such as `review-<number>`. Give it the repository, the
+   pull request, the head SHA, the reviewer and operator logins, the review
+-  mode, the review ids this loop has recorded for the pull request, and the
+-  path of `../review-changes/SKILL.md`, and have it run that skill for the
+-  head.
++  mode, the loop's id to pass as `--loop`, and the path of
++  `../review-changes/SKILL.md`, and have it run that skill for the head.
+ - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
+   same subagent as a message; never start a second one for it. Each message
+-  is another run of `review-changes`, for the head it names. A `NEW HEAD`
++  is another run of `review-changes`, for the head it names; a `RESPONDED`
++  re-review of an unmoved head runs `project review setup` with
++  `--rereview`. A `NEW HEAD`
+   that arrives mid-review is the moved-head case that skill's start-comment
+   rule covers.
+ - The subagent reports each published review back: the SHA, the verdict, the
+-  review id, and how many threads it opened. The main loop records the SHA
+-  and review id. A question for the user comes back to the main loop to ask.
++  review id, and how many threads it opened; `publish` has already added the
++  id to the loop's record. A question for the user comes back to the main
++  loop to ask.
+ - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+   to finish: delete any start comment it still holds and remove its scratch
+   worktrees. Then close the subagent and delete the pull request's line from
+@@ -125,12 +130,13 @@ reads the new head against that history instead of rediscovering it.
+   pull request's Projector reviews, their finding threads, and the replies on
+   them.
+ 
+-The loop's record decides the collision check `review-changes` runs before it
+-publishes. An id in the record is this loop's own, including the second
+-verdict a `RESPONDED` re-review legitimately publishes on an unmoved head, so
+-it never trips the check. An id absent from it means another loop under the
+-same account is reviewing this pull request: hold the review and ask the user
+-which loop continues. The tracked file does not prevent this: every loop that
++The loop's record decides the collision check `project review publish` runs
++before it submits. An id in the record is this loop's own, and a second one on
++the same head passes only for a `RESPONDED` re-review, which `setup
++--rereview` marks, so it never trips the check. An id absent from it means
++another loop under the same account is reviewing this pull request: `publish`
++refuses, and the loop holds the review and asks the user which loop
++continues. The tracked file does not prevent this: every loop that
+ adopts the same author's pull requests tracks the same ones.
+ 
+ The main loop routes events and records outcomes; it does not inspect code, so
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 801402c..0ec015f 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -310,7 +310,10 @@ def parser() -> argparse.ArgumentParser:
+     review_release = review_commands.add_parser(
+         "release", help="clear a pull request's review lock when no review is running"
+     )
+-    for command in (review_setup, review_move, review_census, review_release):
++    review_publish = review_commands.add_parser(
++        "publish", help="check and submit the review, set draft state, and delete the start comment"
++    )
++    for command in (review_setup, review_move, review_census, review_release, review_publish):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                              "later: default the review set up for this pull request)")
+@@ -326,6 +329,17 @@ def parser() -> argparse.ArgumentParser:
+     review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
+     review_setup.add_argument("--rereview", action="store_true",
+                               help="a re-review of a head this loop already published a verdict on")
++    review_publish.add_argument("--verdict", required=True, choices=("approved", "changes-requested"),
++                                help="the verdict the signature line and marker carry")
++    review_publish.add_argument("--body", type=Path, required=True,
++                                help="the review below its signature line, with {census} and optionally "
++                                     "{took}, {seconds}, {sha}, {short_sha}")
++    review_publish.add_argument("--threads", type=Path,
++                                help="a JSON list of findings, each {path, line, priority, body}")
++    review_publish.add_argument("--covered", required=True,
++                                help="files read over files changed, such as 12/12")
++    review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
++                                help="outside a loop, the earlier verdict a user approved publishing beside")
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -654,6 +668,22 @@ def run_review(arguments: argparse.Namespace) -> int:
+             else:
+                 print("\n".join(review.census_lines(result)))
+             return 0
++        if command == "publish":
++            state = review.read_state(review.Paths(root, repo, arguments.pr))
++            try:
++                allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
++            except ProjectorError:
++                allow = False
++            result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
++                                    arguments.threads, arguments.covered, arguments.second_verdict, allow)
++            if arguments.json_output:
++                print(json.dumps(result, indent=2))
++            else:
++                print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
++                      f"{result['repo']}#{result['number']} at {result['sha']}")
++                if result["draft"] is not None:
++                    print("marked draft" if result["draft"] else "marked ready")
++            return 0
+         if command == "release":
+             released = review.release(review.Paths(root, repo, arguments.pr))
+             if arguments.json_output:
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 8b5ce06..59451fd 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -32,7 +32,9 @@
+ from .summary import repo_slug
+ 
+ FINDING_MARKER = "projector-finding"
+-START_MARK = "⚬◀"
++# The mark that opens both the start comment and the review's signature line, as
++# review-changes/SKILL.md § Label every review and finding writes it.
++MARK = "⚬◀"
+ SHORT = 12
+ STALE_AFTER = timedelta(days=1)
+ LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+@@ -319,7 +321,7 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
+ # Start comments
+ 
+ def start_comment(model: str, effort: str, sha: str, moved_from: Optional[str] = None) -> str:
+-    lines = [f"{START_MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
++    lines = [f"{MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
+              f"reviewing `{sha[:7]}`", ""]
+     if moved_from:
+         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
+@@ -488,3 +490,278 @@ def census_lines(result: dict) -> list[str]:
+         if not t["resolved"]:
+             lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
+     return lines
++
++
++# Publishing
++
++PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
++PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
++# Code the body quotes is left exactly as written: fenced blocks, then inline spans.
++CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
++# A comment of Projector's own at the start of a line, as a review or finding carries it.
++OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
++SIGNATURE = re.compile(
++    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · effort `[^`\n]+` · "
++    r"\*\*(APPROVED|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
++)
++MARKER = re.compile(
++    r"^<!-- projector-review v=1 verdict=(approved|changes-requested) model=\S+ effort=\S+ "
++    r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
++)
++HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
++PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
++VERDICT_WORDS = {"approved": "APPROVED", "changes-requested": "CHANGES REQUESTED"}
++
++
++def duration(seconds: int, heads: int) -> str:
++    """How long the review took, as the signature line writes it: minutes and seconds
++    under an hour, hours and minutes past it, and how many heads the time covers."""
++    if seconds < 3600:
++        text = f"{seconds // 60}m {seconds % 60:02d}s"
++    else:
++        text = f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
++    return text + (f" over {heads} heads" if heads > 1 else "")
++
++
++def elapsed(created_at: str, at: datetime) -> int:
++    """Whole seconds from the start comment's `created_at` to `at`, both in UTC."""
++    start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
++    if start.tzinfo is None:
++        start = start.replace(tzinfo=timezone.utc)
++    return max(0, int((at - start).total_seconds()))
++
++
++def diff_lines(repo: str, number: int) -> dict[str, list[tuple[int, int]]]:
++    """Each changed file's right-side hunk ranges, from every page of the pull request's files."""
++    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/files",
++                   "--jq", '.[] | [.filename, (.patch // "")] | @json']).splitlines()
++    ranges: dict[str, list[tuple[int, int]]] = {}
++    for row in rows:
++        if not row.strip():
++            continue
++        path, patch = json.loads(row)
++        spans = ranges.setdefault(path, [])
++        for start, count in HUNK.findall(patch):
++            count = 1 if count == "" else int(count)
++            if count:
++                spans.append((int(start), int(start) + count - 1))
++    return ranges
++
++
++def load_threads(path: Optional[Path]) -> list[dict]:
++    if path is None:
++        return []
++    if not path.is_file():
++        raise ReviewError(f"the threads file {path} does not exist; write the findings there first")
++    try:
++        threads = json.loads(path.read_text(encoding="utf-8") or "[]")
++    except ValueError as exc:
++        raise ReviewError(f"the threads file {path} is not JSON: {exc}") from exc
++    if not isinstance(threads, list):
++        raise ReviewError(f"the threads file {path} must hold a list of findings")
++    return threads
++
++
++def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
++    """Refuse a finding GitHub could not anchor or a reader could not act on."""
++    for i, t in enumerate(threads, 1):
++        where = f"finding {i}"
++        if not isinstance(t, dict):
++            raise ReviewError(f"{where} is not an object with path, line, priority, and body")
++        path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
++        if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
++            raise ReviewError(f"{where} needs a path and a line number (got {path!r}:{line!r}); "
++                              "anchor it to a line the diff changes")
++        spans = ranges.get(path)
++        if spans is None:
++            raise ReviewError(f"{where}: {path} is not a file this pull request changes, or GitHub has no "
++                              "patch for it; anchor the finding to a changed line")
++        if not any(a <= line <= b for a, b in spans):
++            listed = ", ".join(f"{a}-{b}" for a, b in spans) or "none"
++            raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
++                              "anchor it to a changed line")
++        if priority not in ("P1", "P2"):
++            raise ReviewError(f"{where}: priority must be P1 or P2; a P3 goes in the body's Suggestions list")
++        if OWN_MARKER.search(body):
++            raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
++                              "the head's SHA")
++        header = PRIORITY_HEADER.match(body)
++        if not header or header.group(1) != priority:
++            raise ReviewError(f"{where}: the body must open with `**{priority} · <what goes wrong>**`")
++        if "**Fix:**" not in body:
++            raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
++
++
++def reviewer_verdicts(repo: str, number: int, reviewer: str, sha: str) -> list[int]:
++    """The ids of every Projector verdict the reviewer posted on this exact SHA, from every page."""
++    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
++                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
++                           f'| select(.body | test("projector-review .* sha={sha}")) | .id']).split()
++    return [int(r) for r in rows]
++
++
++def read_record(root: Path, loop: str) -> list[dict]:
++    record = loop_record(root, loop)
++    return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
++
++
++def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str) -> None:
++    """The collision check review-changes § Publish one review describes, read from the loop's record."""
++    earlier = reviewer_verdicts(state["repo"], state["number"], state["reviewer"], state["sha"])
++    if loop is not None:
++        mine = {r["review_id"] for r in read_record(root, loop)
++                if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
++        others = [i for i in earlier if i not in mine]
++        if others:
++            raise ReviewError(
++                f"the reviewer already has a verdict on {state['sha'][:7]} that loop {loop} did not publish "
++                f"(review {', '.join(map(str, others))}); another loop is reviewing this pull request, so ask "
++                "the user which one continues")
++        if any(i in mine for i in earlier) and not state.get("rereview"):
++            raise ReviewError(
++                f"loop {loop} already published a verdict on {state['sha'][:7]}; a re-review of this head "
++                f"starts with `project review setup {state['number']} --rereview`")
++        return
++    if earlier:
++        if second not in earlier:
++            raise ReviewError(
++                f"the reviewer already has a verdict on {state['sha'][:7]} (review {', '.join(map(str, earlier))}); "
++                "ask the user, and if they want a second one pass --second-verdict with that review's id")
++        if str(second) not in body:
++            raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
++
++
++def self_review(repo: str, number: int, reviewer: str) -> bool:
++    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
++    return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
++
++
++def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
++            at: datetime) -> str:
++    """The review's text: the signature line and marker, then the body with its placeholders filled.
++
++    The duration and `seconds=` come from one clock reading, so they cannot disagree."""
++    if not body.strip():
++        raise ReviewError("the body is empty; write the review below the signature line")
++    if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
++        raise ReviewError("leave the signature line and marker out of the body; publish writes them")
++    if not PLACEHOLDER.search(CODE.sub("", body)) or "{census}" not in CODE.sub("", body):
++        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
++                          "outside code")
++    seconds = elapsed(state["start_comment"]["created_at"], at)
++    took = duration(seconds, state["heads"])
++    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
++              "census": census_line}
++    # Placeholders are filled only in prose, so quoted code keeps its braces; anything else in
++    # braces is the author's text, not a placeholder.
++    pieces, last = [], 0
++    for code in CODE.finditer(body):
++        pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
++        pieces.append(code.group(0))
++        last = code.end()
++    pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
++    filled = "".join(pieces)
++    signature = (f"{MARK} **Projector review** · model `{state['model']}` · effort `{state['effort']}` · "
++                 f"**{VERDICT_WORDS[verdict]}** · took {took}")
++    marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} effort={state['effort']} "
++              f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
++    if not SIGNATURE.match(signature) or not MARKER.match(marker):
++        raise ReviewError("the signature line or marker does not match review-changes/SKILL.md; check the "
++                          f"model and effort in the review's state ({state['model']}, {state['effort']})")
++    return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
++
++
++def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: str, body_path: Path,
++            threads_path: Optional[Path], covered: str, second: Optional[int], allow_approve: bool) -> dict:
++    """Submit the review, then set draft state, re-read, record, delete the start comment, and
++    release the lock, in that order. Every refusal leaves the lock held for this review to retry."""
++    paths = Paths(root, repo, number)
++    state = read_state(paths)
++    loop = loop if loop is not None else state.get("loop")
++    repo, sha = state["repo"], state["sha"]
++    if verdict not in VERDICT_WORDS:
++        raise ReviewError(f"--verdict must be approved or changes-requested, not {verdict}")
++    if not re.fullmatch(r"\d+/\d+", covered or ""):
++        raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
++    if not paths.lock(sha).exists():
++        raise ReviewError(f"no review of {repo}#{number} at {sha[:7]} holds the lock; "
++                          f"run `project review setup {number}` again")
++    published = state.get("published")
++    if published and published.get("sha") == sha and state.get("start_comment"):
++        # A publish that submitted and then stopped: finish it rather than post a second review.
++        review_id, draft_wanted = published["id"], published["draft"]
++    else:
++        if not body_path.is_file():
++            raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
++        body = body_path.read_text(encoding="utf-8")
++        threads = load_threads(threads_path)
++        pr = pull_request(repo, number)
++        if pr["head"]["sha"] != sha:
++            raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
++                              f"run `project review move {number}` and review the new head")
++        check_collision(root, state, loop, second, body)
++        check_threads(threads, diff_lines(repo, number) if threads else {})
++        tally = census(repo, number)
++        open_now = tally["open"] + len(threads)
++        if verdict == "approved" and open_now:
++            raise ReviewError(f"an approved verdict needs no open finding, and {tally['open']} are open and "
++                              f"{len(threads)} are being posted; settle them or request changes")
++        if verdict == "changes-requested" and not open_now:
++            raise ReviewError("changes-requested needs an open finding or a new one; with none open the head is clean")
++        total = tally["total"] + len(threads)
++        noun = "thread" if total == 1 else "threads"
++        census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
++        text = compose(state, verdict, body, covered, len(threads), census_line, now())
++        mine = self_review(repo, number, state["reviewer"])
++        if mine or (verdict == "approved" and not allow_approve):
++            event = "COMMENT"
++        else:
++            event = "APPROVE" if verdict == "approved" else "REQUEST_CHANGES"
++        draft_wanted = (verdict == "changes-requested") if mine else None
++        payload = {"commit_id": sha, "event": event, "body": text,
++                   "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
++                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} -->\n"
++                                         f"{t['body'].strip()}\n"} for t in threads]}
++        token = reviewer_token(state["reviewer"])
++        paths.folder.mkdir(parents=True, exist_ok=True)
++        request = paths.folder / f"{number}-review.json"
++        request.write_text(json.dumps(payload), encoding="utf-8")
++        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", str(request)],
++                         token)
++        request.unlink(missing_ok=True)
++        review_id = posted["id"]
++        # Recorded before anything else can fail, so a retry finishes this review rather than
++        # posting a second one.
++        state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
++                              "draft": draft_wanted}
++        write_state(paths, state)
++    token = reviewer_token(state["reviewer"])
++    if draft_wanted is not None:
++        run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
++    posted = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"])
++    if f"sha={sha}" not in (posted or {}).get("body", ""):
++        raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
++    if draft_wanted is not None:
++        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
++        if draft != draft_wanted:
++            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the "
++                              f"{state['published']['verdict']} verdict; set it with `gh pr ready` and retry")
++    if loop is not None:
++        record = read_record(root, loop)
++        if not any(r.get("review_id") == review_id for r in record):
++            record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
++                           "verdict": state["published"]["verdict"], "published_at": now().isoformat()})
++            loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
++            loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
++    comment = (state.get("start_comment") or {}).get("id")
++    if comment:
++        try:
++            run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
++        except NotFound:
++            pass
++        state["start_comment"] = None
++    write_state(paths, state)
++    paths.lock(sha).unlink(missing_ok=True)
++    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
++            "verdict": state["published"]["verdict"], "event": state["published"]["event"],
++            "draft": draft_wanted}
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 406513d..45d1c75 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -11,6 +11,7 @@
+ import io
+ import json
+ import os
++import re
+ import subprocess
+ import tempfile
+ import unittest
+@@ -42,11 +43,43 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.permissions: dict[str, str] = {}
+         self.calls: list[tuple[list[str], str | None]] = []
+         self.comments: dict[int, str] = {}
+-        self.pages: list[dict] = []
++        self.pages: list[dict] = [{"data": {"repository": {"pullRequest": {"reviewThreads": {
++            "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}}}}}]
+         self.missing = False
++        self.pr["draft"] = True
++        # Every review on the pull request, as the REST reviews endpoint returns them.
++        self.reviews: list[dict] = []
++        self.files = [("src/x.py", "@@ -1,2 +1,6 @@\n a\n+b\n+c\n+d\n+e\n f"),
++                      ("src/z.py", "@@ -10,0 +11,2 @@\n+x\n+y")]
++        self.fail: str | None = None
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
++        if self.fail and self.fail in " ".join(args):
++            raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
++            login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
++            sha = re.search(r"sha=([0-9a-f]+)", args[4]).group(1)
++            return "".join(f"{r['id']}\n" for r in self.reviews if r["user"]["login"] == login
++                           and re.search(f"projector-review .* sha={sha}", r["body"]))
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
++            return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
++        if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
++            payload = json.loads(Path(args[5]).read_text())
++            review_id = 900 + len(self.reviews) + 1
++            self.reviews.append({"id": review_id, "user": {"login": token.removeprefix("token-")},
++                                 "body": payload["body"], "event": payload["event"],
++                                 "commit_id": payload["commit_id"], "comments": payload["comments"]})
++            return json.dumps({"id": review_id})
++        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/1/reviews/"):
++            review_id = int(args[1].rsplit("/", 1)[1])
++            return json.dumps(next(r for r in self.reviews if r["id"] == review_id))
++        if args[:2] == ["pr", "ready"]:
++            self.pr["draft"] = "--undo" in args
++            return ""
++        if args[:3] == ["api", "-X", "DELETE"]:
++            del self.comments[int(args[3].rsplit("/", 1)[1])]
++            return ""
+         if args[:2] == ["auth", "token"]:
+             return f"token-{args[-1]}\n"
+         if args == ["api", "user", "--jq", ".login"]:
+@@ -154,7 +187,7 @@ def test_sets_up_the_exact_head_and_posts_the_start_comment_as_the_reviewer(self
+         self.assertEqual(("starkey-loop", False), (state["loop"], state["rereview"]))
+         self.assertEqual([], json.loads((self.state / "loops" / "starkey-loop" / "published.json").read_text()))
+         self.assertEqual(
+-            f"{review.START_MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
++            f"{review.MARK} **Projector review started** · model `claude-opus-5-5` · effort `low` · "
+             f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
+             self.github.comments[101],
+         )
+@@ -411,16 +444,331 @@ def test_outside_a_checkout_with_no_review_set_up_says_to_pass_repo(self) -> Non
+         self.assertIn("--repo", err)
+ 
+ 
++FINDING = "<!-- projector-finding v=1 priority=P2 sha=%s --> **P2 · A nil deref**"
++
++
++def finding(path: str = "src/x.py", line: int = 3, priority: str = "P2",
++            body: str = "**P2 · The cache returns nil after a restart**\n\n`load` skips the warm-up.\n\n"
++                        "**Fix:** warm the cache in `load`.") -> dict:
++    return {"path": path, "line": line, "priority": priority, "body": body}
++
++
++class PublishCase(ReviewCase):
++    START = datetime(2026, 9, 27, 1, 2, 3, tzinfo=timezone.utc)
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.clock = self.START + timedelta(minutes=12, seconds=34)
++        patcher = mock.patch.object(review, "now", lambda: self.clock)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        self.dir = Path(tempfile.mkdtemp())
++
++    def body(self, text: str = "This change warms the cache.\n\n{census}\n\nCovered 3 of 3 changed files.\n") -> Path:
++        path = self.dir / "body.md"
++        path.write_text(text)
++        return path
++
++    def threads(self, *items: dict) -> Path:
++        path = self.dir / "threads.json"
++        path.write_text(json.dumps(list(items)))
++        return path
++
++    def publish(self, verdict: str, *extra: str, body: Path | None = None, loop: str | None = "l1",
++                cwd: Path | None = None) -> tuple[int, str, str]:
++        args = ["--verdict", verdict, "--body", str(body or self.body()), "--covered", "3/3"]
++        if loop:
++            args += ["--loop", loop]
++        return self.later("publish", *args, *extra, cwd=cwd)
++
++    def open_finding(self) -> None:
++        self.github.pages = [{"data": {"repository": {"pullRequest": {"reviewThreads": {
++            "pageInfo": {"hasNextPage": False, "endCursor": None},
++            "nodes": [thread("T1", FINDING % self.head)]}}}}}]
++
++    def posted(self) -> dict:
++        return self.github.reviews[-1]
++
++
++class PublishTests(PublishCase):
++    def test_publishes_an_approved_self_review_marks_it_ready_and_cleans_up_in_order(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, out, err = self.publish("approved", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++        review_body = self.posted()["body"]
++        self.assertEqual(
++            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · effort `low` · **APPROVED** · took 12m 34s",
++            review_body.splitlines()[0])
++        self.assertIn(f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low "
++                      f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
++        self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
++        self.assertEqual(("COMMENT", self.head, "token-operator"),
++                         (self.posted()["event"], self.posted()["commit_id"], "token-" + self.posted()["user"]["login"]))
++        self.assertFalse(self.github.pr["draft"], "a clean self-review marks the pull request ready")
++        self.assertEqual({}, self.github.comments, "the start comment is gone")
++        self.assertFalse(self.lock(self.head).exists(), "the lock is released")
++        record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
++        self.assertEqual([(REPO, 1, self.head, 901, "approved")],
++                         [(r["repo"], r["number"], r["sha"], r["review_id"], r["verdict"]) for r in record])
++        steps = [" ".join(args) for args, _ in self.github.calls]
++        ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
++        reread = next(i for i, c in enumerate(steps) if c == f"api repos/{REPO}/pulls/1/reviews/901")
++        delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
++        self.assertLess(ready, reread)
++        self.assertLess(reread, delete, "the start comment goes only after draft state and the re-read")
++        self.assertIn("published review 901", out)
++
++    def test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_request_to_draft(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.pr["draft"] = False
++
++        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding())))
++
++        self.assertEqual(0, code, err)
++        comment = self.posted()["comments"][0]
++        self.assertEqual(("src/x.py", 3, "RIGHT"), (comment["path"], comment["line"], comment["side"]))
++        self.assertTrue(comment["body"].startswith(f"<!-- projector-finding v=1 priority=P2 sha={self.head} -->\n"
++                                                   "**P2 · The cache returns nil"))
++        self.assertIn("findings=1 ", self.posted()["body"])
++        self.assertIn("1 finding thread: 0 resolved, 1 open", self.posted()["body"])
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_a_cross_author_review_requests_changes_and_leaves_draft_state_alone(self) -> None:
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.permissions = {"teammate": "write"}
++        self.github.commit_authors = ["teammate"]
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding())))
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("REQUEST_CHANGES", self.posted()["event"])
++        self.assertTrue(self.github.pr["draft"], "untouched")
++        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
++
++    def test_a_clean_cross_author_review_is_a_comment_unless_approval_is_allowed(self) -> None:
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.permissions = {"teammate": "write"}
++        self.github.commit_authors = ["teammate"]
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("approved")[0])
++        self.assertEqual("COMMENT", self.posted()["event"])
++
++        (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
++        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
++        code, _, err = self.publish("approved")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("APPROVE", self.posted()["event"])
++
++
++class PublishRefusalTests(PublishCase):
++
++    def refused(self, result: tuple[int, str, str], words: str) -> None:
++        code, _, err = result
++        self.assertEqual(1, code, "a refusal exits non-zero")
++        self.assertIn(words, err)
++        self.assertEqual([], self.github.reviews, "nothing was posted")
++        self.assertTrue(self.lock(self.head).exists(), "a refused publish keeps the lock")
++
++    def test_the_duration_and_seconds_are_always_present_and_agree(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.clock = self.START + timedelta(hours=1, minutes=4, seconds=9)
++
++        self.assertEqual(0, self.publish("approved")[0])
++
++        first = self.posted()["body"].splitlines()[0]
++        self.assertTrue(first.endswith("· took 1h 04m"), first)
++        self.assertIn("seconds=3849 ", self.posted()["body"])
++
++    def test_no_sha_is_ever_typed_and_a_moved_head_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        self.refused(self.publish("approved"), "project review move 1")
++
++    def test_a_missing_or_empty_body_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("approved", body=self.dir / "nowhere.md"), "does not exist")
++        self.refused(self.publish("approved", body=self.body("   \n")), "empty")
++
++    def test_a_body_cannot_carry_its_own_signature_so_took_is_never_stale(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        stale = (f"{review.MARK} **Projector review** · model `m` · effort `e` · **APPROVED** · took 3m 00s\n\n"
++                 "{census}\n")
++
++        self.refused(self.publish("approved", body=self.body(stale)), "signature line")
++
++    def test_an_anchor_outside_the_diff_or_without_a_line_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("changes-requested", "--threads", str(self.threads(finding(line=40)))),
++                     "outside the pull request's diff hunks")
++        no_line = finding()
++        no_line["line"] = None
++        self.refused(self.publish("changes-requested", "--threads", str(self.threads(no_line))), "line number")
++        self.refused(self.publish("changes-requested", "--threads", str(self.threads(finding(path="docs/a.md")))),
++                     "not a file this pull request changes")
++
++    def test_a_finding_needs_its_header_and_fix_and_leaves_the_marker_to_publish(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("changes-requested", "--threads",
++                                  str(self.threads(finding(body="A nil deref.\n\n**Fix:** check it.")))), "must open with")
++        self.refused(self.publish("changes-requested", "--threads",
++                                  str(self.threads(finding(body="**P2 · A nil deref**\n\nNo fix.")))), "**Fix:**")
++        self.refused(self.publish("changes-requested", "--threads",
++                                  str(self.threads(finding(body=FINDING % self.head + "\n\n**Fix:** x")))), "marker")
++
++    def test_a_second_publish_on_the_same_head_is_refused_without_rereview(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("approved")[0])
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("approved")
++
++        self.assertEqual(1, code)
++        self.assertIn("--rereview", err)
++        self.assertEqual(1, len(self.github.reviews))
++
++    def test_a_rereview_publishes_a_second_verdict_on_the_same_head(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("approved")[0])
++        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
++
++        code, _, err = self.publish("approved")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(2, len(self.github.reviews))
++
++    def test_another_loops_verdict_on_the_head_is_a_collision(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "a")[0])
++        self.assertEqual(0, self.publish("approved", loop="a")[0])
++        self.assertEqual(0, self.setup_review("--loop", "b", "--rereview")[0])
++
++        code, _, err = self.publish("approved", loop="b")
++
++        self.assertEqual(1, code)
++        self.assertIn("another loop", err)
++
++    def test_outside_a_loop_a_second_verdict_needs_its_id_named_in_the_body(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        self.assertEqual(0, self.publish("approved", loop=None)[0])
++        self.assertEqual(0, self.setup_review()[0])
++
++        refused = self.publish("approved", loop=None)
++        uncited = self.publish("approved", "--second-verdict", "901", loop=None)
++        cited = self.publish("approved", "--second-verdict", "901", loop=None,
++                             body=self.body("A second verdict beside review 901.\n\n{census}\n"))
++
++        self.assertEqual((1, 1, 0), (refused[0], uncited[0], cited[0]), cited[2])
++        self.assertIn("--second-verdict", refused[2])
++        self.assertIn("name the earlier review 901", uncited[2])
++
++    def test_a_gh_failure_mid_publish_exits_non_zero_keeps_the_lock_and_a_retry_finishes(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.fail = "pr ready"
++
++        failed = self.publish("approved")
++        self.github.fail = None
++        retried = self.publish("approved")
++
++        self.assertEqual(1, failed[0])
++        self.assertIn("HTTP 502", failed[2])
++        self.assertEqual(0, retried[0], retried[2])
++        self.assertEqual(1, len(self.github.reviews), "the retry did not post a second review")
++        self.assertFalse(self.github.pr["draft"])
++        self.assertFalse(self.lock(self.head).exists())
++
++    def test_approved_is_refused_while_a_finding_is_open(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.open_finding()
++
++        self.refused(self.publish("approved"), "needs no open finding")
++
++    def test_changes_requested_is_refused_on_a_clean_head(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("changes-requested"), "the head is clean")
++
++    def test_a_body_without_the_census_in_prose_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("approved", body=self.body("No census here.\n")), "{census}")
++        self.refused(self.publish("approved", body=self.body("Only quoted: `{census}`.\n")), "{census}")
++
++    def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual(0, self.publish("approved", body=self.body("{census}\n\nChecked {checks}.\n"))[0])
++
++        self.assertIn("Checked {checks}.", self.posted()["body"])
++
++    def test_placeholders_fill_from_state_and_the_same_clock(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        body = self.body("{census}\n\nReviewed {short_sha} ({sha}) in {took}, {seconds} seconds.\n")
++        self.assertEqual(0, self.publish("approved", body=body)[0])
++
++        self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
++
++    def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        body = self.body(
++            "The loop id `starkey-projector-review-loop` and the `projector-finding` marker both appear here.\n\n"
++            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `{short_sha}` from state.\n"
++            "- Findings are `{path, line}` objects.\n\n```\nprint(f\"{sha} {took}\")\n```\n")
++        item = finding(body="**P2 · The `projector-finding` marker is parsed by substring**\n\n"
++                            "`census` matches `{name}` too loosely.\n\n**Fix:** match the comment.")
++
++        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(item)), body=body)
++
++        self.assertEqual(0, code, err)
++        posted = self.posted()["body"]
++        self.assertIn('`f"sha={sha}"` should read `{short_sha}` from state.', posted)
++        self.assertIn("`{path, line}` objects", posted)
++        self.assertIn('print(f"{sha} {took}")', posted)
++        self.assertIn("`starkey-projector-review-loop`", posted)
++        self.assertIn("matches `{name}` too loosely", self.posted()["comments"][0]["body"])
++
++    def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.refused(self.publish("approved", body=self.body(
++            "{census}\n\n<!-- projector-review v=1 verdict=approved -->\n")), "signature line")
++
++    def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        path = self.state / "prs" / REPO / "1.json"
++        state = json.loads(path.read_text())
++        state["model"] = "has space"
++        path.write_text(json.dumps(state))
++
++        self.refused(self.publish("approved"), "does not match review-changes/SKILL.md")
++
++    def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.later("release", "--repo", REPO)[0])
++
++        code, _, err = self.publish("approved")
++
++        self.assertEqual(1, code)
++        self.assertIn("project review setup 1", err)
++
++
+ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+         # wrong 40-character SHAs reached a publish.
+-        for command in ("setup", "move", "census", "release"):
++        for command in ("setup", "move", "census", "release", "publish"):
+             with self.subTest(command):
+                 help_text = io.StringIO()
+                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
+                     cli.main(["review", command, "--help"])
+-                self.assertNotIn("sha", help_text.getvalue().lower())
++                self.assertIsNone(re.search(r"--\S*sha|metavar.*SHA|\bSHA\b", help_text.getvalue()))
+                 self.assertIn("--loop", help_text.getvalue())
+ 
+ 

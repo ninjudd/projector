@@ -1,0 +1,137 @@
+{
+ "version": 1,
+ "name": "Review Publish Command",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 132,
+  "title": "Add project review publish",
+  "head": "74faeeae9f2d26c37aa70d35a3d74ddc215e305f",
+  "base": "3d18d94eaa3fa0b8e6b08e3c01f9bcd519d7c83e",
+  "baseRef": "review-commands"
+ },
+ "overview": {
+  "summary": [
+   "Adds <code>project review publish</code>, the last bookkeeping step of a review. It takes a body file and an optional JSON list of findings, writes the signature line and marker itself from the review's state and one clock reading, checks every finding's anchor against the pull request's diff hunks, runs the collision check against the loop's record, and submits one review.",
+   "After it submits, it runs the ending #127's plan review settled on, in this order: draft transition (self-review only), re-read of the review and <code>draft</code>, appending to the loop's record, deleting the start comment, and releasing the lock. It records the submission before any of those steps, so a failed run exits non-zero and a retry finishes the same review instead of posting a second one.",
+   "<code>review-changes</code> and <code>start-review-loop</code> now call the command instead of carrying <code>gh</code> snippets, and the loop keeps a loop id instead of its own record."
+  ],
+  "cards": [
+   {
+    "id": "order",
+    "title": "What publish does, in order",
+    "html": "<ol><li>Refuse on a closed PR, a moved head, a collision, a bad anchor, a bad body, or a verdict that disagrees with the census; each refusal exits 1 and keeps the lock</li><li>POST one review: <code>COMMENT</code> (self), <code>REQUEST_CHANGES</code>, <code>COMMENT</code>, or <code>APPROVE</code> under <code>review.allow_approve</code> (cross-author)</li><li>Write <code>published</code> to the state file</li><li><code>gh pr ready</code> / <code>--undo</code> on a self-review only</li><li>Re-read the review body and <code>draft</code></li><li>Append the id to <code>loops/&lt;id&gt;/published.json</code></li><li>Delete the start comment, then release the lock</li></ol>"
+   },
+   {
+    "id": "collision",
+    "title": "The collision check",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Earlier verdict on the SHA</th><th>Under <code>--loop</code></th><th>Outside a loop</th></tr></thead><tbody><tr><td>None</td><td class=\"r\">publish</td><td class=\"r\">publish</td></tr><tr><td>Another loop's</td><td class=\"r\">refuse</td><td class=\"r\">refuse unless <code>--second-verdict</code> names it in the body</td></tr><tr><td>This loop's own</td><td class=\"r\">refuse unless <code>setup --rereview</code></td><td>n/a</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Stacked on #128 (<code>setup</code>/<code>move</code>/<code>census</code>/<code>release</code>) and #127 (the plan), both approved.</li><li><code>3a41086</code>: two P2 threads, one on body and finding text matched by substring and <code>{…}</code> placeholders filled inside quoted code, and one on history comments in the tests.</li><li><code>282f387</code> matches markers by line-start comment structure and fills only known placeholders outside code. <code>74faeea</code> drops the history comments. Both threads are resolved, and <code>74faeea</code> is approved.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "publish",
+   "title": "The publish command",
+   "kicker": "review.py's new Publishing section and its CLI wiring",
+   "intro": [
+    "<code>compose</code> builds the signature and marker and fills the body's placeholders only in prose. <code>CODE</code> masks fenced blocks and inline spans, <code>PLACEHOLDER</code> matches only the five known names, and <code>OWN_MARKER</code> refuses only a line-start <code>&lt;!-- projector-review|finding</code> comment. <code>check_threads</code> validates each finding against <code>diff_lines</code>, which reads every page of <code>pulls/&lt;n&gt;/files</code>. <code>check_collision</code> reads the per-loop record, and <code>publish</code> runs the ordered ending.",
+    "The CLI reads <code>review.allow_approve</code> from the checkout recorded in the state file, so the setting is per repository."
+   ],
+   "concepts": [
+    "Every SHA comes from the state file or GitHub, never an argument.",
+    "A <code>published</code> entry with a live start comment marks a submitted but unfinished publish, and a retry takes the finishing branch."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The draft transition runs only when <code>self_review</code> is true, so a cross-author pull request's draft state is never touched."
+    },
+    {
+     "kind": "verify",
+     "text": "The lock is unlinked only after the start comment is deleted and the state is written, and every <code>ReviewError</code> before that leaves it in place."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>reviewer_verdicts</code> and <code>diff_lines</code> both use <code>--paginate</code>, so the 30-row reviews page can't hide a verdict."
+    },
+    {
+     "kind": "verify",
+     "text": "Text outside a code span is filled, text inside one stays verbatim, and a <code>{census}</code> that appears only inside code is refused."
+    },
+    {
+     "kind": "flag",
+     "text": "Under a loop, <code>--second-verdict</code> is ignored for another loop's verdict (<code>review.py:611</code>), so if the user answers that this loop continues, publish still can't post on that SHA. The plan scoped the override to runs outside a loop."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>review.py:648</code>: the <code>PLACEHOLDER.search</code> test is implied by the <code>{census}</code> test beside it, and the code is stripped twice (P3)."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Read Publishing from <code>duration</code> to the end of <code>publish</code>."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The subcommand's arguments and the <code>allow_approve</code> lookup."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Publish tests over a fake gh and real git",
+   "intro": [
+    "There's one test per starkey failure the plan lists, plus the draft transition in each mode, <code>APPROVE</code> gating, the collision matrix, and the retry after a mid-publish <code>gh</code> failure."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>test_prose_and_code_that_mention_markers_or_braces_publish_as_written</code> covers each false positive from the first round."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills and CLI docs",
+   "kicker": "review-changes and start-review-loop move onto the command",
+   "intro": [
+    "<code>review-changes</code> drops its duration, collision, and delete snippets and describes what <code>publish</code> refuses. <code>start-review-loop</code> replaces its recorded SHA and id pairs with a loop id that it passes as <code>--loop</code>, and routes a <code>RESPONDED</code> re-review through <code>setup --rereview</code>."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The refusal list in <code>review-changes/SKILL.md</code> matches the <code>ReviewError</code>s <code>publish</code> raises."
+    },
+    {
+     "kind": "flag",
+     "text": "<code>docs/cli.md</code> leaves out the refusal of a loop's own second verdict without <code>setup --rereview</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-changes/SKILL.md"
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md"
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}
