@@ -81,3 +81,31 @@ remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
 requires. If every criterion is proven, continue with `finish` in the same
 implementation change.
+
+## Hand the work over
+
+Open a pull request and never merge it. The merge is the user's checkpoint,
+however small the change: end at `gh pr create` and hand over the URL.
+
+Size the pull request for its reviewer, not for the plan. A review costs
+about the same whether the diff is twenty lines or three hundred, and that
+cost is charged per pull request and per review cycle, so combine by default
+and make splitting the thing that needs an argument. Fold a follow-on — a
+move, a documentation sweep, the retirement this change made possible — into
+the pull request that unblocked it, because none of those is worth anything
+alone. Split only at the reviewability ceiling: when a reviewer would be
+holding two unrelated arguments at once, or when one half would still be
+worth shipping if the other were abandoned. Work that crosses it becomes a
+stack, as `../gh-stack/SKILL.md` describes.
+
+Open it as a draft. A review loop marks it ready on a clean head, so the
+draft says the work has not been signed off yet; never mark it ready
+yourself.
+
+Write an imperative title and a body that explains why the change exists,
+because a squash merge makes the body the commit message. End every body with
+a `## Testing` section: the exact commands, in order, that you ran yourself
+from the directory you name; what the reader should see; the signal that
+would show the change is wrong; and what needs building first and what state
+the commands leave behind. Where a change cannot be exercised by hand, say so
+and point at the test that covers it.
