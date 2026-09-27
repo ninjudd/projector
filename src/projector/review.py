@@ -35,7 +35,7 @@ from .summary import repo_slug
 FINDING_MARKER = "projector-finding"
 # The mark that opens both the start comment and the review's signature line, as
 # review-changes/SKILL.md § Label every review and finding writes it.
-MARK = "⚬◀"
+MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

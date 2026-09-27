@@ -78,6 +78,10 @@ interface SiteReview {
   head: string;
   heads: number;
   projects: string[];
+  /** The review of the pull request this one is stacked on, when the site has it. */
+  stackedOn?: number | null;
+  /** The base branch, when it is not the default branch. */
+  baseRef?: string | null;
   updated: string;
 }
 
