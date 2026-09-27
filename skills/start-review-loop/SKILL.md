@@ -55,8 +55,11 @@ nothing open.
    appends the operator's pull requests itself; append one the user assigns,
    and delete a line when its pull request closes. Start or reuse a
    persistent recurring goal that records the repository, operator, the
-   tracked file's path, and every reviewed SHA paired with the id of the
-   review this loop published for it.
+   tracked file's path, and this loop's id: a name chosen once, such as
+   `<repo>-review-loop`, that the loop passes as `--loop <id>` to every
+   `project review` command. The record of which reviews this loop published
+   lives under that id in the review state directory, where `project review
+   publish` keeps it.
 6. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -96,8 +99,8 @@ proves nothing.
 
 Where the host can keep a subagent alive and send it later messages, each
 tracked pull request gets one reviewing subagent for as long as it stays open.
-The main loop owns the watcher, the tracked file, and the record of reviewed
-SHAs; the subagent owns every review of its pull request. Review context that
+The main loop owns the watcher, the tracked file, and the loop's id; the
+subagent owns every review of its pull request. Review context that
 carries over is the point: on a fix-cycle head the subagent already knows its
 earlier findings, the author's replies, and what it verified last round, so it
 reads the new head against that history instead of rediscovering it.
@@ -105,17 +108,19 @@ reads the new head against that history instead of rediscovering it.
 - On a pull request's first `NEW PR`, start its subagent with a name that
   carries the number, such as `review-<number>`. Give it the repository, the
   pull request, the head SHA, the reviewer and operator logins, the review
-  mode, the review ids this loop has recorded for the pull request, and the
-  path of `../review-changes/SKILL.md`, and have it run that skill for the
-  head.
+  mode, the loop's id to pass as `--loop`, and the path of
+  `../review-changes/SKILL.md`, and have it run that skill for the head.
 - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
   same subagent as a message; never start a second one for it. Each message
-  is another run of `review-changes`, for the head it names. A `NEW HEAD`
+  is another run of `review-changes`, for the head it names; a `RESPONDED`
+  re-review of an unmoved head runs `project review setup` with
+  `--rereview`. A `NEW HEAD`
   that arrives mid-review is the moved-head case that skill's start-comment
   rule covers.
 - The subagent reports each published review back: the SHA, the verdict, the
-  review id, and how many threads it opened. The main loop records the SHA
-  and review id. A question for the user comes back to the main loop to ask.
+  review id, and how many threads it opened; `publish` has already added the
+  id to the loop's record. A question for the user comes back to the main
+  loop to ask.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
   to finish: delete any start comment it still holds and remove its scratch
   worktrees. Then close the subagent and delete the pull request's line from
@@ -125,12 +130,13 @@ reads the new head against that history instead of rediscovering it.
   pull request's Projector reviews, their finding threads, and the replies on
   them.
 
-The loop's record decides the collision check `review-changes` runs before it
-publishes. An id in the record is this loop's own, including the second
-verdict a `RESPONDED` re-review legitimately publishes on an unmoved head, so
-it never trips the check. An id absent from it means another loop under the
-same account is reviewing this pull request: hold the review and ask the user
-which loop continues. The tracked file does not prevent this: every loop that
+The loop's record decides the collision check `project review publish` runs
+before it submits. An id in the record is this loop's own, and a second one on
+the same head passes only for a `RESPONDED` re-review, which `setup
+--rereview` marks, so it never trips the check. An id absent from it means
+another loop under the same account is reviewing this pull request: `publish`
+refuses, and the loop holds the review and asks the user which loop
+continues. The tracked file does not prevent this: every loop that
 adopts the same author's pull requests tracks the same ones.
 
 The main loop routes events and records outcomes; it does not inspect code, so

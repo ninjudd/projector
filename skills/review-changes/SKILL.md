@@ -256,14 +256,10 @@ changes, keeping its `⚬◀` signature line and setting its marker's `sha=` to 
 new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
 edit took; it also refuses when the head has not moved.
 
-Once the review is published and verified, delete the start comment. The
-review's signature line carries how long the review took, so the comment has
-nothing left to say, and a pull request that keeps one per review is noise a
-reader scrolls past:
-
-```sh
-gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
-```
+Once the review is published and verified, the start comment goes:
+`project review publish` deletes it as its last step. The review's signature
+line carries how long the review took, so the comment has nothing left to say,
+and a pull request that keeps one per review is noise a reader scrolls past.
 
 A start comment on a pull request therefore means a review in progress. A
 session resuming mid-review looks for one on GitHub rather than in memory and
@@ -300,18 +296,13 @@ signature misstates what produced it is worse than an unlabeled one: a reader
 weighs a finding by what reviewed it.
 
 `<duration>` is how long the review took, measured from the start comment's
-`created_at` to the moment the body is composed, in minutes and seconds under
-an hour and hours and minutes past it — `took 12m 34s`, `took 1h 04m`. When
-the head moved during the review, say how many heads the time covers: `took
-14m 02s over 2 heads`. The marker's `seconds=` carries the same span as a whole
-number. Compute it in Python rather than with `date`, whose timestamp parsing
-differs between platforms:
-
-```sh
-python3 -c 'import sys, datetime as d
-s = d.datetime.fromisoformat(sys.argv[1])
-print(int((d.datetime.now(d.UTC) - s).total_seconds()))' <created_at>
-```
+`created_at` to the moment the review is published, in minutes and seconds
+under an hour and hours and minutes past it — `took 12m 34s`, `took 1h 04m`.
+When the head moved during the review, it says how many heads the time covers:
+`took 14m 02s over 2 heads`. The marker's `seconds=` carries the same span as a
+whole number. `project review publish` writes the signature line and marker
+itself, from the review's state and one reading of the clock, so the duration,
+`seconds=`, and `sha=` are never typed and never disagree.
 
 The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
 marker's `verdict=`. `approved` means no finding thread on the pull request is
@@ -433,31 +424,51 @@ same code — the CI step, test, or README line that runs it — and name the re
 `path:line` in the first sentence, so a reader lands on the code rather than on
 the anchor.
 
-Immediately before submitting, list every verdict the reviewer has already
-posted on this exact SHA. The endpoint pages at 30 rows, oldest first, and
-every fix-loop thread reply adds a review object of its own, so the newest
-verdict is the first row a single page loses:
+Publish with `project review publish`, from any directory:
 
 ```sh
-gh api --paginate repos/<owner>/<repo>/pulls/<number>/reviews \
-  --jq '.[] | select(.user.login == "<reviewer>")
-        | select(.body | test("projector-review .* sha=<full-sha>"))
-        | "\(.id) \(.submitted_at)"'
+project review publish <number> --verdict <approved|changes-requested> \
+  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>]
 ```
 
-A verdict this run did not publish means the same account already reviewed
-this commit, whether an earlier run or another agent reviewing it now. Hold the
-review and ask the user whether to submit, rather than either submitting or
-standing down. Two verdicts from one account on one commit read as a single
-thorough review, so the overlap goes unnoticed unless this check catches it.
-Standing down silently is no better: a second review is sometimes requested
-deliberately, and a head both reviews walk away from gets no verdict at all. If
-the user says to submit, name the earlier review's id in the new body, so a
+The body file is the review below its signature line: the intent paragraph,
+the census, the coverage line, disclosures, `Suggestions`, and what was
+checked. Put `{census}` where the census goes; `publish` fills it with the
+count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
+`{short_sha}` where you use them. The threads file is a JSON list of findings,
+each `{"path", "line", "priority", "body"}`, where `body` is the visible text
+below — `publish` adds the finding marker with the head's SHA. It refuses,
+exiting 1 with what to fix and keeping the lock so you can correct the input
+and run it again, when:
+
+- the pull request is closed or its head moved since `setup`;
+- a finding's line is outside the pull request's diff hunks, it has no line,
+  its text does not open with its priority header or lacks a `**Fix:**` line,
+  or it carries a marker of its own;
+- the body is missing or empty, carries its own signature line or marker,
+  leaves out `{census}`, or has a placeholder `publish` does not fill;
+- the verdict disagrees with the census: `approved` with a finding open or
+  being posted, or `changes-requested` with none;
+- the collision check below trips.
+
+The collision check lists every verdict the reviewer has already posted on
+this exact SHA, reading every page, since each fix-loop thread reply adds a
+review object of its own. A verdict this run did not publish means the same
+account already reviewed this commit, whether an earlier run or another agent
+reviewing it now. Hold the review and ask the user whether to submit, rather
+than either submitting or standing down. Two verdicts from one account on one
+commit read as a single thorough review, so the overlap goes unnoticed unless
+this check catches it. Standing down silently is no better: a second review is
+sometimes requested deliberately, and a head both reviews walk away from gets
+no verdict at all. If the user says to submit, run `publish` again with
+`--second-verdict <earlier-review-id>` and name that review in the body, so a
 reader sees the second verdict was deliberate.
 
-When `start-review-loop` runs this skill, the loop's record of the reviews it
-published decides instead, as that skill describes, so a re-review the loop
-asked for never trips the check.
+When `start-review-loop` runs this skill, it passes `--loop <id>`, and the
+loop's record of the reviews it published decides instead, as that skill
+describes: a verdict another loop posted trips the check, and a second verdict
+on a head this loop already published needs `setup --rereview`, the re-review
+`RESPONDED` asks for.
 
 A head is *clean* only when, after you have settled every earlier finding as
 above, no Projector finding thread is open **and this review posts no P1 or P2
@@ -473,38 +484,42 @@ author who fixes a finding without resolving it is not held up. Under
 the author answers: `RESPONDED` fires when every thread is resolved, or when
 the newest comment on an open finding thread is the author's.
 
-**Threads open, self-review:** submit a `COMMENT` review, verdict
-`changes-requested`, then convert it to a draft with `gh pr ready <number>
---undo`.
+`publish` chooses the review state and draft transition from the mode:
 
-**Threads open, cross-author:** submit a `REQUEST_CHANGES` review, verdict
-`changes-requested`. Leave draft state alone.
+**Threads open, self-review:** a `COMMENT` review, verdict
+`changes-requested`, then the pull request returns to draft with `gh pr ready
+<number> --undo`.
 
-**Clean head, self-review:** submit a `COMMENT` review naming the exact SHA and
-what was checked, verdict `approved`, then mark it ready with `gh pr ready
-<number>`. That transition is the sign-off a reader sees in the pull-request
-list.
+**Threads open, cross-author:** a `REQUEST_CHANGES` review, verdict
+`changes-requested`. Draft state is left alone.
 
-**Clean head, cross-author:** submit a `COMMENT` review naming the exact SHA and
-what was checked, verdict `approved`. Say plainly in the body that the head
-looks clean and that a human approval is what remains. Post a real `APPROVE`
-only where configuration explicitly permits it.
+**Clean head, self-review:** a `COMMENT` review, verdict `approved`, then the
+pull request is marked ready with `gh pr ready <number>`. That transition is
+the sign-off a reader sees in the pull-request list.
+
+**Clean head, cross-author:** a `COMMENT` review, verdict `approved`; say
+plainly in the body that the head looks clean and that a human approval is
+what remains. It posts a real `APPROVE` only where `review.allow_approve` is
+`true`.
 
 Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
-Report the review as done only after it is published and, on a clean
-self-review, the pull request is ready. Report the SHA, the verdict, the review
-id, how many threads it opened, and the summary's URL when the next section
-publishes one; `start-review-loop` records the SHA and id.
-Verify the input as well as the outputs: before an `approved` verdict, every
-earlier finding is settled, the query shows no Projector finding thread open,
-and the review opens no P1 or P2 thread; after publishing, re-read the review
-body and the pull request's `isDraft`, and only then delete the start comment,
-so the pull request is never left with neither. Never resolve another
-reviewer's thread, resolve a finding you have not verified at this head, claim
-a newer SHA was reviewed, or merge.
+After submitting, `publish` sets draft state for a self-review, re-reads the
+review it posted and the pull request's `isDraft`, adds the review id to the
+loop's record, deletes the start comment, and releases the lock, in that
+order, so the pull request is never left with neither a start comment nor its
+verdict's draft state. It records the review as submitted before any of those
+steps, so a run that fails partway exits non-zero and running it again
+finishes that review instead of posting a second one.
+
+Report the review as done only after `publish` exits 0. Report the SHA, the
+verdict, the review id, how many threads it opened, and the summary's URL when
+the next section publishes one. Before an `approved` verdict, settle every
+earlier finding first; `publish` refuses one while a finding is open. Never
+resolve another reviewer's thread, resolve a finding you have not verified at
+this head, claim a newer SHA was reviewed, or merge.
 
 Once the summary below has run or been skipped, remove the scratch worktree,
 which a summary reads for context. A `start-review-loop` subagent may instead
