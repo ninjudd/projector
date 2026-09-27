@@ -6,7 +6,7 @@ on:
     branches: [main]
     # Rebuild when the action or the site code changes too, since this site
     # runs both from main.
-    paths: [README.md, 'docs/**', 'actions/site/**', 'src/projector/**']
+    paths: [README.md, 'docs/**', 'actions/site/**', 'src/projector/**', .projector.toml, .github/workflows/projector-site.yml]
   workflow_dispatch:
 permissions:
   contents: read

@@ -15,6 +15,7 @@ import html
 from html.parser import HTMLParser
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,62 @@ jobs:
       - id: site
         uses: ninjudd/projector/actions/site@{ref}
 """
+# Earlier shapes of the workflow Projector wrote. A file matching one of them, or
+# the current one, is Projector's own and safe to rewrite; anything else has been
+# edited by hand and is left for its owner.
+PREVIOUS_WORKFLOWS = (
+    # Before the site rebuilt on docs changes, when its step was named walkthroughs.
+    """name: Projector site
+on:
+  repository_dispatch:
+    types: [{event}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@{ref}
+""",
+    # Rebuilding on docs changes, before the step was renamed site.
+    """name: Projector site
+on:
+  repository_dispatch:
+    types: [{event}]
+  push:
+    branches: [{branch}]
+    paths: [{paths}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@{ref}
+""",
+)
 
 
 class SpecError(ProjectorError):
@@ -700,12 +757,47 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     return commit
 
 
-def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
-    """The site workflow; a projects directory outside docs/ is watched as well."""
+def watched_paths(projects_dir: str | None = None) -> list[str]:
+    """The paths a push to the default branch rebuilds the site for: the README
+    and docs/, a projects directory outside docs/, and .projector.toml and the
+    workflow itself, so merging the workflow deploys the site the first time and
+    a new site.prepare takes effect."""
     paths = ["README.md", "'docs/**'"]
     if projects_dir and projects_dir.strip("/") != "docs" and not projects_dir.strip("/").startswith("docs/"):
         paths.append(f"'{projects_dir.strip('/')}/**'")
-    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
+    return paths + [".projector.toml", WORKFLOW_PATH]
+
+
+def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
+    """The site workflow."""
+    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch,
+                           paths=", ".join(watched_paths(projects_dir)))
+
+
+def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
+    """Whether `text` is a workflow Projector wrote for this repository, in its
+    current shape or an earlier one, with any action ref.
+
+    Only what Projector itself varies is free: the action ref, one branch, its
+    dispatch event, and the watched paths it lists for `projects_dir`, with or
+    without the two it added later. A path or branch added on the same line is
+    a hand edit, and so is any other change.
+    """
+    current = watched_paths(projects_dir)
+    lists = {", ".join(current), ", ".join(current[:-2])}
+    slots = {
+        "event": ("@@EVENT@@", "(?:" + "|".join(map(re.escape, (DISPATCH_EVENT, LEGACY_DISPATCH_EVENT))) + ")"),
+        "ref": ("@@REF@@", r"[^\s]+"),
+        "branch": ("@@BRANCH@@", r"[^\s,\]]+"),
+        "paths": ("@@PATHS@@", "(?:" + "|".join(map(re.escape, sorted(lists))) + ")"),
+    }
+    for template in (WORKFLOW, *PREVIOUS_WORKFLOWS):
+        pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
+        for mark, allowed in slots.values():
+            pattern = pattern.replace(re.escape(mark), allowed)
+        if re.fullmatch(pattern, text):
+            return True
+    return False
 
 
 def default_branch(remote: str = "origin", root: Path | None = None) -> str:

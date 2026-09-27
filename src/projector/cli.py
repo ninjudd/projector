@@ -368,6 +368,8 @@ def parser() -> argparse.ArgumentParser:
     )
     site_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow runs")
     site_workflow.add_argument("--write", action="store_true", help=f"write {WORKFLOW_PATH} in this checkout")
+    site_workflow.add_argument("--force", action="store_true",
+                               help=f"with --write, replace {WORKFLOW_PATH} even if it was edited by hand")
     site_workflow.add_argument(
         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
     )
@@ -790,24 +792,39 @@ def run_site(arguments: argparse.Namespace) -> int:
         if not arguments.write:
             print(text, end="")
             return 0
-        write_site_workflow(root, text)
+        result = write_site_workflow(root, text, force=arguments.force)
+        if result.action == "kept":
+            print(f"project: {result.note}", file=sys.stderr)
+            return 1
         print(f"wrote {root / WORKFLOW_PATH}; commit it to the default branch, where GitHub runs dispatched workflows")
     return 0
 
 
-def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+def site_projects_dir(root: Path) -> Optional[str]:
+    """The configured projects directory as the site workflow names it, if it is inside the checkout."""
     projects_dir = configured_projects_dir(root)
-    return summary.workflow_text(
-        action_ref,
-        branch or summary.default_branch(root=root),
-        projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
-    )
+    return projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None
 
 
-def write_site_workflow(root: Path, text: str) -> FileAction:
+def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+    return summary.workflow_text(action_ref, branch or summary.default_branch(root=root), site_projects_dir(root))
+
+
+def write_site_workflow(root: Path, text: str, force: bool = False) -> FileAction:
+    """Write the site workflow, updating one Projector wrote but keeping one edited by hand,
+    such as a workflow that sets up a toolchain for site.prepare, unless `force` replaces it."""
     path = root / WORKFLOW_PATH
-    if path.is_file() and path.read_text(encoding="utf-8") == text:
-        return FileAction(WORKFLOW_PATH, "unchanged")
+    if path.is_file():
+        current = path.read_text(encoding="utf-8")
+        if current == text:
+            return FileAction(WORKFLOW_PATH, "unchanged")
+        if not force and not summary.generated_workflow(current, site_projects_dir(root)):
+            return FileAction(
+                WORKFLOW_PATH,
+                "kept",
+                f"{WORKFLOW_PATH} has changes Projector did not write, so it was left alone; compare it with "
+                "`project site workflow`, or replace it with `project site workflow --write --force`",
+            )
     action = "updated" if path.exists() else "created"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
