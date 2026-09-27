@@ -259,43 +259,71 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
 
-    def stacks(self) -> dict[int, tuple]:
-        return {r["number"]: (r["stackedOn"], r["baseRef"]) for r in self.build()["reviews"]}
+    def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, int | None], list[str]]:
+        """Each review's stackedOn, and the head branches the build asked GitHub about."""
+        asked: list[str] = []
+
+        def lookup(*args: str) -> str | None:
+            head = next(a for a in args if a.startswith("head=")).split(":", 1)[1]
+            asked.append(head)
+            if pulls is None:
+                raise summary.SpecError("gh api failed: offline")
+            return pulls.get(head, "") + "\n"
+
+        with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+            reviews = self.build()["reviews"]
+        self.assertTrue(all("baseRef" not in r for r in reviews), "the page shows pull requests, not branch names")
+        return {r["number"]: r["stackedOn"] for r in reviews}, asked
 
     def test_a_review_names_the_review_its_pull_request_is_stacked_on(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
-        self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a", base="e" * 40)
+        self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
 
-        self.assertEqual({9: (None, None), 10: (9, "feature-a")}, self.stacks())
+        self.assertEqual(({9: None, 10: 9}, []), self.stacks(), "a review's head branch answers without GitHub")
 
-    def test_an_older_spec_without_head_branches_is_stacked_by_its_merge_base(self) -> None:
-        self.publish(9, "c" * 40)
-        self.publish(9, "f" * 40)
-        self.publish(10, "d" * 40, baseRef="feature-a", base="c" * 40)
+    def test_a_spec_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
+        self.publish(10, "d" * 40, baseRef="feature-a", basePr=7)
 
-        self.assertEqual(9, self.stacks()[10][0], "the merge base is one of #9's heads, not only its newest")
+        self.assertEqual(({10: 7}, []), self.stacks())
 
-    def test_a_base_branch_no_review_covers_is_named_without_a_link(self) -> None:
-        self.publish(10, "d" * 40, baseRef="release")
+    def test_an_older_spec_asks_github_once_per_base_branch(self) -> None:
+        self.publish(10, "d" * 40, baseRef="feature-a")
+        self.publish(11, "e" * 40, baseRef="feature-a")
+        self.publish(12, "f" * 40, baseRef="release")
 
-        self.assertEqual({10: (None, "release")}, self.stacks())
+        stacked, asked = self.stacks({"feature-a": "7"})
 
-    def test_a_pull_request_on_the_default_branch_is_never_stacked(self) -> None:
-        self.publish(9, "c" * 40)
-        self.publish(10, "d" * 40, base="c" * 40)
+        self.assertEqual({10: 7, 11: 7, 12: None}, stacked, "a base branch no pull request uses marks nothing")
+        self.assertEqual(["feature-a", "release"], sorted(asked))
 
-        self.assertEqual({9: (None, None), 10: (None, None)}, self.stacks(),
-                         "a merge base that happens to be another head does not stack a pull request on main")
+    def test_a_pull_request_on_the_default_branch_is_never_stacked_or_looked_up(self) -> None:
+        self.publish(9, "c" * 40, headRef="main")
+        self.publish(10, "d" * 40)
+
+        self.assertEqual(({9: None, 10: None}, []), self.stacks({"main": "9"}))
+
+    def test_a_default_branch_misjudged_is_still_not_a_stack(self) -> None:
+        # A checkout on a feature branch that never recorded origin's HEAD takes feature for the default.
+        subprocess.run(["git", "init", "-q", "-b", "feature", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "commit", "-q", "--allow-empty", "-m", "start"], check=True)
+        self.publish(10, "d" * 40)
+
+        self.assertEqual(({10: None}, ["main"]), self.stacks({}),
+                         "on a checkout that does not know its default branch, main is asked about and is no pull request's head")
 
     def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -> None:
         subprocess.run(["git", "init", "-q", "-b", "feature", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "symbolic-ref", "refs/remotes/origin/HEAD",
                         "refs/remotes/origin/trunk"], check=True)
         self.publish(9, "c" * 40, baseRef="trunk")
-        self.publish(10, "d" * 40, baseRef="feature")
 
-        self.assertEqual({9: (None, None), 10: (None, "feature")}, self.stacks(),
-                         "a checkout on a feature branch still knows trunk is the default")
+        self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+
+    def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
+        self.publish(10, "d" * 40, baseRef="feature-a")
+
+        self.assertEqual({10: None}, self.stacks(None)[0])
 
     def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
         self.publish(9, "c" * 40)

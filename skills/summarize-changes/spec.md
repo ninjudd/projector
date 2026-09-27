@@ -12,8 +12,10 @@ it. The spec is JSON:
     "number": 2062,
     "title": "The pull request title",
     "head": "full head commit SHA",
+    "headRef": "the pull request's head branch",
     "base": "full merge-base commit SHA",
-    "baseRef": "main"
+    "baseRef": "main",
+    "basePr": 2061
   },
   "overview": {
     "summary": ["<p>-level HTML paragraph", "..."],
@@ -49,6 +51,9 @@ it. The spec is JSON:
   request has moved past it, unless `--at-head` asks for that head exactly.
 - `pr.base` is the merge base the diff is taken from. `init` records it; the
   page shows the diff from `pr.base` to `pr.head`.
+- `pr.headRef`, and `pr.basePr` when the base branch is another open pull
+  request's head, are what the site's review list uses to mark a stacked pull
+  request. `init` records both; keep them when you edit a spec by hand.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
 - `overview.cards` lay out two per row. A card with an `id` also gets a

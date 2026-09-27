@@ -788,6 +788,14 @@ def trunk_branch(root: Path) -> str:
 def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
     """Build the site from a checkout, and summarize what it holds."""
     projects, projects_dir = site_projects(root)
+
+    # A stack is a fact on GitHub; when it cannot be asked, the review shows none.
+    def base_pr(base_ref: str) -> Optional[int]:
+        try:
+            return summary.base_pr(repo, base_ref)
+        except summary.SpecError:
+            return None
+
     entries, failures = site.build_site(
         out,
         summaries=summaries,
@@ -798,6 +806,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         branch=site_branch(root),
         trunk=trunk_branch(root),
         base=base,
+        lookup=base_pr if repo else None,
     )
     return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
 

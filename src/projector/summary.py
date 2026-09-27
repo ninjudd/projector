@@ -427,9 +427,22 @@ def merge_base(repo: str, base_ref: str, head: str) -> str:
     return gh("api", f"repos/{repo}/compare/{base_ref}...{head}", "--jq", ".merge_base_commit.sha").strip()
 
 
-def pr_metadata(repo: str, number: int) -> dict:
+def base_pr(repo: str, base_ref: str) -> int | None:
+    """The open pull request whose head is `base_ref`, which a pull request based on it is stacked on.
+
+    Only an open one: a long-lived branch such as `develop` has merged release
+    pull requests from it, and a pull request based on `develop` sits on none
+    of them.
+    """
+    owner = repo.split("/", 1)[0]
+    found = gh_lookup("api", "-X", "GET", f"repos/{repo}/pulls", "-f", f"head={owner}:{base_ref}",
+                      "-f", "per_page=1", "--jq", ".[0].number // empty")
+    return int(found) if found and found.strip().isdigit() else None
+
+
+def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
-    return {
+    meta = {
         "repo": repo,
         "number": number,
         "title": raw["title"],
@@ -438,6 +451,13 @@ def pr_metadata(repo: str, number: int) -> dict:
         "base": merge_base(repo, raw["baseRefName"], raw["headRefOid"]),
         "baseRef": raw["baseRefName"],
     }
+    # A pull request on the default branch is not stacked, even when an open
+    # main -> production pull request has the default branch as its head.
+    if stack and raw["baseRefName"] != gh("api", f"repos/{repo}", "--jq", ".default_branch").strip():
+        stacked_on = base_pr(repo, raw["baseRefName"])
+        if stacked_on is not None and stacked_on != number:
+            meta["basePr"] = stacked_on
+    return meta
 
 
 def fetch_diff(repo: str, base: str, head: str) -> str:
@@ -611,7 +631,7 @@ def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, ext
         raise SpecError("pr.repo, pr.number and pr.head are required")
     if not at_head:
         try:
-            live = pr_metadata(pr["repo"], int(pr["number"]))
+            live = pr_metadata(pr["repo"], int(pr["number"]), stack=False)
         except SpecError as exc:
             if diff is None:
                 raise
