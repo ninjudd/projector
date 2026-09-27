@@ -491,8 +491,8 @@ a Markdown file or an HTML page. The build copies those files under `content/`
 and describes them in `site.json`; the page renders Markdown in the browser and
 shows an HTML page as it is, titled by its `<title>`, in a frame that fills the
 window below the header, with the sidebar hidden until the menu button opens
-it. A button at the end of the header hides the header too, giving the page
-the whole window, and a button in the corner brings it back.
+it. A full-screen button at the end of the header hides the header, giving
+the page the whole window, and a button in the corner leaves full screen.
 The frame loads the page's copy under `content/`, beside a copy of every
 other file under `docs/` and the projects directory, so the data, scripts,
 and WebAssembly modules the page loads by relative path resolve there. The

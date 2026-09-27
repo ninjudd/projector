@@ -391,7 +391,7 @@ class HeaderTests(unittest.TestCase):
         stub = (
             "const base = '/', site = {repo: 'owner/example'};\n"
             "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>',"
-            " HIDE_ICON = '<svg hide></svg>';\n"
+            " FULL_ICON = '<svg full></svg>';\n"
             "function nav() { return ''; }\n"
         )
         program = stub + js_function("esc") + "\n" + js_function("header") + \
@@ -411,11 +411,11 @@ class HeaderTests(unittest.TestCase):
         self.assertIn('aria-controls="siteside" aria-expanded="true"', html)
         self.assertNotIn("barhide", html)
 
-    def test_an_html_page_can_hide_the_header_and_starts_with_its_sidebar_closed(self) -> None:
+    def test_an_html_page_can_go_full_screen_and_starts_with_its_sidebar_closed(self) -> None:
         html = self.header_html("'docs', undefined, 'closed', true")
 
         self.assertIn('aria-expanded="false"', html)
-        self.assertTrue(html.endswith('aria-label="Hide the header"><svg hide></svg></button></header>'), html)
+        self.assertTrue(html.endswith('aria-label="Full screen"><svg full></svg></button></header>'), html)
 
 
 @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")

@@ -25,11 +25,11 @@
   // Projector's mark, as projector.bot draws it: an orange beam from a lens.
   const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
     '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
-  // The header's icon buttons: the section menu, and hiding and restoring the header.
+  // The header's icon buttons: the section menu, and entering and leaving full screen.
   const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
   const MENU_ICON = `${ICON}<path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg>`;
-  const HIDE_ICON = `${ICON}<path d="M5.5 11.5 10 7l4.5 4.5M5.5 15.5 10 11l4.5 4.5"/></svg>`;
-  const SHOW_ICON = `${ICON}<path d="M5.5 4.5 10 9l4.5-4.5M5.5 8.5 10 13l4.5-4.5"/></svg>`;
+  const FULL_ICON = `${ICON}<path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4"/></svg>`;
+  const EXIT_FULL_ICON = `${ICON}<path d="M7.5 3.5v4h-4M16.5 7.5h-4v-4M12.5 16.5v-4h4M3.5 12.5h4v4"/></svg>`;
   // Set once site.json loads, before any view draws.
   let site!: SiteData;
   const pageFiles = new Set<string>();
@@ -154,15 +154,16 @@
   }
 
   // The site's header. A page with a section sidebar gets the button that shows
-  // and hides it at the header's start; a wide page, an HTML page's frame, gets
-  // one at its end that hides the header so the page has the whole window.
+  // and hides it at the header's start; a wide page, an HTML page's frame, gets a
+  // full-screen button at its end, which hides the header so the page has the
+  // whole window.
   function header(active: Section, extra?: string, side?: 'open' | 'closed', wide?: boolean): string {
     const menu = side !== undefined
       ? `<button type="button" class="sitebtn sidetoggle" aria-controls="siteside" aria-expanded="${String(side === 'open')}" ` +
         `title="Show or hide this section's pages" aria-label="Show or hide this section's pages">${MENU_ICON}</button>`
       : '';
     const hide = wide === true
-      ? `<button type="button" class="sitebtn barhide" title="Hide the header" aria-label="Hide the header">${HIDE_ICON}</button>`
+      ? `<button type="button" class="sitebtn barhide" title="Full screen" aria-label="Full screen">${FULL_ICON}</button>`
       : '';
     return `<header class="sitebar${extra !== undefined && extra !== '' ? ` ${extra}` : ''}">${menu}<a class="sitename" href="${esc(base)}">` +
       `${MARK}${esc(site.repo !== '' ? site.repo : 'Projector')}</a><nav class="sitenav" aria-label="Site">${nav(active)}</nav>` +
@@ -174,8 +175,8 @@
 
   // Draw the page around `body`, with `side` as a sidebar when given, and return
   // the element the body went into. A wide page, an HTML page's frame, fills the
-  // window below the header, starts with its sidebar hidden, and can hide the
-  // header too; a button pinned to the corner brings the header back.
+  // window below the header, starts with its sidebar hidden, and can go full
+  // screen, hiding the header; a button pinned to the corner leaves full screen.
   function frame(active: Section, title: string, body: Body, side?: string | null, wide?: boolean): HTMLElement {
     if (root === null) throw new Error('A view needs the #site element to draw into');
     document.title = title !== '' ? `${title} · ${site.repo}` : site.repo;
@@ -186,7 +187,7 @@
     const classes = `sitemain${hasSide ? ' withside' : ''}${isWide ? ' wide' : ''}${hasSide && isWide ? ' collapsed' : ''}`;
     root.innerHTML =
       header(active, undefined, hasSide ? (isWide ? 'closed' : 'open') : undefined, isWide) +
-      (isWide ? `<button type="button" class="sitebtn barshow" title="Show the header" aria-label="Show the header">${SHOW_ICON}</button>` : '') +
+      (isWide ? `<button type="button" class="sitebtn barshow" title="Exit full screen" aria-label="Exit full screen">${EXIT_FULL_ICON}</button>` : '') +
       `<main class="${classes}">` +
       (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
       '<div class="sidebody" id="sidebody"></div></main>' +
