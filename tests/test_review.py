@@ -565,7 +565,6 @@ class PublishTests(PublishCase):
 
 
 class PublishRefusalTests(PublishCase):
-    """One test per failure the starkey loop's hand-built helpers made, plus the other refusals."""
 
     def refused(self, result: tuple[int, str, str], words: str) -> None:
         code, _, err = result
@@ -575,8 +574,6 @@ class PublishRefusalTests(PublishCase):
         self.assertTrue(self.lock(self.head).exists(), "a refused publish keeps the lock")
 
     def test_the_duration_and_seconds_are_always_present_and_agree(self) -> None:
-        # `datetime.UTC` does not exist before Python 3.11's minor releases caught up;
-        # a helper that used it published `took 0m 00s` and an empty `seconds=`.
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.clock = self.START + timedelta(hours=1, minutes=4, seconds=9)
 
@@ -627,7 +624,6 @@ class PublishRefusalTests(PublishCase):
                                   str(self.threads(finding(body=FINDING % self.head + "\n\n**Fix:** x")))), "marker")
 
     def test_a_second_publish_on_the_same_head_is_refused_without_rereview(self) -> None:
-        # Two waiting instances published the same review twice, with six duplicate threads.
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.assertEqual(0, self.publish("approved")[0])
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -673,8 +669,6 @@ class PublishRefusalTests(PublishCase):
         self.assertIn("name the earlier review 901", uncited[2])
 
     def test_a_gh_failure_mid_publish_exits_non_zero_keeps_the_lock_and_a_retry_finishes(self) -> None:
-        # A helper that failed at `gh pr view` exited 0; here every failure is non-zero,
-        # and a retry finishes the review it already posted instead of posting another.
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.github.fail = "pr ready"
 
