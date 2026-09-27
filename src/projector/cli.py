@@ -21,7 +21,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import site, summary
+from . import review, site, summary
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
@@ -297,6 +297,28 @@ def parser() -> argparse.ArgumentParser:
     summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
     )
+
+    review_parser = subcommands.add_parser("review", help="the mechanical steps of a pull request review")
+    review_commands = review_parser.add_subparsers(dest="review_command", required=True)
+    review_setup = review_commands.add_parser(
+        "setup", help="fetch a pull request's head into a scratch worktree and post the start comment"
+    )
+    review_move = review_commands.add_parser(
+        "move", help="follow a head that moved mid-review and update the start comment in place"
+    )
+    review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
+    for command in (review_setup, review_move, review_census):
+        command.add_argument("pr", type=int, help="the pull request number")
+        command.add_argument("--repo", help="owner/name (default: the checkout's origin)")
+        command.add_argument("--state-dir", type=Path,
+                             help="where review state and locks live (default: $XDG_STATE_HOME/projector/reviews)")
+        add_output(command)
+    for command in (review_setup, review_move):
+        command.add_argument("--checkout", type=Path,
+                             help="the local clone to fetch into (default: the one containing this directory)")
+    review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
+    review_setup.add_argument("--model", required=True, help="the model id the start comment names")
+    review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -601,6 +623,38 @@ def run_prepare(root: Path, command: str) -> None:
 
 
 NOT_HOSTED = 3
+
+
+def run_review(arguments: argparse.Namespace) -> int:
+    checkout = getattr(arguments, "checkout", None)
+    if checkout is None:
+        try:
+            checkout = discover_git_root(Path.cwd())
+        except ProjectorError:
+            checkout = None
+    ctx = review.context(arguments.pr, arguments.repo, checkout, arguments.state_dir)
+    command = arguments.review_command
+    if command == "census":
+        result = review.census(ctx)
+        if arguments.json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            print("\n".join(review.census_lines(result)))
+        return 0
+    if command == "setup":
+        configured = load_config(ctx.checkout).get("review.username") if ctx.checkout else None
+        reviewer = review.reviewer_login(arguments.reviewer, configured if isinstance(configured, str) else None)
+        state = review.setup(ctx, reviewer, arguments.model, arguments.effort)
+    else:
+        state = review.move(ctx)
+    if arguments.json_output:
+        print(json.dumps(state, indent=2))
+    else:
+        print(f"reviewing {ctx.repo}#{ctx.number} at {state['sha']} (head {state['heads']})")
+        print(f"merge base {state['base']}")
+        print(f"worktree {state['worktree']}")
+        print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+    return 0
 
 
 def run_summary(arguments: argparse.Namespace) -> int:
@@ -916,6 +970,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_summary(arguments)
     if arguments.command == "site":
         return run_site(arguments)
+    if arguments.command == "review":
+        return run_review(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
