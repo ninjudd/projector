@@ -76,8 +76,21 @@ planning it is the current focus, and an `in-progress` project can drop to
 status is `completed`; completed work needs no schedule.
 
 Add `owner` only in a repository where more than one person could own the
-project. Add other metadata only after a command or workflow needs it. The file
-path already supplies the project name, so do not duplicate it in frontmatter.
+project. Name one person, preferably by GitHub login, so the value matches
+code owners and review requests:
+
+```yaml
+---
+status: in-progress
+priority: now
+owner: octocat
+---
+```
+
+Set it with `project owner <project> <login>` and remove it with
+`project owner <project> --clear`. Add other metadata only after a command or
+workflow needs it. The file path already supplies the project name, so do not
+duplicate it in frontmatter.
 
 Change status and priority in the pull request that makes the change true. For
 example, the pull request that begins implementation changes the status from

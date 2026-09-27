@@ -171,7 +171,8 @@ now:
 ```
 
 Add `--status ready` or `--priority next` to select one value, or both to
-intersect them. Run `show <project>` to print the entry point, including its
+intersect them. Add `--owner <login>` to select the projects one person owns,
+ignoring case. A row ends with its owner in brackets when the plan names one. Run `show <project>` to print the entry point, including its
 frontmatter, or `search <query>` to search project names, metadata, plans, and
 supplemental Markdown files.
 
@@ -218,6 +219,18 @@ project priority payments now
 project done payments/invoices
 ```
 
+Set or remove the optional owner with `owner`. Name one person, preferably by
+GitHub login:
+
+```sh
+project owner payments octocat
+project owner payments --clear
+```
+
+`owner` adds the field just before the closing `---` when the plan has none,
+and `--clear` removes the line. It refuses a value that would not read back
+unchanged, such as one with a leading `@`, a `: `, or a ` #`, with exit code 2.
+
 `priority` adds the field when a plan has none, which happens only for a
 completed project being rescheduled. Set the priority first in that case:
 `status` refuses to move a completed plan to another status while it has no
@@ -238,7 +251,7 @@ Project plans are valid.
 ```
 
 The command reports malformed frontmatter, invalid statuses, invalid or
-missing priorities, missing top-level
+missing priorities, an empty or multi-line owner, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive

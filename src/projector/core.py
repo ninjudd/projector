@@ -33,6 +33,7 @@ def _field_line(field: str) -> re.Pattern[str]:
 
 STATUS_LINE = _field_line("status")
 PRIORITY_LINE = _field_line("priority")
+OWNER_LINE = _field_line("owner")
 FIELD_LINES = {"status": STATUS_LINE, "priority": PRIORITY_LINE}
 
 
@@ -160,6 +161,25 @@ def parse_frontmatter(text: str, path: Path) -> tuple[dict[str, str], int]:
     raise ProjectorError(f"{path}: unclosed YAML frontmatter")
 
 
+def owner_problem(owner: str) -> Optional[str]:
+    """Why `owner` cannot be written as a frontmatter value, or None when it can.
+
+    Any one-line name is accepted, though a GitHub login is the recommended
+    form; the value only has to read back unchanged as a plain YAML scalar.
+    """
+    if not owner.strip():
+        return "it must not be empty"
+    if "\n" in owner or "\r" in owner:
+        return "it must be one line"
+    if owner != owner.strip():
+        return "it must not start or end with a space"
+    if owner.startswith("@"):
+        return "write the login without the leading @"
+    if owner[0] in "[]{}&*!|>%`'\"#?,:" or ": " in owner or owner.endswith(":") or _yaml_scalar(owner) != owner:
+        return "it must read back unchanged as a plain YAML value"
+    return None
+
+
 def title_from_text(text: str, fallback: str) -> str:
     for line in text.splitlines():
         if line.startswith("# "):
@@ -203,12 +223,18 @@ class ProjectStore:
                 )
         elif priority not in PRIORITIES:
             raise ProjectorError(f"{display_path}: priority must be one of {choices}")
+        owner = metadata.get("owner")
+        if owner is not None:
+            if not owner:
+                raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
+            if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
+                raise ProjectorError(f"{display_path}: owner must be a single line")
         return Project(
             name=relative,
             title=title_from_text(text, relative),
             status=status,
             priority=priority,
-            owner=metadata.get("owner"),
+            owner=owner,
             path=path,
         )
 
@@ -681,6 +707,42 @@ class ProjectStore:
         if priority not in PRIORITIES:
             raise ProjectorError(f"invalid priority: {priority}")
         return self._set_field(name, "priority", priority)
+
+    def set_owner(self, name: str, owner: Optional[str]) -> tuple[Project, bool]:
+        """Set the owner field, adding it before the closing marker when the plan
+        has none, or remove it when `owner` is None."""
+        if owner is not None:
+            problem = owner_problem(owner)
+            if problem is not None:
+                raise UsageError(f"invalid owner {owner!r}: {problem}")
+        project = self.resolve(name)
+        before = self._read_text(project.path)
+        original_stat = project.path.stat()
+        metadata, end = parse_frontmatter(before, project.path)
+        if metadata.get("owner") == owner:
+            return project, False
+        # Only the frontmatter is searched, so an `owner:` line in the plan's
+        # body is never mistaken for the field.
+        lines = before.splitlines(keepends=True)
+        header, body = "".join(lines[:end]), "".join(lines[end:])
+        match = OWNER_LINE.search(header)
+        if match is not None and _yaml_scalar(match.group("value")) != metadata.get("owner"):
+            raise ProjectorError(f"{project.path}: cannot update owner safely")
+        if match is None:
+            newline = "\r\n" if lines[end - 1].endswith("\r\n") else "\n"
+            header = "".join(lines[: end - 1]) + f"owner: {owner}{newline}" + lines[end - 1]
+        elif owner is None:
+            line_end = header.find("\n", match.end())
+            header = header[: match.start()] + header[len(header) if line_end < 0 else line_end + 1 :]
+        else:
+            header = header[: match.start("value")] + owner + header[match.end("value") :]
+        current_stat = project.path.stat()
+        signature = (original_stat.st_ino, original_stat.st_size, original_stat.st_mtime_ns)
+        current = (current_stat.st_ino, current_stat.st_size, current_stat.st_mtime_ns)
+        if signature != current:
+            raise ProjectorError(f"{project.path}: changed while it was being read")
+        self._atomic_write(project.path, header + body, signature)
+        return self.resolve(name), True
 
     def _set_field(self, name: str, field: str, value: str) -> tuple[Project, bool]:
         project = self.resolve(name)

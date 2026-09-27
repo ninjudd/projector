@@ -312,6 +312,8 @@ def js_function(name: str) -> str:
     """One function of the compiled site.js, from its signature to the brace that closes it."""
     lines = SITE_JS.read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(f"    function {name}("))
+    if lines[start].endswith("}"):
+        return lines[start]
     end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     return "\n".join(lines[start:end + 1])
 
@@ -332,6 +334,54 @@ class CompiledScriptTests(unittest.TestCase):
             for name in built:
                 self.assertEqual((Path(out) / name).read_text(), (assets / name).read_text(),
                                  f"{name} is stale: run `npm run build` and commit it")
+
+
+@unittest.skipUnless(shutil.which("node"), "the projects view test needs node")
+class ProjectsViewTests(unittest.TestCase):
+    def projects_html(self, projects: list[dict]) -> str:
+        """The projects view's markup for `projects`, drawn by the compiled showProjects."""
+        stub = (
+            "const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];\n"
+            "const PRIORITY_ORDER = ['now', 'next', 'later'];\n"
+            "const base = '/';\n"
+            f"const site = {{projects: {json.dumps(projects)}, projectsDir: 'docs/projects', projectsReadme: null}};\n"
+            "let drawn = '';\n"
+            "function frame(active, title, body) { drawn = body; return {querySelector: function () {"
+            " return {addEventListener: function () {}}; }}; }\n"
+        )
+        program = stub + "\n".join(js_function(n) for n in ("esc", "badge", "depth", "ownerName", "showProjects")) + \
+            "\nshowProjects(); process.stdout.write(drawn);"
+        return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+    @staticmethod
+    def project(name: str, owner: str | None) -> dict:
+        return {"name": name, "title": name.title(), "status": "in-progress", "priority": "now", "owner": owner,
+                "path": f"docs/projects/{name}/readme.md", "files": [], "reviews": []}
+
+    def test_an_owner_column_lists_each_owner_and_the_filter_matches_it(self) -> None:
+        html = self.projects_html([self.project("alpha", "aparsuri-poly"), self.project("beta", None)])
+
+        self.assertIn("<th>Priority</th><th>Owner</th><th>Name</th>", html)
+        self.assertIn('<td class="owner">aparsuri-poly</td>', html)
+        self.assertIn('<td class="owner"></td>', html)
+        self.assertIn('data-search="alpha alpha aparsuri-poly"', html)
+
+    def test_no_owner_column_when_no_plan_names_an_owner(self) -> None:
+        html = self.projects_html([self.project("alpha", None), self.project("beta", None)])
+
+        self.assertIn("<th>Priority</th><th>Name</th>", html)
+        self.assertNotIn("Owner", html)
+
+    def test_the_manifest_carries_each_owner(self) -> None:
+        repo = Path(tempfile.mkdtemp())
+        path = repo / "docs/projects/alpha/readme.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("---\nstatus: draft\npriority: now\nowner: aparsuri-poly\n---\n\n# Alpha\n")
+        out = Path(tempfile.mkdtemp()) / "site"
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(["site", "build", "--out", str(out), "--repo-root", str(repo)]))
+
+        self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
 
 
 @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
