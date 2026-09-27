@@ -56,5 +56,5 @@ Projector section in `AGENTS.md` without touching the repository's own text.
 Confirm that the plan names the outcome, every acceptance criterion has
 evidence or an explicit non-delivery disposition, the code the change
 replaced is gone, and no separate closeout change remains. Follow the
-repository's handoff rules and never merge unless the user explicitly owns
-that action.
+repository's handoff rules, and `implement`'s **Hand the work over** where
+they are silent, and never merge unless the user explicitly owns that action.

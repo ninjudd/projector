@@ -24,7 +24,8 @@ repository and current runtime behavior as authoritative evidence.
 
 Build the requested outcome, not merely the easiest plan item. Keep changes
 reviewable and verify each behavior in proportion to its risk. Follow the
-repository's branch, stack, commit, review, and merge rules.
+repository's branch, stack, commit, review, and merge rules, and
+[Hand the work over](#hand-the-work-over) where they are silent.
 
 Apply the review method's passes to your own change before the review loop
 does; `../review-changes/method.md` § 3 describes them, and three apply to
@@ -84,8 +85,13 @@ implementation change.
 
 ## Hand the work over
 
+These are the defaults where the repository's instructions are silent. Where
+its written rules or pull request template say otherwise, follow them — except
+that the merge stays the user's checkpoint either way.
+
 Open a pull request and never merge it. The merge is the user's checkpoint,
-however small the change: end at `gh pr create` and hand over the URL.
+however small the change: end at `gh pr create --draft`, or
+`gh stack submit --auto` for a stack, and hand over the URL.
 
 Size the pull request for its reviewer, not for the plan. A review costs
 about the same whether the diff is twenty lines or three hundred, and that
