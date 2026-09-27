@@ -4,7 +4,7 @@
 .sitebar {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px;
-  min-height: 60px; padding: 10px max(16px, calc((100% - 1040px) / 2));
+  min-height: 60px; padding: 10px 16px;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
@@ -21,15 +21,40 @@
 .sitenav a:hover { color: var(--text); }
 .sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* The header's icon buttons: the section menu, and entering and leaving full screen. */
+.sitebtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 32px; height: 32px; padding: 0; margin: 0 -8px 0 -6px;
+  color: var(--muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.sitebtn:hover { color: var(--text); background: var(--surface-2); }
+.sitebtn svg { width: 18px; height: 18px; }
+/* Where a page has no sidebar, an empty slot holds the menu button's place, so the
+   site name sits in the same spot on every page. */
+.menuspace { visibility: hidden; cursor: default; }
+.barhide { margin: 0 -6px 0 -12px; }
+.barshow {
+  display: none; position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); right: 8px; z-index: 20; margin: 0;
+  background: var(--surface); border-color: var(--border); box-shadow: var(--shadow);
+}
+body.barhidden .sitebar { display: none; }
+body.barhidden .barshow { display: inline-flex; }
+
 .sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
 .sidebody { min-width: 0; }
 
-/* A section's tree beside its page: the docs, or one project's folder. */
-.sitemain.withside { max-width: 1120px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px; }
-.sitemain.withside + .sitefoot { max-width: 1120px; }
+/* A section's tree beside its page: the docs, or one project's folder. The tree
+   runs down the window's left edge under the header's menu button, and the page
+   keeps its reading width, centred in the window whether or not the tree is
+   shown. Only a window too narrow to centre the page clear of the tree moves it
+   right, as little as it must. */
+.sitemain.withside { max-width: none; padding: 0; }
+.sitemain.withside .sidebody { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.sitemain.withside:not(.collapsed):not(.wide) .sidebody,
+.sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: max(240px, calc((100% - 880px) / 2)); }
 .side {
-  position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 88px); overflow-y: auto;
-  font-size: 14px; line-height: 1.4;
+  position: fixed; top: 61px; bottom: 0; left: 0; width: 240px; align-self: stretch; overflow-y: auto;
+  padding: 28px 16px; font-size: 14px; line-height: 1.4;
 }
 .side ul { list-style: none; margin: 0; padding: 0 0 0 12px; }
 .side > ul { padding-left: 0; }
@@ -40,21 +65,27 @@
 .sidetop { font-weight: 600; margin-bottom: 10px; }
 .sidetop a { color: var(--text); }
 .sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-.sidetoggle {
-  font: inherit; font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; margin-bottom: 12px;
-}
-.sidetoggle:hover { color: var(--text); }
-.sitemain.withside.collapsed { grid-template-columns: auto minmax(0, 1fr); gap: 16px; }
-.sitemain.collapsed .sidetree { display: none; }
+.sitemain.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.collapsed .side { display: none; }
 
-/* An HTML page takes the whole width, in a frame sized to the window. */
-.sitemain.wide, .sitemain.wide + .sitefoot { max-width: none; }
-.htmlbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-iframe.htmlpage { display: block; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+/* An HTML page fills the window below the header, edge to edge, with its section
+   sidebar, when shown, as a column beside it. */
+.sitemain.wide { max-width: none; padding: 0; }
+.sitemain.wide.withside { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0; }
+.sitemain.wide.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.wide .sidebody { max-width: none; margin: 0; padding: 0; }
+.sitemain.wide .side {
+  position: static; width: auto; align-self: stretch; max-height: none; padding: 20px 16px;
+  border-right: 1px solid var(--border);
+}
+.sitemain.wide .sidebody > :not(iframe) { margin: 16px; }
+iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 @media (max-width: 760px) {
   .sitemain.withside { display: block; }
-  .side { position: static; max-height: none; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .side { position: static; width: auto; max-height: none; padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
+  .sitemain.withside:not(.collapsed):not(.wide) .sidebody,
+  .sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: auto; }
+  .sitemain.wide .side { margin: 0; border-right: 0; }
 }
 .sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
 .note { color: var(--muted); font-size: 13.5px; }

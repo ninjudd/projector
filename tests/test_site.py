@@ -384,6 +384,42 @@ class ProjectsViewTests(unittest.TestCase):
         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
 
 
+@unittest.skipUnless(shutil.which("node"), "the header test needs node")
+class HeaderTests(unittest.TestCase):
+    def header_html(self, args: str) -> str:
+        """The site header's markup for `header(args)`, drawn by the compiled script."""
+        stub = (
+            "const base = '/', site = {repo: 'owner/example'};\n"
+            "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>',"
+            " FULL_ICON = '<svg full></svg>';\n"
+            "function nav() { return ''; }\n"
+        )
+        program = stub + js_function("esc") + "\n" + js_function("header") + \
+            f"\nprocess.stdout.write(header({args}));"
+        return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+    def test_a_page_without_a_sidebar_keeps_the_menu_buttons_place_empty(self) -> None:
+        html = self.header_html("'docs'")
+
+        self.assertTrue(html.startswith('<header class="sitebar"><span class="sitebtn menuspace" aria-hidden="true"></span>'
+                                        '<a class="sitename"'), html)
+        self.assertNotIn("sidetoggle", html)
+        self.assertNotIn("barhide", html)
+
+    def test_the_section_menu_button_leads_the_header_and_reports_its_state(self) -> None:
+        html = self.header_html("'docs', undefined, 'open'")
+
+        self.assertTrue(html.startswith('<header class="sitebar"><button type="button" class="sitebtn sidetoggle"'), html)
+        self.assertIn('aria-controls="siteside" aria-expanded="true"', html)
+        self.assertNotIn("barhide", html)
+
+    def test_an_html_page_can_go_full_screen_and_starts_with_its_sidebar_closed(self) -> None:
+        html = self.header_html("'docs', undefined, 'closed', true")
+
+        self.assertIn('aria-expanded="false"', html)
+        self.assertTrue(html.endswith('aria-label="Full screen"><svg full></svg></button></header>'), html)
+
+
 @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
 class HighlightTests(unittest.TestCase):
     def highlight(self, text: str, words: list[str]) -> str:
