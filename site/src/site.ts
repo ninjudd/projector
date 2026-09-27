@@ -154,14 +154,15 @@
   }
 
   // The site's header. A page with a section sidebar gets the button that shows
-  // and hides it at the header's start; a wide page, an HTML page's frame, gets a
-  // full-screen button at its end, which hides the header so the page has the
-  // whole window.
+  // and hides it at the header's start, and any other page an empty slot in its
+  // place, so the site name sits in the same spot on every page. A wide page, an
+  // HTML page's frame, gets a full-screen button at its end, which hides the
+  // header so the page has the whole window.
   function header(active: Section, extra?: string, side?: 'open' | 'closed', wide?: boolean): string {
     const menu = side !== undefined
       ? `<button type="button" class="sitebtn sidetoggle" aria-controls="siteside" aria-expanded="${String(side === 'open')}" ` +
         `title="Show or hide this section's pages" aria-label="Show or hide this section's pages">${MENU_ICON}</button>`
-      : '';
+      : '<span class="sitebtn menuspace" aria-hidden="true"></span>';
     const hide = wide === true
       ? `<button type="button" class="sitebtn barhide" title="Full screen" aria-label="Full screen">${FULL_ICON}</button>`
       : '';

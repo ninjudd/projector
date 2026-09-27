@@ -398,9 +398,11 @@ class HeaderTests(unittest.TestCase):
             f"\nprocess.stdout.write(header({args}));"
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
-    def test_a_page_without_a_sidebar_has_no_header_buttons(self) -> None:
+    def test_a_page_without_a_sidebar_keeps_the_menu_buttons_place_empty(self) -> None:
         html = self.header_html("'docs'")
 
+        self.assertTrue(html.startswith('<header class="sitebar"><span class="sitebtn menuspace" aria-hidden="true"></span>'
+                                        '<a class="sitename"'), html)
         self.assertNotIn("sidetoggle", html)
         self.assertNotIn("barhide", html)
 
