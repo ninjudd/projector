@@ -128,7 +128,9 @@ private and its site is public, it makes the site private and prints
 website link at the site when that link is empty, and keeps a link to
 anywhere else, saying so on stderr. Last, it writes the same workflow file
 as `site workflow --write` and reports it like any other file, reminding you
-on stderr to merge it to the default branch through a pull request.
+on stderr to merge it to the default branch through a pull request. It
+updates a workflow Projector wrote, in any earlier shape, and keeps one edited
+by hand, reported as `kept` with a note saying how to replace it.
 `--action-ref` pins the Projector tag or commit the workflow runs, `v0` by
 default.
 
@@ -588,10 +590,12 @@ request's review URL, when the repository has the site workflow on its
 default branch and a GitHub Pages site. It exits 3 and says why when either is
 missing, or when a private repository's site is public. `site workflow`
 prints the workflow file a repository adds to its default branch once, or
-writes it with `--write`. The workflow runs when a summary is published,
-when a push to the default branch changes `README.md`, `docs/`, or a
-configured `projects.dir` outside `docs/`, and on demand; `--branch` names
-the default branch when `origin` does not record it.
+writes it with `--write`. `--write` refuses, exiting 1, to overwrite a
+workflow edited by hand, and `--force` replaces it anyway. The workflow runs
+when a summary is published, when a push to the default branch changes
+`README.md`, `docs/`, a configured `projects.dir` outside `docs/`,
+`.projector.toml`, or the workflow itself, and on demand; `--branch` names the
+default branch when `origin` does not record it.
 
 ## Consume JSON
 
