@@ -90,8 +90,10 @@ project site page --spec WORKDIR/summary.json --out WORKDIR/site
 longer the spec's `pr.head`, so the page never describes a diff it does not
 show. The compare API is not the pull request diff endpoint and does not
 share its 300-file limit, so a pull request that `gh pr diff` refuses still
-builds without help. Pass `--diff` with the diff from step 3 only when
-`page` itself reports that GitHub could not serve the diff. The head check
+builds without help. Pass `--diff` only when `page` itself reports that
+GitHub could not serve the diff. Step 3's compare call reads the same
+endpoint and has failed too then, so pass the local `git diff` from step 3,
+taken in a checkout of the repository. The head check
 still runs; only when `gh` cannot reach GitHub does an offline `--diff` build
 go ahead with a warning, because it cannot tell whether the pull request
 moved.
@@ -170,8 +172,9 @@ that does not build. It then commits the spec and that diff to
 without touching the checkout, and sends a `repository_dispatch` event that
 starts the workflow. It fetches from the compare API, which serves pull
 requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
-`publish` reports that GitHub could not serve the diff. The file must be the
-diff from the spec's `pr.base` to its `pr.head`, as step 3 produces it,
+`publish` reports that GitHub could not serve the diff. The file is then the
+local `git diff` from step 3, since the compare call there fails with
+`publish`'s. It must be the diff from the spec's `pr.base` to its `pr.head`,
 because every later deploy serves the stored diff as it is. Because the diff is
 stored, the site deploy asks GitHub for nothing: it checks each spec against
 its stored diff and writes each page's data beside it, and the page loads
