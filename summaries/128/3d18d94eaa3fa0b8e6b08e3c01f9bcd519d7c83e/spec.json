@@ -1,0 +1,131 @@
+{
+ "version": 1,
+ "name": "Review setup, move, and census",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 128,
+  "title": "Add project review setup, move, and census",
+  "head": "3d18d94eaa3fa0b8e6b08e3c01f9bcd519d7c83e",
+  "base": "1d8e4cefa83288c8f9406ba30143412cfb52de66",
+  "baseRef": "review-scripts-plan"
+ },
+ "overview": {
+  "summary": [
+   "Adds the first <code>project review</code> commands from the <code>review-scripts</code> plan, so the mechanical steps of <code>review-changes</code> are tested code instead of <code>gh</code> snippets each loop session rebuilds. <code>setup</code> fetches the exact head, including a fork's from <code>pull/&lt;n&gt;/head</code>, into a scratch worktree, records whether the head is trusted, and posts the start comment. <code>move</code> follows a head that moved mid-review by editing that comment in place. <code>census</code> counts the Projector finding threads across every page. <code>release</code> clears a review lock left behind.",
+   "<code>review-changes/SKILL.md</code> now runs these commands in place of its snippets, <code>docs/cli.md</code> documents them, and the plan moves to <code>in-progress</code>. <code>publish</code>, which releases the lock in the normal flow, and <code>review.gate</code> are later delivery steps."
+  ],
+  "cards": [
+   {
+    "id": "rules",
+    "title": "Shared rules the commands enforce",
+    "html": "<ul class=\"tight\"><li>No command takes a SHA; each comes from GitHub or the state file.</li><li><code>setup</code> works from a source checkout; <code>--repo</code> must match its configured <code>origin</code>. Later commands find the review by <code>--repo</code> or the pull request number.</li><li>Posts use <code>GH_TOKEN</code> from <code>gh auth token --user &lt;reviewer&gt;</code> for that call alone.</li><li>The lock is held per pull request and head from <code>setup</code>. It records host, loop, and time, goes stale after a day, and <code>release</code> clears it.</li><li><code>--loop</code> keys a per-loop record under <code>loops/&lt;id&gt;/</code>; <code>--rereview</code> marks a re-review.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><code>2705222</code>: changes requested, 3 threads (trailing blank line, a lock that was never released, forks refused).</li><li><code>3d18d94</code>: all three fixed and resolved; approved. Suggestions left: <code>census</code> reads at most 50 comments per thread, and nothing releases the lock at publish until <code>publish</code> ships.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "The review module",
+   "kicker": "<code>src/projector/review.py</code>: identity, state, lock, setup, move, census",
+   "intro": [
+    "One new module holds the commands and their helpers. <code>setup</code> resolves the checkout and its <code>origin</code>, takes the per-head lock, fetches the head (branch or <code>pull/&lt;n&gt;/head</code>) and base, verifies <code>FETCH_HEAD</code> and the worktree's <code>HEAD</code> against GitHub's SHA, runs <code>trusted_head</code>, posts the start comment with a reviewer token, and writes the state file.",
+    "<code>move</code> reads the state, refuses an unmoved head, locks the new head, rechecks trust, edits and re-reads the start comment, and hands the lock over. <code>census</code> pages the review-thread query and keeps threads whose first comment carries <code>projector-finding</code>. <code>release</code> deletes every lock for the pull request."
+   ],
+   "concepts": [
+    "The lock lasts from <code>setup</code> until <code>publish</code>, a later step; until then only staleness or <code>release</code> clears it.",
+    "Trust follows <code>review-changes</code>: base-repository branch, trusted author, no untrusted commit author."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every SHA the commands act on comes from <code>pull_request()</code> or the state file."
+    },
+    {
+     "kind": "verify",
+     "text": "The reviewer token goes only to the posting calls."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>trusted_head</code> treats bots and failed permission lookups as untrusted."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Read <code>take_lock</code>, <code>setup</code>, and <code>move</code> together for the lock lifecycle, and <code>trusted_head</code> against the skill's trust rule."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "CLI wiring",
+   "kicker": "The <code>project review</code> subcommands",
+   "intro": [
+    "Adds the <code>review</code> parser with <code>setup</code>, <code>move</code>, <code>census</code>, and <code>release</code>. All four share <code>--repo</code>, <code>--state-dir</code>, <code>--loop</code>, and <code>--json</code>; <code>setup</code> alone takes <code>--checkout</code>, <code>--reviewer</code>, and <code>--rereview</code>. Commands after <code>setup</code> resolve the repository through <code>find_repo</code>."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "An empty <code>review.username</code> falls through to the authenticated user."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Real Git against a bare origin, fake <code>gh</code>",
+   "intro": [
+    "The tests run <code>git</code> for real against a bare origin and replace <code>run_gh</code> with a recording fake. They cover setup, fork heads and trust, token scoping, lock staleness and <code>release</code>, <code>--repo</code> matching, <code>move</code> from any directory, census paging, and that no command takes a SHA."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>test_release_clears_the_lock_so_a_rereview_can_set_up</code> shows the re-review path."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill, docs, and plan",
+   "kicker": "Where the commands replace prose",
+   "intro": [
+    "<code>review-changes/SKILL.md</code> replaces its start-comment, moved-head, and thread-query snippets with the commands and keeps their rules as what the commands guarantee. <code>docs/cli.md</code> gains a section on <code>project review</code>, and the plan's status becomes <code>in-progress</code>."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every rule the removed snippets carried survives either in the command or in the prose."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-changes/SKILL.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/review-scripts/readme.md"
+    }
+   ]
+  }
+ ]
+}
