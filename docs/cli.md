@@ -504,8 +504,12 @@ project page lists its reviews. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.
-A project that does not parse drops the Projects section with a warning
-rather than failing the build. The site workflow runs `site build` through Projector's
+A broken plan costs only its own place in the Projects section, never the
+build: the site lists every project that loads and prints a
+`::warning title=Project skipped::` line for each plan it leaves out, naming
+the path and the problem `project check` reports for it. That covers a plan
+that does not parse, a top-level folder with no lowercase `readme.md`, and an
+entry point spelled `README.md`. The site workflow runs `site build` through Projector's
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every

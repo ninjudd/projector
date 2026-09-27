@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 from urllib.parse import unquote, urlsplit
 
 from . import instructions
@@ -227,26 +227,55 @@ class ProjectStore:
                 paths.append(Path(directory) / "readme.md")
         return sorted(paths)
 
-    def projects(self) -> list[Project]:
-        found: dict[str, Project] = {}
+    def _load_projects(self) -> Iterator[tuple[Path, Project | None, ProjectorError | None]]:
+        """Each entry point with its project, or with the error that kept it
+        from loading: an unreadable plan, bad frontmatter, or a name that
+        differs only in case from one already loaded."""
+        names: dict[str, str] = {}
         for path in self._entry_points():
             try:
                 project = self._project_from_path(path)
             except (ProjectorError, OSError, UnicodeDecodeError) as error:
                 message = str(error)
                 prefix = f"{self._relative(path)}:"
-                if not message.startswith(prefix):
-                    message = f"{prefix} {message}"
-                raise ProjectorError(
-                    f"{message} (run 'project check' for the full report)"
-                ) from error
+                if message.startswith(prefix):
+                    message = message[len(prefix) :].lstrip()
+                failure = ProjectorError(message)
+                failure.__cause__ = error
+                yield path, None, failure
+                continue
             folded = project.name.casefold()
-            if folded in found:
-                raise AmbiguousProject(
-                    f"ambiguous project names: {found[folded].name}, {project.name}"
+            if folded in names:
+                yield path, None, AmbiguousProject(
+                    f"ambiguous project names: {names[folded]}, {project.name}"
                 )
-            found[folded] = project
-        return sorted(found.values(), key=lambda project: project.name)
+                continue
+            names[folded] = project.name
+            yield path, project, None
+
+    def projects(self) -> list[Project]:
+        found: list[Project] = []
+        for path, project, error in self._load_projects():
+            if isinstance(error, AmbiguousProject):
+                raise error
+            if error is not None:
+                raise ProjectorError(
+                    f"{self._relative(path)}: {error} (run 'project check' for the full report)"
+                ) from error.__cause__
+            found.append(project)
+        return sorted(found, key=lambda project: project.name)
+
+    def readable_projects(self) -> tuple[list[Project], list[Issue]]:
+        """Every project whose plan loads, and an issue for each one that does
+        not, so one broken plan does not hide the rest."""
+        found: list[Project] = []
+        issues: list[Issue] = []
+        for path, project, error in self._load_projects():
+            if error is not None:
+                issues.append(Issue("invalid-project", self._relative(path), str(error)))
+            else:
+                found.append(project)
+        return sorted(found, key=lambda project: project.name), issues
 
     def resolve(self, name: str) -> Project:
         candidates = []
@@ -847,24 +876,8 @@ class ProjectStore:
                     )
                 )
 
-        projects: list[Project] = []
-        names: dict[str, str] = {}
-        for path in self._entry_points():
-            try:
-                project = self._project_from_path(path)
-                folded = project.name.casefold()
-                if folded in names:
-                    raise AmbiguousProject(
-                        f"ambiguous project names: {names[folded]}, {project.name}"
-                    )
-                names[folded] = project.name
-                projects.append(project)
-            except (ProjectorError, OSError, UnicodeDecodeError) as error:
-                message = str(error)
-                prefix = f"{self._relative(path)}:"
-                if message.startswith(prefix):
-                    message = message[len(prefix) :].lstrip()
-                issues.append(Issue("invalid-project", self._relative(path), message))
+        projects, invalid = self.readable_projects()
+        issues.extend(invalid)
 
         for path in sorted(self.projects_dir.rglob("*.md")):
             if any(path == project.path or project.path.parent in path.parents for project in projects):

@@ -606,20 +606,27 @@ def run_summary(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def site_projects(root: Path) -> tuple[list, Optional[Path]]:
-    """The repository's projects for the site, or none when its plans do not parse.
+# The `project check` problems that keep a plan off the site: a plan that does
+# not load, a top-level directory with no lowercase readme.md, and an entry
+# point spelled README.md, which is read as a page rather than a project.
+SKIPPED_PLAN_ISSUES = {"invalid-project", "missing-plan", "wrong-entry-case"}
 
-    A broken plan should cost the projects view, not the deploy that also
-    carries the README, the docs, and the summaries.
+
+def site_projects(root: Path) -> tuple[list, Optional[Path]]:
+    """The repository's projects for the site, without the plans that are broken.
+
+    A broken plan should cost only its own place on the site, not the other
+    projects or the deploy that also carries the README, the docs, and the
+    summaries, so each one is skipped with a warning that names it.
     """
     store = ProjectStore(root, root, configured_projects_dir(root))
     if not store.projects_dir.is_dir():
         return [], None
-    try:
-        return store.projects(), store.projects_dir
-    except ProjectorError as error:
-        print(f"::warning title=Projects skipped::{error}", file=sys.stderr)
-        return [], store.projects_dir
+    projects, _ = store.readable_projects()
+    for issue in store.check(instructions_enabled=False):
+        if issue.code in SKIPPED_PLAN_ISSUES:
+            print(f"::warning title=Project skipped::{issue.path}: {issue.message}", file=sys.stderr)
+    return projects, store.projects_dir
 
 
 def site_repo(root: Path) -> str:

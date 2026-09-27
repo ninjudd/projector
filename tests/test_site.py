@@ -113,15 +113,42 @@ class SiteBuildTests(SiteRepoCase):
         self.assertIn('src="/projector/assets/site.js"', home)
         self.assertEqual("/projector/", json.loads((self.out / "site.json").read_text())["base"])
 
-    def test_a_plan_that_does_not_parse_costs_the_projects_view_not_the_deploy(self) -> None:
+    def test_a_plan_that_does_not_parse_costs_only_its_own_place(self) -> None:
+        # The nested project under the broken one loads on its own, so it stays.
         (self.repo / "docs/projects/alpha/readme.md").write_text("---\nstatus: shipped\n---\n\n# Bad\n")
 
         code, manifest, err = self.build()
 
         self.assertEqual(0, code)
-        self.assertEqual([], manifest["projects"])
+        self.assertEqual(["alpha/beta"], [p["name"] for p in manifest["projects"]])
         self.assertEqual("README.md", manifest["readme"])
-        self.assertIn("Projects skipped", err)
+        self.assertIn("::warning title=Project skipped::docs/projects/alpha/readme.md: status must be one of", err)
+
+    def test_each_broken_plan_is_skipped_by_name_and_the_rest_are_listed(self) -> None:
+        # The three ways a real repository's plans broke at once: a top-level
+        # directory holding notes but no readme.md, an entry point spelled
+        # README.md inside a project, and a readme with no frontmatter.
+        broken = {
+            "docs/projects/backlog/tests.md": "# Tests\n",
+            "docs/projects/alpha/evidence/README.md": "# Evidence\n",
+            "docs/projects/charts/readme.md": "# Split the charts\n\n## 1. Goal\n\nText.\n",
+        }
+        (self.repo / "docs/projects/gamma").mkdir(parents=True)
+        (self.repo / "docs/projects/gamma/readme.md").write_text(plan("Ship gamma", "ready", "next"))
+        for path, text in broken.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+
+        code, manifest, err = self.build()
+
+        self.assertEqual(0, code)
+        self.assertEqual(["alpha", "alpha/beta", "gamma"], [p["name"] for p in manifest["projects"]])
+        warnings = [line for line in err.splitlines() if line.startswith("::warning title=Project skipped::")]
+        self.assertEqual(
+            ["docs/projects/alpha/evidence/README.md", "docs/projects/backlog", "docs/projects/charts/readme.md"],
+            sorted(line.split("::")[2].split(":")[0] for line in warnings),
+        )
+        self.assertIn("docs/projects/charts/readme.md: missing YAML frontmatter", err)
 
     def test_a_repository_without_docs_still_gets_a_home_page(self) -> None:
         for path in sorted(self.repo.rglob("*"), reverse=True):
