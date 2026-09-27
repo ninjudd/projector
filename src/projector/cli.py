@@ -800,13 +800,14 @@ def run_site(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+def site_projects_dir(root: Path) -> Optional[str]:
+    """The configured projects directory as the site workflow names it, if it is inside the checkout."""
     projects_dir = configured_projects_dir(root)
-    return summary.workflow_text(
-        action_ref,
-        branch or summary.default_branch(root=root),
-        projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None,
-    )
+    return projects_dir.as_posix() if projects_dir is not None and not projects_dir.is_absolute() else None
+
+
+def site_workflow_text(root: Path, action_ref: str, branch: Optional[str] = None) -> str:
+    return summary.workflow_text(action_ref, branch or summary.default_branch(root=root), site_projects_dir(root))
 
 
 def write_site_workflow(root: Path, text: str, force: bool = False) -> FileAction:
@@ -817,7 +818,7 @@ def write_site_workflow(root: Path, text: str, force: bool = False) -> FileActio
         current = path.read_text(encoding="utf-8")
         if current == text:
             return FileAction(WORKFLOW_PATH, "unchanged")
-        if not force and not summary.generated_workflow(current):
+        if not force and not summary.generated_workflow(current, site_projects_dir(root)):
             return FileAction(
                 WORKFLOW_PATH,
                 "kept",

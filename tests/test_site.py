@@ -1209,12 +1209,20 @@ class WorkflowTests(unittest.TestCase):
         }
         for name, text in shapes.items():
             with self.subTest(name):
-                self.assertTrue(summary.generated_workflow(text))
+                self.assertTrue(summary.generated_workflow(text, "plans" if "plans" in text else None))
 
         setup = current.replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
         self.assertFalse(summary.generated_workflow(setup), "a toolchain step for site.prepare")
         self.assertFalse(summary.generated_workflow("# Deploys the docs.\n" + current), "a comment")
         self.assertFalse(summary.generated_workflow(current.replace("paths: [README.md", "paths:\n      - README.md")))
+        # A path or branch added on the one line Projector writes is still a hand edit.
+        self.assertFalse(summary.generated_workflow(current.replace("'plans/**'", "'plans/**', 'proto/**'"), "plans"),
+                         "an added watched path")
+        self.assertFalse(summary.generated_workflow(current.replace("branches: [trunk]", "branches: [trunk, release]"),
+                                                    "plans"), "an added branch")
+        plain = summary.workflow_text("v0", "main")
+        self.assertFalse(summary.generated_workflow(plain.replace("'docs/**'", "'docs/**', 'proto/**'")),
+                         "an added glob where a projects directory would go")
 
 
 if __name__ == "__main__":

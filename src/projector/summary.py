@@ -757,26 +757,44 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     return commit
 
 
-def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
-    """The site workflow. It rebuilds when the README or docs/ change, and a
-    projects directory outside docs/ is watched as well. It also rebuilds when
-    .projector.toml or the workflow itself changes, so merging the workflow
-    deploys the site the first time and a new site.prepare takes effect."""
+def watched_paths(projects_dir: str | None = None) -> list[str]:
+    """The paths a push to the default branch rebuilds the site for: the README
+    and docs/, a projects directory outside docs/, and .projector.toml and the
+    workflow itself, so merging the workflow deploys the site the first time and
+    a new site.prepare takes effect."""
     paths = ["README.md", "'docs/**'"]
     if projects_dir and projects_dir.strip("/") != "docs" and not projects_dir.strip("/").startswith("docs/"):
         paths.append(f"'{projects_dir.strip('/')}/**'")
-    paths += [".projector.toml", WORKFLOW_PATH]
-    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
+    return paths + [".projector.toml", WORKFLOW_PATH]
 
 
-def generated_workflow(text: str) -> bool:
-    """Whether `text` is a workflow Projector wrote, in its current shape or an
-    earlier one, with any action ref, branch, dispatch event and watched paths."""
-    slots = {"event": "@@EVENT@@", "ref": "@@REF@@", "branch": "@@BRANCH@@", "paths": "@@PATHS@@"}
+def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
+    """The site workflow."""
+    return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch,
+                           paths=", ".join(watched_paths(projects_dir)))
+
+
+def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
+    """Whether `text` is a workflow Projector wrote for this repository, in its
+    current shape or an earlier one, with any action ref.
+
+    Only what Projector itself varies is free: the action ref, one branch, its
+    dispatch event, and the watched paths it lists for `projects_dir`, with or
+    without the two it added later. A path or branch added on the same line is
+    a hand edit, and so is any other change.
+    """
+    current = watched_paths(projects_dir)
+    lists = {", ".join(current), ", ".join(current[:-2])}
+    slots = {
+        "event": ("@@EVENT@@", "(?:" + "|".join(map(re.escape, (DISPATCH_EVENT, LEGACY_DISPATCH_EVENT))) + ")"),
+        "ref": ("@@REF@@", r"[^\s]+"),
+        "branch": ("@@BRANCH@@", r"[^\s,\]]+"),
+        "paths": ("@@PATHS@@", "(?:" + "|".join(map(re.escape, sorted(lists))) + ")"),
+    }
     for template in (WORKFLOW, *PREVIOUS_WORKFLOWS):
-        pattern = re.escape(template.format(**slots))
-        for slot in slots.values():
-            pattern = pattern.replace(re.escape(slot), r"[^\n]+")
+        pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
+        for mark, allowed in slots.values():
+            pattern = pattern.replace(re.escape(mark), allowed)
         if re.fullmatch(pattern, text):
             return True
     return False
