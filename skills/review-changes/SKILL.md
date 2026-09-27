@@ -293,7 +293,7 @@ this skill — nothing in GitHub enforces them.
 ```
 📽️ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
+<!-- projector-review v=1 verdict=<clean|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
 
 State the model **actually running this review** — the model identifier the
@@ -317,14 +317,14 @@ whole number. `project review publish` writes the signature line and marker
 itself, from the review's state and one reading of the clock, so the duration,
 `seconds=`, and `sha=` are never typed and never disagree.
 
-The visible verdict word is `APPROVED` or `CHANGES REQUESTED`, matching the
-marker's `verdict=`. `approved` means no finding thread on the pull request is
+The visible verdict word is `CLEAN` or `CHANGES REQUESTED`, matching the
+marker's `verdict=`. `clean` means no finding thread on the pull request is
 open — a thread outlives the head it was filed on, so findings from earlier
 heads count until resolved; `changes-requested` means at least one is open.
 Print the census the verdict rests on — `6 finding threads: 4 resolved, 2
 open` — counting the threads this review opens among the open, so a
 changes-requested review on a fresh head never prints `0 open` above its own
-findings. `approved` requires that last number to be zero, and printing it
+findings. `clean` requires that last number to be zero, and printing it
 lets a reader see the verdict was earned.
 
 `findings=` is the number of P1 and P2 threads this review opens. P3 items
@@ -440,7 +440,7 @@ the anchor.
 Publish with `project review publish`, from any directory:
 
 ```sh
-project review publish <number> --verdict <approved|changes-requested> \
+project review publish <number> --verdict <clean|changes-requested> \
   --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>]
 ```
 
@@ -462,7 +462,7 @@ and run it again, when:
   or it opens a `<!-- projector-… -->` marker comment of its own;
 - the body is missing or empty, opens with its own signature line or carries
   a marker comment, or has no `{census}` outside code;
-- the verdict disagrees with the census: `approved` with a finding open or
+- the verdict disagrees with the census: `clean` with a finding open or
   being posted, or `changes-requested` with none;
 - the collision check below trips.
 
@@ -508,11 +508,11 @@ the newest comment on an open finding thread is the author's.
 **Threads open, cross-author:** a `REQUEST_CHANGES` review, verdict
 `changes-requested`. Draft state is left alone.
 
-**Clean head, self-review:** a `COMMENT` review, verdict `approved`, then the
+**Clean head, self-review:** a `COMMENT` review, verdict `clean`, then the
 pull request is marked ready with `gh pr ready <number>`. That transition is
 the sign-off a reader sees in the pull-request list.
 
-**Clean head, cross-author:** a `COMMENT` review, verdict `approved`; say
+**Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
 plainly in the body that the head looks clean and that a human approval is
 what remains. It posts a real `APPROVE` only where `review.allow_approve` is
 `true`.
@@ -531,7 +531,7 @@ finishes that review instead of posting a second one.
 
 Report the review as done only after `publish` exits 0. Report the SHA, the
 verdict, the review id, how many threads it opened, and the summary's URL when
-the next section publishes one. Before an `approved` verdict, settle every
+the next section publishes one. Before a `clean` verdict, settle every
 earlier finding first; `publish` refuses one while a finding is open. Never
 resolve another reviewer's thread, resolve a finding you have not verified at
 this head, claim a newer SHA was reviewed, or merge.

@@ -331,7 +331,7 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True, help="the model id the start comment names")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
-    review_publish.add_argument("--verdict", required=True, choices=("approved", "changes-requested"),
+    review_publish.add_argument("--verdict", required=True, choices=("clean", "changes-requested"),
                                 help="the verdict the signature line and marker carry")
     review_publish.add_argument("--body", type=Path, required=True,
                                 help="the review below its signature line, with {census} and optionally "
@@ -341,7 +341,7 @@ def parser() -> argparse.ArgumentParser:
     review_publish.add_argument("--covered", required=True,
                                 help="files read over files changed, such as 12/12")
     review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
-                                help="outside a loop, the earlier verdict a user approved publishing beside")
+                                help="outside a loop, the earlier verdict a user agreed to publish beside")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
