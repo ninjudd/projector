@@ -21,6 +21,22 @@
 .sitenav a:hover { color: var(--text); }
 .sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* The header's icon buttons: the section menu, and hiding and restoring the header. */
+.sitebtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 32px; height: 32px; padding: 0; margin: 0 -8px 0 -6px;
+  color: var(--muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.sitebtn:hover { color: var(--text); background: var(--surface-2); }
+.sitebtn svg { width: 18px; height: 18px; }
+.barhide { margin: 0 -6px 0 -12px; }
+.barshow {
+  display: none; position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); right: 8px; z-index: 20; margin: 0;
+  background: var(--surface); border-color: var(--border); box-shadow: var(--shadow);
+}
+body.barhidden .sitebar { display: none; }
+body.barhidden .barshow { display: inline-flex; }
+
 .sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
 .sidebody { min-width: 0; }
 
@@ -40,21 +56,24 @@
 .sidetop { font-weight: 600; margin-bottom: 10px; }
 .sidetop a { color: var(--text); }
 .sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-.sidetoggle {
-  font: inherit; font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; margin-bottom: 12px;
-}
-.sidetoggle:hover { color: var(--text); }
-.sitemain.withside.collapsed { grid-template-columns: auto minmax(0, 1fr); gap: 16px; }
-.sitemain.collapsed .sidetree { display: none; }
+.sitemain.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.collapsed .side { display: none; }
 
-/* An HTML page takes the whole width, in a frame sized to the window. */
-.sitemain.wide, .sitemain.wide + .sitefoot { max-width: none; }
-.htmlbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-iframe.htmlpage { display: block; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+/* An HTML page fills the window below the header, edge to edge, with its section
+   sidebar, when shown, as a column beside it. */
+.sitemain.wide { max-width: none; padding: 0; }
+.sitemain.wide.withside { grid-template-columns: 240px minmax(0, 1fr); gap: 0; }
+.sitemain.wide.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.wide .side {
+  position: static; align-self: stretch; max-height: none; padding: 20px 16px;
+  border-right: 1px solid var(--border);
+}
+.sitemain.wide .sidebody > :not(iframe) { margin: 16px; }
+iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 @media (max-width: 760px) {
   .sitemain.withside { display: block; }
   .side { position: static; max-height: none; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .sitemain.wide .side { margin: 0; border-right: 0; }
 }
 .sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
 .note { color: var(--muted); font-size: 13.5px; }
