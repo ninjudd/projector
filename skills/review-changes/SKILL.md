@@ -142,11 +142,11 @@ For the head under review:
    preparing or cleaning up a review.
 3. Confirm the scratch worktree's `HEAD` equals GitHub's recorded SHA.
 4. Only then post a concise start comment naming the short SHA, carrying the
-   review signature line's `⚬◀` mark and its model and effort segments and a
+   review signature line's `📽️` mark and its model and effort segments and a
    start marker, and keep the comment id and `created_at` the call returns:
 
    ```
-   ⚬◀ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
+   📽️ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
 
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
@@ -227,7 +227,7 @@ publication — step 7 catches it, or `start-review-loop` reports `NEW HEAD`
 while inspection is still running — do not post a second start comment. Edit the
 existing one so it names the new short SHA, says the head moved from the old
 one, and says the review is being updated for the new changes, keeping its
-`⚬◀` signature line, and set its marker's `sha=` to the new full SHA:
+`📽️` signature line, and set its marker's `sha=` to the new full SHA:
 
 ```sh
 gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
@@ -268,7 +268,7 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-⚬◀ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
+📽️ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
 <!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
