@@ -377,7 +377,7 @@ These are the keys Projector reads today:
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
-| `review.allow_approve` | boolean | `false` | `review-changes`, to permit a real `APPROVE` on a clean cross-author review |
+| `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
 | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
 | `fix.resolve_human_threads` | boolean | `true` | `start-fix-loop`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
@@ -609,6 +609,7 @@ a review loop does not rebuild them as helpers of its own:
 project review setup 66 --model claude-opus-5-5 --effort low --loop main-loop
 project review move 66
 project review census 66 --json
+project review publish 66 --verdict approved --body body.md --covered 12/12 --loop main-loop
 project review release 66
 ```
 
@@ -631,6 +632,29 @@ thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. `release`
 clears the pull request's review lock.
+
+`publish` submits the review. `--body` names a file holding the review below
+its signature line, with `{census}` where the census goes and, wherever used,
+`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills only outside
+quoted code; `--threads` names a JSON list
+of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
+files read over the files changed. `publish` writes the signature line and
+marker itself from the review's state and one reading of the clock, and adds
+the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
+when the pull request closed or its head moved, when a finding's line is
+outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
+line, when the body is empty, carries its own signature or marker comment, or
+has no `{census}` outside code, when the verdict disagrees with the finding
+count, or when the reviewer already has a verdict on the head that this loop's
+record does not account for; outside a loop, `--second-verdict <review-id>`
+publishes beside an earlier verdict the body names. On a self-review it
+submits a `COMMENT` and then marks the pull request ready or returns it to
+draft; on another author's pull request it posts `REQUEST_CHANGES` or a
+`COMMENT`, or an `APPROVE` where `review.allow_approve` is `true`, and leaves
+draft state alone. It then re-reads the review and the draft state, adds the
+review id to the loop's record, deletes the start comment, and releases the
+lock. A run that fails after submitting exits non-zero, and running it again
+finishes that review rather than posting another.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

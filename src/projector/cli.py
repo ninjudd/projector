@@ -310,7 +310,10 @@ def parser() -> argparse.ArgumentParser:
     review_release = review_commands.add_parser(
         "release", help="clear a pull request's review lock when no review is running"
     )
-    for command in (review_setup, review_move, review_census, review_release):
+    review_publish = review_commands.add_parser(
+        "publish", help="check and submit the review, set draft state, and delete the start comment"
+    )
+    for command in (review_setup, review_move, review_census, review_release, review_publish):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -326,6 +329,17 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
+    review_publish.add_argument("--verdict", required=True, choices=("approved", "changes-requested"),
+                                help="the verdict the signature line and marker carry")
+    review_publish.add_argument("--body", type=Path, required=True,
+                                help="the review below its signature line, with {census} and optionally "
+                                     "{took}, {seconds}, {sha}, {short_sha}")
+    review_publish.add_argument("--threads", type=Path,
+                                help="a JSON list of findings, each {path, line, priority, body}")
+    review_publish.add_argument("--covered", required=True,
+                                help="files read over files changed, such as 12/12")
+    review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
+                                help="outside a loop, the earlier verdict a user approved publishing beside")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -653,6 +667,22 @@ def run_review(arguments: argparse.Namespace) -> int:
                 print(json.dumps(result, indent=2))
             else:
                 print("\n".join(review.census_lines(result)))
+            return 0
+        if command == "publish":
+            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            try:
+                allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
+            except ProjectorError:
+                allow = False
+            result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
+                                    arguments.threads, arguments.covered, arguments.second_verdict, allow)
+            if arguments.json_output:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
+                      f"{result['repo']}#{result['number']} at {result['sha']}")
+                if result["draft"] is not None:
+                    print("marked draft" if result["draft"] else "marked ready")
             return 0
         if command == "release":
             released = review.release(review.Paths(root, repo, arguments.pr))
