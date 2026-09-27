@@ -15,6 +15,7 @@ import html
 from html.parser import HTMLParser
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,62 @@ jobs:
       - id: site
         uses: ninjudd/projector/actions/site@{ref}
 """
+# Earlier shapes of the workflow Projector wrote. A file matching one of them, or
+# the current one, is Projector's own and safe to rewrite; anything else has been
+# edited by hand and is left for its owner.
+PREVIOUS_WORKFLOWS = (
+    # Before the site rebuilt on docs changes, when its step was named walkthroughs.
+    """name: Projector site
+on:
+  repository_dispatch:
+    types: [{event}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@{ref}
+""",
+    # Rebuilding on docs changes, before the step was renamed site.
+    """name: Projector site
+on:
+  repository_dispatch:
+    types: [{event}]
+  push:
+    branches: [{branch}]
+    paths: [{paths}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.walkthroughs.outputs.page_url }}}}
+    steps:
+      - id: walkthroughs
+        uses: ninjudd/projector/actions/walkthroughs@{ref}
+""",
+)
 
 
 class SpecError(ProjectorError):
@@ -701,11 +758,28 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
 
 
 def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | None = None) -> str:
-    """The site workflow; a projects directory outside docs/ is watched as well."""
+    """The site workflow. It rebuilds when the README or docs/ change, and a
+    projects directory outside docs/ is watched as well. It also rebuilds when
+    .projector.toml or the workflow itself changes, so merging the workflow
+    deploys the site the first time and a new site.prepare takes effect."""
     paths = ["README.md", "'docs/**'"]
     if projects_dir and projects_dir.strip("/") != "docs" and not projects_dir.strip("/").startswith("docs/"):
         paths.append(f"'{projects_dir.strip('/')}/**'")
+    paths += [".projector.toml", WORKFLOW_PATH]
     return WORKFLOW.format(event=DISPATCH_EVENT, ref=action_ref, branch=branch, paths=", ".join(paths))
+
+
+def generated_workflow(text: str) -> bool:
+    """Whether `text` is a workflow Projector wrote, in its current shape or an
+    earlier one, with any action ref, branch, dispatch event and watched paths."""
+    slots = {"event": "@@EVENT@@", "ref": "@@REF@@", "branch": "@@BRANCH@@", "paths": "@@PATHS@@"}
+    for template in (WORKFLOW, *PREVIOUS_WORKFLOWS):
+        pattern = re.escape(template.format(**slots))
+        for slot in slots.values():
+            pattern = pattern.replace(re.escape(slot), r"[^\n]+")
+        if re.fullmatch(pattern, text):
+            return True
+    return False
 
 
 def default_branch(remote: str = "origin", root: Path | None = None) -> str:

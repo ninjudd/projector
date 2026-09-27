@@ -47,7 +47,7 @@ is the GitHub repository:
        types: [projector-summaries]
      push:
        branches: [main]
-       paths: [README.md, 'docs/**']
+       paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]
      workflow_dispatch:
    permissions:
      contents: read
@@ -67,6 +67,10 @@ is the GitHub repository:
          - id: site
            uses: ninjudd/projector/actions/site@v0
    ```
+
+   The push paths include the workflow itself, so the merge that adds it
+   deploys the site right away, and `.projector.toml`, so a new
+   `site.prepare` takes effect.
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
    `@v0.5.0`, or a full commit SHA, to change only when you choose, with
@@ -95,6 +99,11 @@ is the GitHub repository:
          - id: site
            uses: ninjudd/projector/actions/site@v0
    ```
+
+   Running `init` again keeps a workflow you edited this way, and says so,
+   rather than overwriting your steps; it updates only a workflow Projector
+   wrote. `project site workflow` prints the current one to compare, and
+   `project site workflow --write --force` replaces yours.
 
    The action's `prepare` input runs a different command in its place. On
    your own machine, `project site serve` runs the command only after you

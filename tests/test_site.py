@@ -940,6 +940,53 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual({"pages": "unchanged", "visibility": "unchanged", "url": "https://owner.github.io/example/",
                           "public": True, "website": "unchanged"}, report["site"])
 
+    def test_init_updates_a_workflow_projector_wrote_in_an_earlier_shape(self) -> None:
+        self.workflow().parent.mkdir(parents=True)
+        self.workflow().write_text(summary.workflow_text("v0", "main").replace(
+            ", .projector.toml, .github/workflows/projector-site.yml", ""))
+
+        code, out, err = self.init(FakeGitHub(pages=SITE_READY))
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"updated {summary.WORKFLOW_PATH}\n", out)
+        self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
+
+    def test_init_keeps_a_workflow_edited_by_hand(self) -> None:
+        # A workflow that sets up a toolchain for site.prepare, as a repository
+        # with a generated explorer needs, must survive a rerun of init.
+        edited = summary.workflow_text("v0", "main").replace(
+            "    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
+        self.workflow().parent.mkdir(parents=True)
+        self.workflow().write_text(edited)
+
+        code, out, err = self.init(FakeGitHub(pages=SITE_READY))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(edited, self.workflow().read_text())
+        self.assertIn(f"kept {summary.WORKFLOW_PATH}", out)
+        self.assertIn("left alone", out + err)
+
+    def test_writing_the_workflow_refuses_a_hand_edit_until_forced(self) -> None:
+        edited = "# Deploys the docs and the explorer.\n" + summary.workflow_text("v0", "main")
+        self.workflow().parent.mkdir(parents=True)
+        self.workflow().write_text(edited)
+
+        def write(*extra: str) -> tuple[int, str]:
+            err = io.StringIO()
+            with mock.patch.object(cli.Path, "cwd", return_value=self.repo), \
+                 redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = cli.main(["site", "workflow", "--write", *extra])
+            return code, err.getvalue()
+
+        code, err = write()
+        self.assertEqual(1, code)
+        self.assertIn("--write --force", err)
+        self.assertEqual(edited, self.workflow().read_text())
+
+        code, err = write("--force")
+        self.assertEqual(0, code, err)
+        self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
+
     def test_no_site_or_the_config_key_leaves_github_alone_and_site_overrides_the_key(self) -> None:
         github = FakeGitHub()
 
@@ -1136,12 +1183,38 @@ class WorkflowTests(unittest.TestCase):
 
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = summary.workflow_text("v0", "trunk")
-        self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**']\n", text)
+        self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]\n", text)
         self.assertIn("uses: ninjudd/projector/actions/site@v0", text)
 
     def test_a_projects_directory_outside_docs_is_watched_too(self) -> None:
-        self.assertIn("paths: [README.md, 'docs/**', 'plans/**']", summary.workflow_text("v0", "main", "plans"))
-        self.assertIn("paths: [README.md, 'docs/**']\n", summary.workflow_text("v0", "main", "docs/projects"))
+        self.assertIn("paths: [README.md, 'docs/**', 'plans/**', .projector.toml, .github/workflows/projector-site.yml]", summary.workflow_text("v0", "main", "plans"))
+        self.assertIn("paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]\n", summary.workflow_text("v0", "main", "docs/projects"))
+
+    def test_merging_the_workflow_or_changing_projector_toml_rebuilds_the_site(self) -> None:
+        # The first merge adds only the workflow, so without its own path the site
+        # waits for the next docs change before it deploys at all.
+        paths = summary.workflow_text("v0", "main").split("    paths: [", 1)[1].split("]", 1)[0].split(", ")
+
+        self.assertIn(summary.WORKFLOW_PATH, paths)
+        self.assertIn(".projector.toml", paths)
+
+    def test_every_workflow_projector_wrote_is_its_own_and_an_edited_one_is_not(self) -> None:
+        current = summary.workflow_text("v0.5.3", "trunk", "plans")
+        shapes = {
+            "current": current,
+            "before the new paths": current.replace(", .projector.toml, .github/workflows/projector-site.yml", ""),
+            "walkthroughs step": summary.PREVIOUS_WORKFLOWS[1].format(
+                event="projector-walkthroughs", ref="v0", branch="main", paths="README.md, 'docs/**'"),
+            "no push trigger": summary.PREVIOUS_WORKFLOWS[0].format(event="projector-walkthroughs", ref="0123abc"),
+        }
+        for name, text in shapes.items():
+            with self.subTest(name):
+                self.assertTrue(summary.generated_workflow(text))
+
+        setup = current.replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
+        self.assertFalse(summary.generated_workflow(setup), "a toolchain step for site.prepare")
+        self.assertFalse(summary.generated_workflow("# Deploys the docs.\n" + current), "a comment")
+        self.assertFalse(summary.generated_workflow(current.replace("paths: [README.md", "paths:\n      - README.md")))
 
 
 if __name__ == "__main__":
