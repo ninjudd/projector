@@ -428,12 +428,13 @@ def merge_base(repo: str, base_ref: str, head: str) -> str:
 
 
 def pr_metadata(repo: str, number: int) -> dict:
-    raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,baseRefName"))
+    raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
     return {
         "repo": repo,
         "number": number,
         "title": raw["title"],
         "head": raw["headRefOid"],
+        "headRef": raw["headRefName"],
         "base": merge_base(repo, raw["baseRefName"], raw["headRefOid"]),
         "baseRef": raw["baseRefName"],
     }

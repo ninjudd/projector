@@ -153,11 +153,11 @@ takes every SHA from GitHub, never from an argument:
 3. The fetched commit and the scratch worktree's `HEAD` both equal GitHub's
    recorded SHA.
 4. Only then it posts, as the reviewer, a concise start comment naming the
-   short SHA, carrying the review signature line's `⚬◀` mark and its model and
+   short SHA, carrying the review signature line's `📽️` mark and its model and
    effort segments and a start marker:
 
    ```
-   ⚬◀ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
+   📽️ **Projector review started** · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
 
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
@@ -259,7 +259,7 @@ while inspection is still running — do not post a second start comment. Run
 the new head, rechecks whether the head is trusted, moves the lock to it, and
 edits the existing comment in place so it names the new short SHA, says the
 head moved from the old one, and says the review is being updated for the new
-changes, keeping its `⚬◀` signature line and setting its marker's `sha=` to the
+changes, keeping its `📽️` signature line and setting its marker's `sha=` to the
 new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
 edit took; it also refuses when the head has not moved.
 
@@ -291,7 +291,7 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-⚬◀ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
+📽️ **Projector review** · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
 <!-- projector-review v=1 verdict=<approved|changes-requested> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```

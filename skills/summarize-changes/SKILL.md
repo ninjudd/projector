@@ -36,10 +36,29 @@ push to, or approve the pull request unless the user asks.
    the host's scratch directory when you will publish to Claude Artifacts,
    which accepts supporting files only from the working directory or the
    scratch directory. The spec is what you edit when the pull request moves.
-3. Read enough to explain the change: the pull request body, the full diff
-   (`gh pr diff NUMBER --repo OWNER/NAME`), plan or design documents the
-   change touches, and the review threads. For a large diff, delegate the
-   reading to subagents and keep only their conclusions.
+3. Read enough to explain the change: the pull request body, the full diff,
+   plan or design documents the change touches, and the review threads.
+   Take the diff from the spec's `pr.base` to its `pr.head` through the
+   compare API, the one `page` and `publish` read, which works from any
+   directory:
+
+   ```sh
+   gh api -H 'Accept: application/vnd.github.diff' \
+     repos/OWNER/NAME/compare/PR_BASE...PR_HEAD > WORKDIR/pr.diff
+   ```
+
+   In a checkout whose `origin` is the repository, a local diff holds the
+   same changes:
+
+   ```sh
+   git fetch origin PR_BASE PR_HEAD
+   git diff PR_BASE PR_HEAD > WORKDIR/pr.diff
+   ```
+
+   Do not read it with `gh pr diff`. GitHub's pull request diff endpoint
+   refuses a pull request that changes more than 300 files with HTTP 406,
+   and the compare API does not share that limit. For a large diff, delegate
+   the reading to subagents and keep only their conclusions.
 4. Fill the spec as `spec.md` describes. The groups decide whether the page
    helps:
    - **Order groups from the contract outward.** API and schema first, then
@@ -69,15 +88,15 @@ project site page --spec WORKDIR/summary.json --out WORKDIR/site
 `page` fetches the diff from GitHub's compare API for the spec's merge base
 (`pr.base`) and head, and refuses to run when the pull request's head is no
 longer the spec's `pr.head`, so the page never describes a diff it does not
-show. When GitHub cannot serve the diff because the pull request is too
-large, produce it locally and pass it with `--diff`. The head check still
-runs; only when `gh` cannot reach GitHub does an offline `--diff` build go
-ahead with a warning, because it cannot tell whether the pull request moved:
-
-```sh
-git fetch origin BASE HEAD_SHA
-git diff "$(git merge-base origin/BASE HEAD_SHA)" HEAD_SHA > WORKDIR/pr.diff
-```
+show. The compare API is not the pull request diff endpoint and does not
+share its 300-file limit, so a pull request that `gh pr diff` refuses still
+builds without help. Pass `--diff` only when `page` itself reports that
+GitHub could not serve the diff. Step 3's compare call reads the same
+endpoint and has failed too then, so pass the local `git diff` from step 3,
+taken in a checkout of the repository. The head check
+still runs; only when `gh` cannot reach GitHub does an offline `--diff` build
+go ahead with a warning, because it cannot tell whether the pull request
+moved.
 
 The output directory holds `index.html` with the data embedded, plus the
 site's renderer files beside it. Opening `index.html` from disk works in any
@@ -140,14 +159,23 @@ hosting up; do it when `status` exits 0 or the user asks.
 project summary publish --spec WORKDIR/summary.json
 ```
 
+Always publish with this command, run directly. Do not wrap it in a script
+of your own, and do not commit to the ref or send the dispatch yourself. The
+command already builds the spec and refuses one that does not build, and a
+wrapper only hides what is being written from the user and from the host's
+permission checks. You do not need to build the page first; `page` is a
+local preview.
+
 `publish` fetches the diff once, builds the spec against it, and refuses one
 that does not build. It then commits the spec and that diff to
 `summaries/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
-starts the workflow. Pass `--diff` with the file you produced for a pull
-request too large for GitHub's compare API. It must be the diff from the
-spec's `pr.base` to its `pr.head`, as "Build the page" produces it, because
-every later deploy serves the stored diff as it is. Because the diff is
+starts the workflow. It fetches from the compare API, which serves pull
+requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
+`publish` reports that GitHub could not serve the diff. The file is then the
+local `git diff` from step 3, since the compare call there fails with
+`publish`'s. It must be the diff from the spec's `pr.base` to its `pr.head`,
+because every later deploy serves the stored diff as it is. Because the diff is
 stored, the site deploy asks GitHub for nothing: it checks each spec against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any spec that still

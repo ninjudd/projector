@@ -485,7 +485,9 @@ when GitHub cannot serve a diff that large.
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
-project. **Reviews** lists the summaries. **Docs** renders `README.md`
+project. **Reviews** lists the summaries, and marks a stacked pull request
+with the review of the one it is stacked on, or with its base branch when no
+review covers that branch. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
