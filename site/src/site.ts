@@ -287,7 +287,11 @@
 
   function depth(name: string): number { return name.split('/').length - 1; }
 
+  function ownerName(p: SiteProject): string { return p.owner ?? ''; }
+
   function showProjects(): void {
+    // The Owner column appears only in a repository whose plans name owners.
+    const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
     const groups = STATUS_ORDER.map(function (status) {
       const rows = site.projects.filter(function (p) { return p.status === status; });
       rows.sort(function (a, b) {
@@ -296,11 +300,13 @@
       });
       if (rows.length === 0) return '';
       return `<section class="pgroup"><h2>${esc(status)} <span class="count">${String(rows.length)}</span></h2>` +
-        '<div class="tblwrap"><table class="tbl projects"><tr><th>Project</th><th>Priority</th><th>Name</th></tr>' +
+        '<div class="tblwrap"><table class="tbl projects"><tr><th>Project</th><th>Priority</th>' +
+        `${owners ? '<th>Owner</th>' : ''}<th>Name</th></tr>` +
         rows.map(function (p) {
-          return `<tr data-search="${esc(`${p.name} ${p.title}`.toLowerCase())}">` +
+          return `<tr data-search="${esc(`${p.name} ${p.title} ${ownerName(p)}`.toLowerCase())}">` +
             `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a></td>` +
-            `<td>${badge('priority', p.priority)}</td><td class="mono">${esc(p.name)}</td></tr>`;
+            `<td>${badge('priority', p.priority)}</td>${owners ? `<td class="owner">${esc(ownerName(p))}</td>` : ''}` +
+            `<td class="mono">${esc(p.name)}</td></tr>`;
         }).join('') + '</table></div></section>';
     }).join('');
     const main = frame('projects', 'Projects',

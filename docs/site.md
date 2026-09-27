@@ -2,7 +2,8 @@
 
 Projector can host a site for a repository on GitHub Pages, built from content
 Projector keeps in the repository itself. Its menu has three sections:
-**Projects**, the home page, lists the projects under `docs/projects`;
+**Projects**, the home page, lists the projects under `docs/projects` with
+each one's priority, and its owner when any plan names one;
 **Reviews** lists the pull request summaries the `summarize-changes` skill
 publishes; and **Docs** renders `README.md` beside a sidebar of every other
 document under `docs/`. A document is Markdown, which the site renders, or an
