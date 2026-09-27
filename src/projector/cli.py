@@ -307,18 +307,25 @@ def parser() -> argparse.ArgumentParser:
         "move", help="follow a head that moved mid-review and update the start comment in place"
     )
     review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
-    for command in (review_setup, review_move, review_census):
+    review_release = review_commands.add_parser(
+        "release", help="clear a pull request's review lock when no review is running"
+    )
+    for command in (review_setup, review_move, review_census, review_release):
         command.add_argument("pr", type=int, help="the pull request number")
-        command.add_argument("--repo", help="owner/name (default: the checkout's origin)")
+        command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                             "later: default the review set up for this pull request)")
         command.add_argument("--state-dir", type=Path,
                              help="where review state and locks live (default: $XDG_STATE_HOME/projector/reviews)")
+        command.add_argument("--loop", help="the review loop's id, which keys its record of published reviews")
         add_output(command)
-    for command in (review_setup, review_move):
-        command.add_argument("--checkout", type=Path,
-                             help="the local clone to fetch into (default: the one containing this directory)")
+    review_setup.add_argument("--checkout", type=Path,
+                              help="the source checkout to fetch into (default: the repository containing "
+                                   "this directory)")
     review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
     review_setup.add_argument("--model", required=True, help="the model id the start comment names")
     review_setup.add_argument("--effort", required=True, help="the effort the start comment names")
+    review_setup.add_argument("--rereview", action="store_true",
+                              help="a re-review of a head this loop already published a verdict on")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -626,33 +633,42 @@ NOT_HOSTED = 3
 
 
 def run_review(arguments: argparse.Namespace) -> int:
-    checkout = getattr(arguments, "checkout", None)
-    if checkout is None:
-        try:
-            checkout = discover_git_root(Path.cwd())
-        except ProjectorError:
-            checkout = None
-    ctx = review.context(arguments.pr, arguments.repo, checkout, arguments.state_dir)
+    root = review.state_dir(arguments.state_dir)
+    loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
-    if command == "census":
-        result = review.census(ctx)
-        if arguments.json_output:
-            print(json.dumps(result, indent=2))
-        else:
-            print("\n".join(review.census_lines(result)))
-        return 0
     if command == "setup":
-        configured = load_config(ctx.checkout).get("review.username") if ctx.checkout else None
-        reviewer = review.reviewer_login(arguments.reviewer, configured if isinstance(configured, str) else None)
-        state = review.setup(ctx, reviewer, arguments.model, arguments.effort)
+        checkout = arguments.checkout or Path.cwd()
+        try:
+            configured = load_config(review.checkout_root(checkout)).get("review.username")
+        except review.ReviewError:
+            configured = None
+        state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
+                             configured if isinstance(configured, str) else None,
+                             arguments.model, arguments.effort, loop, arguments.rereview)
     else:
-        state = review.move(ctx)
+        repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+        if command == "census":
+            result = review.census(repo, arguments.pr)
+            if arguments.json_output:
+                print(json.dumps(result, indent=2))
+            else:
+                print("\n".join(review.census_lines(result)))
+            return 0
+        if command == "release":
+            released = review.release(review.Paths(root, repo, arguments.pr))
+            if arguments.json_output:
+                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
+            else:
+                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}")
+            return 0
+        state = review.move(root, arguments.pr, repo, loop)
     if arguments.json_output:
         print(json.dumps(state, indent=2))
     else:
-        print(f"reviewing {ctx.repo}#{ctx.number} at {state['sha']} (head {state['heads']})")
+        print(f"reviewing {state['repo']}#{state['number']} at {state['sha']} (head {state['heads']})")
         print(f"merge base {state['base']}")
         print(f"worktree {state['worktree']}")
+        print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
     return 0
 

@@ -133,21 +133,20 @@ transition is the sign-off a reader sees in the pull-request list.
 
 ## Review an exact head
 
-For the head under review, steps 1 to 4 are one command, run from the
-operator's checkout:
+For the head under review, steps 1 to 4 are one command, run from a checkout
+of the repository or given one with `--checkout`:
 
 ```sh
-project review setup <number> --model <model-id> --effort <effort>
+project review setup <number> --model <model-id> --effort <effort> [--loop <id>] [--rereview]
 ```
 
 It refuses, exiting non-zero with the reason, unless each step holds, and it
 takes every SHA from GitHub, never from an argument:
 
-1. The pull request is open and its head is a branch in the base repository.
-   A fork's head is refused here; review it by reading, as the next section
-   describes.
-2. It fetches that commit and creates a scratch worktree at it, under its
-   state directory rather than inside the operator's checkout. Never run a
+1. The pull request is open. A head from a fork is set up too, fetched from
+   `pull/<number>/head`.
+2. It fetches that commit into the checkout and creates a scratch worktree at
+   it under its state directory, never inside the checkout. Never run a
    reproducer that writes inside the operator's checkout. Never discard,
    restore, or overwrite the operator's dirty or uncommitted work while
    preparing or cleaning up a review.
@@ -163,12 +162,21 @@ takes every SHA from GitHub, never from an argument:
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
 
-It prints the SHA, the merge base, the worktree, and the start comment's id and
-`created_at`, and records them in the review's state file, which the later
-steps read. It takes a lock for the pull request and head, so a second
-instance for the same head exits without posting. It posts with a token for
-the reviewer from `review.username` or the authenticated user, set for that
-call alone; `--reviewer` passes explicit user input.
+It prints the SHA, the merge base, the worktree, whether the head is trusted by
+the next section's rule, and the start comment's id and `created_at`, and
+records them in the review's state file, from which every later command reads
+the checkout, the worktree, and the repository. An untrusted head is reviewed
+by reading. It posts with a token for the reviewer from `review.username` or
+the authenticated user, set for that call alone; `--reviewer` passes explicit
+user input. `start-review-loop` passes its loop id as `--loop` to every
+command, and `--rereview` marks a re-review of a head the loop already
+published a verdict on, the case `RESPONDED` asks for.
+
+The review holds a lock for the pull request and head from `setup` until it is
+published, so a second instance for the same head exits without posting. A
+refused `setup` releases it. A lock older than a day is stale and cleared;
+`project review release <number>` clears one left by a session that stopped,
+and only when no review of that pull request is running.
 
 5. Inspect the head by the method in `method.md`, next to this file: state
    the change's intent, sort the changed files, run the passes, follow every
@@ -240,7 +248,8 @@ A start comment belongs to the review it opens, not to the SHA it first named,
 and it lives only until that review is published. When the head moves before
 publication — step 7 catches it, or `start-review-loop` reports `NEW HEAD`
 while inspection is still running — do not post a second start comment. Run
-`project review move <number>`. It creates a worktree for the new head and
+`project review move <number>`, from any directory. It creates a worktree for
+the new head, rechecks whether the head is trusted, moves the lock to it, and
 edits the existing comment in place so it names the new short SHA, says the
 head moved from the old one, and says the review is being updated for the new
 changes, keeping its `⚬◀` signature line and setting its marker's `sha=` to the

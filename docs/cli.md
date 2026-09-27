@@ -604,35 +604,51 @@ default branch when `origin` does not record it.
 a review loop does not rebuild them as helpers of its own:
 
 ```sh
-project review setup 66 --model claude-opus-5-5 --effort low
+project review setup 66 --model claude-opus-5-5 --effort low --loop main-loop
 project review move 66
 project review census 66 --json
+project review release 66
 ```
 
-`setup` checks that pull request 66 is open and that its head is a branch in
-this repository, fetches the head and its base into the checkout, creates a
-scratch worktree at the exact SHA GitHub reports, verifies the worktree's
-`HEAD`, computes the merge base, and posts the start comment the skill
-describes as the reviewer. It records the SHA, the merge base, the worktree,
-and the start comment's id and `created_at` in a state file, and prints them.
-`move` follows a head that moved mid-review: it creates a worktree for the new
-head, edits the start comment in place to name it, re-reads the comment to
-confirm the edit, and updates the state file. `census` lists every thread
-whose first comment carries the `projector-finding` marker, reading every
-page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments.
+`setup` checks that pull request 66 is open, fetches its head into the
+checkout — from its branch, or from `pull/66/head` when the head is in a fork —
+and fetches the base. It creates a scratch worktree at the exact SHA GitHub
+reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
+start comment the skill describes as the reviewer. It records the SHA, the
+merge base, the worktree, whether the head is trusted, and the start comment's
+id and `created_at` in a state file, and prints them. A head is trusted when it
+is a branch in this repository, the pull request's author is you or has write
+access, and no commit names another author; a fork's head, or an untrusted
+one, is recorded so and reviewed by reading. `--rereview` records a re-review
+of a head the loop already published a verdict on.
 
-No command takes a SHA: each comes from GitHub or the state file. The
-repository is `--repo` or the checkout's `origin`, so `census` runs from any
-directory with `--repo`, and `setup` and `move` fetch into the checkout that
-contains the working directory or `--checkout`. A command that posts runs `gh`
-as the reviewer, `--reviewer` or `review.username` or else the authenticated
-user, with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call
-alone, so the account the rest of the session uses is left alone. `setup` and
-`move` take a lock for the pull request and head, so a second instance for the
-same head exits. State, locks, and scratch worktrees live under
-`$XDG_STATE_HOME/projector/reviews`, or `~/.local/state/projector/reviews`,
-and `--state-dir` moves them. Every refusal exits 1 and says what to do.
+`move` follows a head that moved mid-review: it creates a worktree for the new
+head, rechecks trust, edits the start comment in place to name it, re-reads the
+comment to confirm the edit, and updates the state file. `census` lists every
+thread whose first comment carries the `projector-finding` marker, reading
+every page, and prints how many are resolved and open and each open thread's
+`path:line`; with `--json` each thread also carries its comments. `release`
+clears the pull request's review lock.
+
+No command takes a SHA: each comes from GitHub or the state file. `setup` works
+from the checkout containing the working directory, or `--checkout`, and
+refuses outside one; the repository is that checkout's `origin`, and `--repo`
+must name the same one. Every later command reads the checkout, worktree, and
+repository from the state file, finding it by `--repo` or by the pull request's
+number, so it runs from any directory. A command that posts runs `gh` as the
+reviewer, `--reviewer` or `review.username` or else the authenticated user,
+with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
+so the account the rest of the session uses is left alone.
+
+A review holds a lock for its pull request and head from `setup` until it is
+published, recording the host, the loop, and when it was taken, so a second
+instance for the same head exits. A refused `setup` releases it, a lock older
+than a day is stale, and `release` clears one left by a session that stopped.
+`--loop <id>` names the review loop; each loop keeps its record of published
+reviews under that id. State, locks, loop records, and scratch worktrees live
+under `$XDG_STATE_HOME/projector/reviews`, or
+`~/.local/state/projector/reviews`, and `--state-dir` moves them. Every refusal
+exits 1 and says what to do.
 
 ## Consume JSON
 

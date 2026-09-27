@@ -7,14 +7,24 @@ passed to `gh` explicitly, so a command runs from any directory; a comment is
 posted as the reviewer with a token for that call alone, never by switching
 the account the rest of the session uses; and every refusal raises
 `ReviewError`, which exits non-zero with what to do about it.
+
+Layout of the state directory:
+
+    prs/<owner>/<repo>/<pr>.json         the review's state
+    prs/<owner>/<repo>/<pr>-<sha>.lock   the lock a review holds from setup until publish
+    worktrees/<owner>/<repo>/<pr>/<sha>  scratch worktrees, never inside the checkout
+    loops/<id>/published.json            a loop's record of the review ids it published
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import socket
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +33,9 @@ from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
 START_MARK = "⚬◀"
+SHORT = 12
+STALE_AFTER = timedelta(days=1)
+LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class ReviewError(ProjectorError):
@@ -31,7 +44,11 @@ class ReviewError(ProjectorError):
     exit_code = 1
 
 
-# GitHub
+class NotFound(ReviewError):
+    pass
+
+
+# GitHub and git
 
 def run_gh(args: list[str], token: Optional[str] = None) -> str:
     """Run gh, with GH_TOKEN set for this call alone when `token` is given."""
@@ -49,10 +66,6 @@ def run_gh(args: list[str], token: Optional[str] = None) -> str:
         raise ReviewError(f"gh {' '.join(args)} failed: {detail}") from exc
 
 
-class NotFound(ReviewError):
-    pass
-
-
 def gh_json(args: list[str], token: Optional[str] = None):
     return json.loads(run_gh(args, token) or "null")
 
@@ -64,17 +77,41 @@ def git(*args: str) -> str:
         raise ReviewError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
+def checkout_root(path: Path) -> Path:
+    try:
+        return Path(git("-C", str(path), "rev-parse", "--show-toplevel")).resolve()
+    except ReviewError as exc:
+        raise ReviewError(f"{path} is not inside a Git checkout; run this in a checkout of the repository "
+                          "or pass --checkout") from exc
+
+
+def origin_repo(checkout: Path) -> str:
+    """The repository origin names, read as configured: `remote get-url` applies a user's
+    `insteadOf` rewrites, which can turn the GitHub URL into a mirror's."""
+    try:
+        repo = repo_slug(git("-C", str(checkout), "config", "--get", "remote.origin.url"))
+    except ReviewError:
+        repo = ""
+    if not repo:
+        raise ReviewError(f"{checkout} has no GitHub origin; review from a checkout whose origin is the repository")
+    return repo
+
+
 # Identity
 
-def reviewer_login(explicit: Optional[str], configured: Optional[str]) -> str:
-    """The reviewer: explicit input, then review.username, then the authenticated user."""
-    for login in (explicit, configured):
-        if login:
-            return login
+def authenticated_login() -> str:
     login = run_gh(["api", "user", "--jq", ".login"]).strip()
     if not login:
         raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
     return login
+
+
+def reviewer_login(explicit: Optional[str], configured: Optional[str], operator: str) -> str:
+    """The reviewer: explicit input, then review.username, then the authenticated user."""
+    for login in (explicit, configured):
+        if login:
+            return login
+    return operator
 
 
 def reviewer_token(login: str) -> str:
@@ -86,6 +123,47 @@ def reviewer_token(login: str) -> str:
     if not token:
         raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account")
     return token
+
+
+# Trust
+
+def trusted_head(repo: str, pr: dict, operator: str) -> tuple[bool, str]:
+    """Whether the head's code may run, by review-changes § Run a head's code only when the
+    head is trusted, and why not when it may not."""
+    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
+    if head_repo != repo:
+        return False, f"its head is in {head_repo or 'a deleted fork'}, not {repo}"
+    permissions: dict[str, bool] = {}
+
+    def trusted(login: str) -> bool:
+        if not login:
+            return False
+        if login == operator:
+            return True
+        if login.endswith("[bot]"):
+            return False
+        if login not in permissions:
+            try:
+                level = run_gh(["api", f"repos/{repo}/collaborators/{login}/permission",
+                                "--jq", ".permission"]).strip()
+            except ReviewError:
+                level = ""
+            permissions[login] = level in ("admin", "maintain", "write")
+        return permissions[login]
+
+    author = (pr.get("user") or {}).get("login") or ""
+    if not trusted(author):
+        return False, f"its author {author or '(unknown)'} has no write access to {repo}"
+    number = pr["number"]
+    try:
+        authors = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/commits",
+                          "--jq", '.[] | (.author.login // "")']).splitlines()
+    except ReviewError:
+        return False, "its commits could not be read"
+    for login in authors:
+        if not trusted(login.strip()):
+            return False, f"a commit names {login.strip() or 'no GitHub user'} as its author"
+    return True, ""
 
 
 # State
@@ -106,7 +184,7 @@ class Paths:
 
     @property
     def folder(self) -> Path:
-        return self.root / self.repo
+        return self.root / "prs" / self.repo
 
     @property
     def state(self) -> Path:
@@ -115,13 +193,30 @@ class Paths:
     def lock(self, sha: str) -> Path:
         return self.folder / f"{self.number}-{sha}.lock"
 
+    def locks(self) -> list[Path]:
+        return sorted(self.folder.glob(f"{self.number}-*.lock")) if self.folder.is_dir() else []
+
     def worktree(self, sha: str) -> Path:
-        return self.folder / "worktrees" / f"{self.number}-{sha[:12]}"
+        return self.root / "worktrees" / self.repo / str(self.number) / sha[:SHORT]
+
+
+def loop_record(root: Path, loop: str) -> Path:
+    return root / "loops" / loop / "published.json"
+
+
+def ensure_loop(root: Path, loop: Optional[str]) -> None:
+    if loop is None:
+        return
+    record = loop_record(root, loop)
+    if not record.exists():
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("[]\n", encoding="utf-8")
 
 
 def read_state(paths: Paths) -> dict:
     if not paths.state.is_file():
-        raise ReviewError(f"no review of {paths.repo}#{paths.number} is set up here; run `project review setup {paths.number}`")
+        raise ReviewError(f"no review of {paths.repo}#{paths.number} is set up here; "
+                          f"run `project review setup {paths.number}`")
     return json.loads(paths.state.read_text(encoding="utf-8"))
 
 
@@ -132,49 +227,83 @@ def write_state(paths: Paths, state: dict) -> None:
     tmp.replace(paths.state)
 
 
-def take_lock(paths: Paths, sha: str) -> Path:
-    """Claim the review of this pull request at this head, or refuse when another instance holds it."""
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def lock_age(lock: Path) -> timedelta:
+    try:
+        taken = datetime.fromisoformat(json.loads(lock.read_text(encoding="utf-8"))["taken_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        taken = datetime.fromtimestamp(lock.stat().st_mtime, timezone.utc)
+    return now() - taken
+
+
+def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
+    """Claim the review of this pull request at this head until publish finishes.
+
+    A lock older than a day is stale and cleared; any other refuses the second instance."""
     lock = paths.lock(sha)
     lock.parent.mkdir(parents=True, exist_ok=True)
+    if lock.exists() and lock_age(lock) > STALE_AFTER:
+        lock.unlink(missing_ok=True)
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as exc:
+        holder = ""
+        try:
+            held = json.loads(lock.read_text(encoding="utf-8"))
+            holder = f" (taken by loop {held.get('loop') or '-'} on {held.get('host')} at {held.get('taken_at')})"
+        except (OSError, ValueError):
+            pass
         raise ReviewError(
-            f"another review of {paths.repo}#{paths.number} at {sha[:7]} holds {lock}; let it finish, "
-            "or delete the lock if no review is running"
+            f"another review of {paths.repo}#{paths.number} at {sha[:7]} holds its lock{holder}; let it finish, "
+            f"or run `project review release {paths.number}` if no review is running"
         ) from exc
     with os.fdopen(fd, "w") as handle:
-        handle.write(f"{os.getpid()}\n")
+        json.dump({"sha": sha, "host": socket.gethostname(), "loop": loop, "pid": os.getpid(),
+                   "taken_at": now().isoformat()}, handle)
+        handle.write("\n")
     return lock
+
+
+def release(paths: Paths) -> list[Path]:
+    """Clear every lock this pull request's reviews hold; returns what was cleared."""
+    released = paths.locks()
+    for lock in released:
+        lock.unlink(missing_ok=True)
+    return released
 
 
 # The pull request
 
 def pull_request(repo: str, number: int) -> dict:
-    """The open, same-repository pull request, or a refusal saying why it cannot be reviewed."""
+    """The open pull request, or a refusal saying why it cannot be reviewed."""
     try:
         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
     if pr.get("state") != "open":
         raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is reviewed")
-    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
-    if head_repo != repo:
-        raise ReviewError(
-            f"{repo}#{number} comes from {head_repo or 'a deleted fork'}; these commands review only a branch "
-            "in the base repository — review a fork's head by reading, as review-changes describes"
-        )
     return pr
 
 
-def fetch_head(checkout: Path, number: int, sha: str, base_ref: str, base_sha: str) -> str:
-    """Fetch the head and base into the checkout, verify the head, and return the merge base."""
-    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin",
-        f"refs/pull/{number}/head", f"refs/heads/{base_ref}")
-    fetched = git("-C", str(checkout), "rev-parse", "FETCH_HEAD")
+def fetch(checkout: Path, ref: str) -> str:
+    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", ref)
+    return git("-C", str(checkout), "rev-parse", "FETCH_HEAD")
+
+
+def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
+    """Fetch the head — its branch in this repository, or `pull/<n>/head` from a fork — and
+    the base into the checkout, verify the head, and return the merge base."""
+    sha = pr["head"]["sha"]
+    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
+    ref = f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
+    fetched = fetch(checkout, ref)
     if fetched != sha:
         raise ReviewError(f"the head moved to {fetched[:7]} while it was fetched; run the command again")
-    return git("-C", str(checkout), "merge-base", sha, base_sha)
+    fetch(checkout, f"refs/heads/{pr['base']['ref']}")
+    return git("-C", str(checkout), "merge-base", sha, pr["base"]["sha"])
 
 
 def add_worktree(checkout: Path, path: Path, sha: str) -> None:
@@ -190,97 +319,125 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
 # Start comments
 
 def start_comment(model: str, effort: str, sha: str, moved_from: Optional[str] = None) -> str:
-    lines = [f"{START_MARK} **Projector review started** · model `{model}` · effort `{effort}` · reviewing `{sha[:7]}`", ""]
+    lines = [f"{START_MARK} **Projector review started** · model `{model}` · effort `{effort}` · "
+             f"reviewing `{sha[:7]}`", ""]
     if moved_from:
-        lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated for the new changes.", ""]
+        lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
+                  "for the new changes.", ""]
     lines.append(f"<!-- projector-start v=1 sha={sha} -->")
     return "\n".join(lines) + "\n"
 
 
+# Resolving which review a command means
+
+def valid_loop(loop: Optional[str]) -> Optional[str]:
+    if loop is not None and not LOOP_ID.match(loop):
+        raise ReviewError(f"--loop {loop!r} is not a usable id; use letters, digits, '.', '_' and '-'")
+    return loop
+
+
+def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
+    """The repository a command after setup means: --repo, else the review set up here for
+    this pull request, else the origin of the checkout the command runs in."""
+    if repo:
+        return repo
+    found = sorted((root / "prs").glob(f"*/*/{number}.json")) if (root / "prs").is_dir() else []
+    if len(found) == 1:
+        return f"{found[0].parent.parent.name}/{found[0].parent.name}"
+    if len(found) > 1:
+        names = ", ".join(f"{p.parent.parent.name}/{p.parent.name}" for p in found)
+        raise ReviewError(f"reviews of #{number} are set up in {names}; pass --repo to pick one")
+    try:
+        return origin_repo(checkout_root(cwd))
+    except ReviewError as exc:
+        raise ReviewError(f"no review of #{number} is set up here; pass --repo owner/name") from exc
+
+
 # Commands
 
-@dataclass
-class Context:
-    repo: str
-    number: int
-    paths: Paths
-    checkout: Optional[Path]
-
-
-def context(number: int, repo: Optional[str], checkout: Optional[Path], root: Optional[Path]) -> Context:
-    """Resolve the repository from --repo or the checkout's origin; the checkout is needed only to fetch."""
-    if checkout is not None:
-        checkout = Path(git("-C", str(checkout), "rev-parse", "--show-toplevel"))
-    if not repo:
-        if checkout is None:
-            raise ReviewError("run this inside a checkout of the repository, or pass --repo owner/name")
-        repo = repo_slug(git("-C", str(checkout), "remote", "get-url", "origin"))
-        if not repo:
-            raise ReviewError("the checkout's origin is not a GitHub repository; pass --repo owner/name")
-    return Context(repo, number, Paths(state_dir(root), repo, number), checkout)
-
-
-def setup(ctx: Context, reviewer: str, model: str, effort: str) -> dict:
-    if ctx.checkout is None:
-        raise ReviewError("setting up a review needs a checkout to fetch into; run it there or pass --checkout")
-    pr = pull_request(ctx.repo, ctx.number)
-    sha, base_ref, base_sha = pr["head"]["sha"], pr["base"]["ref"], pr["base"]["sha"]
-    lock = take_lock(ctx.paths, sha)
+def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
+          configured_reviewer: Optional[str], model: str, effort: str, loop: Optional[str],
+          rereview: bool) -> dict:
+    checkout = checkout_root(checkout)
+    origin = origin_repo(checkout)
+    if repo and repo.lower() != origin.lower():
+        raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
+    repo = origin
+    paths = Paths(root, repo, number)
+    pr = pull_request(repo, number)
+    sha = pr["head"]["sha"]
+    lock = take_lock(paths, sha, loop)
     try:
-        merge_base = fetch_head(ctx.checkout, ctx.number, sha, base_ref, base_sha)
-        worktree = ctx.paths.worktree(sha)
-        add_worktree(ctx.checkout, worktree, sha)
+        operator = authenticated_login()
+        reviewer = reviewer_login(reviewer, configured_reviewer, operator)
+        merge_base = fetch_head(checkout, repo, pr)
+        worktree = paths.worktree(sha)
+        add_worktree(checkout, worktree, sha)
+        trusted, why = trusted_head(repo, pr, operator)
         token = reviewer_token(reviewer)
-        posted = gh_json(["api", f"repos/{ctx.repo}/issues/{ctx.number}/comments",
+        posted = gh_json(["api", f"repos/{repo}/issues/{number}/comments",
                           "-f", f"body={start_comment(model, effort, sha)}"], token)
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
+    ensure_loop(root, loop)
     state = {
-        "repo": ctx.repo,
-        "number": ctx.number,
+        "repo": repo,
+        "number": number,
         "sha": sha,
         "base": merge_base,
-        "base_ref": base_ref,
+        "base_ref": pr["base"]["ref"],
+        "cross_repository": ((pr["head"].get("repo") or {}).get("full_name")) != repo,
+        "trusted": trusted,
+        "untrusted_because": why or None,
+        "checkout": str(checkout),
         "worktree": str(worktree),
         "worktrees": [str(worktree)],
-        "checkout": str(ctx.checkout),
+        "operator": operator,
         "reviewer": reviewer,
         "model": model,
         "effort": effort,
+        "loop": loop,
+        "rereview": rereview,
         "start_comment": {"id": posted["id"], "created_at": posted["created_at"]},
         "heads": 1,
     }
-    write_state(ctx.paths, state)
+    write_state(paths, state)
     return state
 
 
-def move(ctx: Context) -> dict:
-    state = read_state(ctx.paths)
-    checkout = ctx.checkout or Path(state["checkout"])
-    pr = pull_request(ctx.repo, ctx.number)
+def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
+    paths = Paths(root, repo, number)
+    state = read_state(paths)
+    checkout = Path(state["checkout"])
+    pr = pull_request(state["repo"], number)
     sha, old = pr["head"]["sha"], state["sha"]
     if sha == old:
-        raise ReviewError(f"the head of {ctx.repo}#{ctx.number} is still {old[:7]}; there is nothing to move")
-    lock = take_lock(ctx.paths, sha)
+        raise ReviewError(f"the head of {state['repo']}#{number} is still {old[:7]}; there is nothing to move")
+    lock = take_lock(paths, sha, loop if loop is not None else state.get("loop"))
     try:
-        merge_base = fetch_head(checkout, ctx.number, sha, pr["base"]["ref"], pr["base"]["sha"])
-        worktree = ctx.paths.worktree(sha)
+        merge_base = fetch_head(checkout, state["repo"], pr)
+        worktree = paths.worktree(sha)
         add_worktree(checkout, worktree, sha)
+        trusted, why = trusted_head(state["repo"], pr, state["operator"])
         token = reviewer_token(state["reviewer"])
         comment = state["start_comment"]["id"]
         body = start_comment(state["model"], state["effort"], sha, moved_from=old)
-        run_gh(["api", "-X", "PATCH", f"repos/{ctx.repo}/issues/comments/{comment}", "-f", f"body={body}"], token)
-        reread = gh_json(["api", f"repos/{ctx.repo}/issues/comments/{comment}"])
+        run_gh(["api", "-X", "PATCH", f"repos/{state['repo']}/issues/comments/{comment}",
+                "-f", f"body={body}"], token)
+        reread = gh_json(["api", f"repos/{state['repo']}/issues/comments/{comment}"])
         if f"sha={sha}" not in (reread or {}).get("body", ""):
-            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; edit it by hand")
+            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; "
+                              "edit it by hand")
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
-    ctx.paths.lock(old).unlink(missing_ok=True)
+    paths.lock(old).unlink(missing_ok=True)
     state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
+                 trusted=trusted, untrusted_because=why or None,
+                 cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
                  heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
-    write_state(ctx.paths, state)
+    write_state(paths, state)
     return state
 
 
@@ -291,32 +448,31 @@ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repositor
       comments(first:50){ nodes{ databaseId body } } } } } } }"""
 
 
-def census(ctx: Context) -> dict:
+def census(repo: str, number: int) -> dict:
     """Every Projector finding thread on the pull request, read to the last page, with its
     replies, so the review can verify and settle each one from this one list."""
-    owner, name = ctx.repo.split("/", 1)
+    owner, name = repo.split("/", 1)
     threads, after = [], None
     while True:
         args = ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
-                "-F", f"n={ctx.number}"]
+                "-F", f"n={number}"]
         if after:
             args += ["-f", f"after={after}"]
         page = gh_json(args)
         pr = ((page or {}).get("data") or {}).get("repository", {}).get("pullRequest")
         if pr is None:
-            raise ReviewError(f"{ctx.repo}#{ctx.number} does not exist or is not visible to this account")
+            raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account")
         connection = pr["reviewThreads"]
         for node in connection["nodes"]:
-            first = (node.get("comments") or {}).get("nodes") or [{}]
-            if FINDING_MARKER in (first[0].get("body") or ""):
+            comments = (node.get("comments") or {}).get("nodes") or []
+            if comments and FINDING_MARKER in (comments[0].get("body") or ""):
                 threads.append({
                     "id": node["id"],
                     "path": node.get("path"),
                     "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
                     "outdated": bool(node.get("isOutdated")),
                     "resolved": bool(node.get("isResolved")),
-                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""}
-                                 for c in (node.get("comments") or {}).get("nodes") or []],
+                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
                 })
         if not connection["pageInfo"]["hasNextPage"]:
             break
@@ -332,4 +488,3 @@ def census_lines(result: dict) -> list[str]:
         if not t["resolved"]:
             lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
     return lines
-
