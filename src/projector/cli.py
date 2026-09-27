@@ -693,7 +693,8 @@ def run_review(arguments: argparse.Namespace) -> int:
                 configured = load_config(Path(state["checkout"])).get("review.gate")
             except ProjectorError:
                 configured = None
-            result = review.gate(root, arguments.pr, repo, configured if isinstance(configured, str) else None)
+            result = review.gate(root, arguments.pr, repo, configured if isinstance(configured, str) else None,
+                                 output_to_stderr=arguments.json_output)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:

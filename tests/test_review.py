@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -444,6 +445,39 @@ class GateTests(ReviewCase):
         self.assertIn("review it by reading", err)
         self.assertFalse((worktree / "gate.args").exists())
         self.assertNotIn("gate", self.read_state())
+
+    def test_an_untrusted_head_is_refused_as_untrusted_when_review_gate_is_unset(self) -> None:
+        # A refusal that says to run the repository's checks would send the
+        # review straight to the head's code.
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.assertEqual(0, self.setup_review()[0])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("review it by reading", err)
+        self.assertNotIn("run the repository's checks", err)
+
+    def test_json_output_stays_parseable_when_the_gate_prints(self) -> None:
+        # The gate runs as a child process, so only a real process sees what it
+        # writes to its own standard output.
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure("echo gate says hello; echo and to stderr >&2")
+        src = Path(review.__file__).resolve().parents[1]
+        env = dict(os.environ, PYTHONPATH=str(src))
+
+        plain = subprocess.run([sys.executable, "-m", "projector", "review", "gate", "1", "--repo", REPO,
+                                "--state-dir", str(self.state)], env=env, capture_output=True, text=True)
+        as_json = subprocess.run([sys.executable, "-m", "projector", "review", "gate", "1", "--repo", REPO,
+                                  "--state-dir", str(self.state), "--json"], env=env, capture_output=True, text=True)
+
+        self.assertEqual(0, plain.returncode, plain.stderr)
+        self.assertIn("gate says hello", plain.stdout, "plain output streams the gate's stdout as it is")
+        self.assertEqual(0, as_json.returncode, as_json.stderr)
+        self.assertEqual(0, json.loads(as_json.stdout)["exit_code"])
+        self.assertIn("gate says hello", as_json.stderr)
+        self.assertIn("and to stderr", as_json.stderr)
 
     def test_refuses_without_a_review_set_up(self) -> None:
         self.configure("true")

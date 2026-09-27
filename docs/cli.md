@@ -659,11 +659,13 @@ finishes that review rather than posting another.
 `gate` runs the repository's validation gate: the shell command
 `review.gate` names in `.projector.toml`, run with `sh -c` in the scratch
 worktree, with the worktree and the merge base as `$1` and `$2` and as
-`PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its output passes through, `gate`
-exits with the command's status, and the state file records the command, its
-exit status, the head, and when it ran. The command runs the head's code, so
-`gate` refuses, exiting 1 without running anything, on a head `setup` recorded
-as untrusted, and when `review.gate` is unset.
+`PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its output passes through, on
+standard error under `--json` so standard output carries only the JSON record;
+`gate` exits with the command's status, and the state file records the
+command, its exit status, the head, and when it ran. The command runs the
+head's code, so `gate` refuses, exiting 1 without running anything, on a head
+`setup` recorded as untrusted, whether or not `review.gate` is set, and when
+`review.gate` is unset.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and
