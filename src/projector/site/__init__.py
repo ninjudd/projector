@@ -172,32 +172,37 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[
             page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
-                        "heads": len(versions), "shas": [h["head"] for h in heads], "updated": versions[0][0],
+                        "heads": len(versions), "updated": versions[0][0],
                         "projects": [p["name"] for p in latest["projects"]]})
     return entries, failures
 
 
-def stack_parents(entries: list[dict], branch: str) -> dict[int, int]:
-    """For each review of a stacked pull request, the review of the one beneath it.
+def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+    """For each stacked pull request, the number of the pull request beneath it.
 
-    A pull request is stacked when its base branch is another pull request's
-    head branch. A spec that records `headRef` names that branch. An older
-    spec does not, but its `base`, the merge base its diff starts from, is
-    then the head the pull request beneath it had, which that review lists
-    among its versions. A pull request on the default branch is never
-    stacked, whatever its merge base.
+    A pull request is stacked only when its base branch is another pull
+    request's head branch, so a base branch no pull request uses, the default
+    branch among them, marks nothing. The pull request beneath is a review's
+    whose spec records that branch as its `headRef`, else the `basePr` the
+    spec recorded, else what `lookup` finds for the branch, asked once per
+    branch. Skipping the default branch only saves a lookup that would find
+    nothing.
     """
     by_branch = {e["pr"]["headRef"]: e["number"] for e in entries if e["pr"].get("headRef")}
-    by_head = {sha: e["number"] for e in entries for sha in e["shas"]}
-    parents = {}
+    looked_up: dict[str, int | None] = {}
+    bases = {}
     for entry in entries:
         base_ref = entry["pr"].get("baseRef") or ""
-        if not base_ref or base_ref == branch:
+        if not base_ref or base_ref == trunk:
             continue
-        parent = by_branch.get(base_ref) or by_head.get(entry["pr"].get("base") or "")
-        if parent is not None and parent != entry["number"]:
-            parents[entry["number"]] = parent
-    return parents
+        beneath = by_branch.get(base_ref) or entry["pr"].get("basePr")
+        if beneath is None and lookup is not None:
+            if base_ref not in looked_up:
+                looked_up[base_ref] = lookup(base_ref)
+            beneath = looked_up[base_ref]
+        if beneath is not None and beneath != entry["number"]:
+            bases[entry["number"]] = int(beneath)
+    return bases
 
 
 def copy_content(repo_root: Path, path: Path, out: Path) -> str:
@@ -422,11 +427,13 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
-               trunk: str | None = None) -> tuple[list[dict], list[str]]:
+               trunk: str | None = None, lookup=None) -> tuple[list[dict], list[str]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
     `trunk` the default branch a pull request that is not stacked is based on.
+    `lookup` finds the pull request whose head is a branch, for a spec that
+    did not record the one it is stacked on.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -447,7 +454,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
-    parents = stack_parents(entries, trunk)
+    bases = stack_bases(entries, trunk, lookup)
     manifest = {
         "repo": repo,
         "base": base,
@@ -462,8 +469,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
         "reviews": [
             {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
              "heads": e["heads"], "projects": e["projects"],
-             "stackedOn": parents.get(e["number"]),
-             "baseRef": e["pr"].get("baseRef") if e["pr"].get("baseRef") not in (None, "", trunk) else None,
+             "stackedOn": bases.get(e["number"]),
              "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
             for e in entries
         ],

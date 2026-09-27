@@ -151,7 +151,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(["core", "gen"], [g["id"] for g in data["groups"]])
 
     def test_a_diff_file_build_still_refuses_a_moved_head(self) -> None:
-        moved = lambda repo, number: dict(make_spec([])["pr"], head="c" * 40)
+        moved = lambda repo, number, stack=True: dict(make_spec([])["pr"], head="c" * 40)
         code, _, err = self.build(GOOD_GROUPS, live=moved)
         self.assertEqual(65, code)
         self.assertIn("moved from aaaaaaaaa to ccccccccc", err)
@@ -546,6 +546,57 @@ class RepoSlugTests(unittest.TestCase):
         for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "https://github.com/o/r.git", "https://github.com/o/r"):
             self.assertEqual("o/r", summary.repo_slug(url), url)
         self.assertEqual("", summary.repo_slug("https://gitlab.com/o/r.git"))
+
+
+class PrMetadataTests(unittest.TestCase):
+    def metadata(self, base_ref: str, open_pulls: dict[str, str], merged_pulls: dict[str, str] | None = None) -> dict:
+        view = json.dumps({"title": "T", "headRefOid": "d" * 40, "headRefName": "feature-b", "baseRefName": base_ref})
+        self.asked: list[str] = []
+
+        def run(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return view
+            if args[:2] == ("api", "repos/owner/example"):
+                return "main\n"
+            raise AssertionError(f"unexpected gh {args}")
+
+        # GitHub's pulls endpoint lists only open pull requests unless asked for state=all.
+        def lookup(*args: str) -> str:
+            head = next(a for a in args if a.startswith("head=")).removeprefix("head=")
+            self.asked.append(head)
+            pulls = dict(open_pulls, **(merged_pulls or {})) if "state=all" in args else open_pulls
+            return pulls.get(head, "") + "\n"
+
+        with mock.patch.object(summary, "gh", side_effect=run), \
+             mock.patch.object(summary, "merge_base", return_value="c" * 40), \
+             mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+            return summary.pr_metadata("owner/example", 10)
+
+    def test_records_the_open_pull_request_its_base_branch_belongs_to(self) -> None:
+        meta = self.metadata("feature-a", {"owner:feature-a": "9"})
+
+        self.assertEqual(("feature-b", "feature-a", 9), (meta["headRef"], meta["baseRef"], meta["basePr"]))
+
+    def test_a_long_lived_base_branch_is_not_stacked_on_a_merged_pull_request(self) -> None:
+        meta = self.metadata("develop", {}, merged_pulls={"owner:develop": "134"})
+
+        self.assertNotIn("basePr", meta, "the last develop -> main release pull request is not what this one sits on")
+
+    def test_a_pull_request_on_the_default_branch_asks_nothing(self) -> None:
+        meta = self.metadata("main", {"owner:main": "7"})
+
+        self.assertNotIn("basePr", meta, "an open main -> production pull request does not stack everything on main")
+        self.assertEqual([], self.asked)
+
+    def test_the_live_head_check_asks_nothing_about_stacks(self) -> None:
+        view = json.dumps({"title": "T", "headRefOid": "d" * 40, "headRefName": "feature-b", "baseRefName": "feature-a"})
+
+        with mock.patch.object(summary, "gh", return_value=view), \
+             mock.patch.object(summary, "merge_base", return_value="c" * 40), \
+             mock.patch.object(summary, "gh_lookup", side_effect=AssertionError("no stack lookup")):
+            meta = summary.pr_metadata("owner/example", 10, stack=False)
+
+        self.assertNotIn("basePr", meta)
 
 
 class StatusTests(unittest.TestCase):
