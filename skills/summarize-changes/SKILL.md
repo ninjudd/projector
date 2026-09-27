@@ -38,7 +38,17 @@ push to, or approve the pull request unless the user asks.
    scratch directory. The spec is what you edit when the pull request moves.
 3. Read enough to explain the change: the pull request body, the full diff,
    plan or design documents the change touches, and the review threads.
-   Take the diff locally, from the spec's `pr.base` to its `pr.head`:
+   Take the diff from the spec's `pr.base` to its `pr.head` through the
+   compare API, the one `page` and `publish` read, which works from any
+   directory:
+
+   ```sh
+   gh api -H 'Accept: application/vnd.github.diff' \
+     repos/OWNER/NAME/compare/PR_BASE...PR_HEAD > WORKDIR/pr.diff
+   ```
+
+   In a checkout whose `origin` is the repository, a local diff holds the
+   same changes:
 
    ```sh
    git fetch origin PR_BASE PR_HEAD
@@ -47,9 +57,8 @@ push to, or approve the pull request unless the user asks.
 
    Do not read it with `gh pr diff`. GitHub's pull request diff endpoint
    refuses a pull request that changes more than 300 files with HTTP 406,
-   while the local diff has no limit and holds the same changes the page
-   shows. For a large diff, delegate the reading to subagents and keep only
-   their conclusions.
+   and the compare API does not share that limit. For a large diff, delegate
+   the reading to subagents and keep only their conclusions.
 4. Fill the spec as `spec.md` describes. The groups decide whether the page
    helps:
    - **Order groups from the contract outward.** API and schema first, then
@@ -81,7 +90,7 @@ project site page --spec WORKDIR/summary.json --out WORKDIR/site
 longer the spec's `pr.head`, so the page never describes a diff it does not
 show. The compare API is not the pull request diff endpoint and does not
 share its 300-file limit, so a pull request that `gh pr diff` refuses still
-builds without help. Pass `--diff` with the local diff from step 3 only when
+builds without help. Pass `--diff` with the diff from step 3 only when
 `page` itself reports that GitHub could not serve the diff. The head check
 still runs; only when `gh` cannot reach GitHub does an offline `--diff` build
 go ahead with a warning, because it cannot tell whether the pull request
