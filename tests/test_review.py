@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -383,6 +384,105 @@ class MoveTests(ReviewCase):
 
     def test_refuses_without_a_review_set_up(self) -> None:
         code, _, err = self.later("move", "--repo", REPO)
+
+        self.assertEqual(1, code)
+        self.assertIn("project review setup 1", err)
+
+
+class GateTests(ReviewCase):
+    GATE = ('printf "%s %s %s %s" "$1" "$2" "$PROJECTOR_WORKTREE" "$PROJECTOR_BASE" > "$1/gate.args"; '
+            'pwd -P > "$1/gate.pwd"; exit 3')
+
+    def configure(self, command: str) -> None:
+        (self.checkout / ".projector.toml").write_text(f"[review]\ngate = {json.dumps(command)}\n")
+
+    def test_runs_the_command_in_the_worktree_and_exits_with_its_status(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure(self.GATE)
+        state = self.read_state()
+        worktree = Path(state["worktree"])
+
+        code, _, err = self.later("gate", cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(3, code, err)
+        self.assertEqual(f"{worktree} {state['base']} {worktree} {state['base']}",
+                         (worktree / "gate.args").read_text())
+        self.assertEqual(str(worktree.resolve()), (worktree / "gate.pwd").read_text().strip())
+        record = self.read_state()["gate"]
+        self.assertEqual((self.GATE, 3, state["sha"]), (record["command"], record["exit_code"], record["sha"]))
+        self.assertIn("exited 3", err)
+
+    def test_a_passing_gate_exits_zero_and_is_recorded(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure("true")
+
+        code, out, err = self.later("gate", "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(0, json.loads(out)["exit_code"])
+        self.assertEqual(0, self.read_state()["gate"]["exit_code"])
+
+    def test_refuses_when_review_gate_is_unset(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("nothing to run", err)
+        self.assertNotIn("gate", self.read_state())
+
+    def test_refuses_an_untrusted_head_without_running_anything(self) -> None:
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure(self.GATE)
+        worktree = Path(self.read_state()["worktree"])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("untrusted", err)
+        self.assertIn("review it by reading", err)
+        self.assertFalse((worktree / "gate.args").exists())
+        self.assertNotIn("gate", self.read_state())
+
+    def test_an_untrusted_head_is_refused_as_untrusted_when_review_gate_is_unset(self) -> None:
+        # A refusal that says to run the repository's checks would send the
+        # review straight to the head's code.
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.assertEqual(0, self.setup_review()[0])
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("review it by reading", err)
+        self.assertNotIn("run the repository's checks", err)
+
+    def test_json_output_stays_parseable_when_the_gate_prints(self) -> None:
+        # The gate runs as a child process, so only a real process sees what it
+        # writes to its own standard output.
+        self.assertEqual(0, self.setup_review()[0])
+        self.configure("echo gate says hello; echo and to stderr >&2")
+        src = Path(review.__file__).resolve().parents[1]
+        env = dict(os.environ, PYTHONPATH=str(src))
+
+        plain = subprocess.run([sys.executable, "-m", "projector", "review", "gate", "1", "--repo", REPO,
+                                "--state-dir", str(self.state)], env=env, capture_output=True, text=True)
+        as_json = subprocess.run([sys.executable, "-m", "projector", "review", "gate", "1", "--repo", REPO,
+                                  "--state-dir", str(self.state), "--json"], env=env, capture_output=True, text=True)
+
+        self.assertEqual(0, plain.returncode, plain.stderr)
+        self.assertIn("gate says hello", plain.stdout, "plain output streams the gate's stdout as it is")
+        self.assertEqual(0, as_json.returncode, as_json.stderr)
+        self.assertEqual(0, json.loads(as_json.stdout)["exit_code"])
+        self.assertIn("gate says hello", as_json.stderr)
+        self.assertIn("and to stderr", as_json.stderr)
+
+    def test_refuses_without_a_review_set_up(self) -> None:
+        self.configure("true")
+
+        code, _, err = self.later("gate", "--repo", REPO)
 
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)
@@ -763,7 +863,7 @@ class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release", "publish"):
+        for command in ("setup", "move", "census", "release", "publish", "gate"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):

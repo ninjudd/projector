@@ -234,6 +234,13 @@ A head is trusted only when all three hold:
 
 A bot, and a login whose lookup fails, are untrusted.
 
+On a trusted head, run the repository's validation gate with `project review
+gate <number>` when `.projector.toml` sets `review.gate`: it runs that command
+in the scratch worktree, with the worktree and the merge base as its arguments,
+and exits with its status. Without `review.gate`, run the checks the
+repository's instructions name. On a head `setup` recorded as untrusted, `gate`
+refuses without running anything, and the review proceeds by reading.
+
 When the head is untrusted, review it by reading. The four-step protocol in
 `method.md` verifies findings without running anything. Before you run
 anything from the head, ask the user, naming why the head is not trusted and
