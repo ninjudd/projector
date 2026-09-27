@@ -485,7 +485,7 @@ when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the summaries, and marks a pull request whose base
-branch is another pull request's head with that pull request's number,
+branch is another open pull request's head with that pull request's number,
 linked to its review when the site has one and to GitHub otherwise. A spec
 that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`

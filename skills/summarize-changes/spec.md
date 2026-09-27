@@ -51,7 +51,7 @@ it. The spec is JSON:
   request has moved past it, unless `--at-head` asks for that head exactly.
 - `pr.base` is the merge base the diff is taken from. `init` records it; the
   page shows the diff from `pr.base` to `pr.head`.
-- `pr.headRef`, and `pr.basePr` when the base branch is another pull
+- `pr.headRef`, and `pr.basePr` when the base branch is another open pull
   request's head, are what the site's review list uses to mark a stacked pull
   request. `init` records both; keep them when you edit a spec by hand.
 - `overview.summary` is what the pull request does, in a few paragraphs.
