@@ -1010,9 +1010,26 @@ class MutationTests(RepositoryTestCase):
         self.assertFalse(self.settings().exists())
 
         (self.root / ".projector.toml").write_text('[review]\npublish_rule = "no"\n')
+        (self.root / "AGENTS.md").unlink()
         code, _, stderr = self.invoke("init")
         self.assertEqual(78, code)
         self.assertIn("review.publish_rule must be true or false", stderr)
+        self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
+
+    def test_init_keeps_a_plain_file_claude_and_undecodable_settings(self) -> None:
+        self.settings().write_bytes(b'{"env": {"NAME": "caf\xe9"}}')
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("is not UTF-8", stderr)
+
+        self.settings().unlink()
+        (self.root / ".claude").rmdir()
+        (self.root / ".claude").write_text(str(self.home / ".claude"), encoding="utf-8")
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("is not a directory", stderr)
 
 
 class ValidationTests(RepositoryTestCase):

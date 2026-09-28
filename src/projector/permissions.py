@@ -37,9 +37,14 @@ def allow_publish(root: Path) -> FileAction:
     target = path.resolve()
     if not target.is_relative_to(root.resolve()):
         return kept(f"links outside the repository ({target})")
+    # A committed `.claude` link checks out as a plain file where Git makes no symlinks.
+    if path.parent.exists() and not path.parent.is_dir():
+        return kept("cannot be written, because .claude is not a directory")
     existed = path.exists()
     try:
         text = path.read_text(encoding="utf-8") if existed else ""
+    except UnicodeDecodeError:
+        return kept("is not UTF-8")
     except OSError as error:
         return kept(f"could not be read ({error.strerror})")
     try:

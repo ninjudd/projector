@@ -1083,9 +1083,10 @@ def run(arguments: argparse.Namespace) -> int:
         # An explicit --site or --no-site wins over configuration; unset, the
         # site is set up when it can be and skipped with a note when it cannot.
         wanted = site_enabled(root) if arguments.site is None else arguments.site
+        publish_rule = publish_rule_enabled(root)
         try:
             files = store.init(instructions_enabled(root))
-            if publish_rule_enabled(root):
+            if publish_rule:
                 files.append(allow_publish(root))
             pages = None
             if wanted:

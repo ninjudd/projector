@@ -61,10 +61,11 @@ created .claude/settings.json
   `reviewDecision` and a person still merges. An allow rule resolves the
   command before the classifier runs, and Claude Code applies a repository's
   allow rules only after its workspace trust dialog has listed them to you.
-  `init` adds the rule to the file's existing settings and changes nothing
-  else. It keeps a file that is not valid JSON, holds settings of an
-  unexpected shape, or links outside the repository, and says on stderr how
-  to add the rule yourself. Auto mode reads no `autoMode` block from a
+  `init` adds the rule to the file's existing settings, keeps every other
+  setting, and writes the file back as two-space JSON. It keeps a file that is
+  not valid UTF-8 JSON, holds settings of an unexpected shape, sits under a
+  `.claude` that is not a directory, or links outside the repository, and
+  says on stderr how to add the rule yourself. Auto mode reads no `autoMode` block from a
   repository, so this rule, not an `autoMode` exception, is what a repository
   can carry.
 
