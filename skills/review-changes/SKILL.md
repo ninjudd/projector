@@ -521,6 +521,16 @@ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
 verdict as one.
 
+Claude Code's auto mode refuses a clean self-review's publish as
+self-approval unless the repository's `.claude/settings.json` allows
+`Bash(project review publish *)`, the rule `project init` adds. Run `publish`
+as a command of its own so the rule matches it. If the host refuses it
+anyway, do not retry it in another form: keep the lock and the body, and ask
+the user to run `project init` in a terminal and commit
+`.claude/settings.json`, or to run the publish command themselves. `init`
+adds the rule only for a person at a terminal, so do not run it to add the
+rule yourself.
+
 After submitting, `publish` sets draft state for a self-review, re-reads the
 review it posted and the pull request's `isDraft`, adds the review id to the
 loop's record, deletes the start comment, and releases the lock, in that
