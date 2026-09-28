@@ -27,9 +27,10 @@ $ project init
 created docs/projects/README.md
 created AGENTS.md
 created CLAUDE.md
+created .claude/settings.json
 ```
 
-`init` manages three files and reports what it did to each:
+`init` manages four files and reports what it did to each:
 
 - `docs/projects/README.md` states the convention, links to the Projector
   repository, and shows how to install the CLI, so a reader who meets
@@ -53,6 +54,25 @@ created CLAUDE.md
   an import. When the two are genuinely distinct files, each with its own
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
+- `.claude/settings.json` gains the Claude Code permission rule
+  `Bash(project review publish *)` in `permissions.allow`. Claude Code's auto
+  mode otherwise refuses a review loop's clean review of your own pull request
+  as self-approval, although the review is a `COMMENT` that moves no
+  `reviewDecision` and a person still merges. An allow rule resolves the
+  command before the classifier runs, and Claude Code applies a repository's
+  allow rules only after its workspace trust dialog has listed them to you.
+  Because the rule exempts a command from the classifier, `init` adds it only
+  when you run `init` at a terminal, or when you pass `--publish-rule`. Run
+  without a terminal, as an agent refreshing the instructions runs it, `init`
+  reports the file as `kept` and says on stderr how to add the rule, and
+  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+  to leave the file alone for one run. `init` adds the rule to the file's
+  existing settings, keeps every other setting, and writes the file back as
+  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
+  settings of an unexpected shape, sits under a `.claude` that is not a
+  directory, or links outside the repository, and says on stderr how to add
+  the rule yourself. Auto mode reads no `autoMode` block from a repository,
+  so this rule, not an `autoMode` exception, is what a repository can carry.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without
@@ -72,8 +92,9 @@ instead; the path is a symlink to a file outside the repository, which `init`
 never writes; the file is a symlink checked out as a plain file, as above; or
 the markers in the file do not delimit exactly one section, for example a
 begin marker with no end marker. In that last case `init` still writes the
-other files, then exits 65 and names the repair, and prints no JSON document
-in `--json` mode.
+other instruction files, then exits 65 and names the repair, and prints no
+JSON document in `--json` mode. `.claude/settings.json` is kept for the
+reasons its entry above names, and `init` still exits 0.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
@@ -82,8 +103,14 @@ To keep Projector out of your instruction files, set in `.projector.toml`:
 enabled = false
 ```
 
-With that key false, `init` manages only the projects README and `check` says
-nothing about `AGENTS.md` or `CLAUDE.md`.
+With that key false, `init` manages only the projects README and
+`.claude/settings.json`, and `check` says nothing about `AGENTS.md` or
+`CLAUDE.md`. To leave `.claude/settings.json` alone, set:
+
+```toml
+[review]
+publish_rule = false
+```
 
 Every command that reads or writes a project requires that directory. `init`
 creates it, `check` reports its absence, and `config` and `upgrade` do not
@@ -379,6 +406,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to `.claude/settings.json` |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
 | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
