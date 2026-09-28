@@ -676,5 +676,92 @@ class StatusTests(unittest.TestCase):
             summary.gh_lookup("api", "repos/o/r/pages")
 
 
+HEAD = "a" * 40
+PAGE = "https://owner.github.io/repo/reviews/7/"
+
+
+class CommentSummaryTests(unittest.TestCase):
+    """The pull request's comments stand in a list; the fake answers the calls comment_summary makes."""
+
+    def setUp(self) -> None:
+        self.comments = [{"id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
+        self.calls: list[str] = []
+        self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
+
+    def gh(self, *args: str) -> str:
+        if args == ("api", "user", "--jq", ".login"):
+            return "operator\n"
+        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/comments"):
+            return "".join(json.dumps([c["id"], c["body"]]) + "\n" for c in self.comments
+                           if c["user"]["login"] == "operator" and "<!-- projector-summary v=1 " in c["body"])
+        if args[:3] == ("api", "-X", "PATCH"):
+            comment_id = int(args[3].rsplit("/", 1)[1])
+            self.calls.append(f"patch {comment_id}")
+            next(c for c in self.comments if c["id"] == comment_id)["body"] = args[5].removeprefix("body=")
+            return "{}"
+        if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
+            new = {"id": 100 + len(self.comments), "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
+            self.comments.append(new)
+            self.calls.append(f"post {new['id']}")
+            return json.dumps({"html_url": f"https://github.com/owner/repo/pull/7#issuecomment-{new['id']}"})
+        raise AssertionError(f"unexpected gh call {args}")
+
+    def comment(self, head: str = HEAD) -> str:
+        with mock.patch.object(summary, "gh", side_effect=self.gh), \
+             mock.patch.object(summary, "hosting", return_value=self.hosted):
+            return summary.comment_summary("owner/repo", 7, head)
+
+    def summary_comments(self) -> list[str]:
+        return [c["body"] for c in self.comments if "projector-summary" in c["body"]]
+
+    def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
+        result = self.comment()
+
+        self.assertEqual(["post 101"], self.calls)
+        self.assertEqual([f"<!-- projector-summary v=1 sha={HEAD} -->\n"
+                          f"📽️ **Projector summary** of aaaaaaa: {PAGE}\n"], self.summary_comments())
+        self.assertIn("commented a link to the summary of aaaaaaa", result)
+
+        self.assertIn("already links the summary", self.comment())
+        self.assertEqual(["post 101"], self.calls, "a rerun on the same head adds nothing")
+
+    def test_a_later_head_updates_the_comment_rather_than_adding_one(self) -> None:
+        self.comment()
+
+        result = self.comment("b" * 40)
+
+        self.assertEqual(["post 101", "patch 101"], self.calls)
+        self.assertEqual(1, len(self.summary_comments()))
+        self.assertIn("sha=" + "b" * 40, self.summary_comments()[0])
+        self.assertIn("updated comment 101", result)
+
+    def test_another_accounts_summary_comment_is_left_alone(self) -> None:
+        self.comments.append({"id": 2, "user": {"login": "teammate"},
+                              "body": f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs."})
+
+        self.comment()
+
+        self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
+        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.comments[1]["body"])
+
+    def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
+        self.hosted = (None, "Pages is not enabled")
+        with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
+             mock.patch.object(summary, "hosting", return_value=self.hosted):
+            self.assertIn("Pages is not enabled", summary.comment_summary("owner/repo", 7, HEAD))
+
+    def test_summary_publish_comments_the_link_for_the_specs_head(self) -> None:
+        spec = Path(tempfile.mkdtemp()) / "summary.json"
+        spec.write_text(json.dumps({"pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+        commented: list[tuple] = []
+        out = io.StringIO()
+        with mock.patch.object(summary, "publish"), \
+             mock.patch.object(summary, "comment_summary", side_effect=lambda *a: commented.append(a) or "done"), \
+             redirect_stdout(out):
+            self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec)]))
+        self.assertEqual([("owner/repo", 7, HEAD)], commented)
+        self.assertIn("done", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
