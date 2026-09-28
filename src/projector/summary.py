@@ -790,6 +790,37 @@ def review_page(site: str, number: int) -> str:
     return f"{site}reviews/{number}/"
 
 
+SUMMARY_MARKER = "projector-summary"
+
+
+def comment_summary(repo: str, number: int, head: str) -> str:
+    """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
+
+    The pull request keeps one such comment per account, naming the head it
+    summarizes: a later head's summary updates it in place rather than adding
+    another, and a comment that already names this head is left alone. A
+    repository whose site is not hosted gets no comment. Returns what it did.
+    """
+    url, reason = hosting(repo)
+    if url is None:
+        return f"not linking the summary from a comment: {reason}"
+    page = review_page(url, number)
+    body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
+    login = gh("api", "user", "--jq", ".login").strip()
+    rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
+              f'.[] | select((.user.login | ascii_downcase) == "{login.lower()}") '
+              f'| select(.body | test("<!-- {SUMMARY_MARKER} v=1 ")) | [.id, .body] | @json')
+    comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
+    if comments:
+        comment_id, current = comments[-1]
+        if current.strip() == body.strip():
+            return f"comment {comment_id} already links the summary of {head[:7]}: {page}"
+        gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "-f", f"body={body}")
+        return f"updated comment {comment_id} to link the summary of {head[:7]}: {page}"
+    posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
+    return f"commented a link to the summary of {head[:7]}: {posted.get('html_url') or page}"
+
+
 def watched_paths(projects_dir: str | None = None) -> list[str]:
     """The paths a push to the default branch rebuilds the site for: the README
     and docs/, a projects directory outside docs/, and .projector.toml and the

@@ -191,11 +191,10 @@ were called walkthroughs has its specs on `refs/projector/walkthroughs`,
 under `walkthroughs/`, instead; its next `publish` carries them over to the
 new ref.
 
-Last, `publish` adds `Summary of this head: <url>` as the last line of the
-Projector review of that head, when one was posted, so a reader on GitHub
-finds the page. It looks for the review by the account `project review`
-posts as, `review.username` or else you, and edits it with that account's
-token.
+Last, `publish` comments a link to the summary on the pull request, so a
+reader on GitHub finds the page. The pull request keeps one such comment
+per account: a later head's summary updates it in place, and publishing
+the same head again changes nothing.
 
 Setting a repository up is once, with admin rights, and only when the user
 asks for it. From a checkout whose `origin` is the repository, run:

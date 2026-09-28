@@ -589,13 +589,12 @@ summary a person asks for:
   so a reader sees what the reviewer flagged beside the code it concerns.
   Drop a `flag` check whose finding thread has since been resolved.
 
-Publish it with `project summary publish`, after the review. It links the
-summary from your review of this head, as the review's last line,
-`Summary of this head: <url>`, so a reader on GitHub finds it, and re-reads
-the review to confirm the link. Never edit the review to add the link
-yourself. A summary that fails to build or publish never changes the
-review's verdict: say in your report that the summary failed and why, and
-leave the review as it was.
+Publish it with `project summary publish`, after the review. It then
+comments a link to the summary on the pull request, so a reader on GitHub
+finds it: one comment per pull request, which a later head's summary
+updates in place. Do not post the link yourself. A summary that fails to
+build or publish never changes the review's verdict: say in your report
+that the summary failed and why, and leave the review as it was.
 
 ## Gate readiness claims in plans
 
