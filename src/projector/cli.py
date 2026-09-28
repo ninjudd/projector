@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
 from . import review, site, summary
+from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
@@ -1037,6 +1038,17 @@ def site_enabled(root: Path) -> bool:
     return value
 
 
+def publish_rule_enabled(root: Path) -> bool:
+    """`review.publish_rule` from configuration; unset means `init` adds the rule."""
+
+    value = load_config(root).get("review.publish_rule")
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
+    return value
+
+
 def emit_site(pages: dict) -> None:
     print(f"{pages['pages']} GitHub Pages site {pages['url']}")
     if pages["visibility"] == "updated":
@@ -1073,6 +1085,8 @@ def run(arguments: argparse.Namespace) -> int:
         wanted = site_enabled(root) if arguments.site is None else arguments.site
         try:
             files = store.init(instructions_enabled(root))
+            if publish_rule_enabled(root):
+                files.append(allow_publish(root))
             pages = None
             if wanted:
                 try:

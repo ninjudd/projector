@@ -103,6 +103,38 @@ class InitError(ProjectorError):
         self.files = files
 
 
+def write_through(path: Path, content: str) -> None:
+    """Write `content` to the file `path` names, following any symlink.
+
+    Swapping a temporary file in at `path` itself would turn a link into a
+    regular file, so the swap happens at the resolved target: the link stays
+    a link and the file it points at gets the content.
+    """
+
+    target = path.resolve()
+    if not target.exists():
+        # A dangling link may point into a directory that does not exist yet;
+        # each caller has already decided the target may be written, so create
+        # the directories the way `init` does for the README.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # A new file gets the mode the README gets, 0644 under the umask.
+        # `mkstemp` would leave it at the temporary's owner-only 0600, which
+        # Git never records and another uid cannot read.
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+        return
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+        os.chmod(temporary, stat.S_IMODE(target.stat().st_mode))
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def discover_git_root(start: Path) -> Path:
     try:
         result = subprocess.run(
@@ -408,38 +440,6 @@ class ProjectStore:
         return first.exists() and second.exists() and first.resolve() == second.resolve()
 
     @staticmethod
-    def _write_through(path: Path, content: str) -> None:
-        """Write `content` to the file `path` names, following any symlink.
-
-        Swapping a temporary file in at `path` itself would turn a link into a
-        regular file, so the swap happens at the resolved target: the link stays
-        a link and the file it points at gets the content.
-        """
-
-        target = path.resolve()
-        if not target.exists():
-            # A dangling link may point into a directory that does not exist
-            # yet; callers have already confined the target to the repository,
-            # so create the directories the way `init` does for the README.
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # A new file gets the mode the README gets, 0644 under the umask.
-            # `mkstemp` would leave it at the temporary's owner-only 0600, which
-            # Git never records and another uid cannot read.
-            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-                stream.write(content)
-            return
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-                stream.write(content)
-            os.chmod(temporary, stat.S_IMODE(target.stat().st_mode))
-            os.replace(temporary, target)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-
-    @staticmethod
     def _leaves_repository(path: Path) -> str:
         return f"{path.name}: link leaves the repository ({path.resolve()}); not written"
 
@@ -520,7 +520,7 @@ class ProjectStore:
             if not self._link(claude, agents):
                 # No symlinks here (Windows without Developer Mode): the import
                 # is the documented alternative and reads the same file.
-                self._write_through(claude, instructions.IMPORT_LINE + "\n")
+                write_through(claude, instructions.IMPORT_LINE + "\n")
             files.append(FileAction("CLAUDE.md", "created"))
         elif self._unlinked(claude, agents):
             files.append(FileAction("CLAUDE.md", "kept", self._unlinked_note(claude)))
@@ -570,7 +570,7 @@ class ProjectStore:
     def _write_block(self, path: Path) -> FileAction:
         rendered = self._rendered_block()
         if not path.exists():
-            self._write_through(path, rendered + "\n")
+            write_through(path, rendered + "\n")
             return FileAction(path.name, "created")
         text = self._read_text(path)
         block = instructions.find_block(text)
@@ -585,7 +585,7 @@ class ProjectStore:
                 )
             if block.version == shipped and instructions.block_matches(block, rendered):
                 return FileAction(path.name, "unchanged")
-        self._write_through(path, instructions.with_block(text, rendered))
+        write_through(path, instructions.with_block(text, rendered))
         return FileAction(path.name, "updated")
 
     def instruction_issues(self) -> list[Issue]:

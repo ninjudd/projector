@@ -15,7 +15,7 @@ from unittest import mock
 
 import importlib.metadata as metadata
 
-from projector import cli, instructions
+from projector import cli, instructions, permissions
 from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectStore
 
@@ -48,6 +48,10 @@ class RepositoryTestCase(unittest.TestCase):
         # instruction scenario removes or alters exactly what it tests.
         (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
         os.symlink("AGENTS.md", self.root / "CLAUDE.md")
+        (self.root / ".claude").mkdir()
+        (self.root / ".claude" / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
+        )
         # Every command now reads layered configuration, and the user layer
         # lives at $HOME/.projector.toml. Point HOME at an empty directory so
         # a real one on the machine running the tests cannot reach them.
@@ -553,7 +557,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(69, code)
         self.assertIn("interactive terminal", stderr)
 
-    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md")
+    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md", ".claude/settings.json")
 
     def snapshot(self) -> dict[str, bytes]:
         return {name: (self.root / name).read_bytes() for name in self.ADOPTED}
@@ -567,7 +571,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\n", stdout
+            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\ncreated .claude/settings.json\n", stdout
         )
         self.assertEqual("", stderr)
         convention = (self.root / "docs" / "projects" / "README.md").read_text()
@@ -589,7 +593,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n",
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
             stdout,
         )
         self.assertEqual(before, self.snapshot())
@@ -602,7 +606,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n", stdout
+            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
         self.assertTrue((self.projects / "alpha" / "readme.md").exists())
 
@@ -617,7 +621,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
         written = agents.read_bytes()
         self.assertTrue(written.startswith(b"# House rules\r\n\r\nBe kind.  \r\n\r\n<!-- projector:begin"))
@@ -639,7 +643,7 @@ class MutationTests(RepositoryTestCase):
         self.assertNotIn("AGENTS.md:", stderr)
         code, stdout, _ = self.invoke("init")
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
 
     def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
@@ -653,7 +657,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
         self.assertTrue(agents.is_symlink())
         self.assertEqual("CLAUDE.md", os.readlink(agents))
@@ -662,7 +666,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
         code, stdout, _ = self.invoke("init")
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
 
     def test_a_link_checked_out_as_a_plain_file_is_left_alone(self) -> None:
@@ -704,7 +708,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
         self.assertEqual(self.block() + "\n", agents.read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -725,7 +729,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\n", stdout
+            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
         )
         self.assertIn(f"version {shipped + 98}", stderr)
         self.assertEqual(before, agents.read_bytes())
@@ -807,7 +811,7 @@ class MutationTests(RepositoryTestCase):
 
             self.assertEqual(0, code, stderr)
             self.assertEqual(
-                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\n",
+                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
                 stdout,
                 link.name,
             )
@@ -819,7 +823,7 @@ class MutationTests(RepositoryTestCase):
             self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
             code, stdout, _ = self.invoke("init")
             self.assertEqual(
-                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\n",
+                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
                 stdout,
             )
 
@@ -870,7 +874,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
 
         self.assertEqual(0, code, stderr)
-        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\n", stdout)
+        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout)
         self.assertIn("`plans/README.md`", (self.root / "AGENTS.md").read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
@@ -879,7 +883,8 @@ class MutationTests(RepositoryTestCase):
         (self.root / "AGENTS.md").unlink()
         (self.root / "CLAUDE.md").unlink()
 
-        self.assertEqual((0, "unchanged docs/projects/README.md\n", ""), self.invoke("init"))
+        self.assertEqual((0, "unchanged docs/projects/README.md\nunchanged .claude/settings.json\n", ""),
+                         self.invoke("init"))
         self.assertFalse((self.root / "AGENTS.md").exists())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
@@ -922,9 +927,92 @@ class MutationTests(RepositoryTestCase):
                 {"path": "docs/projects/README.md", "action": "unchanged"},
                 {"path": "AGENTS.md", "action": "unchanged"},
                 {"path": "CLAUDE.md", "action": "created"},
+                {"path": ".claude/settings.json", "action": "unchanged"},
             ],
             payload["files"],
         )
+
+    def settings(self) -> Path:
+        return self.root / ".claude" / "settings.json"
+
+    def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
+        existing = {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)"], "deny": ["Read(.env)"]}}
+        self.settings().write_text(json.dumps(existing), encoding="utf-8")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated .claude/settings.json\n", stdout)
+        self.assertEqual(
+            {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", permissions.RULE], "deny": ["Read(.env)"]}},
+            json.loads(self.settings().read_text()),
+        )
+        before = self.settings().read_bytes()
+        self.assertIn("unchanged .claude/settings.json\n", self.invoke("init")[1])
+        self.assertEqual(before, self.settings().read_bytes())
+
+    def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
+        for text, reason in (
+            ("{not json", "is not valid JSON"),
+            ("[]", "does not hold a JSON object"),
+            ('{"permissions": []}', "`permissions` that is not an object"),
+            ('{"permissions": {"allow": "Bash(ls)"}}', "`permissions.allow` that is not a list"),
+        ):
+            with self.subTest(text=text):
+                self.settings().write_text(text, encoding="utf-8")
+
+                code, stdout, stderr = self.invoke("init")
+
+                self.assertEqual(0, code, stderr)
+                self.assertIn("kept .claude/settings.json\n", stdout)
+                self.assertIn(reason, stderr)
+                self.assertIn(permissions.RULE, stderr)
+                self.assertEqual(text, self.settings().read_text())
+
+    def test_init_leaves_claude_settings_that_link_outside_the_repository(self) -> None:
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        outside = Path(elsewhere.name)
+        (outside / "settings.json").write_text("{}\n", encoding="utf-8")
+        self.settings().unlink()
+        (self.root / ".claude").rmdir()
+        os.symlink(outside, self.root / ".claude")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("links outside the repository", stderr)
+        self.assertEqual("{}\n", (outside / "settings.json").read_text())
+
+    def test_init_writes_through_a_settings_link_inside_the_repository(self) -> None:
+        shared = self.root / "config" / "claude.json"
+        shared.parent.mkdir()
+        shared.write_text("{}\n", encoding="utf-8")
+        self.settings().unlink()
+        os.symlink("../config/claude.json", self.settings())
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated .claude/settings.json\n", stdout)
+        self.assertTrue(self.settings().is_symlink())
+        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
+
+    def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+        self.settings().unlink()
+        (self.root / ".projector.toml").write_text("[review]\npublish_rule = false\n")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertNotIn(".claude/settings.json", stdout)
+        self.assertFalse(self.settings().exists())
+
+        (self.root / ".projector.toml").write_text('[review]\npublish_rule = "no"\n')
+        code, _, stderr = self.invoke("init")
+        self.assertEqual(78, code)
+        self.assertIn("review.publish_rule must be true or false", stderr)
 
 
 class ValidationTests(RepositoryTestCase):
