@@ -114,7 +114,7 @@ unchanged AGENTS.md
 unchanged CLAUDE.md
 created .github/workflows/projector-site.yml
 created GitHub Pages site https://owner.github.io/example/
-updated repository website https://owner.github.io/example/
+updated repository website https://owner.github.io/example
 ```
 
 After the files above, `init` turns on GitHub Pages with GitHub Actions as
@@ -125,8 +125,9 @@ site with a note. Pass `--site` to switch a branch site to GitHub Actions and
 add Projector's workflow beside another deployer. When the repository is
 private and its site is public, it makes the site private and prints
 `updated GitHub Pages visibility: private`. It points the repository's
-website link at the site when that link is empty, and keeps a link to
-anywhere else, saying so on stderr. Last, it writes the same workflow file
+website link at the site when that link is empty, without the trailing slash
+GitHub reports for the site, and keeps a link to anywhere else, saying so on
+stderr. Last, it writes the same workflow file
 as `site workflow --write` and reports it like any other file, reminding you
 on stderr to merge it to the default branch through a pull request. It
 updates a workflow Projector wrote, in any earlier shape, and keeps one edited
