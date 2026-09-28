@@ -988,11 +988,11 @@ class InitSiteTests(SiteRepoCase):
 
         self.assertEqual(0, code, err)
         self.assertEqual([("POST", "repos/owner/example/pages", "-f", "build_type=workflow"),
-                          ("PATCH", "repos/owner/example", "-f", "homepage=https://owner.github.io/example/")],
+                          ("PATCH", "repos/owner/example", "-f", "homepage=https://owner.github.io/example")],
                          github.writes())
         self.assertIn(f"created {summary.WORKFLOW_PATH}\n", out)
         self.assertIn("created GitHub Pages site https://owner.github.io/example/\n", out)
-        self.assertIn("updated repository website https://owner.github.io/example/\n", out)
+        self.assertIn("updated repository website https://owner.github.io/example\n", out)
         self.assertIn("through a pull request", err)
         self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
 
@@ -1160,6 +1160,17 @@ class InitSiteTests(SiteRepoCase):
                 self.assertEqual(action, json.loads(out)["site"]["website"])
                 if action == "kept":
                     self.assertIn("already links its website to https://example.com", err)
+                    self.assertIn("set it to https://owner.github.io/example to link the site", err)
+
+    def test_links_a_custom_domain_website_without_a_trailing_slash(self) -> None:
+        github = FakeGitHub(pages=dict(SITE_READY, html_url="https://docs.example.com/", https_enforced=True))
+
+        code, out, err = self.init(github)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([("PATCH", "repos/owner/example", "-f", "homepage=https://docs.example.com")], github.writes())
+        self.assertEqual("https://docs.example.com", github.homepage)
+        self.assertIn("updated repository website https://docs.example.com\n", out)
 
     def test_warns_a_non_admin_and_writes_the_workflow_only_for_a_site_already_set_up(self) -> None:
         github = FakeGitHub(admin=False, pages=SITE_READY)
