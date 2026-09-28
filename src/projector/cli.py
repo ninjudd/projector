@@ -740,6 +740,8 @@ def run_summary(arguments: argparse.Namespace) -> int:
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
         )
+        pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))["pr"]
+        summary.link_review(pr["repo"], pr["number"], pr["head"])
     return 0
 
 

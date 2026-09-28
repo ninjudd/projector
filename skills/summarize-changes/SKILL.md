@@ -170,9 +170,12 @@ local preview.
 that does not build. It then commits the spec and that diff to
 `summaries/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
-starts the workflow. It fetches from the compare API, which serves pull
-requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
-`publish` reports that GitHub could not serve the diff. The file is then the
+starts the workflow. Last, it adds `Summary of this head: <url>` as the last
+line of your Projector review of that head, when you have posted one, so a
+reader on GitHub finds the page. It fetches from the compare API, which
+serves pull requests past the 300-file limit of `gh pr diff`, so pass
+`--diff` only when `publish` reports that GitHub could not serve the diff.
+The file is then the
 local `git diff` from step 3, since the compare call there fails with
 `publish`'s. It must be the diff from the spec's `pr.base` to its `pr.head`,
 because every later deploy serves the stored diff as it is. Because the diff is

@@ -785,6 +785,46 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     return commit
 
 
+SUMMARY_LINE = "Summary of this head: "
+
+
+def link_review(repo: str, number: int, head: str) -> None:
+    """Link the summary from the Projector review of `head`, so a reader on GitHub finds it.
+
+    The link is the review's last line. A review that already links the page
+    is left alone, and an older link line is replaced rather than repeated.
+    Only the authenticated user's own review can be edited, so a head with no
+    Projector review of theirs, or a repository whose site is not hosted, is
+    reported and skipped.
+    """
+    url, reason = hosting(repo)
+    if url is None:
+        print(f"not linking the summary from a review: {reason}")
+        return
+    page = f"{url}reviews/{number}/"
+    login = gh("api", "user", "--jq", ".login").strip()
+    rows = gh("api", "--paginate", f"repos/{repo}/pulls/{number}/reviews", "--jq",
+              f'.[] | select(.user.login == "{login}") '
+              f'| select(.body | test("projector-review v=1 .*sha={head}")) | [.id, .body] | @json')
+    reviews = [json.loads(row) for row in rows.splitlines() if row.strip()]
+    if not reviews:
+        print(f"no Projector review by {login} on {head[:7]} to link the summary from; it is at {page}")
+        return
+    review_id, body = reviews[-1]
+    kept = [line for line in body.rstrip().split("\n") if not line.startswith(SUMMARY_LINE)]
+    linked = "\n".join(kept).rstrip() + f"\n\n{SUMMARY_LINE}{page}\n"
+    if linked.rstrip() == body.rstrip():
+        print(f"review {review_id} already links the summary: {page}")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        request = Path(tmp) / "review.json"
+        request.write_text(json.dumps({"body": linked}), encoding="utf-8")
+        gh("api", "-X", "PUT", f"repos/{repo}/pulls/{number}/reviews/{review_id}", "--input", str(request))
+    if f"{SUMMARY_LINE}{page}" not in gh("api", f"repos/{repo}/pulls/{number}/reviews/{review_id}", "--jq", ".body"):
+        raise SpecError(f"review {review_id} does not link {page} when read back; check it on GitHub")
+    print(f"linked the summary from review {review_id}: {page}")
+
+
 def watched_paths(projects_dir: str | None = None) -> list[str]:
     """The paths a push to the default branch rebuilds the site for: the README
     and docs/, a projects directory outside docs/, and .projector.toml and the

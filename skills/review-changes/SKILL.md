@@ -589,18 +589,13 @@ summary a person asks for:
   so a reader sees what the reviewer flagged beside the code it concerns.
   Drop a `flag` check whose finding thread has since been resolved.
 
-Publish it with `project summary publish`, then append the URL `site status`
-printed to the review you just published, so a reader on GitHub finds it:
-
-```sh
-gh api -X PUT repos/<owner>/<repo>/pulls/<number>/reviews/<review-id> -F body=@<file>
-```
-
-`-F` reads the body from the file; `-f` would post the literal path. Keep the
-signature line and marker first, add `Summary of this head: <url>` as the
-last line, and re-read the review to confirm it. A summary that fails to
-build or publish never changes the review's verdict: say in your report that
-the summary failed and why, and leave the review as it was.
+Publish it with `project summary publish`, after the review. It links the
+summary from your review of this head, as the review's last line,
+`Summary of this head: <url>`, so a reader on GitHub finds it, and re-reads
+the review to confirm the link. Never edit the review to add the link
+yourself. A summary that fails to build or publish never changes the
+review's verdict: say in your report that the summary failed and why, and
+leave the review as it was.
 
 ## Gate readiness claims in plans
 

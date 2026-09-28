@@ -676,5 +676,104 @@ class StatusTests(unittest.TestCase):
             summary.gh_lookup("api", "repos/o/r/pages")
 
 
+HEAD = "a" * 40
+PAGE = "https://owner.github.io/repo/reviews/7/"
+
+
+def projector_review(review_id: int, sha: str, who: str = "operator", extra: str = "") -> dict:
+    body = (f"📽️ **Projector review** · model `m` · **CLEAN** · took 1m 00s\n\n"
+            f"<!-- projector-review v=1 verdict=clean model=m sha={sha} findings=0 seconds=60 covered=1/1 -->\n\n"
+            f"The head looks clean.{extra}")
+    return {"id": review_id, "user": {"login": who}, "body": body}
+
+
+class LinkReviewTests(unittest.TestCase):
+    """GitHub's reviews stand in a list; the fake answers the calls link_review makes."""
+
+    def setUp(self) -> None:
+        self.reviews = [projector_review(1, "b" * 40), projector_review(2, HEAD, who="teammate"),
+                        projector_review(3, HEAD), {"id": 4, "user": {"login": "operator"}, "body": "Looks good."}]
+        self.puts: list[int] = []
+        self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
+        self.echo = True
+
+    def gh(self, *args: str) -> str:
+        if args == ("api", "user", "--jq", ".login"):
+            return "operator\n"
+        if args[:3] == ("api", "--paginate", "repos/owner/repo/pulls/7/reviews"):
+            return "".join(json.dumps([r["id"], r["body"]]) + "\n" for r in self.reviews
+                           if r["user"]["login"] == "operator" and "projector-review v=1" in r["body"]
+                           and f"sha={HEAD}" in r["body"])
+        if args[:3] == ("api", "-X", "PUT"):
+            review_id = int(args[3].rsplit("/", 1)[1])
+            self.puts.append(review_id)
+            if self.echo:
+                next(r for r in self.reviews if r["id"] == review_id)["body"] = json.loads(Path(args[5]).read_text())["body"]
+            return "{}"
+        if len(args) == 4 and args[2:] == ("--jq", ".body"):
+            review_id = int(args[1].rsplit("/", 1)[1])
+            return next(r for r in self.reviews if r["id"] == review_id)["body"]
+        raise AssertionError(f"unexpected gh call {args}")
+
+    def link(self) -> str:
+        out = io.StringIO()
+        with mock.patch.object(summary, "gh", side_effect=self.gh), \
+             mock.patch.object(summary, "hosting", return_value=self.hosted), redirect_stdout(out):
+            summary.link_review("owner/repo", 7, HEAD)
+        return out.getvalue()
+
+    def body(self, review_id: int) -> str:
+        return next(r for r in self.reviews if r["id"] == review_id)["body"]
+
+    def test_links_the_summary_as_the_last_line_of_your_review_of_the_head(self) -> None:
+        before = {r["id"]: r["body"] for r in self.reviews}
+
+        out = self.link()
+
+        self.assertEqual([3], self.puts)
+        self.assertTrue(self.body(3).startswith(before[3]))
+        self.assertEqual(f"Summary of this head: {PAGE}", self.body(3).rstrip().splitlines()[-1])
+        self.assertEqual(before[1], self.body(1), "a review of another head is left alone")
+        self.assertEqual(before[2], self.body(2), "another person's review is left alone")
+        self.assertIn(f"linked the summary from review 3: {PAGE}", out)
+
+        self.assertIn("already links the summary", self.link())
+        self.assertEqual([3], self.puts, "a review that links the page is not edited again")
+
+    def test_an_older_link_is_replaced_rather_than_repeated(self) -> None:
+        self.reviews[2] = projector_review(3, HEAD, extra="\n\nSummary of this head: http://old.example/reviews/7/")
+
+        self.link()
+
+        self.assertEqual(1, self.body(3).count("Summary of this head: "))
+        self.assertTrue(self.body(3).rstrip().endswith(PAGE))
+
+    def test_a_head_without_your_review_or_a_site_is_left_alone(self) -> None:
+        self.reviews = self.reviews[:2]
+        self.assertIn("no Projector review by operator on aaaaaaa", self.link())
+        self.assertEqual([], self.puts)
+
+        self.hosted = (None, "Pages is not enabled")
+        with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
+             mock.patch.object(summary, "hosting", return_value=self.hosted), redirect_stdout(io.StringIO()) as out:
+            summary.link_review("owner/repo", 7, HEAD)
+        self.assertIn("Pages is not enabled", out.getvalue())
+
+    def test_a_link_that_does_not_read_back_is_an_error(self) -> None:
+        self.echo = False
+        with self.assertRaises(summary.SpecError) as refused:
+            self.link()
+        self.assertIn("does not link", str(refused.exception))
+
+    def test_summary_publish_links_the_review_of_the_specs_head(self) -> None:
+        spec = Path(tempfile.mkdtemp()) / "summary.json"
+        spec.write_text(json.dumps({"pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+        linked: list[tuple] = []
+        with mock.patch.object(summary, "publish"), \
+             mock.patch.object(summary, "link_review", side_effect=lambda *a: linked.append(a)):
+            self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec)]))
+        self.assertEqual([("owner/repo", 7, HEAD)], linked)
+
+
 if __name__ == "__main__":
     unittest.main()
