@@ -740,6 +740,8 @@ def run_summary(arguments: argparse.Namespace) -> int:
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
         )
+        pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))["pr"]
+        print(summary.comment_summary(pr["repo"], pr["number"], pr["head"]))
     return 0
 
 
@@ -935,7 +937,7 @@ def run_site(arguments: argparse.Namespace) -> int:
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
-        print(f"{url}reviews/{arguments.pr}/" if arguments.pr else url)
+        print(summary.review_page(url, arguments.pr) if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
         text = site_workflow_text(root, arguments.action_ref, arguments.branch)
