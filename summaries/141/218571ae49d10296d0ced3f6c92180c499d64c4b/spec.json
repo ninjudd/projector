@@ -1,0 +1,179 @@
+{
+ "version": 1,
+ "name": "Publish Rule on Init",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 141,
+  "title": "Allow the review loop's publish in the repository's Claude Code settings on init",
+  "head": "218571ae49d10296d0ced3f6c92180c499d64c4b",
+  "headRef": "init-auto-mode",
+  "base": "06e6441c2c8d2e5b826aab7452fe8e9d47b2078a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Claude Code's auto mode refuses <code>project review publish</code> for a clean review of a pull request the session's own account opened, as self-approval, so a review loop that runs as the author stalls on every clean head until a person runs the command. A repository cannot carry an <code>autoMode</code> exception, but it can carry an ordinary allow rule, which settles the command before the classifier runs.",
+   "So <code>project init</code> now adds <code>Bash(project review publish *)</code> to <code>permissions.allow</code> in the repository's committed <code>.claude/settings.json</code>. Because the rule exempts a command from the classifier, <code>init</code> adds it only when stdin is a terminal or <code>--publish-rule</code> is passed. Run without a terminal, as an agent refreshing the instructions runs it, <code>init</code> reports the file as <code>kept</code> with a note, and <code>review.publish_rule</code> can only turn the step off.",
+   "A settings file <code>init</code> cannot safely edit is kept with a note and <code>init</code> still exits 0. This repository commits the rule, <code>review-changes</code> says what the rule is for, and <code>write_through</code> moves out of <code>ProjectStore</code> so the new module can share it."
+  ],
+  "cards": [
+   {
+    "id": "decision",
+    "title": "When init adds the rule",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Invocation</th><th>Configuration</th><th>Result</th></tr></thead><tbody><tr><td>At a terminal</td><td>unset or <code>true</code></td><td class=\"r\">added</td></tr><tr><td>No terminal</td><td>unset or <code>true</code></td><td class=\"r\">kept, with a note</td></tr><tr><td>Any</td><td><code>false</code></td><td class=\"r\">left alone</td></tr><tr><td><code>--publish-rule</code></td><td>any</td><td class=\"r\">added</td></tr><tr><td><code>--no-publish-rule</code></td><td>any</td><td class=\"r\">left alone</td></tr></tbody></table></div><p class=\"note\">A file that already holds the rule is <code>unchanged</code> in every row that reaches it.</p>"
+   },
+   {
+    "id": "scope",
+    "title": "What the rule authorizes",
+    "html": "<ul class=\"tight\"><li>One command, <code>project review publish</code>, with any arguments.</li><li>Every Claude Code session opened in a checkout that has the file, not only a review loop's.</li><li>That includes a changes-requested review and the real <code>APPROVE</code> that <code>review.allow_approve</code> permits on someone else's pull request.</li><li><code>publish</code>'s own checks still bound it: the head set up, the verdict matching the finding census, and the lock.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>d97b3e6</code>: two findings. A bad <code>review.publish_rule</code> refused only after <code>init</code> had written files, and a plain-file <code>.claude</code> or a non-UTF-8 settings file aborted <code>init</code> with exit 65.</li><li><code>2bec480</code> fixed both: the setting is read before any write, and both cases are kept with a note.</li><li><code>218571a</code> added the terminal gate and <code>--publish-rule</code> / <code>--no-publish-rule</code>. Reviewed clean.</li></ul>"
+   },
+   {
+    "id": "unverified",
+    "title": "Host claims taken as given",
+    "html": "<p>The change rests on two claims about Claude Code that the review did not check against the host: that a matching allow rule resolves before the auto-mode classifier, and that the workspace trust dialog lists a repository's allow rules before they apply.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rule",
+   "title": "The rule and the settings file",
+   "kicker": "What gets written, where, and what is left alone",
+   "intro": [
+    "<code>allow_publish</code> reads <code>.claude/settings.json</code>, appends the rule to <code>permissions.allow</code> when it is missing, and writes the file back as two-space JSON with every other setting kept. Each state it cannot safely edit returns a <code>kept</code> action whose note names the rule to add by hand.",
+    "With <code>apply=False</code>, the path an agent's <code>init</code> takes, a file that lacks the rule is reported rather than changed. This repository commits the file the new <code>init</code> writes."
+   ],
+   "concepts": [
+    "The <code>kept</code> checks run in order: a link that leaves the repository, a <code>.claude</code> that is not a directory, a read or decode failure, invalid JSON, then an unexpected shape.",
+    "A file that already holds the rule reports <code>unchanged</code> whether or not <code>apply</code> is set."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No path writes when <code>apply</code> is false: the only <code>write_through</code> call comes after the <code>if not apply</code> return."
+    },
+    {
+     "kind": "verify",
+     "text": "A symlinked settings file inside the repository is written at its target, so the link stays a link."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The whole feature: the rule, the kept cases, and the apply switch."
+    },
+    {
+     "path": ".claude/settings.json",
+     "note": "This repository's copy, byte-for-byte what init writes."
+    }
+   ]
+  },
+  {
+   "id": "write-through",
+   "title": "The shared write helper",
+   "kicker": "A move, so permissions.py can reuse it",
+   "intro": [
+    "<code>ProjectStore._write_through</code> becomes the module-level <code>core.write_through</code>, unchanged apart from one comment. The three instruction-file call sites switch to the new name."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No reader of the old <code>ProjectStore._write_through</code> name remains."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "A pure move; compare the removed and added bodies."
+    }
+   ]
+  },
+  {
+   "id": "gate",
+   "title": "The terminal gate in init",
+   "kicker": "Who may add the rule",
+   "intro": [
+    "<code>run</code> decides the step before anything is written: an explicit flag wins, then <code>review.publish_rule</code>, and only then whether stdin is a terminal. The result is <code>add</code>, <code>report</code>, or nothing, and <code>init</code> appends the settings action after the instruction files.",
+    "The gate exists because the plan, implement and finish skills tell an agent to run <code>project init</code> to refresh a stale section. An agent's shell gives the command no terminal, so its <code>init</code> takes the note path."
+   ],
+   "concepts": [
+    "Configuration can only turn the step off; <code>review.publish_rule = true</code> does not add the rule without a terminal.",
+    "The flags mirror <code>--site</code> and <code>--no-site</code>: passing either skips reading the setting."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "An invalid <code>review.publish_rule</code> refuses with exit 78 before <code>store.init</code> writes anything."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>--publish-rule</code> and <code>--no-publish-rule</code> share one <code>dest</code>, and the first action's <code>None</code> default is what an invocation without either sees."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The two flags in <code>parser</code>, <code>publish_rule_enabled</code>, and the gate in <code>run</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Every scenario runs without a terminal unless it says otherwise",
+   "intro": [
+    "The base test case now patches <code>sys.stdin.isatty</code> to false and seeds each repository with a settings file that already holds the rule, so the existing <code>init</code> tests report it <code>unchanged</code>. A test that stands for a person calls <code>at_a_terminal</code>.",
+    "New tests cover merging into existing settings, each kept case, the terminal gate with each flag and setting, and a bad setting refusing before any write. The site tests pass <code>--no-publish-rule</code> so they stay about the site."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Only <code>test_projector.py</code> and <code>test_site.py</code> run <code>init</code>, so the suite does not depend on whether it runs at a terminal."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py"
+    },
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the review skill",
+   "kicker": "What people and agents are told",
+   "intro": [
+    "The CLI guide adds <code>.claude/settings.json</code> to the files <code>init</code> manages, with the terminal gate, both flags, the kept cases, and the <code>review.publish_rule</code> key. The README says what a terminal run adds.",
+    "<code>review-changes</code> tells a reviewer to run <code>publish</code> as a command of its own so the rule matches, and, if the host still refuses it, to ask the user rather than retry or run <code>init</code> itself."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "flag",
+     "text": "<code>docs/cli.md:408</code>: the configuration table still says <code>review.publish_rule</code> makes <code>init</code> add the rule, without the terminal condition the <code>init</code> section states. The review listed this as a suggestion."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "skills/review-changes/SKILL.md",
+     "note": "The one paragraph a reviewing agent reads."
+    }
+   ]
+  }
+ ]
+}
