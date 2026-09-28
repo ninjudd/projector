@@ -60,6 +60,12 @@ class RepositoryTestCase(unittest.TestCase):
         environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
         environment.start()
         self.addCleanup(environment.stop)
+        # Commands run as an agent would, without a terminal, whatever runs the
+        # tests; a test that stands for a person at a terminal says so.
+        self.enterContext(mock.patch("sys.stdin.isatty", return_value=False))
+
+    def at_a_terminal(self) -> None:
+        self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -563,6 +569,7 @@ class MutationTests(RepositoryTestCase):
         return {name: (self.root / name).read_bytes() for name in self.ADOPTED}
 
     def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+        self.at_a_terminal()
         self.temporary.cleanup()
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -936,6 +943,7 @@ class MutationTests(RepositoryTestCase):
         return self.root / ".claude" / "settings.json"
 
     def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
+        self.at_a_terminal()
         existing = {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)"], "deny": ["Read(.env)"]}}
         self.settings().write_text(json.dumps(existing), encoding="utf-8")
 
@@ -992,14 +1000,40 @@ class MutationTests(RepositoryTestCase):
         self.settings().unlink()
         os.symlink("../config/claude.json", self.settings())
 
-        code, stdout, stderr = self.invoke("init")
+        code, stdout, stderr = self.invoke("init", "--publish-rule")
 
         self.assertEqual(0, code, stderr)
         self.assertIn("updated .claude/settings.json\n", stdout)
         self.assertTrue(self.settings().is_symlink())
         self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
 
+    def test_init_adds_the_publish_rule_only_at_a_terminal_or_when_asked(self) -> None:
+        self.settings().unlink()
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
+        self.assertFalse(self.settings().exists())
+
+        (self.root / ".projector.toml").write_text("[review]\npublish_rule = true\n")
+        self.assertIn("kept .claude/settings.json\n", self.invoke("init")[1])
+        self.assertFalse(self.settings().exists(), "configuration cannot add the rule without a terminal")
+
+        (self.root / ".projector.toml").write_text("[review]\npublish_rule = false\n")
+        code, stdout, stderr = self.invoke("init", "--publish-rule")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("created .claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
+
+        self.settings().unlink()
+        self.at_a_terminal()
+        self.assertNotIn(".claude/settings.json", self.invoke("init", "--no-publish-rule")[1])
+        (self.root / ".projector.toml").unlink()
+        self.assertIn("created .claude/settings.json\n", self.invoke("init")[1])
+
     def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+        self.at_a_terminal()
         self.settings().unlink()
         (self.root / ".projector.toml").write_text("[review]\npublish_rule = false\n")
 

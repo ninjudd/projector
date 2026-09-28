@@ -20,11 +20,13 @@ SETTINGS_PATH = ".claude/settings.json"
 RULE = "Bash(project review publish *)"
 
 
-def allow_publish(root: Path) -> FileAction:
+def allow_publish(root: Path, apply: bool = True) -> FileAction:
     """Add the rule to `permissions.allow` in the repository's Claude Code settings.
 
     Everything else in the file is kept. A file `init` cannot read as settings,
     or one that links outside the repository, is left alone with a note.
+    Without `apply`, a file that lacks the rule is only reported, with how to
+    add it.
     """
 
     path = root / SETTINGS_PATH
@@ -61,6 +63,11 @@ def allow_publish(root: Path) -> FileAction:
         return kept("has a `permissions.allow` that is not a list")
     if RULE in allow:
         return FileAction(SETTINGS_PATH, "unchanged")
+    if not apply:
+        return FileAction(SETTINGS_PATH, "kept", f"{SETTINGS_PATH} lacks {RULE}, without which Claude Code's auto "
+                                                 "mode refuses a review loop's clean review of your own pull "
+                                                 "request; run `project init` yourself in a terminal, or pass "
+                                                 "--publish-rule, to add it")
     allow.append(RULE)
     write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
     return FileAction(SETTINGS_PATH, "updated" if existed else "created")

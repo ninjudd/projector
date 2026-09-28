@@ -61,13 +61,18 @@ created .claude/settings.json
   `reviewDecision` and a person still merges. An allow rule resolves the
   command before the classifier runs, and Claude Code applies a repository's
   allow rules only after its workspace trust dialog has listed them to you.
-  `init` adds the rule to the file's existing settings, keeps every other
-  setting, and writes the file back as two-space JSON. It keeps a file that is
-  not valid UTF-8 JSON, holds settings of an unexpected shape, sits under a
-  `.claude` that is not a directory, or links outside the repository, and
-  says on stderr how to add the rule yourself. Auto mode reads no `autoMode` block from a
-  repository, so this rule, not an `autoMode` exception, is what a repository
-  can carry.
+  Because the rule exempts a command from the classifier, `init` adds it only
+  when you run `init` at a terminal, or when you pass `--publish-rule`. Run
+  without a terminal, as an agent refreshing the instructions runs it, `init`
+  reports the file as `kept` and says on stderr how to add the rule, and
+  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+  to leave the file alone for one run. `init` adds the rule to the file's
+  existing settings, keeps every other setting, and writes the file back as
+  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
+  settings of an unexpected shape, sits under a `.claude` that is not a
+  directory, or links outside the repository, and says on stderr how to add
+  the rule yourself. Auto mode reads no `autoMode` block from a repository,
+  so this rule, not an `autoMode` exception, is what a repository can carry.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without

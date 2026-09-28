@@ -975,7 +975,8 @@ class InitSiteTests(SiteRepoCase):
              mock.patch.object(summary, "gh", side_effect=github.gh), \
              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
              redirect_stdout(out), redirect_stderr(err):
-            code = cli.main(["--root", str(self.repo), "init", *extra])
+            # The site is under test; the Claude Code settings step has its own tests.
+            code = cli.main(["--root", str(self.repo), "init", "--no-publish-rule", *extra])
         return code, out.getvalue(), err.getvalue()
 
     def workflow(self) -> Path:

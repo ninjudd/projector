@@ -207,6 +207,17 @@ def parser() -> argparse.ArgumentParser:
         "--no-site", action="store_false", dest="site", help="leave the GitHub Pages site and its workflow alone"
     )
     init.add_argument("--action-ref", default="v0", help="the projector tag or commit the site workflow runs")
+    rule_choice = init.add_mutually_exclusive_group()
+    rule_choice.add_argument(
+        "--publish-rule",
+        action="store_true",
+        default=None,
+        help="add the Claude Code rule allowing `project review publish` to .claude/settings.json even without "
+        "a terminal (default: add it when run at a terminal)",
+    )
+    rule_choice.add_argument(
+        "--no-publish-rule", action="store_false", dest="publish_rule", help="leave .claude/settings.json alone"
+    )
     add_output(init)
 
     listing = subcommands.add_parser("list", help="list projects")
@@ -1083,11 +1094,20 @@ def run(arguments: argparse.Namespace) -> int:
         # An explicit --site or --no-site wins over configuration; unset, the
         # site is set up when it can be and skipped with a note when it cannot.
         wanted = site_enabled(root) if arguments.site is None else arguments.site
-        publish_rule = publish_rule_enabled(root)
+        # The publish rule exempts a command from Claude Code's auto-mode
+        # classifier, so it is added only when a person runs `init` at a
+        # terminal or names --publish-rule; an agent refreshing the
+        # instructions gets a note instead. Configuration can only turn it off.
+        if arguments.publish_rule is not None:
+            publish_rule = "add" if arguments.publish_rule else None
+        elif publish_rule_enabled(root):
+            publish_rule = "add" if sys.stdin.isatty() else "report"
+        else:
+            publish_rule = None
         try:
             files = store.init(instructions_enabled(root))
             if publish_rule:
-                files.append(allow_publish(root))
+                files.append(allow_publish(root, apply=publish_rule == "add"))
             pages = None
             if wanted:
                 try:
