@@ -740,8 +740,18 @@ def run_summary(arguments: argparse.Namespace) -> int:
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
         )
+        # Link the summary from the review, found and edited as the reviewer
+        # `project review` posts as: review.username, else you.
         pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))["pr"]
-        summary.link_review(pr["repo"], pr["number"], pr["head"])
+        url, reason = summary.hosting(pr["repo"])
+        if url is None:
+            print(f"not linking the summary from a review: {reason}")
+        else:
+            configured = load_config(Path.cwd()).get("review.username")
+            reviewer = review.reviewer_login(None, configured if isinstance(configured, str) else None,
+                                             review.authenticated_login())
+            print(review.link_summary(pr["repo"], pr["number"], pr["head"], reviewer,
+                                      summary.review_page(url, pr["number"])))
     return 0
 
 
@@ -937,7 +947,7 @@ def run_site(arguments: argparse.Namespace) -> int:
         if url is None:
             print(f"not hosted: {reason}")
             return NOT_HOSTED
-        print(f"{url}reviews/{arguments.pr}/" if arguments.pr else url)
+        print(summary.review_page(url, arguments.pr) if arguments.pr else url)
     else:
         root = discover_git_root(Path.cwd())
         text = site_workflow_text(root, arguments.action_ref, arguments.branch)

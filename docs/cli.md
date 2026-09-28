@@ -488,11 +488,12 @@ ref without touching the checkout, and starts the repository's site workflow.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the spec's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
-When the site is hosted and you have posted a Projector review of the spec's
-head, `summary publish` then makes `Summary of this head: <url>` that
-review's last line, replacing an older link line rather than repeating it,
-and re-reads the review to confirm the link. With no such review, it prints
-where the summary is and edits nothing.
+When the site is hosted and the account `project review` posts as,
+`review.username` or else you, has a Projector review of the spec's head,
+`summary publish` then makes `Summary of this head: <url>` that review's last
+line, with that account's token, replacing an older link line rather than
+repeating it, and re-reads the review to confirm the link. With no such
+review, it prints where the summary is and edits nothing.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.

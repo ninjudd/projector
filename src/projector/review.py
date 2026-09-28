@@ -24,6 +24,7 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -126,6 +127,41 @@ def reviewer_token(login: str) -> str:
     if not token:
         raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account")
     return token
+
+
+SUMMARY_LINE = "Summary of this head: "
+
+
+def link_summary(repo: str, number: int, head: str, reviewer: str, page: str) -> str:
+    """Make a link to the summary `page` the last line of the reviewer's Projector review of `head`.
+
+    The review is read and edited with the reviewer's own token, the account
+    `publish` posted it as. A review that already links the page is left
+    alone, and an older link line is replaced rather than repeated. With no
+    Projector review of the head by the reviewer, nothing is edited. Returns
+    what it did.
+    """
+    token = reviewer_token(reviewer)
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews", "--jq",
+                   f'.[] | select((.user.login | ascii_downcase) == "{reviewer.lower()}") '
+                   f'| select(.body | test("projector-review v=1 .*sha={head}")) | [.id, .body] | @json'], token)
+    reviews = [json.loads(row) for row in rows.splitlines() if row.strip()]
+    if not reviews:
+        return f"no Projector review by {reviewer} on {head[:7]} to link the summary from; it is at {page}"
+    review_id, body = reviews[-1]
+    kept = [line for line in body.rstrip().split("\n") if not line.startswith(SUMMARY_LINE)]
+    linked = "\n".join(kept).rstrip() + f"\n\n{SUMMARY_LINE}{page}\n"
+    if linked.rstrip() == body.rstrip():
+        return f"review {review_id} already links the summary: {page}"
+    with tempfile.TemporaryDirectory() as tmp:
+        request = Path(tmp) / "review.json"
+        request.write_text(json.dumps({"body": linked}), encoding="utf-8")
+        run_gh(["api", "-X", "PUT", f"repos/{repo}/pulls/{number}/reviews/{review_id}", "--input", str(request)],
+               token)
+    if f"{SUMMARY_LINE}{page}" not in run_gh(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}",
+                                              "--jq", ".body"], token):
+        raise ReviewError(f"review {review_id} does not link {page} when read back; check it on GitHub")
+    return f"linked the summary from review {review_id}: {page}"
 
 
 # Trust
