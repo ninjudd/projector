@@ -1,0 +1,1351 @@
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 4d77eed..5f144f8 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -8,7 +8,7 @@
+   --add-bg: #E4F5EA; --add-ln: #CBEAD6; --add-text: #0F5A2A;
+   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
+   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
+-  --warn: #9A6700; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA;
++  --warn: #946300; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA; --info: #0550AE; --info-bg: #E3EDFA;
+   --code-bg: #EFECE3;
+   --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
+   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
+@@ -22,7 +22,7 @@
+     --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
+     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+-    --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
++    --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+     --code-bg: #1E1C16;
+     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+     --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+@@ -35,11 +35,14 @@
+   --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
+   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+-  --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
++  --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+   --code-bg: #1E1C16;
+   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+   --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+ }
++/* Where sticky headers pin: the top of the viewport, below the compact PR bar on narrow screens. */
++:root { --stick-top: env(safe-area-inset-top, 0px); }
++@media (max-width: 980px) { :root { --stick-top: calc(env(safe-area-inset-top, 0px) + 40px); } }
+ * { box-sizing: border-box; }
+ body {
+   margin: 0; background: var(--bg); color: var(--text);
+@@ -78,8 +81,6 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+   .prbar .prref { font-size: 13px; }
+   .prbar .prname { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+-  .fhead { top: calc(env(safe-area-inset-top, 0px) + 40px); }
+-  .group, .file { scroll-margin-top: 56px; }
+ }
+ .nav .progress { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 6px 10px; font-size: 13px; color: var(--muted); }
+ .nav .progress b { color: var(--text); font-variant-numeric: tabular-nums; }
+@@ -92,7 +93,7 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+ .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+ .nav .ncheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
+ .nav .ncheck.done { background: var(--ok) var(--check-icon) center / 9px 9px no-repeat; border-color: var(--ok); }
+-.nav .extra { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
++.nav .extra { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+ .nav .extra a { grid-template-columns: 1fr; font-size: 13px; color: var(--muted); }
+ @media (max-width: 980px) { .nav ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+ 
+@@ -117,28 +118,39 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
+ .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; color: var(--muted); align-items: center; }
+ 
+ /* groups */
+-.groups { display: flex; flex-direction: column; gap: 36px; margin-top: 36px; }
+-.group { scroll-margin-top: 16px; }
+-.ghead { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: start; padding-bottom: 14px; border-bottom: 2px solid var(--border); }
+-.gnum { width: 44px; height: 44px; border-radius: 8px; background: var(--text); color: var(--bg); display: grid; place-items: center; font-weight: 600; font-size: 18px; font-variant-numeric: tabular-nums; }
+-.gtitle h2 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
+-.kicker { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
+-.gstats { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+-.reviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
++.groups { display: flex; flex-direction: column; gap: 28px; margin-top: 36px; }
++.group { position: relative; scroll-margin-top: var(--stick-top); }
++.gsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
++.ghead { position: sticky; top: var(--stick-top); z-index: 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 2px solid var(--border); }
++.group.gstuck .ghead { box-shadow: 0 8px 8px -8px rgba(0, 0, 0, .2); }
++.gtitle { flex: 1 1 320px; min-width: 0; font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
++.gtoggle { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; padding: 0; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
++.gtoggle .chev { margin-left: 0; }
++.group.folded .gtoggle .chev { transform: rotate(-45deg); }
++.gnum { flex: none; width: 28px; height: 28px; border-radius: 7px; background: var(--text); color: var(--bg); display: grid; place-items: center; font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; }
++.group.done .gnum { background: var(--ok); }
++.gname { min-width: 0; }
++.gstats { font-size: 13px; color: var(--muted); white-space: nowrap; }
++.reviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
+ .reviewed input { accent-color: var(--ok); width: 16px; height: 16px; margin: 0; }
+ .group.done .reviewed { background: var(--ok-bg); border-color: var(--ok); }
+-@media (max-width: 640px) { .ghead { grid-template-columns: 44px 1fr; } .ghead .reviewed { grid-column: 2; justify-self: start; } }
+-.group > .prose { margin-top: 18px; }
+-.concepts, .checks { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--surface); }
+-.concepts h4, .checks h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+-.concepts ul, .checks ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+-.concepts li { padding-left: 14px; position: relative; max-width: 80ch; }
+-.concepts li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+-.checks li { display: grid; grid-template-columns: 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
+-.chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; }
+-.chip.verify { background: var(--surface-2); color: var(--muted); }
+-.chip.flag { background: var(--warn-bg); color: var(--warn); }
+-@media (max-width: 480px) { .checks li { grid-template-columns: 1fr; gap: 4px; } }
++@media (max-width: 640px) { .gstats { display: none; } }
++.group.folded .gbody { display: none; }
++.kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
++.gbody > .prose { margin-top: 14px; }
++.gnotes { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--surface); }
++.gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
++/* Review notes: one list per scope, each note chipped with its kind. */
++.notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
++.notes li { display: grid; grid-template-columns: 16px 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
++.nbox { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--ok); }
++input.nbox { cursor: pointer; }
++.notes li.checked .chip, .notes li.checked .ntext { opacity: .5; }
++.chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
++.chip.context { background: var(--info-bg); color: var(--info); }
++.chip.verify { background: var(--warn-bg); color: var(--warn); }
++.chip.flag { background: var(--accent-soft); color: var(--accent); }
++@media (max-width: 480px) { .notes li { grid-template-columns: 16px 1fr; gap: 4px 10px; } .notes .ntext { grid-column: 2; } }
+ 
+ /* file bar */
+ .filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }
+@@ -153,15 +165,15 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
+ 
+ /* files */
+ .files { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+-.file { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: clip; box-shadow: var(--shadow); scroll-margin-top: 16px; }
++.file { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: clip; box-shadow: var(--shadow); scroll-margin-top: calc(var(--stick-top) + var(--ghead-h, 0px) + 8px); }
+ .fsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
+-.fhead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; background: transparent; border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
++.fhead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; background: transparent; border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; position: sticky; top: calc(var(--stick-top) + var(--ghead-h, 0px)); z-index: 2; }
+ /* The header's surface is painted by ::after so that ::before can lay a page-background strip
+    under its rounded top corners: when the header is stuck mid-file, the tinted rows scrolling
+    beneath would otherwise show through the corner squares outside the radius. */
+ .fhead::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 12px; background: var(--bg); z-index: -2; }
+ .fhead::after { content: ""; position: absolute; inset: 0; background: var(--surface-2); border-radius: inherit; z-index: -1; }
+-.file.collapsed .fhead { border-bottom: 0; border-radius: 9px; position: relative; }
++.file.collapsed .fhead { border-bottom: 0; border-radius: 9px; position: relative; top: 0; }
+ /* Pinned mid-file: square corners so the card's side borders run straight into the header, and a little depth. */
+ .file.stuck .fhead { border-radius: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+ .file.stuck .fhead::before { display: none; }
+@@ -180,13 +192,18 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
+ .badge { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+ .badge.new { color: var(--ok); border-color: var(--ok); }
+ .badge.generated { color: var(--warn); border-color: var(--warn); }
++.badge.notes { color: var(--text); }
++.badge.notes.open { color: var(--accent); border-color: var(--accent); }
+ .stat { font-variant-numeric: tabular-nums; }
+ .flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
+ .flink:hover { color: var(--accent); border-color: var(--accent); }
+-.viewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+-.viewed input { accent-color: var(--ok); margin: 0; }
++.freviewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
++.freviewed input { accent-color: var(--ok); margin: 0; }
+ .fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
+-.file.collapsed .fnote { border-bottom: 0; }
++.fnotes { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
++.file.collapsed .fnote, .file.collapsed .fnotes { border-bottom: 0; }
++.file.collapsed .fnote + .fnotes { border-top: 1px solid var(--border); }
++.file.reviewed .fnote, .file.reviewed .fnotes { display: none; }
+ .file.collapsed .fbody { display: none; }
+ .fbody { max-height: none; }
+ table.diff { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.45; table-layout: fixed; }
+@@ -200,6 +217,13 @@ table.diff tr.del td { background: var(--del-bg); } table.diff tr.del td.ln { ba
+ table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff tr.del .sign { color: var(--del-text); font-weight: 600; }
+ table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
+ table.diff tr.meta td { color: var(--muted); font-style: italic; }
++table.diff tr.noterow td { background: var(--surface); padding-block: 6px 8px; }
++table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
++.inotes { gap: 6px; }
++.inotes li { padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 6px 6px 0; }
++.inotes li.context { border-left-color: var(--info); }
++.inotes li.verify { border-left-color: var(--warn); }
++.inotes li.flag { border-left-color: var(--accent); background: var(--accent-soft); }
+ /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
+ .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
+ .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 8fa220d..37ffc58 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -1,7 +1,7 @@
+ "use strict";
+ // Projector PR summary renderer: builds the page from summary data, embedded in
+ // #summary-data or fetched from data.json beside the page, then wires collapsing,
+-// viewed and reviewed state, highlighting, and sticky headers.
++// reviewed state, highlighting, and sticky headers.
+ (function () {
+     function renderSummary(data) {
+         const pr = data.pr;
+@@ -28,13 +28,53 @@
+             return f;
+         }
+         const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
++        const CHIPS = { context: 'context', verify: 'verify', flag: 'concern' };
++        function kindOf(c) { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
++        // A note's checkbox state is keyed by where it sits and what it says, so a
++        // note carried unchanged to a later head stays checked and a rewritten one
++        // starts over.
++        function noteId(scope, text) {
++            const key = `${scope}\u0000${text}`;
++            let h = 0x811c9dc5;
++            for (let i = 0; i < key.length; i++)
++                h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
++            return h.toString(16).padStart(8, '0');
++        }
++        function notesList(checks, cls, scope) {
++            if (checks.length === 0)
++                return '';
++            return `<ul class="notes ${cls}">` + checks.map(function (c) {
++                const k = kindOf(c);
++                const label = k === 'flag' ? 'Handled' : 'Verified';
++                const box = k === 'context' ? '<span class="nbox"></span>'
++                    : `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="${label}" title="${label}">`;
++                return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
++            }).join('') + '</ul>';
++        }
+         function renderFile(spec) {
+             const f = fileAt(spec.path);
+             const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+             const slash = f.path.lastIndexOf('/');
+             const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+             const base = f.path.slice(slash + 1);
+-            let badges = '';
++            const checks = spec.checks ?? [];
++            // A note with a line sits under that line of the diff; the rest sit at the top of the file.
++            const atLine = {};
++            const loose = [];
++            checks.forEach(function (c) {
++                if (c.line === undefined) {
++                    loose.push(c);
++                    return;
++                }
++                const key = `${c.side === 'old' ? 'old' : 'new'}:${String(c.line)}`;
++                (atLine[key] ?? (atLine[key] = [])).push(c);
++            });
++            function notesAt(l) {
++                const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
++                const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
++                return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
++            }
++            let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+             if (f.new === true)
+                 badges += '<span class="badge new">new</span>';
+             if (f.deleted === true)
+@@ -52,10 +92,11 @@
+                     const cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
+                     const sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
+                     rows.push(`<tr class="${cls}"><td class="ln">${lineNumber(l[1])}</td><td class="ln">${lineNumber(l[2])}</td><td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
++                    rows.push(notesAt(l));
+                 });
+                 return `<table class="diff">${rows.join('')}</table>`;
+             }).join('') || '<p class="fnote">No content changes.</p>';
+-            return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}">` +
++            return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+                 '<div class="fsentinel" aria-hidden="true"></div>' +
+                 '<header class="fhead">' +
+                 `<button class="ftoggle" type="button" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="${f.id}-body" title="Collapse or expand">` +
+@@ -67,34 +108,37 @@
+                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
+                 ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
+                 ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
+-                `<label class="viewed"><input type="checkbox" class="viewed-box" id="${f.id}-viewed"> viewed</label>` +
++                `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+                 '</span>' +
+                 '</header>' +
+                 (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
++                notesList(loose, 'fnotes', f.path) +
+                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+                 '</article>';
+         }
+         function renderGroup(g, i) {
+             let adds = 0, dels = 0;
+             g.files.forEach(function (s) { const f = fileAt(s.path); adds += f.adds; dels += f.dels; });
++            const gid = esc(g.id);
+             const intro = (g.intro ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+-            const conceptList = g.concepts ?? [];
+-            const concepts = conceptList.length > 0 ? '<div class="concepts"><h4>Hold these in mind</h4><ul>' + conceptList.map(function (c) { return `<li>${c}</li>`; }).join('') + '</ul></div>' : '';
+-            const checkList = g.checks ?? [];
+-            const checks = checkList.length > 0 ? '<div class="checks"><h4>What to check</h4><ul>' + checkList.map(function (c) {
+-                const k = c.kind === 'flag' ? 'flag' : 'verify';
+-                return `<li class="${k}"><span class="chip ${k}">${k === 'flag' ? 'look here' : 'verify'}</span><span>${c.text}</span></li>`;
+-            }).join('') + '</ul></div>' : '';
++            const checks = g.checks ?? [];
++            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+             const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
+-            return `<section class="group" id="${esc(g.id)}" data-gid="${esc(g.id)}">` +
+-                `<header class="ghead"><div class="gnum">${String(i + 1)}</div><div class="gtitle"><h2>${g.title}</h2>` +
++            return `<section class="group" id="${gid}" data-gid="${gid}">` +
++                '<div class="gsentinel" aria-hidden="true"></div>' +
++                '<header class="ghead">' +
++                `<h2 class="gtitle"><button class="gtoggle" type="button" aria-expanded="true" aria-controls="${gid}-body" title="Collapse or expand">` +
++                `<span class="chev" aria-hidden="true"></span><span class="gnum">${String(i + 1)}</span><span class="gname">${g.title}</span></button></h2>` +
++                `<span class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></span>` +
++                `<label class="reviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed"> Reviewed</label>` +
++                '</header>' +
++                `<div class="gbody" id="${gid}-body">` +
+                 (g.kicker !== undefined && g.kicker !== '' ? `<p class="kicker">${g.kicker}</p>` : '') +
+-                `<p class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></p></div>` +
+-                `<label class="reviewed"><input type="checkbox" class="reviewed-box" id="${esc(g.id)}-reviewed"> Reviewed</label></header>` +
+-                `<div class="prose">${intro}</div>${concepts}${checks}` +
+-                `<div class="filebar"><span class="filebar-label">Files in this group</span><ul class="filelist">${list}</ul>` +
++                `<div class="prose">${intro}</div>${notes}` +
++                `<div class="filebar"><span class="filebar-label">Files in this section</span><ul class="filelist">${list}</ul>` +
+                 '<span class="filebar-actions"><button type="button" class="linkbtn expand-all">Expand all</button><button type="button" class="linkbtn collapse-all">Collapse all</button></span></div>' +
+                 `<div class="files">${g.files.map(renderFile).join('')}</div>` +
++                '</div>' +
+                 '</section>';
+         }
+         function renderOverview() {
+@@ -102,7 +146,7 @@
+             const s = data.stats;
+             const summary = (o.summary ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+-                '<p><b>How to read this.</b> Each group opens with what it does and why, things to hold in mind, and a checklist. Items marked <span class="chip flag inline">look here</span> deserve a decision; <span class="chip verify inline">verify</span> items are invariants worth tracing. Checkboxes and collapsed files are remembered in this browser only.</p></div>';
++                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off verify and concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
+                 [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
+             out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
+@@ -114,7 +158,7 @@
+                     return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
+                 }).join('') + '</div>';
+             }
+-            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file header to expand or collapse it; "viewed" collapses it and remembers that.</span></div>';
++            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that.</span></div>';
+             return out;
+         }
+         function headsList() {
+@@ -145,12 +189,13 @@
+                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+                 `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+-                '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
++                '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+                 `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}` +
+                 `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>` +
+                 `<div class="prmeta">${ext(`${repoUrl}/commit/${pr.head}`, short(pr.head))} → ${esc(baseRef ?? 'base')} · ${ext(`${prUrl}/files`, 'files')}</div>${headsList()}${projectsList()}</div>` +
++                `<div class="extra">${extra}</div>` +
+                 `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-                `<ol>${nav}</ol><div class="extra">${extra}</div></nav></aside>` +
++                `<ol>${nav}</ol></nav></aside>` +
+                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+                 `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-changes</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+@@ -194,28 +239,19 @@
+             if (barEl !== null)
+                 barEl.style.width = `${String(groups.length > 0 ? (100 * done / groups.length) : 0)}%`;
+         }
+-        groups.forEach(function (g) {
+-            const gid = g.dataset.gid ?? '';
++        function filesOf(g) { return Array.from(g.querySelectorAll('.file')); }
++        function fileBox(f) {
++            const box = f.querySelector('.file-box');
++            if (box === null)
++                throw new Error(`File ${f.dataset.fid ?? ''} has no Reviewed box`);
++            return box;
++        }
++        function groupBox(g) {
+             const box = g.querySelector('.reviewed-box');
+-            const expandAll = g.querySelector('.expand-all');
+-            const collapseAll = g.querySelector('.collapse-all');
+-            if (box === null || expandAll === null || collapseAll === null)
+-                throw new Error(`Group ${gid} is missing its controls`);
+-            const saved = get('g:' + gid) === '1';
+-            box.checked = saved;
+-            g.classList.toggle('done', saved);
+-            box.addEventListener('change', function () {
+-                g.classList.toggle('done', box.checked);
+-                set('g:' + gid, box.checked);
+-                refreshProgress();
+-            });
+-            expandAll.addEventListener('click', function () {
+-                g.querySelectorAll('.file').forEach(function (f) { setCollapsed(f, false); });
+-            });
+-            collapseAll.addEventListener('click', function () {
+-                g.querySelectorAll('.file').forEach(function (f) { setCollapsed(f, true); });
+-            });
+-        });
++            if (box === null)
++                throw new Error(`Section ${g.dataset.gid ?? ''} has no Reviewed box`);
++            return box;
++        }
+         function setCollapsed(f, collapsed) {
+             f.classList.toggle('collapsed', collapsed);
+             if (collapsed)
+@@ -226,29 +262,128 @@
+             if (!collapsed)
+                 highlightFile(f);
+         }
++        // Reviewing a file collapses it; un-reviewing one opens it to be read again.
++        function markFile(f, reviewed) {
++            fileBox(f).checked = reviewed;
++            f.classList.toggle('reviewed', reviewed);
++            set('f:' + (f.dataset.fid ?? ''), reviewed);
++            setCollapsed(f, reviewed);
++        }
++        function setFolded(g, folded, highlight) {
++            g.classList.toggle('folded', folded);
++            const toggle = g.querySelector('.gtoggle');
++            if (toggle !== null)
++                toggle.setAttribute('aria-expanded', folded ? 'false' : 'true');
++            if (!folded && highlight)
++                g.querySelectorAll('.file:not(.collapsed)').forEach(highlightFile);
++        }
++        function allFilesReviewed(g) {
++            const files = filesOf(g);
++            return files.length > 0 && files.every(function (f) { return fileBox(f).checked; });
++        }
++        // A section's Reviewed box is its own: checking it closes the section and its
++        // files without marking any file reviewed. The last file reviewed checks it,
++        // and a file un-reviewed unchecks it.
++        function markSection(g, reviewed) {
++            set('g:' + (g.dataset.gid ?? ''), reviewed);
++            g.classList.toggle('done', reviewed);
++            groupBox(g).checked = reviewed;
++            refreshProgress();
++        }
++        function closeSection(g, fromReader) {
++            const inside = g.getBoundingClientRect().top < 0;
++            filesOf(g).forEach(function (f) { setCollapsed(f, true); });
++            setFolded(g, true, false);
++            // Closed from inside it: bring its header back into view so the next section follows.
++            if (fromReader && inside)
++                g.scrollIntoView({ block: 'start' });
++        }
++        groups.forEach(function (g) {
++            const gid = g.dataset.gid ?? '';
++            const files = filesOf(g);
++            const box = groupBox(g);
++            const toggle = g.querySelector('.gtoggle');
++            const expandAll = g.querySelector('.expand-all');
++            const collapseAll = g.querySelector('.collapse-all');
++            if (toggle === null || expandAll === null || collapseAll === null)
++                throw new Error(`Section ${gid} is missing its controls`);
++            files.forEach(function (f) {
++                const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
++                fileBox(f).checked = reviewed;
++                f.classList.toggle('reviewed', reviewed);
++                if (reviewed)
++                    setCollapsed(f, true);
++            });
++            const reviewed = get('g:' + gid) === '1' || allFilesReviewed(g);
++            markSection(g, reviewed);
++            if (reviewed)
++                closeSection(g, false);
++            box.addEventListener('change', function () {
++                markSection(g, box.checked);
++                if (box.checked) {
++                    closeSection(g, true);
++                }
++                else {
++                    setFolded(g, false, false);
++                    files.forEach(function (f) { setCollapsed(f, fileBox(f).checked || f.dataset.collapsedDefault === '1'); });
++                }
++            });
++            toggle.addEventListener('click', function () { setFolded(g, !g.classList.contains('folded'), true); });
++            expandAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, false); }); });
++            collapseAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, true); }); });
++        });
+         document.querySelectorAll('.file').forEach(function (f) {
+-            const fid = f.dataset.fid ?? '';
+-            const box = f.querySelector('.viewed-box');
++            const box = fileBox(f);
+             const toggle = f.querySelector('.ftoggle');
+-            if (box === null || toggle === null)
+-                throw new Error(`File ${fid} is missing its controls`);
+-            const viewed = get('f:' + fid) === '1';
+-            box.checked = viewed;
+-            if (viewed)
+-                setCollapsed(f, true);
++            const g = f.closest('.group');
++            if (toggle === null || g === null)
++                throw new Error(`File ${f.dataset.fid ?? ''} is missing its controls`);
+             box.addEventListener('change', function () {
+-                set('f:' + fid, box.checked);
+-                const wasStuck = f.getBoundingClientRect().top < 0;
+-                setCollapsed(f, box.checked);
+-                // Marked viewed from a header stuck at the top of a long file: bring
+-                // the collapsed card into view instead of landing on what followed it.
++                const wasStuck = f.classList.contains('stuck');
++                markFile(f, box.checked);
++                // Marked reviewed from a header pinned over a long file: bring the
++                // collapsed card into view instead of landing on what followed it.
+                 if (box.checked && wasStuck)
+                     f.scrollIntoView({ block: 'start' });
++                if (box.checked && !g.classList.contains('done') && allFilesReviewed(g)) {
++                    markSection(g, true);
++                    closeSection(g, true);
++                }
++                else if (!box.checked && g.classList.contains('done')) {
++                    markSection(g, false);
++                }
+             });
+             toggle.addEventListener('click', function () {
+                 setCollapsed(f, !f.classList.contains('collapsed'));
+             });
+         });
++        // A file's note badge counts its verify and concern notes still unchecked.
++        function refreshNoteBadge(f) {
++            const badge = f.querySelector('.badge.notes');
++            if (badge === null)
++                return;
++            const boxes = Array.from(f.querySelectorAll('.note-box'));
++            const open = boxes.filter(function (b) { return !b.checked; }).length;
++            const total = Number(badge.dataset.total ?? '0');
++            badge.textContent = open > 0 ? `${String(open)} of ${String(boxes.length)} open` : `${String(total)} note${total === 1 ? '' : 's'}`;
++            badge.classList.toggle('open', open > 0);
++        }
++        document.querySelectorAll('.note-box').forEach(function (box) {
++            const nid = box.dataset.nid ?? '';
++            const item = box.closest('li');
++            box.checked = get('n:' + nid) === '1';
++            if (item !== null)
++                item.classList.toggle('checked', box.checked);
++            box.addEventListener('change', function () {
++                set('n:' + nid, box.checked);
++                if (item !== null)
++                    item.classList.toggle('checked', box.checked);
++                const f = box.closest('.file');
++                if (f !== null)
++                    refreshNoteBadge(f);
++            });
++        });
++        document.querySelectorAll('.file').forEach(refreshNoteBadge);
+         document.querySelectorAll('.copypath').forEach(function (b) {
+             b.addEventListener('click', function (ev) {
+                 ev.stopPropagation();
+@@ -286,30 +421,49 @@
+                 }
+             });
+         });
+-        // Pinned-header detection: a 1px sentinel sits at the top of each card; once
+-        // it has scrolled above the header's sticky offset, the header is pinned and
+-        // its corners go square so the card's side borders run straight into it.
+-        let stuckObserver = null;
++        // Pinned-header detection: a 1px sentinel sits at the top of each section and
++        // each file card. Once it scrolls above its header's sticky offset the header
++        // is pinned: a section header gains a shadow, and a file header, pinned just
++        // below its section's, goes square so the card's borders run into it. Each
++        // section measures its own header, since titles wrap to different heights.
++        let stuckObservers = [];
++        function topOf(el) { return el !== null ? (parseFloat(getComputedStyle(el).top) || 0) : 0; }
++        function observe(targets, offset, onChange) {
++            const observer = new IntersectionObserver(function (entries) {
++                entries.forEach(function (e) { onChange(e.target, !e.isIntersecting && e.boundingClientRect.top < offset + 1); });
++            }, { rootMargin: `${String(-(offset + 1))}px 0px 0px 0px`, threshold: 0 });
++            targets.forEach(function (t) { observer.observe(t); });
++            stuckObservers.push(observer);
++        }
+         function setupStuck() {
++            groups.forEach(function (g) {
++                const head = g.querySelector('.ghead');
++                if (head !== null)
++                    g.style.setProperty('--ghead-h', `${String(head.offsetHeight)}px`);
++            });
+             if (!('IntersectionObserver' in window))
+                 return;
+-            if (stuckObserver !== null)
+-                stuckObserver.disconnect();
+-            const sample = document.querySelector('.file:not(.collapsed) .fhead') ?? document.querySelector('.fhead');
+-            const offset = sample !== null ? (parseFloat(getComputedStyle(sample).top) || 0) : 0;
+-            const observer = new IntersectionObserver(function (entries) {
+-                entries.forEach(function (e) {
+-                    const f = e.target.parentElement;
++            stuckObservers.forEach(function (o) { o.disconnect(); });
++            stuckObservers = [];
++            groups.forEach(function (g) {
++                const head = g.querySelector('.ghead');
++                const top = topOf(head);
++                const sentinel = g.querySelector('.gsentinel');
++                if (sentinel !== null)
++                    observe([sentinel], top, function (_t, pinned) { g.classList.toggle('gstuck', pinned); });
++                const sentinels = Array.from(g.querySelectorAll('.fsentinel'));
++                if (sentinels.length === 0)
++                    return;
++                observe(sentinels, top + (head !== null ? head.offsetHeight : 0), function (t, pinned) {
++                    const f = t.parentElement;
+                     if (f === null)
+                         throw new Error('A header sentinel sits outside its file');
+-                    const pinned = !e.isIntersecting && e.boundingClientRect.top < offset + 1 && !f.classList.contains('collapsed');
+-                    f.classList.toggle('stuck', pinned);
++                    f.classList.toggle('stuck', pinned && !f.classList.contains('collapsed'));
+                 });
+-            }, { rootMargin: `${String(-(offset + 1))}px 0px 0px 0px`, threshold: 0 });
+-            document.querySelectorAll('.fsentinel').forEach(function (el) { observer.observe(el); });
+-            stuckObserver = observer;
++            });
+         }
+         setupStuck();
++        void document.fonts.ready.then(setupStuck);
+         let resizeTimer;
+         window.addEventListener('resize', function () {
+             clearTimeout(resizeTimer);
+@@ -399,7 +553,7 @@
+             });
+             f.dataset.hl = '1';
+         }
+-        const hlQueue = Array.from(document.querySelectorAll('.file:not(.collapsed)'));
++        const hlQueue = Array.from(document.querySelectorAll('.group:not(.folded) .file:not(.collapsed)'));
+         function pump() {
+             const t0 = Date.now();
+             while (hlQueue.length > 0 && Date.now() - t0 < 24) {
+@@ -412,14 +566,23 @@
+         }
+         if (window.hljs !== undefined)
+             setTimeout(pump, 0);
+-        // A hash pointing at a collapsed file opens it.
++        // A hash pointing into a folded section unfolds it, and one pointing at a
++        // collapsed file opens it.
+         function openHashTarget() {
+             const h = location.hash.replace('#', '');
+             if (h === '')
+                 return;
+             const el = document.getElementById(h);
+-            if (el?.classList.contains('file') === true)
++            if (el === null)
++                return;
++            const g = el.closest('.group');
++            const unfold = g !== null && g !== el && g.classList.contains('folded');
++            if (unfold)
++                setFolded(g, false, true);
++            if (el.classList.contains('file'))
+                 setCollapsed(el, false);
++            if (unfold)
++                el.scrollIntoView({ block: 'start' });
+         }
+         window.addEventListener('hashchange', openHashTarget);
+         openHashTarget();
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 2bd40bb..becf6e1 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -29,14 +29,21 @@ interface SummaryFile {
+   hunks: { header: string; lines: SummaryLine[] }[];
+ }
+ 
++/** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
++interface SummaryCheck {
++  kind: string;
++  text: string;
++  line?: number;
++  side?: string;
++}
++
+ interface SummaryGroup {
+   id: string;
+   title: string;
+   kicker?: string;
+   intro?: string[];
+-  concepts?: string[];
+-  checks?: { kind: string; text: string }[];
+-  files: { path: string; collapsed?: boolean | null; note?: string }[];
++  checks?: SummaryCheck[];
++  files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
+ }
+ 
+ /** A summary page's data: the spec checked against its diff by the build. */
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 8983af3..b5dc40d 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -1,6 +1,6 @@
+ // Projector PR summary renderer: builds the page from summary data, embedded in
+ // #summary-data or fetched from data.json beside the page, then wires collapsing,
+-// viewed and reviewed state, highlighting, and sticky headers.
++// reviewed state, highlighting, and sticky headers.
+ (function (): void {
+ function renderSummary(data: SummaryData): void {
+   const pr = data.pr;
+@@ -29,13 +29,49 @@ function renderSummary(data: SummaryData): void {
+ 
+   const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
+ 
++  const CHIPS: Record<string, string> = { context: 'context', verify: 'verify', flag: 'concern' };
++  function kindOf(c: SummaryCheck): string { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
++  // A note's checkbox state is keyed by where it sits and what it says, so a
++  // note carried unchanged to a later head stays checked and a rewritten one
++  // starts over.
++  function noteId(scope: string, text: string): string {
++    const key = `${scope}\u0000${text}`;
++    let h = 0x811c9dc5;
++    for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
++    return h.toString(16).padStart(8, '0');
++  }
++  function notesList(checks: SummaryCheck[], cls: string, scope: string): string {
++    if (checks.length === 0) return '';
++    return `<ul class="notes ${cls}">` + checks.map(function (c) {
++      const k = kindOf(c);
++      const label = k === 'flag' ? 'Handled' : 'Verified';
++      const box = k === 'context' ? '<span class="nbox"></span>'
++        : `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="${label}" title="${label}">`;
++      return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
++    }).join('') + '</ul>';
++  }
++
+   function renderFile(spec: SummaryGroup['files'][number]): string {
+     const f = fileAt(spec.path);
+     const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+     const slash = f.path.lastIndexOf('/');
+     const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+     const base = f.path.slice(slash + 1);
+-    let badges = '';
++    const checks = spec.checks ?? [];
++    // A note with a line sits under that line of the diff; the rest sit at the top of the file.
++    const atLine: Record<string, SummaryCheck[]> = {};
++    const loose: SummaryCheck[] = [];
++    checks.forEach(function (c) {
++      if (c.line === undefined) { loose.push(c); return; }
++      const key = `${c.side === 'old' ? 'old' : 'new'}:${String(c.line)}`;
++      (atLine[key] ??= []).push(c);
++    });
++    function notesAt(l: SummaryLine): string {
++      const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
++      const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
++      return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
++    }
++    let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+     if (f.new === true) badges += '<span class="badge new">new</span>';
+     if (f.deleted === true) badges += '<span class="badge deleted">deleted</span>';
+     if (f.kind !== '') badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
+@@ -47,10 +83,11 @@ function renderSummary(data: SummaryData): void {
+         const cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
+         const sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
+         rows.push(`<tr class="${cls}"><td class="ln">${lineNumber(l[1])}</td><td class="ln">${lineNumber(l[2])}</td><td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
++        rows.push(notesAt(l));
+       });
+       return `<table class="diff">${rows.join('')}</table>`;
+     }).join('') || '<p class="fnote">No content changes.</p>';
+-    return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}">` +
++    return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+       '<div class="fsentinel" aria-hidden="true"></div>' +
+       '<header class="fhead">' +
+         `<button class="ftoggle" type="button" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="${f.id}-body" title="Collapse or expand">` +
+@@ -62,10 +99,11 @@ function renderSummary(data: SummaryData): void {
+           `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
+           ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
+           ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
+-          `<label class="viewed"><input type="checkbox" class="viewed-box" id="${f.id}-viewed"> viewed</label>` +
++          `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+         '</span>' +
+       '</header>' +
+       (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
++      notesList(loose, 'fnotes', f.path) +
+       `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+     '</article>';
+   }
+@@ -73,24 +111,26 @@ function renderSummary(data: SummaryData): void {
+   function renderGroup(g: SummaryGroup, i: number): string {
+     let adds = 0, dels = 0;
+     g.files.forEach(function (s) { const f = fileAt(s.path); adds += f.adds; dels += f.dels; });
++    const gid = esc(g.id);
+     const intro = (g.intro ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+-    const conceptList = g.concepts ?? [];
+-    const concepts = conceptList.length > 0 ? '<div class="concepts"><h4>Hold these in mind</h4><ul>' + conceptList.map(function (c) { return `<li>${c}</li>`; }).join('') + '</ul></div>' : '';
+-    const checkList = g.checks ?? [];
+-    const checks = checkList.length > 0 ? '<div class="checks"><h4>What to check</h4><ul>' + checkList.map(function (c) {
+-      const k = c.kind === 'flag' ? 'flag' : 'verify';
+-      return `<li class="${k}"><span class="chip ${k}">${k === 'flag' ? 'look here' : 'verify'}</span><span>${c.text}</span></li>`;
+-    }).join('') + '</ul></div>' : '';
++    const checks = g.checks ?? [];
++    const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+     const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
+-    return `<section class="group" id="${esc(g.id)}" data-gid="${esc(g.id)}">` +
+-      `<header class="ghead"><div class="gnum">${String(i + 1)}</div><div class="gtitle"><h2>${g.title}</h2>` +
++    return `<section class="group" id="${gid}" data-gid="${gid}">` +
++      '<div class="gsentinel" aria-hidden="true"></div>' +
++      '<header class="ghead">' +
++        `<h2 class="gtitle"><button class="gtoggle" type="button" aria-expanded="true" aria-controls="${gid}-body" title="Collapse or expand">` +
++          `<span class="chev" aria-hidden="true"></span><span class="gnum">${String(i + 1)}</span><span class="gname">${g.title}</span></button></h2>` +
++        `<span class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></span>` +
++        `<label class="reviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed"> Reviewed</label>` +
++      '</header>' +
++      `<div class="gbody" id="${gid}-body">` +
+         (g.kicker !== undefined && g.kicker !== '' ? `<p class="kicker">${g.kicker}</p>` : '') +
+-        `<p class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></p></div>` +
+-        `<label class="reviewed"><input type="checkbox" class="reviewed-box" id="${esc(g.id)}-reviewed"> Reviewed</label></header>` +
+-      `<div class="prose">${intro}</div>${concepts}${checks}` +
+-      `<div class="filebar"><span class="filebar-label">Files in this group</span><ul class="filelist">${list}</ul>` +
+-        '<span class="filebar-actions"><button type="button" class="linkbtn expand-all">Expand all</button><button type="button" class="linkbtn collapse-all">Collapse all</button></span></div>' +
+-      `<div class="files">${g.files.map(renderFile).join('')}</div>` +
++        `<div class="prose">${intro}</div>${notes}` +
++        `<div class="filebar"><span class="filebar-label">Files in this section</span><ul class="filelist">${list}</ul>` +
++          '<span class="filebar-actions"><button type="button" class="linkbtn expand-all">Expand all</button><button type="button" class="linkbtn collapse-all">Collapse all</button></span></div>' +
++        `<div class="files">${g.files.map(renderFile).join('')}</div>` +
++      '</div>' +
+     '</section>';
+   }
+ 
+@@ -99,7 +139,7 @@ function renderSummary(data: SummaryData): void {
+     const s = data.stats;
+     const summary = (o.summary ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+     let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+-      '<p><b>How to read this.</b> Each group opens with what it does and why, things to hold in mind, and a checklist. Items marked <span class="chip flag inline">look here</span> deserve a decision; <span class="chip verify inline">verify</span> items are invariants worth tracing. Checkboxes and collapsed files are remembered in this browser only.</p></div>';
++      '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off verify and concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+     const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
+       [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
+     out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
+@@ -111,7 +151,7 @@ function renderSummary(data: SummaryData): void {
+         return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
+       }).join('') + '</div>';
+     }
+-    out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file header to expand or collapse it; "viewed" collapses it and remembers that.</span></div>';
++    out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that.</span></div>';
+     return out;
+   }
+ 
+@@ -143,12 +183,13 @@ function renderSummary(data: SummaryData): void {
+       `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+       `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+         `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+-      '<div class="layout"><aside class="side"><nav class="nav" aria-label="Groups">' +
++      '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+         `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}` +
+           `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>` +
+           `<div class="prmeta">${ext(`${repoUrl}/commit/${pr.head}`, short(pr.head))} → ${esc(baseRef ?? 'base')} · ${ext(`${prUrl}/files`, 'files')}</div>${headsList()}${projectsList()}</div>` +
++        `<div class="extra">${extra}</div>` +
+         `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-        `<ol>${nav}</ol><div class="extra">${extra}</div></nav></aside>` +
++        `<ol>${nav}</ol></nav></aside>` +
+       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+         `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+         `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-changes</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+@@ -182,26 +223,17 @@ function wireSummary(): void {
+     if (barEl !== null) barEl.style.width = `${String(groups.length > 0 ? (100 * done / groups.length) : 0)}%`;
+   }
+ 
+-  groups.forEach(function (g) {
+-    const gid = g.dataset.gid ?? '';
++  function filesOf(g: HTMLElement): HTMLElement[] { return Array.from(g.querySelectorAll<HTMLElement>('.file')); }
++  function fileBox(f: HTMLElement): HTMLInputElement {
++    const box = f.querySelector<HTMLInputElement>('.file-box');
++    if (box === null) throw new Error(`File ${f.dataset.fid ?? ''} has no Reviewed box`);
++    return box;
++  }
++  function groupBox(g: HTMLElement): HTMLInputElement {
+     const box = g.querySelector<HTMLInputElement>('.reviewed-box');
+-    const expandAll = g.querySelector('.expand-all');
+-    const collapseAll = g.querySelector('.collapse-all');
+-    if (box === null || expandAll === null || collapseAll === null) throw new Error(`Group ${gid} is missing its controls`);
+-    const saved = get('g:' + gid) === '1';
+-    box.checked = saved; g.classList.toggle('done', saved);
+-    box.addEventListener('change', function () {
+-      g.classList.toggle('done', box.checked);
+-      set('g:' + gid, box.checked);
+-      refreshProgress();
+-    });
+-    expandAll.addEventListener('click', function () {
+-      g.querySelectorAll<HTMLElement>('.file').forEach(function (f) { setCollapsed(f, false); });
+-    });
+-    collapseAll.addEventListener('click', function () {
+-      g.querySelectorAll<HTMLElement>('.file').forEach(function (f) { setCollapsed(f, true); });
+-    });
+-  });
++    if (box === null) throw new Error(`Section ${g.dataset.gid ?? ''} has no Reviewed box`);
++    return box;
++  }
+ 
+   function setCollapsed(f: HTMLElement, collapsed: boolean): void {
+     f.classList.toggle('collapsed', collapsed);
+@@ -211,27 +243,121 @@ function wireSummary(): void {
+     if (!collapsed) highlightFile(f);
+   }
+ 
++  // Reviewing a file collapses it; un-reviewing one opens it to be read again.
++  function markFile(f: HTMLElement, reviewed: boolean): void {
++    fileBox(f).checked = reviewed;
++    f.classList.toggle('reviewed', reviewed);
++    set('f:' + (f.dataset.fid ?? ''), reviewed);
++    setCollapsed(f, reviewed);
++  }
++
++  function setFolded(g: HTMLElement, folded: boolean, highlight: boolean): void {
++    g.classList.toggle('folded', folded);
++    const toggle = g.querySelector('.gtoggle');
++    if (toggle !== null) toggle.setAttribute('aria-expanded', folded ? 'false' : 'true');
++    if (!folded && highlight) g.querySelectorAll<HTMLElement>('.file:not(.collapsed)').forEach(highlightFile);
++  }
++
++  function allFilesReviewed(g: HTMLElement): boolean {
++    const files = filesOf(g);
++    return files.length > 0 && files.every(function (f) { return fileBox(f).checked; });
++  }
++
++  // A section's Reviewed box is its own: checking it closes the section and its
++  // files without marking any file reviewed. The last file reviewed checks it,
++  // and a file un-reviewed unchecks it.
++  function markSection(g: HTMLElement, reviewed: boolean): void {
++    set('g:' + (g.dataset.gid ?? ''), reviewed);
++    g.classList.toggle('done', reviewed);
++    groupBox(g).checked = reviewed;
++    refreshProgress();
++  }
++  function closeSection(g: HTMLElement, fromReader: boolean): void {
++    const inside = g.getBoundingClientRect().top < 0;
++    filesOf(g).forEach(function (f) { setCollapsed(f, true); });
++    setFolded(g, true, false);
++    // Closed from inside it: bring its header back into view so the next section follows.
++    if (fromReader && inside) g.scrollIntoView({ block: 'start' });
++  }
++
++  groups.forEach(function (g) {
++    const gid = g.dataset.gid ?? '';
++    const files = filesOf(g);
++    const box = groupBox(g);
++    const toggle = g.querySelector('.gtoggle');
++    const expandAll = g.querySelector('.expand-all');
++    const collapseAll = g.querySelector('.collapse-all');
++    if (toggle === null || expandAll === null || collapseAll === null) throw new Error(`Section ${gid} is missing its controls`);
++    files.forEach(function (f) {
++      const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
++      fileBox(f).checked = reviewed;
++      f.classList.toggle('reviewed', reviewed);
++      if (reviewed) setCollapsed(f, true);
++    });
++    const reviewed = get('g:' + gid) === '1' || allFilesReviewed(g);
++    markSection(g, reviewed);
++    if (reviewed) closeSection(g, false);
++    box.addEventListener('change', function () {
++      markSection(g, box.checked);
++      if (box.checked) {
++        closeSection(g, true);
++      } else {
++        setFolded(g, false, false);
++        files.forEach(function (f) { setCollapsed(f, fileBox(f).checked || f.dataset.collapsedDefault === '1'); });
++      }
++    });
++    toggle.addEventListener('click', function () { setFolded(g, !g.classList.contains('folded'), true); });
++    expandAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, false); }); });
++    collapseAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, true); }); });
++  });
++
+   document.querySelectorAll<HTMLElement>('.file').forEach(function (f) {
+-    const fid = f.dataset.fid ?? '';
+-    const box = f.querySelector<HTMLInputElement>('.viewed-box');
++    const box = fileBox(f);
+     const toggle = f.querySelector('.ftoggle');
+-    if (box === null || toggle === null) throw new Error(`File ${fid} is missing its controls`);
+-    const viewed = get('f:' + fid) === '1';
+-    box.checked = viewed;
+-    if (viewed) setCollapsed(f, true);
++    const g = f.closest<HTMLElement>('.group');
++    if (toggle === null || g === null) throw new Error(`File ${f.dataset.fid ?? ''} is missing its controls`);
+     box.addEventListener('change', function () {
+-      set('f:' + fid, box.checked);
+-      const wasStuck = f.getBoundingClientRect().top < 0;
+-      setCollapsed(f, box.checked);
+-      // Marked viewed from a header stuck at the top of a long file: bring
+-      // the collapsed card into view instead of landing on what followed it.
++      const wasStuck = f.classList.contains('stuck');
++      markFile(f, box.checked);
++      // Marked reviewed from a header pinned over a long file: bring the
++      // collapsed card into view instead of landing on what followed it.
+       if (box.checked && wasStuck) f.scrollIntoView({ block: 'start' });
++      if (box.checked && !g.classList.contains('done') && allFilesReviewed(g)) {
++        markSection(g, true);
++        closeSection(g, true);
++      } else if (!box.checked && g.classList.contains('done')) {
++        markSection(g, false);
++      }
+     });
+     toggle.addEventListener('click', function () {
+       setCollapsed(f, !f.classList.contains('collapsed'));
+     });
+   });
+ 
++  // A file's note badge counts its verify and concern notes still unchecked.
++  function refreshNoteBadge(f: HTMLElement): void {
++    const badge = f.querySelector<HTMLElement>('.badge.notes');
++    if (badge === null) return;
++    const boxes = Array.from(f.querySelectorAll<HTMLInputElement>('.note-box'));
++    const open = boxes.filter(function (b) { return !b.checked; }).length;
++    const total = Number(badge.dataset.total ?? '0');
++    badge.textContent = open > 0 ? `${String(open)} of ${String(boxes.length)} open` : `${String(total)} note${total === 1 ? '' : 's'}`;
++    badge.classList.toggle('open', open > 0);
++  }
++  document.querySelectorAll<HTMLInputElement>('.note-box').forEach(function (box) {
++    const nid = box.dataset.nid ?? '';
++    const item = box.closest('li');
++    box.checked = get('n:' + nid) === '1';
++    if (item !== null) item.classList.toggle('checked', box.checked);
++    box.addEventListener('change', function () {
++      set('n:' + nid, box.checked);
++      if (item !== null) item.classList.toggle('checked', box.checked);
++      const f = box.closest<HTMLElement>('.file');
++      if (f !== null) refreshNoteBadge(f);
++    });
++  });
++  document.querySelectorAll<HTMLElement>('.file').forEach(refreshNoteBadge);
++
+   document.querySelectorAll<HTMLElement>('.copypath').forEach(function (b) {
+     b.addEventListener('click', function (ev) {
+       ev.stopPropagation();
+@@ -265,27 +391,44 @@ function wireSummary(): void {
+     });
+   });
+ 
+-  // Pinned-header detection: a 1px sentinel sits at the top of each card; once
+-  // it has scrolled above the header's sticky offset, the header is pinned and
+-  // its corners go square so the card's side borders run straight into it.
+-  let stuckObserver: IntersectionObserver | null = null;
++  // Pinned-header detection: a 1px sentinel sits at the top of each section and
++  // each file card. Once it scrolls above its header's sticky offset the header
++  // is pinned: a section header gains a shadow, and a file header, pinned just
++  // below its section's, goes square so the card's borders run into it. Each
++  // section measures its own header, since titles wrap to different heights.
++  let stuckObservers: IntersectionObserver[] = [];
++  function topOf(el: Element | null): number { return el !== null ? (parseFloat(getComputedStyle(el).top) || 0) : 0; }
++  function observe(targets: Element[], offset: number, onChange: (target: Element, pinned: boolean) => void): void {
++    const observer = new IntersectionObserver(function (entries) {
++      entries.forEach(function (e) { onChange(e.target, !e.isIntersecting && e.boundingClientRect.top < offset + 1); });
++    }, { rootMargin: `${String(-(offset + 1))}px 0px 0px 0px`, threshold: 0 });
++    targets.forEach(function (t) { observer.observe(t); });
++    stuckObservers.push(observer);
++  }
+   function setupStuck(): void {
++    groups.forEach(function (g) {
++      const head = g.querySelector<HTMLElement>('.ghead');
++      if (head !== null) g.style.setProperty('--ghead-h', `${String(head.offsetHeight)}px`);
++    });
+     if (!('IntersectionObserver' in window)) return;
+-    if (stuckObserver !== null) stuckObserver.disconnect();
+-    const sample = document.querySelector('.file:not(.collapsed) .fhead') ?? document.querySelector('.fhead');
+-    const offset = sample !== null ? (parseFloat(getComputedStyle(sample).top) || 0) : 0;
+-    const observer = new IntersectionObserver(function (entries) {
+-      entries.forEach(function (e) {
+-        const f = e.target.parentElement;
++    stuckObservers.forEach(function (o) { o.disconnect(); });
++    stuckObservers = [];
++    groups.forEach(function (g) {
++      const head = g.querySelector<HTMLElement>('.ghead');
++      const top = topOf(head);
++      const sentinel = g.querySelector('.gsentinel');
++      if (sentinel !== null) observe([sentinel], top, function (_t, pinned) { g.classList.toggle('gstuck', pinned); });
++      const sentinels = Array.from(g.querySelectorAll('.fsentinel'));
++      if (sentinels.length === 0) return;
++      observe(sentinels, top + (head !== null ? head.offsetHeight : 0), function (t, pinned) {
++        const f = t.parentElement;
+         if (f === null) throw new Error('A header sentinel sits outside its file');
+-        const pinned = !e.isIntersecting && e.boundingClientRect.top < offset + 1 && !f.classList.contains('collapsed');
+-        f.classList.toggle('stuck', pinned);
++        f.classList.toggle('stuck', pinned && !f.classList.contains('collapsed'));
+       });
+-    }, { rootMargin: `${String(-(offset + 1))}px 0px 0px 0px`, threshold: 0 });
+-    document.querySelectorAll('.fsentinel').forEach(function (el) { observer.observe(el); });
+-    stuckObserver = observer;
++    });
+   }
+   setupStuck();
++  void document.fonts.ready.then(setupStuck);
+   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+   window.addEventListener('resize', function () {
+     clearTimeout(resizeTimer);
+@@ -346,7 +489,7 @@ function wireSummary(): void {
+     });
+     f.dataset.hl = '1';
+   }
+-  const hlQueue = Array.from(document.querySelectorAll<HTMLElement>('.file:not(.collapsed)'));
++  const hlQueue = Array.from(document.querySelectorAll<HTMLElement>('.group:not(.folded) .file:not(.collapsed)'));
+   function pump(): void {
+     const t0 = Date.now();
+     while (hlQueue.length > 0 && Date.now() - t0 < 24) {
+@@ -357,12 +500,18 @@ function wireSummary(): void {
+   }
+   if (window.hljs !== undefined) setTimeout(pump, 0);
+ 
+-  // A hash pointing at a collapsed file opens it.
++  // A hash pointing into a folded section unfolds it, and one pointing at a
++  // collapsed file opens it.
+   function openHashTarget(): void {
+     const h = location.hash.replace('#', '');
+     if (h === '') return;
+     const el = document.getElementById(h);
+-    if (el?.classList.contains('file') === true) setCollapsed(el, false);
++    if (el === null) return;
++    const g = el.closest<HTMLElement>('.group');
++    const unfold = g !== null && g !== el && g.classList.contains('folded');
++    if (unfold) setFolded(g, false, true);
++    if (el.classList.contains('file')) setCollapsed(el, false);
++    if (unfold) el.scrollIntoView({ block: 'start' });
+   }
+   window.addEventListener('hashchange', openHashTarget);
+   openHashTarget();
+diff --git a/skills/review-changes/SKILL.md b/skills/review-changes/SKILL.md
+index 7c19cc8..fe7e64c 100644
+--- a/skills/review-changes/SKILL.md
++++ b/skills/review-changes/SKILL.md
+@@ -584,10 +584,10 @@ summary a person asks for:
+   update it as the skill's "Update the page when the pull request moves"
+   section describes, so a fix-cycle head costs a revision, not a rewrite.
+ - **Carry the review into it.** Every finding thread still open after this
+-  review, from the query in § Verify earlier findings, becomes a `flag` check in the
+-  group holding its file, naming the `path:line` and what the finding says,
+-  so a reader sees what the reviewer flagged beside the code it concerns.
+-  Drop a `flag` check whose finding thread has since been resolved.
++  review, from the query in § Verify earlier findings, becomes a `flag` check on its
++  file at its `line`, saying what the finding says, so a reader sees what
++  the reviewer flagged under the code it concerns. Drop a `flag` check whose
++  finding thread has since been resolved.
+ 
+ Publish it with `project summary publish`, after the review. It then
+ comments a link to the summary on the pull request, so a reader on GitHub
+diff --git a/skills/summarize-changes/SKILL.md b/skills/summarize-changes/SKILL.md
+index 1034f39..e083d7b 100644
+--- a/skills/summarize-changes/SKILL.md
++++ b/skills/summarize-changes/SKILL.md
+@@ -68,10 +68,16 @@ push to, or approve the pull request unless the user asks.
+      that misses a file, repeats one, or names one that is not in the diff.
+    - **Explain why, not only what.** Cite the plan decisions or review
+      threads behind a design choice.
+-   - **Write checks a reviewer can act on.** A `verify` check names an
+-     invariant worth tracing. A `flag` check is your own observation that
+-     needs a decision; confirm it against the code before you write it, and
+-     say plainly what is wrong or risky.
++   - **Write notes a reviewer can act on.** A `context` note is what to hold
++     in mind while reading. A `verify` note names an invariant worth tracing.
++     A `flag` note is your own observation that needs a decision; confirm it
++     against the code before you write it, and say plainly what is wrong or
++     risky.
++   - **Put each note at the smallest scope that holds it.** A reader cannot
++     carry a list of notes across twenty files and hundreds of lines. A note
++     about one line goes on its file with that `line`, and renders under
++     that line in the diff. A note about one file goes on that file. Only a
++     note that ties several files together stays on the group.
+    - **Collapse noise.** Generated code, tests and documentation start
+      collapsed unless a file's `collapsed` says otherwise. Give the files a
+      reviewer must read a one-line `note`.
+diff --git a/skills/summarize-changes/spec.md b/skills/summarize-changes/spec.md
+index 0c04154..e8b7b4f 100644
+--- a/skills/summarize-changes/spec.md
++++ b/skills/summarize-changes/spec.md
+@@ -29,13 +29,15 @@ it. The spec is JSON:
+       "title": "The shared decision core",
+       "kicker": "One line on what the group covers",
+       "intro": ["Paragraph", "Paragraph"],
+-      "concepts": ["Idea the reviewer must hold while reading"],
+       "checks": [
+-        {"kind": "verify", "text": "An invariant worth tracing"},
+-        {"kind": "flag", "text": "An observation that needs a decision"}
++        {"kind": "context", "text": "An idea that ties this group's files together"}
+       ],
+       "files": [
+-        {"path": "src/core/check.go", "note": "What to look at in this file"},
++        {"path": "src/core/check.go", "note": "What to look at in this file",
++         "checks": [
++           {"kind": "verify", "text": "An invariant worth tracing in this file"},
++           {"kind": "flag", "text": "An observation that needs a decision", "line": 42}
++         ]},
+         {"path": "src/core/check_test.go", "collapsed": true}
+       ]
+     }
+@@ -57,9 +59,19 @@ it. The spec is JSON:
+ - `overview.summary` is what the pull request does, in a few paragraphs.
+   The page adds the line counts and a legend itself.
+ - `overview.cards` lay out two per row. A card with an `id` also gets a
+-  link at the bottom of the sidebar.
+-- `groups[].id` must be unique; it is the section anchor and the key for the
+-  reader's "Reviewed" checkbox.
++  link in the sidebar, under Overview and above the groups, in page order.
++- `groups[].id` must be unique; it is the section anchor.
++- `checks` are review notes, on a group or on one of its files. Each has a
++  `kind`: `context` for what to hold in mind, `verify` for an invariant
++  worth tracing, or `flag` for something that needs a decision. A file's
++  note may name a `line` its diff shows, on the new side unless `side` is
++  `"old"`, and then renders under that line; `build` refuses a line the diff
++  does not show. A group's notes take no `line`. A group's older `concepts`
++  list still builds, as `context` notes.
++- The reader marks each file Reviewed, which collapses it. Marking a group
++  Reviewed closes the group and its files without marking any file, and a
++  group is marked for the reader once all its files are. The reader can
++  also check off each `verify` and `flag` note; a `context` note has no box.
+ - `groups[].files[].collapsed` overrides the default, which collapses
+   generated, test and documentation files.
+ 
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index bcbb7c4..7b942bb 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -24,6 +24,7 @@
+ from .core import ProjectorError
+ 
+ SPEC_VERSION = 1
++CHECK_KINDS = ("context", "verify", "flag")
+ PAGES_REF = "refs/projector/summaries"
+ DISPATCH_EVENT = "projector-summaries"
+ PAGES_ROOT = "summaries"
+@@ -564,19 +565,33 @@ def sanitized(spec: dict) -> tuple[dict, list[dict]]:
+     }
+     groups = []
+     for g in spec["groups"]:
++        context = [{"kind": "context", "text": c} for c in g.get("concepts") or []]
+         groups.append({
+             "id": str(g["id"]),
+             "title": sanitize_html(g["title"]),
+             "kicker": sanitize_html(g.get("kicker") or ""),
+             "intro": [sanitize_html(p) for p in g.get("intro") or []],
+-            "concepts": [sanitize_html(c) for c in g.get("concepts") or []],
+-            "checks": [{"kind": c["kind"], "text": sanitize_html(c["text"])} for c in g.get("checks") or []],
+-            "files": [{k: (sanitize_html(v) if k == "note" else v) for k, v in f.items() if k in ("path", "note", "collapsed")}
+-                      for f in g.get("files") or []],
++            "checks": [sanitized_check(c) for c in context + list(g.get("checks") or [])],
++            "files": [sanitized_file(f) for f in g.get("files") or []],
+         })
+     return overview, groups
+ 
+ 
++def sanitized_check(c: dict) -> dict:
++    out = {"kind": c["kind"], "text": sanitize_html(c["text"])}
++    if c.get("line") is not None:
++        out["line"] = int(c["line"])
++        out["side"] = "old" if c.get("side") == "old" else "new"
++    return out
++
++
++def sanitized_file(f: dict) -> dict:
++    out = {k: (sanitize_html(v) if k == "note" else v) for k, v in f.items() if k in ("path", "note", "collapsed")}
++    if f.get("checks"):
++        out["checks"] = [sanitized_check(c) for c in f["checks"]]
++    return out
++
++
+ # Specs and pages
+ 
+ def validate(spec: dict, files: list[dict]) -> None:
+@@ -588,10 +603,11 @@ def validate(spec: dict, files: list[dict]) -> None:
+     groups = spec.get("groups") or []
+     if not groups:
+         raise SpecError("the spec has no groups")
+-    known = {f["path"] for f in files}
++    by_path = {f["path"]: f for f in files}
+     seen: dict[str, str] = {}
+     problems: list[str] = []
+     ids: set[str] = set()
++    kinds = ", ".join(CHECK_KINDS)
+     for g in groups:
+         gid = g.get("id")
+         if not gid or not g.get("title"):
+@@ -602,21 +618,40 @@ def validate(spec: dict, files: list[dict]) -> None:
+         ids.add(gid)
+         for fs in g.get("files") or []:
+             path = fs.get("path")
+-            if path not in known:
++            if path not in by_path:
+                 problems.append(f"{gid}: {path} is not in the diff")
+-            elif path in seen:
++                continue
++            if path in seen:
+                 problems.append(f"{path} is in both {seen[path]} and {gid}")
+             else:
+                 seen[path] = gid
++            lines = {"new": diff_lines(by_path[path], "new"), "old": diff_lines(by_path[path], "old")}
++            for c in fs.get("checks") or []:
++                if c.get("kind") not in CHECK_KINDS or not c.get("text"):
++                    problems.append(f"{path}: each check needs a kind ({kinds}) and a text")
++                elif c.get("line") is not None:
++                    side = "old" if c.get("side") == "old" else "new"
++                    if not isinstance(c["line"], int) or c["line"] not in lines[side]:
++                        problems.append(f"{path}: line {c['line']} ({side} side) is not in its diff")
+         for c in g.get("checks") or []:
+-            if c.get("kind") not in ("verify", "flag") or not c.get("text"):
+-                problems.append(f"{gid}: each check needs kind verify or flag and a text")
+-    for path in sorted(known - set(seen)):
++            if c.get("kind") not in CHECK_KINDS or not c.get("text"):
++                problems.append(f"{gid}: each check needs a kind ({kinds}) and a text")
++            elif c.get("line") is not None:
++                problems.append(f"{gid}: a check with a line belongs on its file")
++    for path in sorted(set(by_path) - set(seen)):
+         problems.append(f"{path} is in no group")
+     if problems:
+         raise SpecError("the spec does not match the diff:\n  " + "\n  ".join(problems))
+ 
+ 
++def diff_lines(f: dict, side: str) -> set[int]:
++    """The line numbers a check can point at on one side of a file's diff: on
++    the new side the added and context lines, on the old side the removed and
++    context lines."""
++    kinds, index = (("a", "c"), 2) if side == "new" else (("d", "c"), 1)
++    return {line[index] for h in f["hunks"] for line in h["lines"] if line[0] in kinds and isinstance(line[index], int)}
++
++
+ def stats(files: list[dict]) -> dict:
+     out = {"files": len(files), "adds": 0, "dels": 0, "hand": 0, "test": 0, "generated": 0, "docs": 0}
+     for f in files:
+@@ -883,7 +918,7 @@ def init(repo: str, number: int, spec_path: str, diff_path: str | None = None) -
+         "name": "",
+         "pr": meta,
+         "overview": {"summary": [], "cards": []},
+-        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "concepts": [], "checks": [],
++        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+                     "files": [{"path": f["path"]} for f in files]}],
+     }
+     Path(spec_path).write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index a0b2743..3f2ec17 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -179,7 +179,45 @@ def test_refuses_a_path_outside_the_diff_and_a_bad_check(self) -> None:
+         code, _, err = self.build(groups)
+         self.assertEqual(65, code)
+         self.assertIn("gen: src/gone.go is not in the diff", err)
+-        self.assertIn("core: each check needs kind verify or flag", err)
++        self.assertIn("core: each check needs a kind (context, verify, flag) and a text", err)
++
++    def test_carries_file_checks_and_their_lines_into_the_page(self) -> None:
++        groups = [dict(GOOD_GROUPS[0], concepts=["Hold <code>b</code>."],
++                       files=[{"path": "src/core.go", "checks": [
++                           {"kind": "flag", "text": "Is <code>c</code> escaped?", "line": 12},
++                           {"kind": "verify", "text": "The old value.", "line": 11, "side": "old"},
++                           {"kind": "context", "text": "Whole file."}]},
++                           {"path": "src/core_test.go"}]),
++                  GOOD_GROUPS[1]]
++        code, site, err = self.build(groups)
++
++        self.assertEqual(0, code, err)
++        html = (site / "index.html").read_text()
++        start = html.index('type="application/json">') + len('type="application/json">')
++        data = json.loads(html[start:html.index("</script>", start)])
++        core = data["groups"][0]
++        self.assertNotIn("concepts", core, "the old concepts list reaches the page as context checks")
++        self.assertEqual([{"kind": "context", "text": "Hold <code>b</code>."},
++                          {"kind": "flag", "text": "Look at <code>c</code>."}], core["checks"])
++        self.assertEqual([{"kind": "flag", "text": "Is <code>c</code> escaped?", "line": 12, "side": "new"},
++                          {"kind": "verify", "text": "The old value.", "line": 11, "side": "old"},
++                          {"kind": "context", "text": "Whole file."}], core["files"][0]["checks"])
++        self.assertNotIn("checks", core["files"][1])
++
++    def test_refuses_a_check_on_a_line_its_file_does_not_show(self) -> None:
++        groups = [dict(GOOD_GROUPS[0], checks=[{"kind": "verify", "text": "x", "line": 10}],
++                       files=[{"path": "src/core.go", "checks": [
++                           {"kind": "flag", "text": "gone", "line": 99},
++                           {"kind": "flag", "text": "added, not old", "line": 13, "side": "old"},
++                           {"kind": "maybe", "text": "x"}]},
++                           {"path": "src/core_test.go"}]),
++                  GOOD_GROUPS[1]]
++        code, _, err = self.build(groups)
++        self.assertEqual(65, code)
++        self.assertIn("src/core.go: line 99 (new side) is not in its diff", err)
++        self.assertIn("src/core.go: line 13 (old side) is not in its diff", err)
++        self.assertIn("src/core.go: each check needs a kind (context, verify, flag) and a text", err)
++        self.assertIn("core: a check with a line belongs on its file", err)
+ 
+     def test_refuses_a_duplicate_group_id(self) -> None:
+         groups = [GOOD_GROUPS[0], dict(GOOD_GROUPS[1], id="core")]
+@@ -358,12 +396,13 @@ def test_keeps_the_documented_markup_and_drops_everything_else(self) -> None:
+     def test_a_built_page_carries_no_script_from_the_spec(self) -> None:
+         spec = make_spec(GOOD_GROUPS)
+         spec["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
++        spec["groups"][0]["files"][0]["checks"] = [{"kind": "flag", "text": '<a href="javascript:x">z</a><script>alert(3)</script>', "line": 12}]
+         spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
+         out = Path(tempfile.mkdtemp())
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
+             site.build_page(spec, out, at_head=True)
+         page = (out / "index.html").read_text()
+-        for bad in ("onerror", "alert(2)", "javascript:"):
++        for bad in ("onerror", "alert(2)", "alert(3)", "javascript:"):
+             self.assertNotIn(bad, page)
+         self.assertIn("<b>T<\\/b>", page, "kept, with </ escaped inside the data block")
+ 

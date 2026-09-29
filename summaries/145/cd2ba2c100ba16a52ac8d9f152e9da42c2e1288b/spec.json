@@ -1,0 +1,145 @@
+{
+ "version": 1,
+ "name": "Review notes on files and lines",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 145,
+  "title": "Put summary review notes on files and lines, pin section headers, and track one Reviewed state",
+  "head": "cd2ba2c100ba16a52ac8d9f152e9da42c2e1288b",
+  "headRef": "summary-checks-on-files",
+  "base": "70723d28935f1d0f5ee1f8deaed0e9565123db0a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page used to give each group two lists, <b>Hold these in mind</b> and <b>What to check</b>, above twenty files and hundreds of diff lines, and asked the reader to carry both lists the whole way down. This pull request replaces them with one list of review notes per scope. A note sits on a group, on one file, or under one line of a file's diff, and carries a chip for its kind: <code>context</code>, <code>verify</code>, or <code>concern</code>. The spec still calls a concern <code>flag</code>.",
+   "The build checks a line note against the file's diff and refuses a line the diff doesn't show. Older specs still build: a group's <code>concepts</code> arrive as <code>context</code> notes.",
+   "The page's review state changes too. Files are marked <b>Reviewed</b> instead of <b>viewed</b>. A section's Reviewed box now folds the section and collapses its files without marking any file, and reviewing a section's last file marks the section. Section headers pin at the top with file headers pinned below them. Verify and concern notes get their own checkboxes, and each file header counts the ones still open. The sidebar lists the overview links above the sections."
+  ],
+  "cards": [
+   {
+    "id": "state",
+    "title": "Where the page keeps its state",
+    "html": "<p>Every checkbox lives in <code>localStorage</code> under <code>summary:&lt;repo&gt;#&lt;number&gt;:</code>, so it carries across heads of one pull request.</p><ul class=\"tight\"><li><code>f:&lt;file id&gt;</code> is a file's Reviewed box, the key the old viewed box used.</li><li><code>g:&lt;group id&gt;</code> is a section's Reviewed box.</li><li><code>n:&lt;hash&gt;</code> is a note's box. The hash covers the note's file (or <code>group:&lt;id&gt;</code>) and its text, but not its line.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Projector's review of <span class=\"mono\">cd2ba2c</span> opened one P2 finding. The skill's update steps never say to move a line note when its code shifts, so a note carried to a later head can build cleanly and still render under the wrong line. The validation gate passed at this head.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "spec",
+   "title": "The spec format and its validation",
+   "kicker": "What a note is, where it may sit, and what the build refuses.",
+   "intro": [
+    "<code>validate</code> now reads each file's <code>checks</code> as well as each group's. It accepts three kinds, listed in <code>CHECK_KINDS</code>. A file note with a <code>line</code> must name a line the file's diff shows: an added or context line on the new side, or a removed or context line when <code>side</code> is <code>\"old\"</code>. <code>diff_lines</code> works out that set from the parsed hunks. A group note with a <code>line</code> is refused, because a group has no single diff to anchor it to.",
+    "<code>sanitized</code> turns a group's old <code>concepts</code> into <code>context</code> notes ahead of its checks, so a spec published before this change renders the same ideas in the new list."
+   ],
+   "concepts": [
+    "Validation runs before sanitizing in <code>prepare_page</code>, so <code>sanitized_check</code> can call <code>int()</code> on a line that <code>validate</code> already checked.",
+    "Any <code>side</code> other than <code>\"old\"</code> means the new side, in validation and in the page alike."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A file missing from the diff now skips its line checks (<code>continue</code>), so a missing file produces one problem rather than several."
+    },
+    {
+     "kind": "verify",
+     "text": "The new test fixture's line numbers (12 new, 11 old, 13 not on the old side) match the <code>DIFF</code> fixture's hunks."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "<code>CHECK_KINDS</code>, <code>sanitized_check</code>, <code>sanitized_file</code>, <code>diff_lines</code>, and the file-level loop in <code>validate</code>."
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "<code>SummaryCheck</code> replaces the inline check type, and a group loses <code>concepts</code>."
+    },
+    {
+     "path": "tests/test_summary.py"
+    }
+   ]
+  },
+  {
+   "id": "page",
+   "title": "The page: notes, one Reviewed state, pinned headers",
+   "kicker": "How the renderer places notes, tracks review, and pins headers.",
+   "intro": [
+    "<code>renderFile</code> splits a file's notes into those with a line, keyed <code>new:N</code> or <code>old:N</code>, and the rest. It adds a <code>noterow</code> under each diff row whose number matches a key, and puts the rest at the top of the file. A context row matches both its old and new numbers. <code>highlightFile</code> selects only <code>tr.add</code>, <code>tr.del</code>, and <code>tr.ctx</code>, so note rows stay out of highlighting.",
+    "In <code>wireSummary</code>, <code>markFile</code> and <code>markSection</code> keep two separate states. Checking a section's box calls <code>closeSection</code>, which collapses and folds without touching file boxes. Reviewing a section's last file marks the section, and un-reviewing any file un-marks it. On load, a section counts as reviewed when its stored box is checked or all its files are.",
+    "Sticky headers now come in two layers. Each section's header pins at <code>--stick-top</code>, and <code>setupStuck</code> writes that header's height into <code>--ghead-h</code> so file headers pin just below it. It runs again on resize and once web fonts load, because a wrapped title changes the height."
+   ],
+   "concepts": [
+    "Folding is not stored. A section loads folded exactly when it loads reviewed.",
+    "A note's box is keyed by its file and text, not its line, so a note moved to another line stays checked."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Unchecking a section's box unfolds it and restores each file to its Reviewed or default collapsed state (<code>data-collapsed-default</code>), not to fully open."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>hlQueue</code> skips folded sections, and every way to unfold one (header toggle, unchecking the box, a hash link) highlights the files it reveals."
+    },
+    {
+     "kind": "verify",
+     "text": "A file header's badge counts only verify and concern boxes as open, but its total, shown once none are open, counts context notes too."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "<code>notesList</code>, <code>noteId</code>, <code>renderFile</code>'s <code>notesAt</code>, <code>renderGroup</code>, and the rewritten file, section, and sticky wiring."
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "<code>--stick-top</code> and <code>--ghead-h</code> drive both sticky layers; <code>.notes</code> styles every note list."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>site/src/summary.ts</code> by <code>npm run build</code>; the test suite fails if it drifts.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The skills that write notes",
+   "kicker": "Where summarize-changes and review-changes put each note.",
+   "intro": [
+    "<code>summarize-changes</code> now tells the agent to put each note at the smallest scope that holds it: a line, then a file, and a group only when the note ties several files together. <code>spec.md</code> documents <code>checks</code> on files, <code>line</code> and <code>side</code>, and the page's new review behavior. <code>review-changes</code> moves an open finding from its group onto its file at its line."
+   ],
+   "concepts": [
+    "These skills write the spec the renderer reads, so a gap here shows up as a wrong page even when the code is right."
+   ],
+   "checks": [
+    {
+     "kind": "flag",
+     "text": "Open review finding at <code>skills/summarize-changes/SKILL.md:78</code>: the update steps at line 231 never say to move a note's <code>line</code> when its code shifts. <code>validate</code> checks only that the line appears somewhere in the new diff, so in a new file or a large hunk a carried note still builds and renders under unrelated code."
+    },
+    {
+     "kind": "verify",
+     "text": "The <code>spec.md</code> example uses only kinds and fields the build accepts: <code>context</code> on the group, and <code>verify</code> and a lined <code>flag</code> on a file."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/summarize-changes/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-changes/spec.md"
+    },
+    {
+     "path": "skills/review-changes/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
