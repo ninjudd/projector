@@ -16,6 +16,7 @@ from html.parser import HTMLParser
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -136,6 +137,27 @@ jobs:
 
 class SpecError(ProjectorError):
     pass
+
+
+class NeedsAdmin(SpecError):
+    """Setting up the site needs changes on GitHub that only an admin can make.
+
+    `commands` are the `gh` commands that make them, in order, for the user
+    to hand an admin; `url` is the site's address when it already has one.
+    """
+
+    def __init__(self, repo: str, needed: str, commands: list[str], url: str = "") -> None:
+        super().__init__(repo, needed, commands, url)
+        self.reason = f"you are not an admin of {repo}, so init cannot {needed}"
+        self.commands, self.url = commands, url
+
+    def steps(self) -> str:
+        """What the user does next: the admin's commands, one per line, then `init` again."""
+        return ("ask an admin to run these commands, then run `project init` again to write the site workflow:"
+                + "".join(f"\n    {command}" for command in self.commands))
+
+    def __str__(self) -> str:
+        return f"{self.reason}; {self.steps()}"
 
 
 # Diff parsing
@@ -329,17 +351,20 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
                         "with the Projector site")
     if not admin:
         pages = json.loads(raw) if raw is not None else None
+        endpoint = f"repos/{repo}/pages"
+        needs = []
         if pages is None:
-            needed = "turn on its GitHub Pages site"
+            needs.append(("turn on its GitHub Pages site", f"gh api -X POST {endpoint} -f build_type=workflow"))
         elif pages.get("build_type") != "workflow":
-            needed = "switch its GitHub Pages site to deploy from GitHub Actions"
-        elif exposure(repo, pages):
-            needed = "make its public GitHub Pages site private"
-        else:
-            return {"pages": "unchanged", "visibility": "unchanged", "url": site_url(pages),
-                    "public": pages.get("public", True)}
-        raise SpecError(f"you are not an admin of {repo}, so init cannot {needed}; "
-                        "ask an admin to run `project init --site`")
+            needs.append(("switch its GitHub Pages site to deploy from GitHub Actions",
+                          f"gh api -X PUT {endpoint} -f build_type=workflow"))
+        # A site GitHub is about to create counts as public, as it does below.
+        if exposure(repo, pages or {}):
+            needs.append(("make its public GitHub Pages site private", f"gh api -X PUT {endpoint} -F public=false"))
+        if needs:
+            raise NeedsAdmin(repo, needs[0][0], [command for _, command in needs], site_url(pages or {}))
+        return {"pages": "unchanged", "visibility": "unchanged", "url": site_url(pages),
+                "public": pages.get("public", True)}
     if raw is None:
         gh("api", "-X", "POST", f"repos/{repo}/pages", "-f", "build_type=workflow")
         action = "created"
@@ -407,6 +432,18 @@ def homepage_url(site: str) -> str:
     return site.rstrip("/")
 
 
+def homepage_command(repo: str, url: str = "") -> str:
+    """The `gh` command an admin runs to link the repository's website to its site.
+
+    Without `url`, the command reads the address from the Pages site, for a
+    site the admin's earlier commands have only just created.
+    """
+    if url:
+        return f"gh api -X PATCH repos/{repo} -f homepage={shlex.quote(homepage_url(url))}"
+    return (f"gh api -X PATCH repos/{repo} -f homepage=\"$(gh api repos/{repo}/pages "
+            f"--jq '.html_url | rtrimstr(\"/\")')\"")
+
+
 def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple[str, str]:
     """Point the repository's website link at `url`, unless it already links elsewhere.
 
@@ -426,7 +463,8 @@ def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple
     if current:
         return "kept", f"{repo} already links its website to {current}; set it to {url} to link the site"
     if not admin:
-        return "kept", f"you are not an admin of {repo}, so its website does not link to {url}"
+        return "kept", (f"you are not an admin of {repo}, so its website does not link to {url}; "
+                        f"ask an admin to run `{homepage_command(repo, url)}`")
     gh("api", "-X", "PATCH", f"repos/{repo}", "-f", f"homepage={url}")
     return "updated", ""
 

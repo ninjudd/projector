@@ -1182,6 +1182,8 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual([], github.writes())
         self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
         self.assertIn("you are not an admin of owner/example, so its website does not link", err)
+        self.assertIn("ask an admin to run `gh api -X PATCH repos/owner/example -f "
+                      "homepage=https://owner.github.io/example`", err)
 
         self.workflow().unlink()
         for flags, expected in (((), 0), (("--site",), 65)):
@@ -1194,6 +1196,71 @@ class InitSiteTests(SiteRepoCase):
                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
                 self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
                 self.assertFalse(self.workflow().exists())
+
+
+    def run_as_admin(self, github: FakeGitHub, commands: list[str]) -> None:
+        """Run `commands` in a shell, as the admin would, then apply the calls they made to `github`."""
+        stub = Path(tempfile.mkdtemp())
+        log = stub / "calls"
+        # The stub logs each call one argument per line and answers the lookup
+        # for the site's address that the website link reads.
+        (stub / "gh").write_text('#!/bin/sh\nprintf "%s\\n" "$@" "" >> "$GH_LOG"\n'
+                                 '[ "$2" = repos/owner/example/pages ] && printf "%s\\n" "$SITE_URL"\nexit 0\n')
+        (stub / "gh").chmod(0o755)
+        env = dict(os.environ, PATH=f"{stub}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
+                   SITE_URL="https://owner.github.io/example")
+        for command in commands:
+            subprocess.run(["bash", "-c", command], check=True, env=env)
+        github.admin = True
+        for record in log.read_text().split("\n\n")[:-1]:
+            args = tuple(record.split("\n"))
+            if "-X" in args:
+                github.gh(*args)
+            else:
+                self.assertEqual(("api", "repos/owner/example/pages", "--jq", '.html_url | rtrimstr("/")'), args)
+        github.admin, github.calls = False, []
+
+    @unittest.skipIf(shutil.which("bash") is None, "the admin runs the commands in a shell")
+    def test_hands_a_non_admin_the_commands_that_finish_the_site(self) -> None:
+        create = "gh api -X POST repos/owner/example/pages -f build_type=workflow"
+        switch = "gh api -X PUT repos/owner/example/pages -f build_type=workflow"
+        private = "gh api -X PUT repos/owner/example/pages -F public=false"
+        link_new = ("gh api -X PATCH repos/owner/example -f homepage=\"$(gh api repos/owner/example/pages "
+                    "--jq '.html_url | rtrimstr(\"/\")')\"")
+        link = "gh api -X PATCH repos/owner/example -f homepage=https://owner.github.io/example"
+        cases = (
+            (dict(), (), [create, link_new]),
+            (dict(private=True), (), [create, private, link_new]),
+            (dict(homepage="https://example.com"), (), [create]),
+            (dict(pages=dict(SITE_READY, build_type="legacy")), ("--site",), [switch, link]),
+            (dict(private=True, pages=dict(SITE_READY)), (), [private, link]),
+        )
+        for options, flags, commands in cases:
+            with self.subTest(options=options, flags=flags):
+                self.workflow().unlink(missing_ok=True)
+                github = FakeGitHub(admin=False, **options)
+
+                code, out, err = self.init(github, "--json", *flags)
+
+                self.assertEqual(65 if flags else 0, code)
+                self.assertEqual([], github.writes(), "nothing is attempted without admin")
+                self.assertIn("ask an admin to run these commands, then run `project init` again", err)
+                self.assertIn("".join(f"\n    {command}" for command in commands), err)
+                self.assertNotIn("project init --site", err)
+                if not flags:
+                    self.assertEqual(commands, json.loads(out)["site"]["admin_commands"])
+                self.assertFalse(self.workflow().exists())
+
+                self.run_as_admin(github, commands)
+                code, out, err = self.init(github, *flags)
+
+                self.assertEqual(0, code, err)
+                self.assertEqual([], github.writes(), "the rerun needs no admin")
+                self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
+                self.assertNotIn("not an admin", err)
+                self.assertEqual("workflow", github.pages["build_type"])
+                self.assertEqual(not github.private, github.pages["public"])
+                self.assertEqual(options.get("homepage", "https://owner.github.io/example"), github.homepage)
 
 
 class WorkflowTests(unittest.TestCase):

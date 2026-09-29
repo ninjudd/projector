@@ -1027,7 +1027,13 @@ def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict
     # Only an admin can change Pages or the website link. Without admin, a site
     # already set up still gets its workflow, which needs no admin to propose.
     admin = bool((details.get("permissions") or {}).get("admin"))
-    pages = summary.enable_pages(repo, admin, takeover)
+    try:
+        pages = summary.enable_pages(repo, admin, takeover)
+    except summary.NeedsAdmin as error:
+        # The admin links an empty website in the same visit, as init would.
+        if not (details.get("homepage") or "").strip():
+            error.commands.append(summary.homepage_command(repo, error.url))
+        raise
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:
         pages["website"], note = summary.set_homepage(
@@ -1118,11 +1124,15 @@ def run(arguments: argparse.Namespace) -> int:
                 except ProjectorError as error:
                     if arguments.site:
                         raise InitError(str(error), files) from error
-                    pages = {"skipped": str(error)}
+                    needs_admin = isinstance(error, summary.NeedsAdmin)
+                    reason = error.reason if needs_admin else str(error)
+                    pages = {"skipped": reason, **({"admin_commands": error.commands} if needs_admin else {})}
                     # A repository with no GitHub origin has no site to miss.
                     if not isinstance(error, NotOnGitHub):
-                        print(f"project: site not set up: {error}; pass --no-site, or set site.enabled = false, "
+                        print(f"project: site not set up: {reason}; pass --no-site, or set site.enabled = false, "
                               "to stop setting it up", file=sys.stderr)
+                    if needs_admin:
+                        print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:

@@ -163,8 +163,21 @@ by hand, reported as `kept` with a note saying how to replace it.
 default.
 
 Changing Pages or the website link takes admin rights on the repository.
-Without them, `init` changes nothing on GitHub and says what an admin needs
-to do; it still writes the workflow when an admin has already set Pages up,
+Without them, `init` changes nothing on GitHub and prints the `gh` commands
+an admin runs to make those changes: turning Pages on or switching it to
+GitHub Actions, making a private repository's site private, and linking an
+empty website to the site. Hand them to an admin, then run `init` again to
+write the workflow:
+
+```console
+$ project init
+project: site not set up: you are not an admin of owner/example, so init cannot turn on its GitHub Pages site; pass --no-site, or set site.enabled = false, to stop setting it up
+project: to finish setting it up, ask an admin to run these commands, then run `project init` again to write the site workflow:
+    gh api -X POST repos/owner/example/pages -f build_type=workflow
+    gh api -X PATCH repos/owner/example -f homepage="$(gh api repos/owner/example/pages --jq '.html_url | rtrimstr("/")')"
+```
+
+`init` still writes the workflow when an admin has already set Pages up,
 because proposing the workflow needs no admin.
 
 The workflow is written only once the site is safe to deploy to. When `gh`
@@ -187,7 +200,8 @@ enabled = false
 
 In `--json` mode the document gains a `site` object with `pages`,
 `visibility`, `url`, `public`, and `website`, or with `skipped` and the
-reason when the site was not set up.
+reason when the site was not set up. When the site needs an admin, `site`
+also has `admin_commands`, the list of commands described above.
 
 ## Browse projects
 
