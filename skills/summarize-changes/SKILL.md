@@ -1,17 +1,17 @@
 ---
 name: summarize-changes
-description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, a checklist per group, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
+description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, review notes on each group, file and line, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
 ---
 
 # Summarize a pull request's changes
 
 Summarize a pull request's changes as one guided page a reviewer reads top
 to bottom: the diff split into logical groups in reading order, each group
-opened by what it does and why, what to hold in mind, and a checklist,
-followed by that group's files with every hunk. This skill writes the page's
-data, a summary spec. The Projector CLI renders it and the repository's Projector
-site serves it, so your job is the judgment: the grouping, the explanations,
-and the checks. Every command below is the `project` CLI that ships beside
+opened by what it does and why, followed by that group's files with every
+hunk, and review notes on each group, file and line. This skill writes the
+page's data, a summary spec. The Projector CLI renders it and the repository's
+Projector site serves it, so your job is the judgment: the grouping, the
+explanations, and the notes. Every command below is the `project` CLI that ships beside
 this skill; install it as Projector's README describes when `project` is
 missing. The CLI updates separately from this skill, so when `project`
 rejects a command below as an invalid choice, run `project upgrade` and
