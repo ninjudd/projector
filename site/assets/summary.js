@@ -133,7 +133,7 @@
             const s = data.stats;
             const summary = (o.summary ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
-                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Mark each file Reviewed as you go: a section is reviewed once all its files are, and it folds to its header. Checkboxes are remembered in this browser only.</p></div>';
+                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
                 [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
             out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
@@ -249,13 +249,12 @@
             if (!collapsed)
                 highlightFile(f);
         }
-        // Reviewing a file collapses it. Un-reviewing one opens it to be read again,
-        // or, when a whole section is un-reviewed, restores its opening state.
-        function markFile(f, reviewed, restore) {
+        // Reviewing a file collapses it; un-reviewing one opens it to be read again.
+        function markFile(f, reviewed) {
             fileBox(f).checked = reviewed;
             f.classList.toggle('reviewed', reviewed);
             set('f:' + (f.dataset.fid ?? ''), reviewed);
-            setCollapsed(f, reviewed || (restore && f.dataset.collapsedDefault === '1'));
+            setCollapsed(f, reviewed);
         }
         function setFolded(g, folded, highlight) {
             g.classList.toggle('folded', folded);
@@ -265,22 +264,26 @@
             if (!folded && highlight)
                 g.querySelectorAll('.file:not(.collapsed)').forEach(highlightFile);
         }
-        // A section is reviewed exactly when all its files are; one without files
-        // keeps its own box. Becoming reviewed folds it to its header, brought back
-        // into view when the reader was inside it, so the next section follows.
-        function settle(g, fromReader) {
+        function allFilesReviewed(g) {
             const files = filesOf(g);
-            const done = files.length > 0 ? files.every(function (f) { return fileBox(f).checked; }) : get('g:' + (g.dataset.gid ?? '')) === '1';
-            const changed = done !== g.classList.contains('done');
-            g.classList.toggle('done', done);
-            groupBox(g).checked = done;
-            if (changed || !fromReader) {
-                const inside = g.getBoundingClientRect().top < 0;
-                setFolded(g, done, fromReader);
-                if (fromReader && done && inside)
-                    g.scrollIntoView({ block: 'start' });
-            }
+            return files.length > 0 && files.every(function (f) { return fileBox(f).checked; });
+        }
+        // A section's Reviewed box is its own: checking it closes the section and its
+        // files without marking any file reviewed. The last file reviewed checks it,
+        // and a file un-reviewed unchecks it.
+        function markSection(g, reviewed) {
+            set('g:' + (g.dataset.gid ?? ''), reviewed);
+            g.classList.toggle('done', reviewed);
+            groupBox(g).checked = reviewed;
             refreshProgress();
+        }
+        function closeSection(g, fromReader) {
+            const inside = g.getBoundingClientRect().top < 0;
+            filesOf(g).forEach(function (f) { setCollapsed(f, true); });
+            setFolded(g, true, false);
+            // Closed from inside it: bring its header back into view so the next section follows.
+            if (fromReader && inside)
+                g.scrollIntoView({ block: 'start' });
         }
         groups.forEach(function (g) {
             const gid = g.dataset.gid ?? '';
@@ -291,11 +294,6 @@
             const collapseAll = g.querySelector('.collapse-all');
             if (toggle === null || expandAll === null || collapseAll === null)
                 throw new Error(`Section ${gid} is missing its controls`);
-            // A section checked before its files carried the state passes it down to them.
-            if (files.length > 0 && get('g:' + gid) === '1') {
-                files.forEach(function (f) { set('f:' + (f.dataset.fid ?? ''), true); });
-                set('g:' + gid, false);
-            }
             files.forEach(function (f) {
                 const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
                 fileBox(f).checked = reviewed;
@@ -303,33 +301,44 @@
                 if (reviewed)
                     setCollapsed(f, true);
             });
+            const reviewed = get('g:' + gid) === '1' || allFilesReviewed(g);
+            markSection(g, reviewed);
+            if (reviewed)
+                closeSection(g, false);
             box.addEventListener('change', function () {
-                if (files.length > 0)
-                    files.forEach(function (f) { markFile(f, box.checked, true); });
-                else
-                    set('g:' + gid, box.checked);
-                settle(g, true);
+                markSection(g, box.checked);
+                if (box.checked) {
+                    closeSection(g, true);
+                }
+                else {
+                    setFolded(g, false, false);
+                    files.forEach(function (f) { setCollapsed(f, fileBox(f).checked || f.dataset.collapsedDefault === '1'); });
+                }
             });
             toggle.addEventListener('click', function () { setFolded(g, !g.classList.contains('folded'), true); });
             expandAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, false); }); });
             collapseAll.addEventListener('click', function () { files.forEach(function (f) { setCollapsed(f, true); }); });
-            settle(g, false);
         });
         document.querySelectorAll('.file').forEach(function (f) {
             const box = fileBox(f);
             const toggle = f.querySelector('.ftoggle');
-            if (toggle === null)
+            const g = f.closest('.group');
+            if (toggle === null || g === null)
                 throw new Error(`File ${f.dataset.fid ?? ''} is missing its controls`);
             box.addEventListener('change', function () {
                 const wasStuck = f.classList.contains('stuck');
-                markFile(f, box.checked, false);
+                markFile(f, box.checked);
                 // Marked reviewed from a header pinned over a long file: bring the
                 // collapsed card into view instead of landing on what followed it.
                 if (box.checked && wasStuck)
                     f.scrollIntoView({ block: 'start' });
-                const g = f.closest('.group');
-                if (g !== null)
-                    settle(g, true);
+                if (box.checked && !g.classList.contains('done') && allFilesReviewed(g)) {
+                    markSection(g, true);
+                    closeSection(g, true);
+                }
+                else if (!box.checked && g.classList.contains('done')) {
+                    markSection(g, false);
+                }
             });
             toggle.addEventListener('click', function () {
                 setCollapsed(f, !f.classList.contains('collapsed'));
