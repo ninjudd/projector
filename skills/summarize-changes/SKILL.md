@@ -229,7 +229,11 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 2. Read the new commits and any new review threads, then revise the spec:
    set `pr.head`, move new files into groups, drop files that left the diff,
    and rewrite every note, check and overview card the change made untrue.
-   Resolve or remove `flag` checks the new commits fixed.
+   Move each note that has a `line` to where its code sits in the new diff,
+   using step 1's diff, and remove a note whose code is gone: `build` checks
+   only that a line is still in its file's diff, not that it still holds the
+   code the note is about. Resolve or remove `flag` checks the new commits
+   fixed.
 3. Rebuild, then republish to the same artifact: publish the same file path
    again in the conversation that created it, or pass the artifact's URL as
    `url` after reading it from any other conversation. On a Pages site,
