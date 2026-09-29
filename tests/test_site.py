@@ -946,6 +946,13 @@ class FakeGitHub:
             if not self.private_pages:
                 raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
             self.pages["public"] = False
+            # GitHub serves a private site at its own subdomain unless it has a custom domain.
+            if not self.pages.get("cname"):
+                self.pages["html_url"] = "https://example-private.pages.github.io/"
+        elif (method, endpoint) == ("PUT", "repos/owner/example/pages") and field.startswith("cname="):
+            # GitHub reports a custom domain over http:// until it enforces HTTPS.
+            self.pages["cname"] = field.removeprefix("cname=")
+            self.pages["html_url"] = f"http://{self.pages['cname']}/"
         elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
             self.homepage = field.removeprefix("homepage=")
         else:
@@ -1182,6 +1189,8 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual([], github.writes())
         self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
         self.assertIn("you are not an admin of owner/example, so its website does not link", err)
+        self.assertIn("ask an admin to run `gh api -X PATCH repos/owner/example -f "
+                      "homepage=https://owner.github.io/example`", err)
 
         self.workflow().unlink()
         for flags, expected in (((), 0), (("--site",), 65)):
@@ -1194,6 +1203,131 @@ class InitSiteTests(SiteRepoCase):
                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
                 self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
                 self.assertFalse(self.workflow().exists())
+
+    def run_as_admin(self, github: FakeGitHub, commands: list[str]) -> None:
+        """Run `commands` in a shell, as the admin would, applying each one's calls to `github` before the next."""
+        stub = Path(tempfile.mkdtemp())
+        log = stub / "calls"
+        # The stub logs each call one argument per line and answers the lookup
+        # for the site's address that the website link reads.
+        (stub / "gh").write_text('#!/bin/sh\nprintf "%s\\n" "$@" "" >> "$GH_LOG"\n'
+                                 '[ "$2" = repos/owner/example/pages ] && printf "%s\\n" "$SITE_URL"\nexit 0\n')
+        (stub / "gh").chmod(0o755)
+        github.admin = True
+        for command in commands:
+            log.write_text("")
+            site = (github.pages or {}).get("html_url", "").rstrip("/")
+            env = dict(os.environ, PATH=f"{stub}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log), SITE_URL=site)
+            subprocess.run(["bash", "-c", command], check=True, env=env)
+            for record in log.read_text().split("\n\n")[:-1]:
+                args = tuple(record.split("\n"))
+                if "-X" in args:
+                    github.gh(*args)
+                else:
+                    self.assertEqual(("api", "repos/owner/example/pages", "--jq", '.html_url | rtrimstr("/")'), args)
+        github.admin, github.calls = False, []
+
+    @unittest.skipIf(shutil.which("bash") is None, "the admin runs the commands in a shell")
+    def test_hands_a_non_admin_the_commands_that_finish_the_site(self) -> None:
+        create = "gh api -X POST repos/owner/example/pages -f build_type=workflow"
+        switch = "gh api -X PUT repos/owner/example/pages -f build_type=workflow"
+        private = "gh api -X PUT repos/owner/example/pages -F public=false"
+        # Without --url the website command reads the address back, because
+        # making a site private moves it to a subdomain of its own.
+        link = ("gh api -X PATCH repos/owner/example -f homepage=\"$(gh api repos/owner/example/pages "
+                "--jq '.html_url | rtrimstr(\"/\")')\"")
+        domain = "gh api -X PUT repos/owner/example/pages -f cname=projects.example.com"
+        link_domain = "gh api -X PATCH repos/owner/example -f homepage=https://projects.example.com"
+        vercel = "https://example.vercel.app"
+        cases = (
+            (dict(), (), [create, link]),
+            (dict(private=True), (), [create, private, link]),
+            (dict(homepage="https://example.com"), (), [create]),
+            (dict(pages=dict(SITE_READY, build_type="legacy")), ("--site",), [switch, link]),
+            (dict(private=True, pages=dict(SITE_READY)), (), [private, link]),
+            (dict(private=True, homepage=vercel), ("--url", "projects.example.com"),
+             [create, private, domain, link_domain]),
+            (dict(pages=dict(SITE_READY), homepage=vercel), ("--url", "https://projects.example.com/"),
+             [domain, link_domain]),
+        )
+        for options, flags, commands in cases:
+            with self.subTest(options=options, flags=flags):
+                self.workflow().unlink(missing_ok=True)
+                github = FakeGitHub(admin=False, **options)
+
+                code, out, err = self.init(github, "--json", *flags)
+
+                self.assertEqual(65 if "--site" in flags else 0, code)
+                self.assertEqual([], github.writes(), "nothing is attempted without admin")
+                self.assertIn("ask an admin to run these commands, then run `project init` again", err)
+                self.assertIn("".join(f"\n    {command}" for command in commands), err)
+                self.assertNotIn("project init --site", err)
+                if "--site" not in flags:
+                    self.assertEqual(commands, json.loads(out)["site"]["admin_commands"])
+                self.assertFalse(self.workflow().exists())
+
+                self.run_as_admin(github, commands)
+                code, out, err = self.init(github, *flags)
+
+                self.assertEqual(0, code, err)
+                self.assertEqual([], github.writes(), "the rerun needs no admin")
+                self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
+                self.assertNotIn("not an admin", err)
+                self.assertEqual("workflow", github.pages["build_type"])
+                self.assertEqual(not github.private, github.pages["public"])
+                if "--url" in flags:
+                    self.assertEqual("projects.example.com", github.pages["cname"])
+                    self.assertEqual("https://projects.example.com", github.homepage)
+                else:
+                    self.assertEqual(options.get("homepage", github.pages["html_url"].rstrip("/")), github.homepage)
+
+    def test_serves_the_site_at_the_url_init_is_given_and_links_the_website_to_it(self) -> None:
+        github = FakeGitHub(private=True, homepage="https://example.vercel.app")
+
+        code, out, err = self.init(github, "--url", "projects.example.com")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([
+            ("POST", "repos/owner/example/pages", "-f", "build_type=workflow"),
+            ("PUT", "repos/owner/example/pages", "-F", "public=false"),
+            ("PUT", "repos/owner/example/pages", "-f", "cname=projects.example.com"),
+            ("PATCH", "repos/owner/example", "-f", "homepage=https://projects.example.com"),
+        ], github.writes(), "the domain is set once the site is private, and the website link is replaced")
+        self.assertIn("created GitHub Pages site https://projects.example.com/\n", out)
+        self.assertIn("updated repository website https://projects.example.com\n", out)
+        self.assertTrue(self.workflow().exists())
+
+        github.calls = []
+        code, out, _ = self.init(github, "--url", "https://projects.example.com")
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.writes(), "a rerun changes nothing")
+        self.assertIn("unchanged GitHub Pages site https://projects.example.com/\n", out)
+
+    def test_refuses_a_url_that_is_not_a_custom_domains_address(self) -> None:
+        for url in ("https://example.com/docs", "ftp://example.com", "localhost", "https://example.com:8443",
+                    "https://user@example.com", "https://example.com/?q=1", "projects.example.com;touch pwned",
+                    "projects example.com", "$(id).example.com", "projects-.example.com", "projects..example.com",
+                    "projects_site.example.com"):
+            with self.subTest(url=url):
+                github = FakeGitHub()
+
+                code, _, err = self.init(github, "--url", url)
+
+                self.assertEqual(2, code)
+                self.assertIn("--url must be a custom domain's address", err)
+                self.assertEqual([], github.calls)
+                self.assertFalse((self.repo / "AGENTS.md").exists(), "nothing is written")
+
+        code, _, err = self.init(FakeGitHub(), "--url", "projects.example.com", "--no-site")
+
+        self.assertEqual(2, code)
+        self.assertIn("--url sets the site's address", err)
+
+    def test_reads_a_url_without_a_scheme_as_https(self) -> None:
+        self.assertEqual("https://projects.example.com/", cli.site_address("projects.example.com"))
+        self.assertEqual("https://projects.example.com/", cli.site_address("https://Projects.Example.com/"))
+        self.assertEqual("http://projects.example.com/", cli.site_address("http://projects.example.com"))
 
 
 class WorkflowTests(unittest.TestCase):

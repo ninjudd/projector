@@ -25,14 +25,18 @@ is the GitHub repository:
 
    Besides adopting the convention, it turns on GitHub Pages with GitHub
    Actions as its source, and points the repository's website link at the
-   site if the link is empty. A repository that already deploys its own
+   site if the link is empty. To serve the site at a custom domain, pass it
+   as `--url projects.example.com`; the website then links there even if it
+   linked somewhere else. A repository that already deploys its own
    Pages site keeps it unless you pass `--site`. If the repository is private, it makes the site private too, and
    skips the workflow if GitHub refuses: a private repository's Pages site
    is public unless the account has private Pages, which needs GitHub
    Enterprise Cloud. Then it writes the workflow. When it cannot set the site
    up, for example because you are not an admin, it says why on stderr and
-   adopts the repository anyway; pass `--site` to make that an error. Run it
-   again at any time; it changes only what is out of date.
+   adopts the repository anyway; pass `--site` to make that an error.
+   Without admin rights, it also prints the `gh` commands an admin runs to
+   finish the setup; run `init` again once they have. Run it again at any
+   time; it changes only what is out of date.
 
 2. Commit the workflow to the default branch through a pull request. GitHub
    runs the dispatched workflow only from the default branch, and deploys
