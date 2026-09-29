@@ -1,17 +1,17 @@
 ---
 name: summarize-changes
-description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, a checklist per group, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
+description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, review notes on each group, file and line, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
 ---
 
 # Summarize a pull request's changes
 
 Summarize a pull request's changes as one guided page a reviewer reads top
 to bottom: the diff split into logical groups in reading order, each group
-opened by what it does and why, what to hold in mind, and a checklist,
-followed by that group's files with every hunk. This skill writes the page's
-data, a summary spec. The Projector CLI renders it and the repository's Projector
-site serves it, so your job is the judgment: the grouping, the explanations,
-and the checks. Every command below is the `project` CLI that ships beside
+opened by what it does and why, followed by that group's files with every
+hunk, and review notes on each group, file and line. This skill writes the
+page's data, a summary spec. The Projector CLI renders it and the repository's
+Projector site serves it, so your job is the judgment: the grouping, the
+explanations, and the notes. Every command below is the `project` CLI that ships beside
 this skill; install it as Projector's README describes when `project` is
 missing. The CLI updates separately from this skill, so when `project`
 rejects a command below as an invalid choice, run `project upgrade` and
@@ -68,10 +68,16 @@ push to, or approve the pull request unless the user asks.
      that misses a file, repeats one, or names one that is not in the diff.
    - **Explain why, not only what.** Cite the plan decisions or review
      threads behind a design choice.
-   - **Write checks a reviewer can act on.** A `verify` check names an
-     invariant worth tracing. A `flag` check is your own observation that
-     needs a decision; confirm it against the code before you write it, and
-     say plainly what is wrong or risky.
+   - **Write notes a reviewer can act on.** A `context` note is what to hold
+     in mind while reading. A `verify` note names an invariant worth tracing.
+     A `flag` note is your own observation that needs a decision; confirm it
+     against the code before you write it, and say plainly what is wrong or
+     risky.
+   - **Put each note at the smallest scope that holds it.** A reader cannot
+     carry a list of notes across twenty files and hundreds of lines. A note
+     about one line goes on its file with that `line`, and renders under
+     that line in the diff. A note about one file goes on that file. Only a
+     note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
      collapsed unless a file's `collapsed` says otherwise. Give the files a
      reviewer must read a one-line `note`.
@@ -223,7 +229,11 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 2. Read the new commits and any new review threads, then revise the spec:
    set `pr.head`, move new files into groups, drop files that left the diff,
    and rewrite every note, check and overview card the change made untrue.
-   Resolve or remove `flag` checks the new commits fixed.
+   Move each note that has a `line` to where its code sits in the new diff,
+   using step 1's diff, and remove a note whose code is gone: `build` checks
+   only that a line is still in its file's diff, not that it still holds the
+   code the note is about. Resolve or remove `flag` checks the new commits
+   fixed.
 3. Rebuild, then republish to the same artifact: publish the same file path
    again in the conversation that created it, or pass the artifact's URL as
    `url` after reading it from any other conversation. On a Pages site,
