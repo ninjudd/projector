@@ -29,13 +29,15 @@ it. The spec is JSON:
       "title": "The shared decision core",
       "kicker": "One line on what the group covers",
       "intro": ["Paragraph", "Paragraph"],
-      "concepts": ["Idea the reviewer must hold while reading"],
       "checks": [
-        {"kind": "verify", "text": "An invariant worth tracing"},
-        {"kind": "flag", "text": "An observation that needs a decision"}
+        {"kind": "context", "text": "An idea that ties this group's files together"}
       ],
       "files": [
-        {"path": "src/core/check.go", "note": "What to look at in this file"},
+        {"path": "src/core/check.go", "note": "What to look at in this file",
+         "checks": [
+           {"kind": "verify", "text": "An invariant worth tracing in this file"},
+           {"kind": "flag", "text": "An observation that needs a decision", "line": 42}
+         ]},
         {"path": "src/core/check_test.go", "collapsed": true}
       ]
     }
@@ -57,9 +59,17 @@ it. The spec is JSON:
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
 - `overview.cards` lay out two per row. A card with an `id` also gets a
-  link at the bottom of the sidebar.
-- `groups[].id` must be unique; it is the section anchor and the key for the
-  reader's "Reviewed" checkbox.
+  link in the sidebar, under Overview and above the groups, in page order.
+- `groups[].id` must be unique; it is the section anchor.
+- `checks` are review notes, on a group or on one of its files. Each has a
+  `kind`: `context` for what to hold in mind, `verify` for an invariant
+  worth tracing, or `flag` for something that needs a decision. A file's
+  note may name a `line` its diff shows, on the new side unless `side` is
+  `"old"`, and then renders under that line; `build` refuses a line the diff
+  does not show. A group's notes take no `line`. A group's older `concepts`
+  list still builds, as `context` notes.
+- The reader marks each file Reviewed. A group counts as reviewed once all
+  its files are, and folds to its header.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
 

@@ -179,7 +179,45 @@ class BuildTests(unittest.TestCase):
         code, _, err = self.build(groups)
         self.assertEqual(65, code)
         self.assertIn("gen: src/gone.go is not in the diff", err)
-        self.assertIn("core: each check needs kind verify or flag", err)
+        self.assertIn("core: each check needs a kind (context, verify, flag) and a text", err)
+
+    def test_carries_file_checks_and_their_lines_into_the_page(self) -> None:
+        groups = [dict(GOOD_GROUPS[0], concepts=["Hold <code>b</code>."],
+                       files=[{"path": "src/core.go", "checks": [
+                           {"kind": "flag", "text": "Is <code>c</code> escaped?", "line": 12},
+                           {"kind": "verify", "text": "The old value.", "line": 11, "side": "old"},
+                           {"kind": "context", "text": "Whole file."}]},
+                           {"path": "src/core_test.go"}]),
+                  GOOD_GROUPS[1]]
+        code, site, err = self.build(groups)
+
+        self.assertEqual(0, code, err)
+        html = (site / "index.html").read_text()
+        start = html.index('type="application/json">') + len('type="application/json">')
+        data = json.loads(html[start:html.index("</script>", start)])
+        core = data["groups"][0]
+        self.assertNotIn("concepts", core, "the old concepts list reaches the page as context checks")
+        self.assertEqual([{"kind": "context", "text": "Hold <code>b</code>."},
+                          {"kind": "flag", "text": "Look at <code>c</code>."}], core["checks"])
+        self.assertEqual([{"kind": "flag", "text": "Is <code>c</code> escaped?", "line": 12, "side": "new"},
+                          {"kind": "verify", "text": "The old value.", "line": 11, "side": "old"},
+                          {"kind": "context", "text": "Whole file."}], core["files"][0]["checks"])
+        self.assertNotIn("checks", core["files"][1])
+
+    def test_refuses_a_check_on_a_line_its_file_does_not_show(self) -> None:
+        groups = [dict(GOOD_GROUPS[0], checks=[{"kind": "verify", "text": "x", "line": 10}],
+                       files=[{"path": "src/core.go", "checks": [
+                           {"kind": "flag", "text": "gone", "line": 99},
+                           {"kind": "flag", "text": "added, not old", "line": 13, "side": "old"},
+                           {"kind": "maybe", "text": "x"}]},
+                           {"path": "src/core_test.go"}]),
+                  GOOD_GROUPS[1]]
+        code, _, err = self.build(groups)
+        self.assertEqual(65, code)
+        self.assertIn("src/core.go: line 99 (new side) is not in its diff", err)
+        self.assertIn("src/core.go: line 13 (old side) is not in its diff", err)
+        self.assertIn("src/core.go: each check needs a kind (context, verify, flag) and a text", err)
+        self.assertIn("core: a check with a line belongs on its file", err)
 
     def test_refuses_a_duplicate_group_id(self) -> None:
         groups = [GOOD_GROUPS[0], dict(GOOD_GROUPS[1], id="core")]
@@ -358,12 +396,13 @@ class SanitizeTests(unittest.TestCase):
     def test_a_built_page_carries_no_script_from_the_spec(self) -> None:
         spec = make_spec(GOOD_GROUPS)
         spec["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
+        spec["groups"][0]["files"][0]["checks"] = [{"kind": "flag", "text": '<a href="javascript:x">z</a><script>alert(3)</script>', "line": 12}]
         spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
         out = Path(tempfile.mkdtemp())
         with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
             site.build_page(spec, out, at_head=True)
         page = (out / "index.html").read_text()
-        for bad in ("onerror", "alert(2)", "javascript:"):
+        for bad in ("onerror", "alert(2)", "alert(3)", "javascript:"):
             self.assertNotIn(bad, page)
         self.assertIn("<b>T<\\/b>", page, "kept, with </ escaped inside the data block")
 

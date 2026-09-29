@@ -24,6 +24,7 @@ from pathlib import Path
 from .core import ProjectorError
 
 SPEC_VERSION = 1
+CHECK_KINDS = ("context", "verify", "flag")
 PAGES_REF = "refs/projector/summaries"
 DISPATCH_EVENT = "projector-summaries"
 PAGES_ROOT = "summaries"
@@ -564,17 +565,31 @@ def sanitized(spec: dict) -> tuple[dict, list[dict]]:
     }
     groups = []
     for g in spec["groups"]:
+        context = [{"kind": "context", "text": c} for c in g.get("concepts") or []]
         groups.append({
             "id": str(g["id"]),
             "title": sanitize_html(g["title"]),
             "kicker": sanitize_html(g.get("kicker") or ""),
             "intro": [sanitize_html(p) for p in g.get("intro") or []],
-            "concepts": [sanitize_html(c) for c in g.get("concepts") or []],
-            "checks": [{"kind": c["kind"], "text": sanitize_html(c["text"])} for c in g.get("checks") or []],
-            "files": [{k: (sanitize_html(v) if k == "note" else v) for k, v in f.items() if k in ("path", "note", "collapsed")}
-                      for f in g.get("files") or []],
+            "checks": [sanitized_check(c) for c in context + list(g.get("checks") or [])],
+            "files": [sanitized_file(f) for f in g.get("files") or []],
         })
     return overview, groups
+
+
+def sanitized_check(c: dict) -> dict:
+    out = {"kind": c["kind"], "text": sanitize_html(c["text"])}
+    if c.get("line") is not None:
+        out["line"] = int(c["line"])
+        out["side"] = "old" if c.get("side") == "old" else "new"
+    return out
+
+
+def sanitized_file(f: dict) -> dict:
+    out = {k: (sanitize_html(v) if k == "note" else v) for k, v in f.items() if k in ("path", "note", "collapsed")}
+    if f.get("checks"):
+        out["checks"] = [sanitized_check(c) for c in f["checks"]]
+    return out
 
 
 # Specs and pages
@@ -588,10 +603,11 @@ def validate(spec: dict, files: list[dict]) -> None:
     groups = spec.get("groups") or []
     if not groups:
         raise SpecError("the spec has no groups")
-    known = {f["path"] for f in files}
+    by_path = {f["path"]: f for f in files}
     seen: dict[str, str] = {}
     problems: list[str] = []
     ids: set[str] = set()
+    kinds = ", ".join(CHECK_KINDS)
     for g in groups:
         gid = g.get("id")
         if not gid or not g.get("title"):
@@ -602,19 +618,38 @@ def validate(spec: dict, files: list[dict]) -> None:
         ids.add(gid)
         for fs in g.get("files") or []:
             path = fs.get("path")
-            if path not in known:
+            if path not in by_path:
                 problems.append(f"{gid}: {path} is not in the diff")
-            elif path in seen:
+                continue
+            if path in seen:
                 problems.append(f"{path} is in both {seen[path]} and {gid}")
             else:
                 seen[path] = gid
+            lines = {"new": diff_lines(by_path[path], "new"), "old": diff_lines(by_path[path], "old")}
+            for c in fs.get("checks") or []:
+                if c.get("kind") not in CHECK_KINDS or not c.get("text"):
+                    problems.append(f"{path}: each check needs a kind ({kinds}) and a text")
+                elif c.get("line") is not None:
+                    side = "old" if c.get("side") == "old" else "new"
+                    if not isinstance(c["line"], int) or c["line"] not in lines[side]:
+                        problems.append(f"{path}: line {c['line']} ({side} side) is not in its diff")
         for c in g.get("checks") or []:
-            if c.get("kind") not in ("verify", "flag") or not c.get("text"):
-                problems.append(f"{gid}: each check needs kind verify or flag and a text")
-    for path in sorted(known - set(seen)):
+            if c.get("kind") not in CHECK_KINDS or not c.get("text"):
+                problems.append(f"{gid}: each check needs a kind ({kinds}) and a text")
+            elif c.get("line") is not None:
+                problems.append(f"{gid}: a check with a line belongs on its file")
+    for path in sorted(set(by_path) - set(seen)):
         problems.append(f"{path} is in no group")
     if problems:
         raise SpecError("the spec does not match the diff:\n  " + "\n  ".join(problems))
+
+
+def diff_lines(f: dict, side: str) -> set[int]:
+    """The line numbers a check can point at on one side of a file's diff: on
+    the new side the added and context lines, on the old side the removed and
+    context lines."""
+    kinds, index = (("a", "c"), 2) if side == "new" else (("d", "c"), 1)
+    return {line[index] for h in f["hunks"] for line in h["lines"] if line[0] in kinds and isinstance(line[index], int)}
 
 
 def stats(files: list[dict]) -> dict:
@@ -883,7 +918,7 @@ def init(repo: str, number: int, spec_path: str, diff_path: str | None = None) -
         "name": "",
         "pr": meta,
         "overview": {"summary": [], "cards": []},
-        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "concepts": [], "checks": [],
+        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
                     "files": [{"path": f["path"]} for f in files]}],
     }
     Path(spec_path).write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")

@@ -68,10 +68,16 @@ push to, or approve the pull request unless the user asks.
      that misses a file, repeats one, or names one that is not in the diff.
    - **Explain why, not only what.** Cite the plan decisions or review
      threads behind a design choice.
-   - **Write checks a reviewer can act on.** A `verify` check names an
-     invariant worth tracing. A `flag` check is your own observation that
-     needs a decision; confirm it against the code before you write it, and
-     say plainly what is wrong or risky.
+   - **Write notes a reviewer can act on.** A `context` note is what to hold
+     in mind while reading. A `verify` note names an invariant worth tracing.
+     A `flag` note is your own observation that needs a decision; confirm it
+     against the code before you write it, and say plainly what is wrong or
+     risky.
+   - **Put each note at the smallest scope that holds it.** A reader cannot
+     carry a list of notes across twenty files and hundreds of lines. A note
+     about one line goes on its file with that `line`, and renders under
+     that line in the diff. A note about one file goes on that file. Only a
+     note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
      collapsed unless a file's `collapsed` says otherwise. Give the files a
      reviewer must read a one-line `note`.
