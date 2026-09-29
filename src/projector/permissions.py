@@ -78,8 +78,9 @@ def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -
         return FileAction(name, "unchanged")
     if not apply:
         return FileAction(name, "kept", f"{name} lacks {RULE}, without which Claude Code's auto mode refuses a "
-                                        "review loop's clean review of your own pull request; run `project init` "
-                                        "yourself in a terminal, or pass --publish-rule, to add it")
+                                        "review loop's clean review of your own pull request unless the "
+                                        "repository's own settings allow it; run `project init` yourself in a "
+                                        "terminal, or pass --publish-rule, to add it")
     allow.append(RULE)
     try:
         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")

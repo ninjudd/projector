@@ -221,8 +221,9 @@ When `gh` is missing, the repository already deploys its own site, or GitHub
 refuses to make a private repository's site private, as it does without
 private Pages (GitHub Enterprise Cloud), `init` writes no workflow. In those
 cases, and when you are not an admin and Pages needs changing, `init` adopts
-the repository as usual, skips the site with a note on stderr, and exits 0. If `init` created the Pages site in
-that same run and cannot make it private, it deletes the site again, so a
+the repository as usual, skips the site with a note on stderr, and exits 0.
+If `init` created the Pages site in that same run and cannot make it
+private, it deletes the site again, so a
 private repository is never left with a public site; it never deletes a
 site it did not create. A repository whose `origin` is not on GitHub skips
 the site without a note. `project site serve` still serves the site
