@@ -59,8 +59,7 @@ function renderSummary(data: SummaryData): void {
       const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
       return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes')}</td></tr>` : '';
     }
-    const flags = checks.filter(function (c) { return c.kind === 'flag'; }).length;
-    let badges = flags > 0 ? `<span class="badge flag">${String(flags)} look here</span>` : '';
+    let badges = checks.length > 0 ? `<span class="badge notes">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
     if (f.new === true) badges += '<span class="badge new">new</span>';
     if (f.deleted === true) badges += '<span class="badge deleted">deleted</span>';
     if (f.kind !== '') badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
