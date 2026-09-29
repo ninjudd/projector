@@ -163,10 +163,11 @@ by hand, reported as `kept` with a note saying how to replace it.
 default.
 
 Pass `--url` to serve the site at a custom domain instead of the address
-GitHub assigns. `init` sets the domain on the Pages site once the site is
-private, reports the site at that address, and points the repository's
-website link at it, replacing a link to anywhere else. The value is a
-domain's address with no path or port, and a value without a scheme means
+GitHub assigns. `init` sets the domain on the Pages site, after making a
+private repository's site private, reports the site at that address, and
+points the repository's website link at it, replacing a link to anywhere
+else. The value is a domain's address, with no path or port and a host of
+letters, digits, hyphens, and dots, and a value without a scheme means
 `https://`:
 
 ```sh
