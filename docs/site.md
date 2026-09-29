@@ -25,7 +25,9 @@ is the GitHub repository:
 
    Besides adopting the convention, it turns on GitHub Pages with GitHub
    Actions as its source, and points the repository's website link at the
-   site if the link is empty. A repository that already deploys its own
+   site if the link is empty. To serve the site at a custom domain, pass it
+   as `--url projects.example.com`; the website then links there even if it
+   linked somewhere else. A repository that already deploys its own
    Pages site keeps it unless you pass `--site`. If the repository is private, it makes the site private too, and
    skips the workflow if GitHub refuses: a private repository's Pages site
    is public unless the account has private Pages, which needs GitHub

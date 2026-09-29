@@ -34,6 +34,7 @@ from .core import (
     InitError,
     ProjectorError,
     ProjectStore,
+    UsageError,
     discover_git_root,
     grouped_projects,
     json_scalar,
@@ -207,6 +208,11 @@ def parser() -> argparse.ArgumentParser:
         "--no-site", action="store_false", dest="site", help="leave the GitHub Pages site and its workflow alone"
     )
     init.add_argument("--action-ref", default="v0", help="the projector tag or commit the site workflow runs")
+    init.add_argument(
+        "--url",
+        help="serve the GitHub Pages site at this custom domain, such as https://projects.example.com, and link the "
+        "repository's website to it",
+    )
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -1003,13 +1009,32 @@ def other_pages_deployers(root: Path) -> list[str]:
     return found
 
 
-def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict, FileAction]:
+def site_address(value: str) -> str:
+    """The address `init --url` names, as scheme://host/, assuming https:// when it names no scheme.
+
+    It is a custom domain for the Pages site, so it has no path, port, or credentials.
+    """
+    parsed = urlparse(value.strip() if "://" in value else f"https://{value.strip()}")
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (parsed.scheme not in ("http", "https") or "." not in (parsed.hostname or "") or port is not None
+            or parsed.username or parsed.password or parsed.path.strip("/") or parsed.params or parsed.query
+            or parsed.fragment):
+        raise UsageError(f"--url must be a custom domain's address, such as https://projects.example.com, not {value!r}")
+    return f"{parsed.scheme}://{parsed.hostname}/"
+
+
+def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = "") -> tuple[dict, FileAction]:
     """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
 
     The workflow is written only once the Pages site is safe to deploy to, so
     a private repository whose site cannot be made private gets no workflow.
     Without `takeover`, a repository that already deploys its own Pages site,
-    from a branch or from another workflow, keeps it.
+    from a branch or from another workflow, keeps it. With `url`, the site is
+    served at that custom domain, and the repository's website links to it
+    even when it linked somewhere else.
     """
     try:
         repo = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
@@ -1027,17 +1052,18 @@ def init_site(root: Path, action_ref: str, takeover: bool = False) -> tuple[dict
     # Only an admin can change Pages or the website link. Without admin, a site
     # already set up still gets its workflow, which needs no admin to propose.
     admin = bool((details.get("permissions") or {}).get("admin"))
+    current = (details.get("homepage") or "").strip()
     try:
-        pages = summary.enable_pages(repo, admin, takeover)
+        pages = summary.enable_pages(repo, admin, takeover, url)
     except summary.NeedsAdmin as error:
-        # The admin links an empty website in the same visit, as init would.
-        if not (details.get("homepage") or "").strip():
+        # The admin links the website in the same visit, as init would.
+        if not current or (url and not summary.same_link(current, url)):
             error.commands.append(summary.homepage_command(repo, error.url))
         raise
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:
         pages["website"], note = summary.set_homepage(
-            repo, pages["url"], details.get("homepage") or "", admin
+            repo, pages["url"], current, admin, replace=bool(url)
         ) if pages["url"] else ("unchanged", "")
     except summary.SpecError as error:
         pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
@@ -1102,6 +1128,10 @@ def run(arguments: argparse.Namespace) -> int:
         # An explicit --site or --no-site wins over configuration; unset, the
         # site is set up when it can be and skipped with a note when it cannot.
         wanted = site_enabled(root) if arguments.site is None else arguments.site
+        url = site_address(arguments.url) if arguments.url else ""
+        if url and not wanted:
+            raise UsageError("--url sets the site's address, but --no-site or site.enabled = false leaves the site "
+                             "alone")
         # The publish rule exempts a command from Claude Code's auto-mode
         # classifier, so it is added only when a person runs `init` at a
         # terminal or names --publish-rule; an agent refreshing the
@@ -1119,7 +1149,7 @@ def run(arguments: argparse.Namespace) -> int:
             pages = None
             if wanted:
                 try:
-                    pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site))
+                    pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site), url=url)
                     files.append(workflow)
                 except ProjectorError as error:
                     if arguments.site:

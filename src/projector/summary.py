@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .core import ProjectorError
 
@@ -332,8 +333,11 @@ def require_private_site(repo: str) -> None:
         raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
 
 
-def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
+def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str = "") -> dict:
     """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
+
+    With `url`, a custom domain's address such as https://projects.example.com/,
+    the site is served at that domain and reports `url` as its address.
 
     Returns what changed: `pages` is created, updated, or unchanged, and
     `visibility` is updated when a private repository's public site was made
@@ -349,6 +353,7 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
     if raw is not None and not takeover and json.loads(raw).get("build_type") != "workflow":
         raise SpecError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
                         "with the Projector site")
+    domain = urlparse(url).hostname or ""
     if not admin:
         pages = json.loads(raw) if raw is not None else None
         endpoint = f"repos/{repo}/pages"
@@ -361,9 +366,11 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
         # A site GitHub is about to create counts as public, as it does below.
         if exposure(repo, pages or {}):
             needs.append(("make its public GitHub Pages site private", f"gh api -X PUT {endpoint} -F public=false"))
+        if domain and (pages or {}).get("cname") != domain:
+            needs.append((f"serve its GitHub Pages site at {domain}", f"gh api -X PUT {endpoint} -f cname={domain}"))
         if needs:
-            raise NeedsAdmin(repo, needs[0][0], [command for _, command in needs], site_url(pages or {}))
-        return {"pages": "unchanged", "visibility": "unchanged", "url": site_url(pages),
+            raise NeedsAdmin(repo, needs[0][0], [command for _, command in needs], url or site_url(pages or {}))
+        return {"pages": "unchanged", "visibility": "unchanged", "url": url or site_url(pages),
                 "public": pages.get("public", True)}
     if raw is None:
         gh("api", "-X", "POST", f"repos/{repo}/pages", "-f", "build_type=workflow")
@@ -392,7 +399,13 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False) -> dict:
                 failure += "; the public Pages site init created was deleted"
             raise SpecError(failure)
         visibility = "updated"
-    return {"pages": action, "visibility": visibility, "url": site_url(pages), "public": pages.get("public", True)}
+    # The domain is set once the site is private, so a failure leaves no public site behind.
+    if domain and pages.get("cname") != domain:
+        gh("api", "-X", "PUT", f"repos/{repo}/pages", "-f", f"cname={domain}")
+        pages = json.loads(gh("api", f"repos/{repo}/pages"))
+        action = "updated" if action == "unchanged" else action
+    return {"pages": action, "visibility": visibility, "url": url or site_url(pages),
+            "public": pages.get("public", True)}
 
 
 def hosting(repo: str) -> tuple[str | None, str]:
@@ -444,8 +457,17 @@ def homepage_command(repo: str, url: str = "") -> str:
             f"--jq '.html_url | rtrimstr(\"/\")')\"")
 
 
-def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple[str, str]:
-    """Point the repository's website link at `url`, unless it already links elsewhere.
+def same_link(first: str, second: str) -> bool:
+    """Whether two website links reach the same place, ignoring scheme, case, and a trailing slash."""
+
+    def bare(link: str) -> str:
+        return link.strip().split("://", 1)[-1].rstrip("/").lower()
+
+    return bare(first) == bare(second)
+
+
+def set_homepage(repo: str, url: str, current: str, admin: bool = True, replace: bool = False) -> tuple[str, str]:
+    """Point the repository's website link at `url`, unless it already links elsewhere and not `replace`.
 
     The link is written without a trailing slash. Returns the action, updated,
     unchanged, or kept, and for kept, why. A link that differs only in scheme
@@ -454,13 +476,9 @@ def set_homepage(repo: str, url: str, current: str, admin: bool = True) -> tuple
     """
     url = homepage_url(url)
     current = current.strip()
-
-    def bare(link: str) -> str:
-        return link.split("://", 1)[-1].rstrip("/").lower()
-
-    if current and bare(current) == bare(url):
+    if current and same_link(current, url):
         return "unchanged", ""
-    if current:
+    if current and not replace:
         return "kept", f"{repo} already links its website to {current}; set it to {url} to link the site"
     if not admin:
         return "kept", (f"you are not an admin of {repo}, so its website does not link to {url}; "

@@ -946,6 +946,10 @@ class FakeGitHub:
             if not self.private_pages:
                 raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
             self.pages["public"] = False
+        elif (method, endpoint) == ("PUT", "repos/owner/example/pages") and field.startswith("cname="):
+            # GitHub reports a custom domain over http:// until it enforces HTTPS.
+            self.pages["cname"] = field.removeprefix("cname=")
+            self.pages["html_url"] = f"http://{self.pages['cname']}/"
         elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
             self.homepage = field.removeprefix("homepage=")
         else:
@@ -1228,12 +1232,19 @@ class InitSiteTests(SiteRepoCase):
         link_new = ("gh api -X PATCH repos/owner/example -f homepage=\"$(gh api repos/owner/example/pages "
                     "--jq '.html_url | rtrimstr(\"/\")')\"")
         link = "gh api -X PATCH repos/owner/example -f homepage=https://owner.github.io/example"
+        domain = "gh api -X PUT repos/owner/example/pages -f cname=projects.example.com"
+        link_domain = "gh api -X PATCH repos/owner/example -f homepage=https://projects.example.com"
+        vercel = "https://example.vercel.app"
         cases = (
             (dict(), (), [create, link_new]),
             (dict(private=True), (), [create, private, link_new]),
             (dict(homepage="https://example.com"), (), [create]),
             (dict(pages=dict(SITE_READY, build_type="legacy")), ("--site",), [switch, link]),
             (dict(private=True, pages=dict(SITE_READY)), (), [private, link]),
+            (dict(private=True, homepage=vercel), ("--url", "projects.example.com"),
+             [create, private, domain, link_domain]),
+            (dict(pages=dict(SITE_READY), homepage=vercel), ("--url", "https://projects.example.com/"),
+             [domain, link_domain]),
         )
         for options, flags, commands in cases:
             with self.subTest(options=options, flags=flags):
@@ -1242,12 +1253,12 @@ class InitSiteTests(SiteRepoCase):
 
                 code, out, err = self.init(github, "--json", *flags)
 
-                self.assertEqual(65 if flags else 0, code)
+                self.assertEqual(65 if "--site" in flags else 0, code)
                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
                 self.assertIn("ask an admin to run these commands, then run `project init` again", err)
                 self.assertIn("".join(f"\n    {command}" for command in commands), err)
                 self.assertNotIn("project init --site", err)
-                if not flags:
+                if "--site" not in flags:
                     self.assertEqual(commands, json.loads(out)["site"]["admin_commands"])
                 self.assertFalse(self.workflow().exists())
 
@@ -1260,7 +1271,57 @@ class InitSiteTests(SiteRepoCase):
                 self.assertNotIn("not an admin", err)
                 self.assertEqual("workflow", github.pages["build_type"])
                 self.assertEqual(not github.private, github.pages["public"])
-                self.assertEqual(options.get("homepage", "https://owner.github.io/example"), github.homepage)
+                if "--url" in flags:
+                    self.assertEqual("projects.example.com", github.pages["cname"])
+                    self.assertEqual("https://projects.example.com", github.homepage)
+                else:
+                    self.assertEqual(options.get("homepage", "https://owner.github.io/example"), github.homepage)
+
+    def test_serves_the_site_at_the_url_init_is_given_and_links_the_website_to_it(self) -> None:
+        github = FakeGitHub(private=True, homepage="https://example.vercel.app")
+
+        code, out, err = self.init(github, "--url", "projects.example.com")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([
+            ("POST", "repos/owner/example/pages", "-f", "build_type=workflow"),
+            ("PUT", "repos/owner/example/pages", "-F", "public=false"),
+            ("PUT", "repos/owner/example/pages", "-f", "cname=projects.example.com"),
+            ("PATCH", "repos/owner/example", "-f", "homepage=https://projects.example.com"),
+        ], github.writes(), "the domain is set once the site is private, and the website link is replaced")
+        self.assertIn("created GitHub Pages site https://projects.example.com/\n", out)
+        self.assertIn("updated repository website https://projects.example.com\n", out)
+        self.assertTrue(self.workflow().exists())
+
+        github.calls = []
+        code, out, _ = self.init(github, "--url", "https://projects.example.com")
+
+        self.assertEqual(0, code)
+        self.assertEqual([], github.writes(), "a rerun changes nothing")
+        self.assertIn("unchanged GitHub Pages site https://projects.example.com/\n", out)
+
+    def test_refuses_a_url_that_is_not_a_custom_domains_address(self) -> None:
+        for url in ("https://example.com/docs", "ftp://example.com", "localhost", "https://example.com:8443",
+                    "https://user@example.com", "https://example.com/?q=1"):
+            with self.subTest(url=url):
+                github = FakeGitHub()
+
+                code, _, err = self.init(github, "--url", url)
+
+                self.assertEqual(2, code)
+                self.assertIn("--url must be a custom domain's address", err)
+                self.assertEqual([], github.calls)
+                self.assertFalse((self.repo / "AGENTS.md").exists(), "nothing is written")
+
+        code, _, err = self.init(FakeGitHub(), "--url", "projects.example.com", "--no-site")
+
+        self.assertEqual(2, code)
+        self.assertIn("--url sets the site's address", err)
+
+    def test_reads_a_url_without_a_scheme_as_https(self) -> None:
+        self.assertEqual("https://projects.example.com/", cli.site_address("projects.example.com"))
+        self.assertEqual("https://projects.example.com/", cli.site_address("https://Projects.Example.com/"))
+        self.assertEqual("http://projects.example.com/", cli.site_address("http://projects.example.com"))
 
 
 class WorkflowTests(unittest.TestCase):
