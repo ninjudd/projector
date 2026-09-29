@@ -8,7 +8,7 @@
   --add-bg: #E4F5EA; --add-ln: #CBEAD6; --add-text: #0F5A2A;
   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
-  --warn: #9A6700; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA;
+  --warn: #9A6700; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA; --info: #0550AE; --info-bg: #E3EDFA;
   --code-bg: #EFECE3;
   --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
@@ -22,7 +22,7 @@
     --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
-    --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
+    --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
     --code-bg: #1E1C16;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
     --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -35,7 +35,7 @@
   --add-bg: #10291B; --add-ln: #153A23; --add-text: #8FD5A8;
   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
-  --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D;
+  --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
   --code-bg: #1E1C16;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
   --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -144,9 +144,9 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
 .notes li { display: grid; grid-template-columns: 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
-.chip.context { background: var(--accent-soft); color: var(--accent); }
+.chip.context { background: var(--info-bg); color: var(--info); }
 .chip.verify { background: var(--surface-2); color: var(--muted); }
-.chip.flag { background: var(--warn-bg); color: var(--warn); }
+.chip.flag { background: var(--accent-soft); color: var(--accent); }
 @media (max-width: 480px) { .notes li { grid-template-columns: 1fr; gap: 4px; } }
 
 /* file bar */
@@ -217,8 +217,8 @@ table.diff tr.noterow td { background: var(--surface); padding-block: 6px 8px; }
 table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
 .inotes { gap: 6px; }
 .inotes li { padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 6px 6px 0; }
-.inotes li.context { border-left-color: var(--accent); }
-.inotes li.flag { border-left-color: var(--warn); background: var(--warn-bg); }
+.inotes li.context { border-left-color: var(--info); }
+.inotes li.flag { border-left-color: var(--accent); background: var(--accent-soft); }
 /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
 .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }
