@@ -1306,7 +1306,9 @@ class InitSiteTests(SiteRepoCase):
 
     def test_refuses_a_url_that_is_not_a_custom_domains_address(self) -> None:
         for url in ("https://example.com/docs", "ftp://example.com", "localhost", "https://example.com:8443",
-                    "https://user@example.com", "https://example.com/?q=1"):
+                    "https://user@example.com", "https://example.com/?q=1", "projects.example.com;touch pwned",
+                    "projects example.com", "$(id).example.com", "projects-.example.com", "projects..example.com",
+                    "projects_site.example.com"):
             with self.subTest(url=url):
                 github = FakeGitHub()
 

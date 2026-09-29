@@ -1012,16 +1012,19 @@ def other_pages_deployers(root: Path) -> list[str]:
 def site_address(value: str) -> str:
     """The address `init --url` names, as scheme://host/, assuming https:// when it names no scheme.
 
-    It is a custom domain for the Pages site, so it has no path, port, or credentials.
+    It is a custom domain for the Pages site, so it has no path, port, or credentials,
+    and its host is dot-separated labels of letters, digits, and hyphens, which
+    also keeps it safe to print unquoted in a command for an admin.
     """
     parsed = urlparse(value.strip() if "://" in value else f"https://{value.strip()}")
     try:
         port = parsed.port
     except ValueError:
         port = -1
-    if (parsed.scheme not in ("http", "https") or "." not in (parsed.hostname or "") or port is not None
-            or parsed.username or parsed.password or parsed.path.strip("/") or parsed.params or parsed.query
-            or parsed.fragment):
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if (parsed.scheme not in ("http", "https") or not re.fullmatch(rf"(?:{label}\.)+{label}", parsed.hostname or "")
+            or port is not None or parsed.username or parsed.password or parsed.path.strip("/") or parsed.params
+            or parsed.query or parsed.fragment):
         raise UsageError(f"--url must be a custom domain's address, such as https://projects.example.com, not {value!r}")
     return f"{parsed.scheme}://{parsed.hostname}/"
 
