@@ -30,12 +30,25 @@
         const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
         const CHIPS = { context: 'context', verify: 'verify', flag: 'concern' };
         function kindOf(c) { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
-        function notesList(checks, cls) {
+        // A note's checkbox state is keyed by where it sits and what it says, so a
+        // note carried unchanged to a later head stays checked and a rewritten one
+        // starts over.
+        function noteId(scope, text) {
+            const key = `${scope}\u0000${text}`;
+            let h = 0x811c9dc5;
+            for (let i = 0; i < key.length; i++)
+                h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+            return h.toString(16).padStart(8, '0');
+        }
+        function notesList(checks, cls, scope) {
             if (checks.length === 0)
                 return '';
             return `<ul class="notes ${cls}">` + checks.map(function (c) {
                 const k = kindOf(c);
-                return `<li class="${k}"><span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
+                const label = k === 'flag' ? 'Handled' : 'Verified';
+                const box = k === 'context' ? '<span class="nbox"></span>'
+                    : `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="${label}" title="${label}">`;
+                return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
             }).join('') + '</ul>';
         }
         function renderFile(spec) {
@@ -59,9 +72,9 @@
             function notesAt(l) {
                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
                 const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-                return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes')}</td></tr>` : '';
+                return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
             }
-            let badges = checks.length > 0 ? `<span class="badge notes">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+            let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
             if (f.new === true)
                 badges += '<span class="badge new">new</span>';
             if (f.deleted === true)
@@ -99,7 +112,7 @@
                 '</span>' +
                 '</header>' +
                 (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
-                notesList(loose, 'fnotes') +
+                notesList(loose, 'fnotes', f.path) +
                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
                 '</article>';
         }
@@ -109,7 +122,7 @@
             const gid = esc(g.id);
             const intro = (g.intro ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
             const checks = g.checks ?? [];
-            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist')}</div>` : '';
+            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
             const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
             return `<section class="group" id="${gid}" data-gid="${gid}">` +
                 '<div class="gsentinel" aria-hidden="true"></div>' +
@@ -133,7 +146,7 @@
             const s = data.stats;
             const summary = (o.summary ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
-                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off verify and concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
                 [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
             out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
@@ -344,6 +357,33 @@
                 setCollapsed(f, !f.classList.contains('collapsed'));
             });
         });
+        // A file's note badge counts its verify and concern notes still unchecked.
+        function refreshNoteBadge(f) {
+            const badge = f.querySelector('.badge.notes');
+            if (badge === null)
+                return;
+            const boxes = Array.from(f.querySelectorAll('.note-box'));
+            const open = boxes.filter(function (b) { return !b.checked; }).length;
+            const total = Number(badge.dataset.total ?? '0');
+            badge.textContent = open > 0 ? `${String(open)} of ${String(boxes.length)} open` : `${String(total)} note${total === 1 ? '' : 's'}`;
+            badge.classList.toggle('open', open > 0);
+        }
+        document.querySelectorAll('.note-box').forEach(function (box) {
+            const nid = box.dataset.nid ?? '';
+            const item = box.closest('li');
+            box.checked = get('n:' + nid) === '1';
+            if (item !== null)
+                item.classList.toggle('checked', box.checked);
+            box.addEventListener('change', function () {
+                set('n:' + nid, box.checked);
+                if (item !== null)
+                    item.classList.toggle('checked', box.checked);
+                const f = box.closest('.file');
+                if (f !== null)
+                    refreshNoteBadge(f);
+            });
+        });
+        document.querySelectorAll('.file').forEach(refreshNoteBadge);
         document.querySelectorAll('.copypath').forEach(function (b) {
             b.addEventListener('click', function (ev) {
                 ev.stopPropagation();

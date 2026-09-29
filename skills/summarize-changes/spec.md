@@ -70,7 +70,8 @@ it. The spec is JSON:
   list still builds, as `context` notes.
 - The reader marks each file Reviewed, which collapses it. Marking a group
   Reviewed closes the group and its files without marking any file, and a
-  group is marked for the reader once all its files are.
+  group is marked for the reader once all its files are. The reader can
+  also check off each `verify` and `flag` note; a `context` note has no box.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
 

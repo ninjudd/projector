@@ -142,12 +142,15 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
 /* Review notes: one list per scope, each note chipped with its kind. */
 .notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
-.notes li { display: grid; grid-template-columns: 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
+.notes li { display: grid; grid-template-columns: 16px 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
+.nbox { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--ok); }
+input.nbox { cursor: pointer; }
+.notes li.checked .chip, .notes li.checked .ntext { opacity: .5; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
 .chip.context { background: var(--info-bg); color: var(--info); }
 .chip.verify { background: var(--warn-bg); color: var(--warn); }
 .chip.flag { background: var(--accent-soft); color: var(--accent); }
-@media (max-width: 480px) { .notes li { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 480px) { .notes li { grid-template-columns: 16px 1fr; gap: 4px 10px; } .notes .ntext { grid-column: 2; } }
 
 /* file bar */
 .filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }
@@ -190,6 +193,7 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .badge.new { color: var(--ok); border-color: var(--ok); }
 .badge.generated { color: var(--warn); border-color: var(--warn); }
 .badge.notes { color: var(--text); }
+.badge.notes.open { color: var(--accent); border-color: var(--accent); }
 .stat { font-variant-numeric: tabular-nums; }
 .flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
 .flink:hover { color: var(--accent); border-color: var(--accent); }
