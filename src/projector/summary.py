@@ -144,13 +144,13 @@ class NeedsAdmin(SpecError):
     """Setting up the site needs changes on GitHub that only an admin can make.
 
     `commands` are the `gh` commands that make them, in order, for the user
-    to hand an admin; `url` is the site's address when it already has one.
+    to hand an admin.
     """
 
-    def __init__(self, repo: str, needed: str, commands: list[str], url: str = "") -> None:
-        super().__init__(repo, needed, commands, url)
+    def __init__(self, repo: str, needed: str, commands: list[str]) -> None:
+        super().__init__(repo, needed, commands)
         self.reason = f"you are not an admin of {repo}, so init cannot {needed}"
-        self.commands, self.url = commands, url
+        self.commands = commands
 
     def steps(self) -> str:
         """What the user does next: the admin's commands, one per line, then `init` again."""
@@ -369,7 +369,7 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
         if domain and (pages or {}).get("cname") != domain:
             needs.append((f"serve its GitHub Pages site at {domain}", f"gh api -X PUT {endpoint} -f cname={domain}"))
         if needs:
-            raise NeedsAdmin(repo, needs[0][0], [command for _, command in needs], url or site_url(pages or {}))
+            raise NeedsAdmin(repo, needs[0][0], [command for _, command in needs])
         return {"pages": "unchanged", "visibility": "unchanged", "url": url or site_url(pages),
                 "public": pages.get("public", True)}
     if raw is None:
@@ -448,8 +448,9 @@ def homepage_url(site: str) -> str:
 def homepage_command(repo: str, url: str = "") -> str:
     """The `gh` command an admin runs to link the repository's website to its site.
 
-    Without `url`, the command reads the address from the Pages site, for a
-    site the admin's earlier commands have only just created.
+    Without `url`, the command reads the address from the Pages site once the
+    admin's earlier commands have run, since creating a site gives it an
+    address and making it private moves it.
     """
     if url:
         return f"gh api -X PATCH repos/{repo} -f homepage={shlex.quote(homepage_url(url))}"

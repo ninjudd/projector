@@ -1056,9 +1056,11 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
     try:
         pages = summary.enable_pages(repo, admin, takeover, url)
     except summary.NeedsAdmin as error:
-        # The admin links the website in the same visit, as init would.
+        # The admin links the website in the same visit, as init would. Only
+        # --url names the address up front: making a site private moves it to
+        # a subdomain of its own, so otherwise the command reads it back.
         if not current or (url and not summary.same_link(current, url)):
-            error.commands.append(summary.homepage_command(repo, error.url))
+            error.commands.append(summary.homepage_command(repo, url))
         raise
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:

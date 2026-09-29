@@ -946,6 +946,9 @@ class FakeGitHub:
             if not self.private_pages:
                 raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
             self.pages["public"] = False
+            # GitHub serves a private site at its own subdomain unless it has a custom domain.
+            if not self.pages.get("cname"):
+                self.pages["html_url"] = "https://example-private.pages.github.io/"
         elif (method, endpoint) == ("PUT", "repos/owner/example/pages") and field.startswith("cname="):
             # GitHub reports a custom domain over http:// until it enforces HTTPS.
             self.pages["cname"] = field.removeprefix("cname=")
@@ -1201,9 +1204,8 @@ class InitSiteTests(SiteRepoCase):
                 self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
                 self.assertFalse(self.workflow().exists())
 
-
     def run_as_admin(self, github: FakeGitHub, commands: list[str]) -> None:
-        """Run `commands` in a shell, as the admin would, then apply the calls they made to `github`."""
+        """Run `commands` in a shell, as the admin would, applying each one's calls to `github` before the next."""
         stub = Path(tempfile.mkdtemp())
         log = stub / "calls"
         # The stub logs each call one argument per line and answers the lookup
@@ -1211,17 +1213,18 @@ class InitSiteTests(SiteRepoCase):
         (stub / "gh").write_text('#!/bin/sh\nprintf "%s\\n" "$@" "" >> "$GH_LOG"\n'
                                  '[ "$2" = repos/owner/example/pages ] && printf "%s\\n" "$SITE_URL"\nexit 0\n')
         (stub / "gh").chmod(0o755)
-        env = dict(os.environ, PATH=f"{stub}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
-                   SITE_URL="https://owner.github.io/example")
-        for command in commands:
-            subprocess.run(["bash", "-c", command], check=True, env=env)
         github.admin = True
-        for record in log.read_text().split("\n\n")[:-1]:
-            args = tuple(record.split("\n"))
-            if "-X" in args:
-                github.gh(*args)
-            else:
-                self.assertEqual(("api", "repos/owner/example/pages", "--jq", '.html_url | rtrimstr("/")'), args)
+        for command in commands:
+            log.write_text("")
+            site = (github.pages or {}).get("html_url", "").rstrip("/")
+            env = dict(os.environ, PATH=f"{stub}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log), SITE_URL=site)
+            subprocess.run(["bash", "-c", command], check=True, env=env)
+            for record in log.read_text().split("\n\n")[:-1]:
+                args = tuple(record.split("\n"))
+                if "-X" in args:
+                    github.gh(*args)
+                else:
+                    self.assertEqual(("api", "repos/owner/example/pages", "--jq", '.html_url | rtrimstr("/")'), args)
         github.admin, github.calls = False, []
 
     @unittest.skipIf(shutil.which("bash") is None, "the admin runs the commands in a shell")
@@ -1229,15 +1232,16 @@ class InitSiteTests(SiteRepoCase):
         create = "gh api -X POST repos/owner/example/pages -f build_type=workflow"
         switch = "gh api -X PUT repos/owner/example/pages -f build_type=workflow"
         private = "gh api -X PUT repos/owner/example/pages -F public=false"
-        link_new = ("gh api -X PATCH repos/owner/example -f homepage=\"$(gh api repos/owner/example/pages "
-                    "--jq '.html_url | rtrimstr(\"/\")')\"")
-        link = "gh api -X PATCH repos/owner/example -f homepage=https://owner.github.io/example"
+        # Without --url the website command reads the address back, because
+        # making a site private moves it to a subdomain of its own.
+        link = ("gh api -X PATCH repos/owner/example -f homepage=\"$(gh api repos/owner/example/pages "
+                "--jq '.html_url | rtrimstr(\"/\")')\"")
         domain = "gh api -X PUT repos/owner/example/pages -f cname=projects.example.com"
         link_domain = "gh api -X PATCH repos/owner/example -f homepage=https://projects.example.com"
         vercel = "https://example.vercel.app"
         cases = (
-            (dict(), (), [create, link_new]),
-            (dict(private=True), (), [create, private, link_new]),
+            (dict(), (), [create, link]),
+            (dict(private=True), (), [create, private, link]),
             (dict(homepage="https://example.com"), (), [create]),
             (dict(pages=dict(SITE_READY, build_type="legacy")), ("--site",), [switch, link]),
             (dict(private=True, pages=dict(SITE_READY)), (), [private, link]),
@@ -1275,7 +1279,7 @@ class InitSiteTests(SiteRepoCase):
                     self.assertEqual("projects.example.com", github.pages["cname"])
                     self.assertEqual("https://projects.example.com", github.homepage)
                 else:
-                    self.assertEqual(options.get("homepage", "https://owner.github.io/example"), github.homepage)
+                    self.assertEqual(options.get("homepage", github.pages["html_url"].rstrip("/")), github.homepage)
 
     def test_serves_the_site_at_the_url_init_is_given_and_links_the_website_to_it(self) -> None:
         github = FakeGitHub(private=True, homepage="https://example.vercel.app")
