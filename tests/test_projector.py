@@ -48,24 +48,33 @@ class RepositoryTestCase(unittest.TestCase):
         # instruction scenario removes or alters exactly what it tests.
         (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
         os.symlink("AGENTS.md", self.root / "CLAUDE.md")
-        (self.root / ".claude").mkdir()
-        (self.root / ".claude" / "settings.json").write_text(
-            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
-        )
         # Every command now reads layered configuration, and the user layer
-        # lives at $HOME/.projector.toml. Point HOME at an empty directory so
-        # a real one on the machine running the tests cannot reach them.
-        self.home = self.root / "home"
-        self.home.mkdir()
+        # lives at $HOME/.projector.toml; `init` also writes the user's Claude
+        # Code settings under $HOME/.claude. Point HOME at an empty directory,
+        # outside the repository so a test that replaces the repository keeps
+        # it, and unset CLAUDE_CONFIG_DIR, so real ones on the machine running
+        # the tests cannot reach them.
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        self.home = Path(home.name)
         environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
         environment.start()
         self.addCleanup(environment.stop)
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        self.settings().parent.mkdir()
+        self.settings().write_text(
+            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
+        )
         # Commands run as an agent would, without a terminal, whatever runs the
         # tests; a test that stands for a person at a terminal says so.
         self.enterContext(mock.patch("sys.stdin.isatty", return_value=False))
 
     def at_a_terminal(self) -> None:
         self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
+
+    def settings(self) -> Path:
+        """The user's Claude Code settings, which `init` gives the publish rule."""
+        return self.home / ".claude" / "settings.json"
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -563,10 +572,12 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(69, code)
         self.assertIn("interactive terminal", stderr)
 
-    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md", ".claude/settings.json")
+    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md")
 
     def snapshot(self) -> dict[str, bytes]:
-        return {name: (self.root / name).read_bytes() for name in self.ADOPTED}
+        return {name: (self.root / name).read_bytes() for name in self.ADOPTED} | {
+            "settings": self.settings().read_bytes()
+        }
 
     def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
         self.at_a_terminal()
@@ -574,11 +585,12 @@ class MutationTests(RepositoryTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.settings().unlink()
 
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\ncreated .claude/settings.json\n", stdout
+            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\ncreated ~/.claude/settings.json\n", stdout
         )
         self.assertEqual("", stderr)
         convention = (self.root / "docs" / "projects" / "README.md").read_text()
@@ -593,6 +605,8 @@ class MutationTests(RepositoryTestCase):
         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
         self.assertEqual(1, len(modes), modes)
         self.assertTrue(modes.pop() & stat.S_IRGRP)
+        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
+        self.assertFalse((self.root / ".claude").exists(), "the rule is the user's, not the repository's")
 
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
@@ -600,7 +614,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
             stdout,
         )
         self.assertEqual(before, self.snapshot())
@@ -613,7 +627,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
         self.assertTrue((self.projects / "alpha" / "readme.md").exists())
 
@@ -628,7 +642,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
         written = agents.read_bytes()
         self.assertTrue(written.startswith(b"# House rules\r\n\r\nBe kind.  \r\n\r\n<!-- projector:begin"))
@@ -650,7 +664,7 @@ class MutationTests(RepositoryTestCase):
         self.assertNotIn("AGENTS.md:", stderr)
         code, stdout, _ = self.invoke("init")
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
 
     def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
@@ -664,7 +678,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
         self.assertTrue(agents.is_symlink())
         self.assertEqual("CLAUDE.md", os.readlink(agents))
@@ -673,7 +687,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
         code, stdout, _ = self.invoke("init")
         self.assertEqual(
-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
 
     def test_a_link_checked_out_as_a_plain_file_is_left_alone(self) -> None:
@@ -715,7 +729,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
         self.assertEqual(self.block() + "\n", agents.read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -736,7 +750,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code)
         self.assertEqual(
-            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
+            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
         )
         self.assertIn(f"version {shipped + 98}", stderr)
         self.assertEqual(before, agents.read_bytes())
@@ -818,7 +832,7 @@ class MutationTests(RepositoryTestCase):
 
             self.assertEqual(0, code, stderr)
             self.assertEqual(
-                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
+                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
                 stdout,
                 link.name,
             )
@@ -830,7 +844,7 @@ class MutationTests(RepositoryTestCase):
             self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
             code, stdout, _ = self.invoke("init")
             self.assertEqual(
-                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
+                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
                 stdout,
             )
 
@@ -881,7 +895,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
 
         self.assertEqual(0, code, stderr)
-        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout)
+        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout)
         self.assertIn("`plans/README.md`", (self.root / "AGENTS.md").read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
@@ -890,7 +904,7 @@ class MutationTests(RepositoryTestCase):
         (self.root / "AGENTS.md").unlink()
         (self.root / "CLAUDE.md").unlink()
 
-        self.assertEqual((0, "unchanged docs/projects/README.md\nunchanged .claude/settings.json\n", ""),
+        self.assertEqual((0, "unchanged docs/projects/README.md\nunchanged ~/.claude/settings.json\n", ""),
                          self.invoke("init"))
         self.assertFalse((self.root / "AGENTS.md").exists())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -934,13 +948,10 @@ class MutationTests(RepositoryTestCase):
                 {"path": "docs/projects/README.md", "action": "unchanged"},
                 {"path": "AGENTS.md", "action": "unchanged"},
                 {"path": "CLAUDE.md", "action": "created"},
-                {"path": ".claude/settings.json", "action": "unchanged"},
+                {"path": "~/.claude/settings.json", "action": "unchanged"},
             ],
             payload["files"],
         )
-
-    def settings(self) -> Path:
-        return self.root / ".claude" / "settings.json"
 
     def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
         self.at_a_terminal()
@@ -950,13 +961,13 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init")
 
         self.assertEqual(0, code, stderr)
-        self.assertIn("updated .claude/settings.json\n", stdout)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertEqual(
             {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", permissions.RULE], "deny": ["Read(.env)"]}},
             json.loads(self.settings().read_text()),
         )
         before = self.settings().read_bytes()
-        self.assertIn("unchanged .claude/settings.json\n", self.invoke("init")[1])
+        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
         self.assertEqual(before, self.settings().read_bytes())
 
     def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
@@ -972,65 +983,83 @@ class MutationTests(RepositoryTestCase):
                 code, stdout, stderr = self.invoke("init")
 
                 self.assertEqual(0, code, stderr)
-                self.assertIn("kept .claude/settings.json\n", stdout)
+                self.assertIn("kept ~/.claude/settings.json\n", stdout)
                 self.assertIn(reason, stderr)
                 self.assertIn(permissions.RULE, stderr)
                 self.assertEqual(text, self.settings().read_text())
 
-    def test_init_leaves_claude_settings_that_link_outside_the_repository(self) -> None:
-        elsewhere = tempfile.TemporaryDirectory()
-        self.addCleanup(elsewhere.cleanup)
-        outside = Path(elsewhere.name)
-        (outside / "settings.json").write_text("{}\n", encoding="utf-8")
-        self.settings().unlink()
-        (self.root / ".claude").rmdir()
-        os.symlink(outside, self.root / ".claude")
-
-        code, stdout, stderr = self.invoke("init")
-
-        self.assertEqual(0, code, stderr)
-        self.assertIn("kept .claude/settings.json\n", stdout)
-        self.assertIn("links outside the repository", stderr)
-        self.assertEqual("{}\n", (outside / "settings.json").read_text())
-
-    def test_init_writes_through_a_settings_link_inside_the_repository(self) -> None:
-        shared = self.root / "config" / "claude.json"
+    def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) -> None:
+        dotfiles = tempfile.TemporaryDirectory()
+        self.addCleanup(dotfiles.cleanup)
+        shared = Path(dotfiles.name) / "claude" / "settings.json"
         shared.parent.mkdir()
         shared.write_text("{}\n", encoding="utf-8")
         self.settings().unlink()
-        os.symlink("../config/claude.json", self.settings())
+        os.symlink(shared, self.settings())
 
         code, stdout, stderr = self.invoke("init", "--publish-rule")
 
         self.assertEqual(0, code, stderr)
-        self.assertIn("updated .claude/settings.json\n", stdout)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertTrue(self.settings().is_symlink())
         self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
+
+    def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
+        self.at_a_terminal()
+        configured = tempfile.TemporaryDirectory()
+        self.addCleanup(configured.cleanup)
+        before = self.settings().read_bytes()
+
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": configured.name}):
+            code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn(f"created {Path(configured.name) / 'settings.json'}\n", stdout)
+        self.assertEqual({"permissions": {"allow": [permissions.RULE]}},
+                         json.loads((Path(configured.name) / "settings.json").read_text()))
+        self.assertEqual(before, self.settings().read_bytes())
+
+    def test_init_leaves_the_repositorys_own_claude_settings_alone(self) -> None:
+        self.at_a_terminal()
+        self.settings().unlink()
+        repository = self.root / ".claude" / "settings.json"
+        repository.parent.mkdir()
+        for text in ('{"permissions": {"allow": ["Bash(npm test)"]}}\n',
+                     json.dumps({"permissions": {"allow": [permissions.RULE]}}) + "\n"):
+            with self.subTest(text=text):
+                repository.write_text(text, encoding="utf-8")
+
+                code, stdout, stderr = self.invoke("init")
+
+                self.assertEqual(0, code, stderr)
+                self.assertEqual(text, repository.read_text())
+                self.assertNotIn("\nunchanged .claude/settings.json", "\n" + stdout)
+                self.assertTrue(self.settings().exists(), "the user's settings get the rule either way")
 
     def test_init_adds_the_publish_rule_only_at_a_terminal_or_when_asked(self) -> None:
         self.settings().unlink()
 
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
-        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
         self.assertFalse(self.settings().exists())
 
         (self.root / ".projector.toml").write_text("[review]\npublish_rule = true\n")
-        self.assertIn("kept .claude/settings.json\n", self.invoke("init")[1])
+        self.assertIn("kept ~/.claude/settings.json\n", self.invoke("init")[1])
         self.assertFalse(self.settings().exists(), "configuration cannot add the rule without a terminal")
 
         (self.root / ".projector.toml").write_text("[review]\npublish_rule = false\n")
         code, stdout, stderr = self.invoke("init", "--publish-rule")
         self.assertEqual(0, code, stderr)
-        self.assertIn("created .claude/settings.json\n", stdout)
+        self.assertIn("created ~/.claude/settings.json\n", stdout)
         self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
 
         self.settings().unlink()
         self.at_a_terminal()
         self.assertNotIn(".claude/settings.json", self.invoke("init", "--no-publish-rule")[1])
         (self.root / ".projector.toml").unlink()
-        self.assertIn("created .claude/settings.json\n", self.invoke("init")[1])
+        self.assertIn("created ~/.claude/settings.json\n", self.invoke("init")[1])
 
     def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
         self.at_a_terminal()
@@ -1054,15 +1083,15 @@ class MutationTests(RepositoryTestCase):
         self.settings().write_bytes(b'{"env": {"NAME": "caf\xe9"}}')
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
-        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("is not UTF-8", stderr)
 
         self.settings().unlink()
-        (self.root / ".claude").rmdir()
-        (self.root / ".claude").write_text(str(self.home / ".claude"), encoding="utf-8")
+        self.settings().parent.rmdir()
+        self.settings().parent.write_text("not a directory\n", encoding="utf-8")
         code, stdout, stderr = self.invoke("init")
         self.assertEqual(0, code, stderr)
-        self.assertIn("kept .claude/settings.json\n", stdout)
+        self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("is not a directory", stderr)
 
 

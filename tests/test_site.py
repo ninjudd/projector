@@ -1180,7 +1180,7 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual("https://docs.example.com", github.homepage)
         self.assertIn("updated repository website https://docs.example.com\n", out)
 
-    def test_warns_a_non_admin_and_writes_the_workflow_only_for_a_site_already_set_up(self) -> None:
+    def test_writes_the_workflow_for_a_non_admin_whether_or_not_the_site_is_set_up(self) -> None:
         github = FakeGitHub(admin=False, pages=SITE_READY)
 
         code, out, err = self.init(github)
@@ -1197,12 +1197,13 @@ class InitSiteTests(SiteRepoCase):
             with self.subTest(flags=flags):
                 github = FakeGitHub(admin=False)
 
-                code, _, err = self.init(github, *flags)
+                code, out, err = self.init(github, *flags)
 
                 self.assertEqual(expected, code)
                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
                 self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
-                self.assertFalse(self.workflow().exists())
+                self.assertIn(f"created {summary.WORKFLOW_PATH}", out, "the workflow comes with the admin's commands")
+                self.workflow().unlink()
 
     def run_as_admin(self, github: FakeGitHub, commands: list[str]) -> None:
         """Run `commands` in a shell, as the admin would, applying each one's calls to `github` before the next."""
@@ -1259,19 +1260,21 @@ class InitSiteTests(SiteRepoCase):
 
                 self.assertEqual(65 if "--site" in flags else 0, code)
                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
-                self.assertIn("ask an admin to run these commands, then run `project init` again", err)
+                self.assertIn("ask an admin to run these commands; the site deploys once they have and the site "
+                              "workflow is on the default branch:", err)
                 self.assertIn("".join(f"\n    {command}" for command in commands), err)
-                self.assertNotIn("project init --site", err)
+                self.assertNotIn("project init", err, "the workflow is written now, so no second init is needed")
                 if "--site" not in flags:
                     self.assertEqual(commands, json.loads(out)["site"]["admin_commands"])
-                self.assertFalse(self.workflow().exists())
+                    self.assertIn({"path": summary.WORKFLOW_PATH, "action": "created"}, json.loads(out)["files"])
+                self.assertTrue(self.workflow().exists())
 
                 self.run_as_admin(github, commands)
                 code, out, err = self.init(github, *flags)
 
                 self.assertEqual(0, code, err)
                 self.assertEqual([], github.writes(), "the rerun needs no admin")
-                self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
+                self.assertIn(f"unchanged {summary.WORKFLOW_PATH}", out)
                 self.assertNotIn("not an admin", err)
                 self.assertEqual("workflow", github.pages["build_type"])
                 self.assertEqual(not github.private, github.pages["public"])

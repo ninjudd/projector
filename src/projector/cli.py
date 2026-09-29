@@ -218,11 +218,12 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help="add the Claude Code rule allowing `project review publish` to .claude/settings.json even without "
-        "a terminal (default: add it when run at a terminal)",
+        help="add the Claude Code rule allowing `project review publish` to your Claude Code user settings even "
+        "without a terminal (default: add it when run at a terminal)",
     )
     rule_choice.add_argument(
-        "--no-publish-rule", action="store_false", dest="publish_rule", help="leave .claude/settings.json alone"
+        "--no-publish-rule", action="store_false", dest="publish_rule",
+        help="leave your Claude Code user settings alone",
     )
     add_output(init)
 
@@ -1032,8 +1033,11 @@ def site_address(value: str) -> str:
 def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = "") -> tuple[dict, FileAction]:
     """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
 
-    The workflow is written only once the Pages site is safe to deploy to, so
-    a private repository whose site cannot be made private gets no workflow.
+    A private repository whose site `init` cannot make private gets no
+    workflow. When the Pages changes need an admin, the workflow is written
+    beside the commands the admin runs and rides on the `NeedsAdmin` raised,
+    because its deploy step refuses a private repository's public site, so
+    it cannot publish before the admin is done.
     Without `takeover`, a repository that already deploys its own Pages site,
     from a branch or from another workflow, keeps it. With `url`, the site is
     served at that custom domain, and the repository's website links to it
@@ -1052,8 +1056,8 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
     if shutil.which("gh") is None:
         raise summary.SpecError("the gh CLI is not installed, and setting up Pages needs it")
     details = json.loads(summary.gh("api", f"repos/{repo}"))
-    # Only an admin can change Pages or the website link. Without admin, a site
-    # already set up still gets its workflow, which needs no admin to propose.
+    # Only an admin can change Pages or the website link. The workflow needs no
+    # admin to propose, so a non-admin gets it either way.
     admin = bool((details.get("permissions") or {}).get("admin"))
     current = (details.get("homepage") or "").strip()
     try:
@@ -1064,6 +1068,7 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
         # a subdomain of its own, so otherwise the command reads it back.
         if not current or (url and not summary.same_link(current, url)):
             error.commands.append(summary.homepage_command(repo, url))
+        error.workflow = write_site_workflow(root, site_workflow_text(root, action_ref))
         raise
     # The website link is a convenience; failing to set it must not cost the workflow.
     try:
@@ -1138,9 +1143,10 @@ def run(arguments: argparse.Namespace) -> int:
             raise UsageError("--url sets the site's address, but --no-site or site.enabled = false leaves the site "
                              "alone")
         # The publish rule exempts a command from Claude Code's auto-mode
-        # classifier, so it is added only when a person runs `init` at a
-        # terminal or names --publish-rule; an agent refreshing the
-        # instructions gets a note instead. Configuration can only turn it off.
+        # classifier in the person's own settings, so it is added only when a
+        # person runs `init` at a terminal or names --publish-rule; an agent
+        # refreshing the instructions gets a note instead. Configuration can
+        # only turn it off.
         if arguments.publish_rule is not None:
             publish_rule = "add" if arguments.publish_rule else None
         elif publish_rule_enabled(root):
@@ -1150,16 +1156,18 @@ def run(arguments: argparse.Namespace) -> int:
         try:
             files = store.init(instructions_enabled(root))
             if publish_rule:
-                files.append(allow_publish(root, apply=publish_rule == "add"))
+                files.append(allow_publish(apply=publish_rule == "add"))
             pages = None
             if wanted:
                 try:
                     pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site), url=url)
                     files.append(workflow)
                 except ProjectorError as error:
+                    needs_admin = isinstance(error, summary.NeedsAdmin)
+                    if needs_admin and error.workflow is not None:
+                        files.append(error.workflow)
                     if arguments.site:
                         raise InitError(str(error), files) from error
-                    needs_admin = isinstance(error, summary.NeedsAdmin)
                     reason = error.reason if needs_admin else str(error)
                     pages = {"skipped": reason, **({"admin_commands": error.commands} if needs_admin else {})}
                     # A repository with no GitHub origin has no site to miss.
