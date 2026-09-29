@@ -75,8 +75,10 @@ what it did to each:
   the rule to the file's existing settings, keeps every other setting, writes
   through a symlink such as one into a dotfiles repository, and writes the file
   back as two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
-  settings of an unexpected shape, or sits under a `.claude` that is not a
-  directory, and says on stderr how to add the rule yourself.
+  settings of an unexpected shape, sits under a `.claude` that is not a
+  directory, or cannot be written, as one linked into a read-only directory
+  such as the Nix store cannot, and says on stderr how to add the rule
+  yourself. `init` still exits 0.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without

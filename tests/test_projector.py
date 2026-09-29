@@ -1004,6 +1004,30 @@ class MutationTests(RepositoryTestCase):
         self.assertTrue(self.settings().is_symlink())
         self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
 
+    @unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root writes a read-only directory anyway")
+    def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
+        # A settings file linked into a read-only directory, as home-manager
+        # links it into the Nix store.
+        store = tempfile.TemporaryDirectory()
+        self.addCleanup(store.cleanup)
+        shared = Path(store.name) / "claude" / "settings.json"
+        shared.parent.mkdir()
+        shared.write_text("{}\n", encoding="utf-8")
+        shared.parent.chmod(0o555)
+        self.addCleanup(shared.parent.chmod, 0o755)
+        self.settings().unlink()
+        os.symlink(shared, self.settings())
+        (self.root / "CLAUDE.md").unlink()
+
+        code, stdout, stderr = self.invoke("init", "--publish-rule")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("created CLAUDE.md\n", stdout, "the files init did write are still reported")
+        self.assertIn("kept ~/.claude/settings.json\n", stdout)
+        self.assertIn("could not be written", stderr)
+        self.assertIn(permissions.RULE, stderr)
+        self.assertEqual("{}\n", shared.read_text())
+
     def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
         self.at_a_terminal()
         configured = tempfile.TemporaryDirectory()

@@ -81,5 +81,9 @@ def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -
                                         "review loop's clean review of your own pull request; run `project init` "
                                         "yourself in a terminal, or pass --publish-rule, to add it")
     allow.append(RULE)
-    write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    try:
+        write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    except OSError as error:
+        # A file linked into a read-only directory, such as the Nix store.
+        return kept(f"could not be written ({error.strerror})")
     return FileAction(name, "updated" if existed else "created")
