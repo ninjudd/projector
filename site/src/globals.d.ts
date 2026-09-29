@@ -29,14 +29,21 @@ interface SummaryFile {
   hunks: { header: string; lines: SummaryLine[] }[];
 }
 
+/** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
+interface SummaryCheck {
+  kind: string;
+  text: string;
+  line?: number;
+  side?: string;
+}
+
 interface SummaryGroup {
   id: string;
   title: string;
   kicker?: string;
   intro?: string[];
-  concepts?: string[];
-  checks?: { kind: string; text: string }[];
-  files: { path: string; collapsed?: boolean | null; note?: string }[];
+  checks?: SummaryCheck[];
+  files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
 }
 
 /** A summary page's data: the spec checked against its diff by the build. */

@@ -584,10 +584,10 @@ summary a person asks for:
   update it as the skill's "Update the page when the pull request moves"
   section describes, so a fix-cycle head costs a revision, not a rewrite.
 - **Carry the review into it.** Every finding thread still open after this
-  review, from the query in § Verify earlier findings, becomes a `flag` check in the
-  group holding its file, naming the `path:line` and what the finding says,
-  so a reader sees what the reviewer flagged beside the code it concerns.
-  Drop a `flag` check whose finding thread has since been resolved.
+  review, from the query in § Verify earlier findings, becomes a `flag` check on its
+  file at its `line`, saying what the finding says, so a reader sees what
+  the reviewer flagged under the code it concerns. Drop a `flag` check whose
+  finding thread has since been resolved.
 
 Publish it with `project summary publish`, after the review. It then
 comments a link to the summary on the pull request, so a reader on GitHub
