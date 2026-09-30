@@ -455,12 +455,12 @@ These are the keys Projector reads today:
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
-| `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
-| `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+| `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+| `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
-| `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
-| `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
+| `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of a large pull request to the repository's Projector site after each review |
+| `review.summarize_min_lines` | integer | `400` | `review-pr`, as the added and deleted lines at which a pull request gets a summary |
 | `fix.resolve_human_threads` | boolean | `true` | `start-fix-loop`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
@@ -519,7 +519,7 @@ A repository that sets up the Projector site serves it from GitHub Pages,
 built from content Projector keeps in the repository: its `README.md`, the
 Markdown documents under `docs/`, the project plans, and the pull request
 summaries on the hidden ref `refs/projector/summaries`. The
-`summarize-changes` skill writes a summary's data, a spec, and these
+`summarize-pr` skill writes a summary's data, a spec, and these
 commands do everything else:
 
 ```sh
@@ -719,7 +719,7 @@ default branch when `origin` does not record it.
 
 ## Review a pull request
 
-`project review` runs the mechanical steps of the `review-changes` skill, so
+`project review` runs the mechanical steps of the `review-pr` skill, so
 a review loop does not rebuild them as helpers of its own:
 
 ```sh

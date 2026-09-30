@@ -11,11 +11,11 @@ PUBLISHED_SKILLS = {
     "design",
     "implement",
     "finish",
-    "review-changes",
+    "review-pr",
     "start-review-loop",
     "start-fix-loop",
     "gh-stack",
-    "summarize-changes",
+    "summarize-pr",
 }
 
 

@@ -424,7 +424,7 @@
           `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
           `<td class="date">${esc(r.updated)}</td></tr>`;
       }).join('') + '</table></div>' +
-      '<p class="note">Built by Projector\'s <span class="mono">summarize-changes</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
+      '<p class="note">Built by Projector\'s <span class="mono">summarize-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
   }
 
   // Centered on the whole query where the text holds it, else on the earliest word.

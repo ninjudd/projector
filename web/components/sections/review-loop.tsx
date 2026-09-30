@@ -44,7 +44,7 @@ export function ReviewLoop() {
       title="Automated reviews"
       lead={
         <>
-          <Code>review-changes</Code> reviews one pull request&rsquo;s current head when you ask.
+          <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask.
           Two more skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run it
           and fix what it finds in the background while you keep working. The plans and the CLI do
           not depend on any of them.
