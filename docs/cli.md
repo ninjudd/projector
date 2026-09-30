@@ -27,10 +27,11 @@ $ project init
 created docs/projects/README.md
 created AGENTS.md
 created CLAUDE.md
-created .claude/settings.json
+updated ~/.claude/settings.json
 ```
 
-`init` manages four files and reports what it did to each:
+`init` manages three files in the repository and one of yours, and reports
+what it did to each:
 
 - `docs/projects/README.md` states the convention, links to the Projector
   repository, and shows how to install the CLI, so a reader who meets
@@ -54,25 +55,30 @@ created .claude/settings.json
   an import. When the two are genuinely distinct files, each with its own
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
-- `.claude/settings.json` gains the Claude Code permission rule
-  `Bash(project review publish *)` in `permissions.allow`. Claude Code's auto
-  mode otherwise refuses a review loop's clean review of your own pull request
-  as self-approval, although the review is a `COMMENT` that moves no
-  `reviewDecision` and a person still merges. An allow rule resolves the
-  command before the classifier runs, and Claude Code applies a repository's
-  allow rules only after its workspace trust dialog has listed them to you.
-  Because the rule exempts a command from the classifier, `init` adds it only
-  when you run `init` at a terminal, or when you pass `--publish-rule`. Run
-  without a terminal, as an agent refreshing the instructions runs it, `init`
-  reports the file as `kept` and says on stderr how to add the rule, and
-  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
-  to leave the file alone for one run. `init` adds the rule to the file's
-  existing settings, keeps every other setting, and writes the file back as
-  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
+- `~/.claude/settings.json`, your own Claude Code settings, gains the
+  permission rule `Bash(project review publish *)` in `permissions.allow`.
+  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
+  directory instead. Claude Code's auto mode otherwise refuses a review loop's
+  clean review of your own pull request as self-approval, although the review
+  is a `COMMENT` that moves no `reviewDecision` and a person still merges. An
+  allow rule resolves the command before the classifier runs. The rule goes in
+  your settings rather than the repository's, so it holds in every repository,
+  clone, and worktree you open, whether or not the repository commits or
+  ignores `.claude/`, and no repository has to carry a permission for everyone
+  who opens it. `init` never touches the repository's own
+  `.claude/settings.json`. Because the rule exempts a command from the
+  classifier, `init` adds it only when you run `init` at a terminal, or when
+  you pass `--publish-rule`. Run without a terminal, as an agent refreshing the
+  instructions runs it, `init` reports the file as `kept` and says on stderr
+  how to add the rule, and `review.publish_rule = true` does not change that.
+  Pass `--no-publish-rule` to leave the file alone for one run. `init` adds
+  the rule to the file's existing settings, keeps every other setting, writes
+  through a symlink such as one into a dotfiles repository, and writes the file
+  back as two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
   settings of an unexpected shape, sits under a `.claude` that is not a
-  directory, or links outside the repository, and says on stderr how to add
-  the rule yourself. Auto mode reads no `autoMode` block from a repository,
-  so this rule, not an `autoMode` exception, is what a repository can carry.
+  directory, or cannot be written, as one linked into a read-only directory
+  such as the Nix store cannot, and says on stderr how to add the rule
+  yourself. `init` still exits 0.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without
@@ -93,8 +99,10 @@ never writes; the file is a symlink checked out as a plain file, as above; or
 the markers in the file do not delimit exactly one section, for example a
 begin marker with no end marker. In that last case `init` still writes the
 other instruction files, then exits 65 and names the repair, and prints no
-JSON document in `--json` mode. `.claude/settings.json` is kept for the
-reasons its entry above names, and `init` still exits 0.
+JSON document in `--json` mode. Your Claude Code settings file is kept for
+the reasons its entry above names, and `init` still exits 0. It is reported
+with your home directory as `~`, in `--json` mode too, or by its full path
+when `CLAUDE_CONFIG_DIR` points outside your home directory.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
@@ -103,9 +111,10 @@ To keep Projector out of your instruction files, set in `.projector.toml`:
 enabled = false
 ```
 
-With that key false, `init` manages only the projects README and
-`.claude/settings.json`, and `check` says nothing about `AGENTS.md` or
-`CLAUDE.md`. To leave `.claude/settings.json` alone, set:
+With that key false, `init` manages only the projects README and your Claude
+Code settings, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`. To
+leave your Claude Code settings alone when `init` runs in this repository,
+set:
 
 ```toml
 [review]
@@ -182,27 +191,39 @@ Changing Pages or the website link takes admin rights on the repository.
 Without them, `init` changes nothing on GitHub and prints the `gh` commands
 an admin runs to make those changes: turning Pages on or switching it to
 GitHub Actions, making a private repository's site private, setting the
-domain `--url` names, and linking the website to the site. Hand them to an
-admin, then run `init` again to write the workflow:
+domain `--url` names, and linking the website to the site. It still writes
+the workflow, because proposing the workflow needs no admin. Hand the
+commands to an admin and merge the workflow through a pull request, in
+either order; the site deploys once both are done:
 
 ```console
 $ project init
 project: site not set up: you are not an admin of owner/example, so init cannot turn on its GitHub Pages site; pass --no-site, or set site.enabled = false, to stop setting it up
-project: to finish setting it up, ask an admin to run these commands, then run `project init` again to write the site workflow:
+project: to finish setting it up, ask an admin to run these commands; the site deploys once they have and the site workflow is on the default branch:
     gh api -X POST repos/owner/example/pages -f build_type=workflow
     gh api -X PATCH repos/owner/example -f homepage="$(gh api repos/owner/example/pages --jq '.html_url | rtrimstr("/")')"
+project: commit .github/workflows/projector-site.yml to the default branch through a pull request; GitHub runs the site workflow only from there
+unchanged docs/projects/README.md
+unchanged AGENTS.md
+unchanged CLAUDE.md
+unchanged ~/.claude/settings.json
+created .github/workflows/projector-site.yml
 ```
 
-`init` still writes the workflow when an admin has already set Pages up,
-because proposing the workflow needs no admin.
+A workflow that reaches the default branch first cannot publish too early.
+Its run fails at `actions/configure-pages` until the Pages site exists, and
+its build refuses to deploy a private repository's site while that site is
+public. Once the admin is done, start it with
+`gh workflow run projector-site.yml`, or rerun the failed run from the
+repository's Actions tab.
 
-The workflow is written only once the site is safe to deploy to. When `gh`
-is missing, you are not an admin and Pages needs changing, the repository
-already deploys its own site, or GitHub refuses to make a private
-repository's site private, as it does without private Pages (GitHub
-Enterprise Cloud), `init` adopts the repository as usual, skips the site
-with a note on stderr, and exits 0. If `init` created the Pages site in
-that same run and cannot make it private, it deletes the site again, so a
+When `gh` is missing, the repository already deploys its own site, or GitHub
+refuses to make a private repository's site private, as it does without
+private Pages (GitHub Enterprise Cloud), `init` writes no workflow. In those
+cases, and when you are not an admin and Pages needs changing, `init` adopts
+the repository as usual, skips the site with a note on stderr, and exits 0.
+If `init` created the Pages site in that same run and cannot make it
+private, it deletes the site again, so a
 private repository is never left with a public site; it never deletes a
 site it did not create. A repository whose `origin` is not on GitHub skips
 the site without a note. `project site serve` still serves the site
@@ -436,7 +457,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to `.claude/settings.json` |
+| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
 | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |

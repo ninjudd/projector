@@ -35,10 +35,11 @@ project check
 
 `init` writes the convention to `docs/projects/README.md` and Projector's
 conventions into `AGENTS.md`, linked as `CLAUDE.md`, so every agent session in
-the repository follows them. Run at a terminal, it adds a Claude Code rule to
-`.claude/settings.json` that lets a review loop publish its review of your own
-pull request in auto mode. When `origin` is on GitHub, it also sets up the
-[Projector site](docs/site.md). `create` writes the plan at
+the repository follows them. Run at a terminal, it adds a rule to your own
+Claude Code settings, `~/.claude/settings.json`, that lets a review loop
+publish its review of your own pull request in auto mode. When `origin` is on
+GitHub, it also sets up the [Projector site](docs/site.md). `create` writes
+the plan at
 `docs/projects/cool-new-feature/readme.md`. A project can hold supporting
 documents and nested projects:
 
