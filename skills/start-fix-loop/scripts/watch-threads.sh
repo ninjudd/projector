@@ -13,7 +13,7 @@
 #             waiting on a re-review rather than on a change
 #   CONFLICT  a pull request whose branch conflicts with its base, so no
 #             verdict can land it until the base is merged in
-#   REVIEW   a submitted review carrying a body — the shape every COMMENT
+#   REVIEW    a submitted review carrying a body — the shape every COMMENT
 #             review posts, Projector's own included, which never moves
 #             reviewDecision
 #   TRACKED   a problem with the tracked file: a line that is not
@@ -288,11 +288,18 @@ EOF
 
     # CONFLICT — the branch no longer merges into its base. GitHub computes
     # mergeability lazily and answers UNKNOWN until it has, so only
-    # CONFLICTING counts, and a later pass sees the settled answer. Keyed on
-    # the head SHA, so a base that moves into conflict under an unchanged head
-    # announces at once, and the push that merges the base retires the row.
-    if [ "$pmergeable" = "CONFLICTING" ]; then
-      vid="conflict:$n:$psha"
+    # CONFLICTING announces, and a later pass sees the settled answer. An
+    # UNKNOWN pass, such as the one after every move of the base, keeps this
+    # head's row unannounced, so a conflict that outlasts the recomputation
+    # waits out --renotify instead of reading as new. Keyed on the head SHA,
+    # so a base that moves into conflict under an unchanged head announces at
+    # once, and the push that merges the base retires the row.
+    vid="conflict:$n:$psha"
+    if [ "$pmergeable" = "UNKNOWN" ]; then
+      carried=$(awk -v t="$vid" '$1==t' "$STATE" 2>/dev/null || true)
+      [ -n "$carried" ] && new_state="$new_state$carried
+"
+    elif [ "$pmergeable" = "CONFLICTING" ]; then
       last=$(awk -v t="$vid" '$1==t {print $4}' "$STATE" 2>/dev/null)
       if [ -z "$last" ]; then
         echo "CONFLICT $slug#$n head=${psha:0:8} base=$pbase — the branch conflicts with its base; merge the base and resolve it"

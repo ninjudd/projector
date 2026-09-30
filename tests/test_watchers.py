@@ -313,6 +313,25 @@ class WatchThreadsTests(WatcherCase):
         self.assertEqual(1, len(result.stdout.splitlines()), result.stdout)
         self.assertTrue(result.stdout.startswith("CONFLICT acme/app#1 head=aaaaaaaa base=main"), result.stdout)
 
+    def test_a_conflict_is_not_new_again_after_github_recomputes_it(self) -> None:
+        # GitHub answers UNKNOWN between a base move and its recomputation.
+        self.pull_request(1, mergeable="CONFLICTING")
+        self.track("acme/app#1")
+
+        first = self.run_watcher(THREADS)
+        self.pull_request(1, mergeable="UNKNOWN")
+        recomputing = self.run_watcher(THREADS)
+        self.pull_request(1, mergeable="CONFLICTING")
+        recomputed = self.run_watcher(THREADS)
+
+        self.assert_ok(first)
+        self.assertEqual(1, len(first.stdout.splitlines()), first.stdout)
+        self.assert_ok(recomputing)
+        self.assertEqual("", recomputing.stdout)
+        self.assert_ok(recomputed)
+        self.assertEqual("", recomputed.stdout)
+        self.assertEqual([(f"conflict:1:{SHA_A}", "acme/app", "1")], [tuple(row[:3]) for row in self.state_rows()])
+
     def test_an_unsettled_mergeability_is_not_a_conflict(self) -> None:
         self.pull_request(1, mergeable="UNKNOWN")
         self.track("acme/app#1")
