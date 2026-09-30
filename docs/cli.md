@@ -533,7 +533,9 @@ The command reads the release's version from the plugin manifest at
 is the release `upgrade` installs. It checks at most once a day, waits at
 most two seconds for an answer, and caches the answer in
 `$XDG_CACHE_HOME/projector/release.json` (`~/.cache/projector/release.json`
-by default). A check that fails also waits a day before the next one.
+by default). A check that fails also waits a day before the next one. Where
+that cache cannot be written, as in a read-only home directory, the command
+skips the check rather than fetching on every run.
 `PROJECTOR_OFFLINE=1` skips the check and warns only from the cache. To stay
 on a pinned release without the warning, set `PROJECTOR_REF` to its tag, such
 as `v0.6.2`. A command installed from a checkout does not check, because

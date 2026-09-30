@@ -220,27 +220,41 @@ def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
     return 0.0, None
 
 
+def record_release(path: Path, url: str, version: Optional[str]) -> bool:
+    """Cache `version` as checked now, and say whether the cache could be written."""
+
+    # Parallel commands, such as a review loop's subagents, write this at
+    # once, so each writes its own file and renames it into place.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        scratch = path.with_name(f"{path.name}.{os.getpid()}")
+        scratch.write_text(json.dumps({"url": url, "checked": time.time(), "version": version}))
+        scratch.replace(path)
+    except OSError:
+        return False
+    return True
+
+
 def latest_release(url: str) -> Optional[str]:
     """The version of the release at `url`, fetched at most once a day.
 
-    One command a day waits up to RELEASE_CHECK_TIMEOUT for the fetch. A
-    failed fetch is recorded like a successful one,
-    so an offline machine pays that wait once a day rather than on every
-    command. `PROJECTOR_OFFLINE` skips the fetch and answers from the cache.
+    One command a day waits up to RELEASE_CHECK_TIMEOUT for the fetch. The
+    check is recorded before the fetch, so a failed fetch waits a day like a
+    successful one, and a cache that cannot be written skips the fetch
+    rather than repeating it on every command. `PROJECTOR_OFFLINE` skips the
+    fetch and answers from the cache.
     """
 
     path = release_cache_file()
     checked, version = cached_release(path, url)
     if os.environ.get("PROJECTOR_OFFLINE") or 0 <= time.time() - checked < RELEASE_CHECK_SECONDS:
         return version
-    version = fetch_release_version(url) or version
-    # Parallel commands, such as a review loop's subagents, write this at
-    # once, so each writes its own file and renames it into place.
-    with contextlib.suppress(OSError):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        scratch = path.with_name(f"{path.name}.{os.getpid()}")
-        scratch.write_text(json.dumps({"url": url, "checked": time.time(), "version": version}))
-        scratch.replace(path)
+    if not record_release(path, url, version):
+        return version
+    fetched = fetch_release_version(url)
+    if fetched is not None and fetched != version:
+        record_release(path, url, fetched)
+        return fetched
     return version
 
 

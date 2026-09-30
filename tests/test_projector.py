@@ -1767,6 +1767,18 @@ class StaleReleaseWarningTests(unittest.TestCase):
         self.assertLess(waited, 2)
         self.assertNotIn("warning", stderr)
 
+    def test_an_unwritable_cache_is_not_fetched_on_every_command(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        (self.root / "cache").write_text("a file where the cache directory belongs")
+        fetch = self.patch(mock.patch.object(cli, "fetch_release_version", wraps=cli.fetch_release_version))
+
+        for _ in range(3):
+            code, _, stderr = self.invoke()
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(0, fetch.call_count)
+
     def test_an_unreadable_cache_is_fetched_afresh(self) -> None:
         self.installed("0.6.4")
         self.release("0.6.6")
