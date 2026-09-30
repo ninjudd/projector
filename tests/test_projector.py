@@ -6,6 +6,8 @@ import shlex
 import stat
 import subprocess
 import tempfile
+import threading
+import time
 import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -1604,6 +1606,242 @@ class UpgradeTests(unittest.TestCase):
 
         self.assertEqual(69, code)
         self.assertIn(str(self.checkout / "install.sh"), stderr)
+
+
+class StaleReleaseWarningTests(unittest.TestCase):
+    """Every command says on stderr when it is older than the release `upgrade` installs.
+
+    The release's manifest is a file:// URL and the cache lives in a
+    temporary XDG_CACHE_HOME, so nothing here reaches the network or the
+    real cache.
+    """
+
+    RELEASE = {"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {}}
+    # setUp points the check at a local manifest; this is the real address.
+    unpatched_manifest_url = staticmethod(cli.release_manifest_url)
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.elsewhere = self.root / "elsewhere"
+        self.elsewhere.mkdir()
+        self.manifest = self.root / "served" / "plugin.json"
+        self.manifest.parent.mkdir()
+        self.cache = self.root / "cache" / "projector" / "release.json"
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("PROJECTOR_OFFLINE", "PROJECTOR_REF")}
+        environment["XDG_CACHE_HOME"] = str(self.root / "cache")
+        self.patch(mock.patch.dict(os.environ, environment, clear=True))
+        self.patch(mock.patch.object(cli, "release_manifest_url", return_value=self.manifest.as_uri()))
+
+    def patch(self, patcher: object) -> object:
+        started = patcher.start()
+        self.addCleanup(patcher.stop)
+        return started
+
+    def installed(self, version: str, record: dict[str, object] | None = None) -> None:
+        distribution = mock.Mock()
+        distribution.read_text.return_value = json.dumps(record or self.RELEASE)
+        self.patch(mock.patch.object(metadata, "distribution", return_value=distribution))
+        self.patch(mock.patch.object(metadata, "version", return_value=version))
+
+    def release(self, version: str) -> None:
+        self.manifest.write_text(json.dumps({"name": "projector", "version": version}))
+
+    def invoke(self, *argv: str) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        previous = Path.cwd()
+        os.chdir(self.elsewhere)
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                try:
+                    code = main(list(argv or ["config", "paths"]))
+                except SystemExit as stop:
+                    code = stop.code
+        finally:
+            os.chdir(previous)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def age_cache(self, seconds: float) -> None:
+        cached = json.loads(self.cache.read_text())
+        cached["checked"] -= seconds
+        self.cache.write_text(json.dumps(cached))
+
+    def test_a_release_install_behind_the_release_warns_on_stderr(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+
+        code, stdout, stderr = self.invoke()
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn(
+            "warning: project 0.6.4 is behind the 0.6.6 release;"
+            " run 'project upgrade' to update the CLI and the Projector plugins\n",
+            stderr,
+        )
+        # stdout stays the command's own, so --json output still parses.
+        self.assertNotIn("warning", stdout)
+
+    def test_versions_compare_as_numbers(self) -> None:
+        for installed, release, warned in [
+            ("0.6.6", "0.6.6", False),
+            ("0.6.10", "0.6.9", False),
+            ("0.6.9", "0.6.10", True),
+            ("unknown", "0.6.6", False),
+        ]:
+            with self.subTest(installed=installed, release=release):
+                self.cache.unlink(missing_ok=True)
+                self.installed(installed)
+                self.release(release)
+
+                _, _, stderr = self.invoke()
+
+                self.assertEqual(warned, "warning: project" in stderr, stderr)
+
+    def test_a_checkout_install_is_left_to_install_sh_status(self) -> None:
+        self.installed("0.6.4", {"url": self.root.as_uri(), "dir_info": {}})
+        self.release("0.6.6")
+
+        code, _, stderr = self.invoke()
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertFalse(self.cache.exists())
+
+    def test_the_release_is_fetched_at_most_once_a_day(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        self.invoke()
+        self.release("0.6.7")
+
+        _, _, within_a_day = self.invoke()
+        self.age_cache(2 * 24 * 60 * 60)
+        _, _, a_day_later = self.invoke()
+
+        self.assertIn("behind the 0.6.6 release", within_a_day)
+        self.assertIn("behind the 0.6.7 release", a_day_later)
+
+    def test_an_unreachable_release_waits_a_day_before_trying_again(self) -> None:
+        self.installed("0.6.4")
+
+        code, _, unreachable = self.invoke()
+        self.release("0.6.6")
+        _, _, within_a_day = self.invoke()
+
+        self.assertEqual(0, code)
+        self.assertEqual("", unreachable)
+        self.assertEqual("", within_a_day)
+        self.assertIsNone(json.loads(self.cache.read_text())["version"])
+
+    def test_a_failed_refresh_keeps_the_release_it_knew(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        self.invoke()
+        self.manifest.unlink()
+        self.age_cache(2 * 24 * 60 * 60)
+
+        _, _, stderr = self.invoke()
+
+        self.assertIn("behind the 0.6.6 release", stderr)
+
+    def test_a_stalled_fetch_gives_up_after_the_timeout(self) -> None:
+        # urlopen's timeout bounds each socket operation, not the fetch, and
+        # name resolution has none, so only the command's own wait is bounded.
+        self.installed("0.6.4")
+        released = threading.Event()
+        self.addCleanup(released.set)
+
+        def stall(*_: object, **__: object) -> None:
+            released.wait(30)
+            raise OSError("released at cleanup")
+
+        self.patch(mock.patch.object(cli, "RELEASE_CHECK_TIMEOUT", 0.2))
+        self.patch(mock.patch.object(cli, "urlopen", side_effect=stall))
+
+        started = time.monotonic()
+        code, _, stderr = self.invoke()
+        waited = time.monotonic() - started
+
+        self.assertEqual(0, code, stderr)
+        self.assertLess(waited, 2)
+        self.assertNotIn("warning", stderr)
+
+    def test_an_unwritable_cache_is_not_fetched_on_every_command(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        (self.root / "cache").write_text("a file where the cache directory belongs")
+        fetch = self.patch(mock.patch.object(cli, "fetch_release_version", wraps=cli.fetch_release_version))
+
+        for _ in range(3):
+            code, _, stderr = self.invoke()
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(0, fetch.call_count)
+
+    def test_an_unreadable_cache_is_fetched_afresh(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        self.cache.parent.mkdir(parents=True)
+        for text in ["not json", "[]", json.dumps({"url": self.manifest.as_uri()}),
+                     json.dumps({"url": "https://example.com/other.json", "checked": 9e99, "version": "9.9.9"})]:
+            with self.subTest(cache=text):
+                self.cache.write_text(text)
+
+                _, _, stderr = self.invoke()
+
+                self.assertIn("behind the 0.6.6 release", stderr)
+
+    def test_offline_answers_from_the_cache_without_fetching(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        os.environ["PROJECTOR_OFFLINE"] = "1"
+
+        _, _, uncached = self.invoke()
+        del os.environ["PROJECTOR_OFFLINE"]
+        self.invoke()
+        self.age_cache(2 * 24 * 60 * 60)
+        self.release("0.6.7")
+        os.environ["PROJECTOR_OFFLINE"] = "1"
+        _, _, cached = self.invoke()
+
+        self.assertEqual("", uncached)
+        self.assertIn("behind the 0.6.6 release", cached)
+
+    def test_a_usage_error_ends_with_the_warning(self) -> None:
+        # The error a newer skill meets on an old command is argparse's, so
+        # the warning has to follow it rather than wait for a command to run.
+        self.installed("0.6.4")
+        self.release("0.6.6")
+
+        code, _, stderr = self.invoke("summary-from-the-future")
+
+        self.assertEqual(2, code)
+        self.assertLess(stderr.index("invalid choice"), stderr.index("behind the 0.6.6 release"))
+
+    def test_help_version_and_upgrade_do_not_warn(self) -> None:
+        self.installed("0.6.4")
+        self.release("0.6.6")
+        self.patch(mock.patch.object(cli, "run_upgrade", return_value=0))
+
+        for argv in (["--help"], ["--version"], ["upgrade"]):
+            with self.subTest(argv=argv):
+                code, _, stderr = self.invoke(*argv)
+
+                self.assertEqual(0, code)
+                self.assertNotIn("warning", stderr)
+
+    def test_the_compared_release_is_the_one_upgrade_installs(self) -> None:
+        manifest_url = self.unpatched_manifest_url
+
+        upstream = manifest_url({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz"})
+        fork = manifest_url({"url": "git+https://github.com/someone/projector.git"})
+        os.environ["PROJECTOR_REF"] = "v0.6.2"
+        pinned = manifest_url({"url": "https://github.com/ninjudd/projector/archive/v0.6.2.tar.gz"})
+
+        self.assertEqual("https://raw.githubusercontent.com/ninjudd/projector/v0/.claude-plugin/plugin.json", upstream)
+        self.assertEqual("https://raw.githubusercontent.com/someone/projector/v0/.claude-plugin/plugin.json", fork)
+        self.assertEqual("https://raw.githubusercontent.com/ninjudd/projector/v0.6.2/.claude-plugin/plugin.json", pinned)
 
 
 if __name__ == "__main__":
