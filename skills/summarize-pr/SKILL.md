@@ -100,10 +100,10 @@ push to, or approve the pull request unless the user asks.
 
 ## Write for someone new to the code
 
-Write every intro, note and card to `../writing.md`: for a reviewer who
-may be seeing this code and this part of the system for the first time
-(§ 2), with structure (§ 4), written to the reader (§ 5). A summary adds
-these to it:
+Follow the writing guide in `../writing.md` when you write every intro, note
+and card. Write for a reviewer who may be seeing this code and this part of
+the system for the first time (§ 2), with structure (§ 4), and to the reader
+(§ 5). A summary also needs these:
 
 - **Define terms in each group.** Readers jump to a group from the
   sidebar, so each group defines the terms it uses, and the overview gets a

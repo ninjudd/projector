@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write"
+  short_description: "Write or revise prose so it follows Projector's writing guide"
+  default_prompt: "Use $write to revise this text so it follows Projector's writing guide."

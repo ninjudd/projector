@@ -74,7 +74,8 @@ export function Agents() {
         In Codex the same skills are <Code>$design</Code>, <Code>$implement</Code>, and{" "}
         <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
         <Code>summarize-pr</Code>, which summarizes the changes in a large pull request as a guided page for
-        its reviewers; and <Code>gh-stack</Code>, for splitting a large change into a chain of
+        its reviewers; <Code>write</Code>, which writes or revises any prose so that it follows
+        Projector&rsquo;s writing guide; and <Code>gh-stack</Code>, for splitting a large change into a chain of
         dependent pull requests.{" "}
         <a
           href={DOCS.plugins}

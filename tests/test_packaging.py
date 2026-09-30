@@ -17,6 +17,7 @@ PUBLISHED_SKILLS = {
     "start-fix-loop",
     "gh-stack",
     "summarize-pr",
+    "write",
 }
 
 
