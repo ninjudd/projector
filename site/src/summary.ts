@@ -455,17 +455,19 @@ function wireSummary(): void {
   // Combining marks belong to the name they follow, as a vowel sign does in
   // Devanagari, and connector punctuation includes the underscore.
   const IDENTIFIER = /[\p{L}\p{M}\p{N}\p{Pc}$]+/gu;
-  const IDENTIFIER_CHAR = /[\p{L}\p{M}\p{N}\p{Pc}$]/u;
+  // A run of digits or marks alone, a number or an emoji's variation
+  // selector, is not a name worth tracing.
+  const NAME = /[\p{L}\p{Pc}$]/u;
   let token = '';
   function tokenAt(node: Node | null, offset: number): string {
     if (!(node instanceof Text)) return '';
-    const s = node.data;
-    let start = offset, end = offset;
-    while (start > 0 && IDENTIFIER_CHAR.test(s.charAt(start - 1))) start--;
-    while (end < s.length && IDENTIFIER_CHAR.test(s.charAt(end))) end++;
-    const word = s.slice(start, end);
-    // A bare number is a literal, not a name worth tracing.
-    return /[^\p{N}]/u.test(word) ? word : '';
+    // The same match that marks the page finds the clicked name, so the two
+    // always agree, a name with a letter beyond one UTF-16 unit included.
+    for (const m of node.data.matchAll(IDENTIFIER)) {
+      if (m.index > offset) break;
+      if (offset <= m.index + m[0].length) return NAME.test(m[0]) ? m[0] : '';
+    }
+    return '';
   }
   function clearTokens(): void {
     document.querySelectorAll('mark.tok').forEach(function (m) {
