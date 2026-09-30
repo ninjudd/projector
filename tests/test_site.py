@@ -741,20 +741,24 @@ class ServeTests(SiteRepoCase):
             process.terminate()
             process.communicate(timeout=10)
 
-    def test_the_background_fetch_fails_rather_than_prompting_for_credentials(self) -> None:
+    def test_the_background_fetch_cannot_prompt_on_the_servers_terminal(self) -> None:
         published = serve.Summaries(self.repo, "origin")
-        envs: list[dict | None] = []
+        calls: list[dict] = []
 
-        def run_git(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-            envs.append(env)
-            return subprocess.CompletedProcess(args, 0, b"", b"")
+        def run(command: list[str], **options: object) -> subprocess.CompletedProcess:
+            calls.append(options)
+            return subprocess.CompletedProcess(command, 0, b"", b"")
 
-        with mock.patch.object(serve, "run_git", side_effect=run_git):
+        with mock.patch.object(serve.subprocess, "run", side_effect=run):
             published.fetch()
             published.fetch_quietly()
 
-        self.assertIsNone(envs[0], "the startup fetch keeps the user's environment, prompts included")
-        self.assertEqual("0", (envs[1] or {}).get("GIT_TERMINAL_PROMPT"))
+        startup, background = calls
+        self.assertNotIn("start_new_session", startup, "the startup fetch may still prompt whoever started the server")
+        # A session of its own has no terminal, so an ssh git starts cannot ask for a passphrase either.
+        self.assertTrue(background.get("start_new_session"))
+        self.assertIs(subprocess.DEVNULL, background.get("stdin"))
+        self.assertEqual("0", background["env"]["GIT_TERMINAL_PROMPT"])
 
     def test_keep_fetching_reports_a_failure_once_and_again_only_when_it_changes(self) -> None:
         stop = threading.Event()

@@ -31,8 +31,13 @@ WILDCARD = {"", "0.0.0.0", "::"}
 FETCH_INTERVAL = 60.0
 
 
-def run_git(root: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, env=env)
+def run_git(root: Path, *args: str, detached: bool = False) -> subprocess.CompletedProcess:
+    """Run git in `root`. `detached` runs it in a session of its own with no input and git's prompts off,
+    so neither git nor an ssh it starts can ask for credentials on the server's terminal."""
+    if not detached:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, stdin=subprocess.DEVNULL,
+                          start_new_session=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
 
 
 def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
@@ -48,17 +53,18 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
     new one's place, and `summaries_ref` reads it until the new ref exists.
     A server fetches every minute, so the fetch writes only the tracking ref
     and never FETCH_HEAD, which the user's own fetch may have just written.
-    Without `prompt`, a remote that wants typed credentials fails the fetch
-    rather than asking for them from a thread no one is watching.
+    Without `prompt`, the fetch runs detached from the terminal, so a remote
+    that wants a password or an ssh key's passphrase fails the fetch rather
+    than asking for it from a thread no one is watching.
     """
     fetch = ("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote)
-    env = None if prompt else {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     local = tracking_ref(remote, ref)
-    fetched = run_git(root, *fetch, f"+{ref}:{local}", env=env)
+    fetched = run_git(root, *fetch, f"+{ref}:{local}", detached=not prompt)
     if fetched.returncode == 0:
         return ""
     if ref == PAGES_REF:
-        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}", env=env)
+        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}",
+                         detached=not prompt)
         if legacy.returncode == 0:
             return ""
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
