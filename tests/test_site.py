@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -664,6 +665,81 @@ class ServeTests(SiteRepoCase):
 
         self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
         self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
+
+    def test_a_running_server_serves_summaries_published_after_it_started(self) -> None:
+        remote = self.published_remote()
+        published = serve.Summaries(self.repo, "origin")
+
+        def build(out: Path) -> str:
+            with tempfile.TemporaryDirectory() as specs, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                return cli.build_checkout(self.repo.resolve(), out, published.extract(Path(specs)), "/", "owner/example")
+
+        site = serve.Site(build, lambda: (serve.fingerprint([self.repo / "docs"]), published.version()))
+        self.sites.append(site)
+        site.refresh(force=True)
+
+        def reviews() -> list[tuple[str, int]]:
+            manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+            return [(review["head"], review["heads"]) for review in manifest["reviews"]]
+
+        self.assertEqual([], reviews(), "nothing is fetched yet")
+        self.assertIsNone(site.refresh(), "no change, no rebuild")
+
+        self.assertEqual("", published.fetch())
+        self.assertIsNotNone(site.refresh(), "the ref that appeared after startup is a change")
+        self.assertEqual([("d" * 40, 2)], reviews())
+
+        run_git(remote, "update-ref", summary.PAGES_REF, "HEAD~1")
+        self.assertEqual("", published.fetch())
+        self.assertIsNotNone(site.refresh(), "a fetched ref that moved is a change")
+        self.assertEqual([("c" * 40, 1)], reviews())
+
+    def test_a_served_site_shows_a_summary_published_after_the_server_started(self) -> None:
+        self.published_remote()
+        env = dict(os.environ, PYTHONPATH=str(Path(cli.__file__).parents[1]))
+        process = subprocess.Popen(
+            [sys.executable, "-m", "projector", "site", "serve", "--port", "0", "--no-fetch",
+             "--repo-root", str(self.repo)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        try:
+            url = ""
+            for line in process.stdout:
+                if line.startswith("serving http://"):
+                    url = line.split()[1].rstrip(";")
+                    break
+
+            def reviews() -> list:
+                with urllib.request.urlopen(url + "site.json") as response:
+                    return json.loads(response.read())["reviews"]
+
+            self.assertEqual([], reviews())
+            # `summary publish` updates the same local copy of the remote's ref.
+            self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+            for _ in range(100):
+                if reviews():
+                    break
+                time.sleep(0.1)
+            self.assertEqual(["d" * 40], [review["head"] for review in reviews()])
+        finally:
+            process.terminate()
+            process.communicate(timeout=10)
+
+    def test_keep_fetching_reports_a_failure_once_and_again_only_when_it_changes(self) -> None:
+        stop = threading.Event()
+        reasons = iter(["couldn't find remote ref", "", "couldn't find remote ref", "offline", "offline"])
+        reported: list[str] = []
+
+        def fetch() -> str:
+            reason = next(reasons, None)
+            if reason is None:
+                stop.set()
+                return ""
+            return reason
+
+        serve.keep_fetching(fetch, stop, 0, reported.append, last="couldn't find remote ref")
+
+        self.assertEqual(["could not fetch summaries: couldn't find remote ref", "could not fetch summaries: offline"],
+                         reported, "the startup failure is not repeated, and a recovery resets it")
 
     @unittest.skipIf(os.name == "nt", "SIGINT is how a terminal stops the server on POSIX")
     def test_ctrl_c_or_a_termination_signal_stops_the_server_and_removes_its_builds(self) -> None:

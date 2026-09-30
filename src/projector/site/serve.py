@@ -3,8 +3,9 @@
 `project site serve` builds the same static site a deploy does into a
 temporary directory and serves it over HTTP. It reads summaries from the
 checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
-site, no workflow, and no network once the ref is fetched. While it runs it
-watches the files the site is built from and rebuilds when they change.
+site and no workflow. While it runs it watches the files the site is built
+from and the summaries ref, fetching the ref again every minute, and
+rebuilds when either changes, as each publish redeploys a Pages site.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, PAGES_REF, PAGES_ROOT
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 WILDCARD = {"", "0.0.0.0", "::"}
+# How often a running server fetches the summaries ref, in seconds.
+FETCH_INTERVAL = 60.0
 
 
 def run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -110,6 +113,47 @@ def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT
             if path.is_file():
                 os.utime(path, (when, when))
     return dest / folder
+
+
+class Summaries:
+    """The summaries published to a checkout's remote, looked up afresh on every look.
+
+    A server outlives the ref it started with: `summary publish` may create
+    the ref after the server starts, and each fetch moves it, so every look
+    finds the ref again rather than keeping the one found at startup.
+    """
+
+    def __init__(self, root: Path, remote: str) -> None:
+        self.root, self.remote = root, remote
+
+    def fetch(self) -> str:
+        """Update the local copy of the remote's summaries, and say why when it cannot."""
+        return fetch_summaries(self.root, self.remote)
+
+    def version(self) -> tuple:
+        """The ref the summaries are read from and its commit, which move when a summary is published."""
+        found = summaries_ref(self.root, self.remote)
+        return found, ref_commit(self.root, found[0] if found else None)
+
+    def extract(self, dest: Path) -> Path | None:
+        """Write the published specs under `dest`, or return None when nothing is published."""
+        found = summaries_ref(self.root, self.remote)
+        return extract_summaries(self.root, found[0], dest, found[1]) if found else None
+
+
+def keep_fetching(fetch: Callable[[], str], stop: threading.Event, interval: float,
+                  report: Callable[[str], None], last: str = "") -> None:
+    """Fetch the summaries every `interval` seconds until `stop`, reporting a failure once.
+
+    A failure is reported again only when its reason changes, so a remote with
+    nothing published yet does not repeat itself every minute. `last` is the
+    failure already reported, if any.
+    """
+    while not stop.wait(interval):
+        reason = fetch()
+        if reason and reason != last:
+            report(f"could not fetch summaries: {reason}")
+        last = reason
 
 
 def fingerprint(paths: list[Path]) -> tuple:

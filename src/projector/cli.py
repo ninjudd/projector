@@ -855,16 +855,14 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     repo = site_repo(root)
     base = "/" + arguments.base.strip("/") + "/" if arguments.base.strip("/") else "/"
     given = Path(arguments.summaries).resolve() if arguments.summaries else None
-    ref, folder = None, summary.PAGES_ROOT
-    if given is None:
-        if not arguments.no_fetch:
-            reason = serve.fetch_summaries(root, arguments.remote)
-            if reason:
-                print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {reason}",
-                      file=sys.stderr)
-        # The folder comes with the ref, because the old walkthroughs ref a
-        # repository may still have keeps its specs under another name.
-        ref, folder = serve.summaries_ref(root, arguments.remote) or (None, folder)
+    # Summaries come from the published ref unless --summaries names a folder.
+    published = serve.Summaries(root, arguments.remote) if given is None else None
+    fetched = ""
+    if published is not None and not arguments.no_fetch:
+        fetched = published.fetch()
+        if fetched:
+            print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {fetched}",
+                  file=sys.stderr)
     projects_dir = configured_projects_dir(root)
     watched = [root / "README.md", root / "docs"]
     if projects_dir is not None:
@@ -873,12 +871,13 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         watched.append(given)
 
     def sources() -> tuple:
-        return serve.fingerprint([path for path in watched if path.exists()]), serve.ref_commit(root, ref)
+        files = serve.fingerprint([path for path in watched if path.exists()])
+        return files, published.version() if published is not None else ()
 
     def build(out: Path) -> str:
         # The build copies what it needs from the specs, so they outlive it only as long as it runs.
         with tempfile.TemporaryDirectory(prefix="projector-specs-") as specs:
-            summaries = serve.extract_summaries(root, ref, Path(specs), folder) if ref is not None else given
+            summaries = published.extract(Path(specs)) if published is not None else given
             # The build reports each page as a deploy log would; a server keeps only its one-line result.
             with contextlib.redirect_stdout(io.StringIO()):
                 return build_checkout(root, out, summaries, base, repo)
@@ -913,6 +912,11 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         if not arguments.no_watch:
             report = lambda message: print(message, flush=True)
             threading.Thread(target=serve.watch, args=(site_state, stop, 1.0, report), daemon=True).start()
+            # A publish from another checkout reaches a Pages site through its
+            # deploy; here it arrives with the next fetch, which the watch sees.
+            if published is not None and not arguments.no_fetch:
+                threading.Thread(target=serve.keep_fetching, daemon=True,
+                                 args=(published.fetch, stop, serve.FETCH_INTERVAL, report, fetched)).start()
         print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
