@@ -808,6 +808,16 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n"],
                          self.summary_comments())
 
+    def test_a_hosted_site_with_no_pages_url_gets_no_comment(self) -> None:
+        for site in ("", None):
+            with self.subTest(site=site), \
+                 mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
+                 mock.patch.object(summary, "hosting", return_value=("", "")):
+                result = summary.comment_summary("owner/repo", 7, HEAD, site=site)
+
+                self.assertIn("GitHub's Pages answer for owner/repo has no URL", result)
+        self.assertEqual([], self.summary_comments(), "a relative reviews/7/ would link nowhere")
+
     def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
         self.hosted = (None, "Pages is not enabled")
         with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \

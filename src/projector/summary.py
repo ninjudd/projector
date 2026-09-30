@@ -947,6 +947,8 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
         if url is None:
             return f"not linking the summary from a comment: {reason}"
         site = url
+    if not site:
+        return f"not linking the summary from a comment: GitHub's Pages answer for {repo} has no URL"
     page = review_page(site, number)
     body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
     login = gh("api", "user", "--jq", ".login").strip()
