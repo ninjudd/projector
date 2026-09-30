@@ -404,6 +404,26 @@ class CompiledScriptTests(unittest.TestCase):
                                  f"{name} is stale: run `npm run build` and commit it")
 
 
+class StateClassTests(unittest.TestCase):
+    def test_no_rule_styles_a_state_class_on_its_own(self) -> None:
+        # A class the script toggles as state lands on elements that other rules
+        # also style, so a bare `.reviewed` rule written for one label restyles
+        # every reviewed file card. State is styled only beside another class.
+        bare_state_rules = []
+        for script, sheet in (("summary.ts", "summary.css"), ("site.ts", "site.css")):
+            source = (TS_PROJECT / "src" / script).read_text()
+            states = set(re.findall(r"classList\.(?:toggle|add|remove)\('([a-z-]+)'", source))
+            self.assertIn("collapsed", states, f"no state classes found in {script}")
+            css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / sheet).read_text(), flags=re.S)
+            for rule in re.findall(r"([^{}]+)\{", css):
+                for selector in rule.split(","):
+                    for compound in re.split(r"[\s>+~]+", selector.strip()):
+                        bare = re.fullmatch(r"\.([a-z-]+)(?::[a-z-]+(?:\([^)]*\))?)*", compound)
+                        if bare and bare.group(1) in states:
+                            bare_state_rules.append(f"{sheet}: {selector.strip()}")
+        self.assertEqual([], bare_state_rules)
+
+
 @unittest.skipUnless(shutil.which("node"), "the projects view test needs node")
 class ProjectsViewTests(unittest.TestCase):
     def projects_html(self, projects: list[dict]) -> str:
