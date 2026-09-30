@@ -16,6 +16,10 @@ The plugin provides `design`, `implement`, `finish`, `review-changes`,
 `start-review-loop`, `start-fix-loop`, and `summarize-changes`, which
 summarizes a pull request's changes as a guided review page. Claude invokes a
 plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
+`design` writes a project's technical design doc under `docs/projects/`.
+`implement` builds from that plan, or from a description of a change small
+enough to need no design, such as `/projector:implement fix the typo in the
+install docs`.
 `review-changes` reviews a pull request's current head once, by the method in
 `skills/review-changes/method.md`, and publishes one labeled review;
 `start-review-loop` runs it on every new head of your pull requests, and the

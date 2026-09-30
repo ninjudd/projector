@@ -7,7 +7,8 @@ description: Write a project's technical design doc as a Git-native plan under d
 
 Turn the requested outcome into a durable Projector plan, a technical design
 doc that another person or agent can execute without reconstructing the
-conversation.
+conversation. Work small enough to need no design goes straight to
+`implement`, which builds from a description as well as from a plan.
 
 ## Establish context
 
