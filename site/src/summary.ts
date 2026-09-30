@@ -15,6 +15,12 @@ function renderSummary(data: SummaryData): void {
     return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function num(n: number): string { return n.toLocaleString('en-US'); }
+  // A paragraph of prose is wrapped in <p>; a list, table, heading or code
+  // block the spec wrote as an item of its own is placed as it is, since a
+  // block inside <p> ends the paragraph early.
+  function block(html: string): string {
+    return /^\s*<(ul|ol|table|div|pre|h3|h4|p)[\s>]/i.test(html) ? html : `<p>${html}</p>`;
+  }
   function short(sha: string | undefined): string { return (sha ?? '').slice(0, 9); }
   function lineNumber(n: number | null): string { return n === null || n === 0 ? '' : String(n); }
   function ext(href: string, text: string, cls?: string): string {
@@ -125,7 +131,7 @@ function renderSummary(data: SummaryData): void {
     let adds = 0, dels = 0;
     g.files.forEach(function (s) { const f = fileAt(s.path); adds += f.adds; dels += f.dels; });
     const gid = esc(g.id);
-    const intro = (g.intro ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+    const intro = (g.intro ?? []).map(block).join('');
     const checks = g.checks ?? [];
     const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
     const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
@@ -150,7 +156,7 @@ function renderSummary(data: SummaryData): void {
   function renderOverview(): string {
     const o = data.overview ?? {};
     const s = data.stats;
-    const summary = (o.summary ?? []).map(function (p) { return `<p>${p}</p>`; }).join('');
+    const summary = (o.summary ?? []).map(block).join('');
     let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
       '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off verify and concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
     const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],

@@ -157,12 +157,56 @@ write:
 > checks bank accounts. Then it asks the card network whether the bank that
 > issued the card has that name on file.
 
+## Give the prose structure
+
+Write in the Google developer documentation style, as Projector's own
+documentation is: lead with the point, keep paragraphs short, and let the
+shape of the content choose its form instead of writing everything as
+paragraphs.
+
+- **Lead with what matters.** Open each group with one or two sentences
+  that say what the group does and why, so a reader who stops there has
+  the gist. Put the detail after them.
+- **Use a numbered list for a sequence**, such as what happens, in order,
+  when a user adds a card.
+- **Use a bulleted list for parallel items**, such as the steps of a check,
+  the outcomes it can reach, or the settings that control it. Open each
+  item with a short bold lead-in that names the thing, then explain it in
+  full sentences.
+- **Use a table for anything with two dimensions**, such as which
+  combinations of results allow or block a card, or each setting's default
+  and effect. Wrap it in `<div class="tblwrap"><table class="tbl">`.
+- **Keep a paragraph to a few sentences about one idea.** A longer
+  paragraph usually holds a list or a table.
+- **Write in the present tense and the active voice.** Say "the engine
+  refuses the card", not "the card will be refused". Address the reviewer
+  as "you" when you tell them what to check. Put code, file names, values
+  and commands in `<code>`.
+- **Use a heading to split a long intro.** An `<h4>` such as "Before",
+  "What changes" or "Why" helps a reader find their place in an intro that
+  runs past three paragraphs. Write headings in sentence case.
+
+In an intro or the overview, give a list, table or heading an item of its
+own, such as `"<ol><li>…</li></ol>"`, and it renders as written rather
+than inside a paragraph. The example above reads better as:
+
+> When someone adds a debit card, the engine now checks that the name on
+> the card belongs to the account holder. The card must pass both steps:
+>
+> 1. **The typed name matches the account holder.** The engine compares the
+>    name the user typed on the card with the legal name the account was
+>    verified under, using `namematch`, the fuzzy matcher that already
+>    checks bank accounts.
+> 2. **The card's bank knows that name.** The engine asks the card network
+>    whether the bank that issued the card has the typed name on file.
+
 A summary written this way runs longer than one written for insiders,
 often by half, and that is expected. Cut repetition and detail no reviewer
 would act on, never the context, and keep each group intro to a few short
 paragraphs, with the details in file and line notes.
 
-Before you publish, reread each group intro and note as that newcomer.
+Before you publish, reread each group intro and note as that newcomer,
+and check that each has the structure its content calls for.
 Build as often as you like, since building is how you learn that a note's
 line sits outside the diff, but publish only once the reread is done.
 Where a sentence makes sense only to someone who already knows the code,
