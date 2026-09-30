@@ -1,0 +1,148 @@
+{
+ "version": 1,
+ "name": "Stale release warning",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 159,
+  "title": "Warn on every command when a newer release is out",
+  "head": "76527ef5d7f6ea7b0777e7d94f708a8f62052255",
+  "headRef": "warn-when-behind-release",
+  "base": "d70ae273b492170c388f47469efee8c2471f5a58",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "An old <code>project</code> beside newer skills fails with argparse's <code>invalid choice</code>, which reads as a broken CLI rather than an old one, and nothing between upgrades says a release is out. Every Projector skill runs <code>project</code>, so this pull request has the CLI itself say so: every command installed from a release prints one stderr line when the release <code>project upgrade</code> would install is newer.",
+   "The check reads that release's version from its plugin manifest, which carries the CLI's version too. It runs at most once a day, waits at most two seconds, and caches the answer in <code>$XDG_CACHE_HOME/projector/release.json</code>. It never touches stdout or the exit status, stays quiet for <code>--help</code>, <code>--version</code>, <code>upgrade</code>, and checkout installs, and also follows a usage error, because a usage error is what a newer skill meets on an old command.",
+   "Auto-upgrade was considered and set aside: it would run a downloaded installer with nobody present, replace the CLI under a review loop's parallel commands, and still leave the running session on the old skills until a restart."
+  ],
+  "cards": [
+   {
+    "id": "when",
+    "title": "When the warning prints",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Invocation</th><th>Warns</th></tr></thead><tbody><tr><td>Any subcommand, release install, behind the release</td><td class=\"r\">Yes, before the command runs</td></tr><tr><td>Usage error (exit 2)</td><td class=\"r\">Yes, after argparse's error</td></tr><tr><td><code>--help</code>, <code>--version</code>, <code>--package-dir</code></td><td class=\"r\">No</td></tr><tr><td><code>upgrade</code></td><td class=\"r\">No</td></tr><tr><td>Checkout or editable install</td><td class=\"r\">No; never checks</td></tr><tr><td>Not installed, as the site action runs it from <code>PYTHONPATH</code></td><td class=\"r\">No; never checks</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "config",
+    "title": "Configuration surface",
+    "html": "<ul class=\"tight\"><li><code>PROJECTOR_REF</code> picks the release compared against, default <code>v0</code>, the same one <code>upgrade</code> installs. Setting it to a tag such as <code>v0.6.2</code> pins and silences the warning.</li><li><code>PROJECTOR_OFFLINE</code> skips the fetch and warns only from the cache.</li><li><code>XDG_CACHE_HOME</code> moves the cache, default <code>~/.cache</code>. A cache that cannot be written skips the fetch.</li><li><code>RELEASE_CHECK_SECONDS</code> is one day and <code>RELEASE_CHECK_TIMEOUT</code> two seconds; neither is configurable.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li>The first head, <code>8927044</code>, drew two findings. The two-second <code>urlopen</code> timeout bounded each socket step, not the fetch, so four packet-dropping addresses held a command for 8 seconds. And a cache that could not be written made every command fetch.</li><li><code>18ba1c7</code> runs the fetch in a daemon thread joined for the timeout, and <code>76527ef</code> records each check before fetching and skips the fetch when that write fails.</li><li>The review of <code>76527ef</code> verified both fixes against a local server and TEST-NET addresses and found the head clean, with suggestions only.</li></ul>"
+   },
+   {
+    "id": "later",
+    "title": "Left for later",
+    "html": "<ul class=\"tight\"><li>Auto-upgrade, for the reasons in the summary above.</li><li>Refreshing the release on a usage error, and keeping a fetch that lands after the wait, both flagged in the first group.</li><li>A module-wide stub of the check in the tests, flagged in the second group.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "check",
+   "title": "The release check",
+   "kicker": "How a command finds the release, caches it, bounds the wait, and warns",
+   "intro": [
+    "The check sits in <code>cli.py</code> beside <code>run_upgrade</code>, because it compares against the release <code>upgrade</code> installs: <code>release_manifest_url</code> derives the repository from pip's install record and the ref from <code>PROJECTOR_REF</code>, the same way <code>release_installer</code> does.",
+    "<code>latest_release</code> answers from the cache for a day. When the cache is older, it first records the check with the version it already knew, then fetches. Recording first means a failed fetch waits a day like a successful one, parallel commands started meanwhile read the fresh record instead of fetching too, and a cache that cannot be written skips the fetch altogether.",
+    "<code>fetch_release_version</code> runs <code>urlopen</code> in a daemon thread and joins it for two seconds, because <code>urlopen</code>'s timeout applies to each socket operation and name resolution has none. <code>main</code> calls <code>warn_of_stale_release</code> before running any command but <code>upgrade</code>, and <code>parse</code> calls it after a usage error."
+   ],
+   "concepts": [
+    "A release install is one whose pip <code>direct_url.json</code> has no <code>dir_info</code>: an archive or a Git URL. Checkout and editable installs never check.",
+    "The cache records when a check ran, not only what it found, so its timestamp is what rate-limits the network.",
+    "The CLI's version and the plugin manifest's version are one number, which the packaging tests pin."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The warning prints only from the main thread, to stderr, and before <code>run()</code> or after argparse's error, so stdout, <code>--json</code> output, and the exit status are the command's own."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>latest_release</code> calls <code>record_release</code> before <code>fetch_release_version</code> and returns without fetching when that write fails."
+    },
+    {
+     "kind": "verify",
+     "text": "The worker thread is a daemon and is joined only for <code>RELEASE_CHECK_TIMEOUT</code>; a fetch that finishes later appends to a list nobody reads, and prints nothing."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>newer_release</code> compares versions as tuples of integers and returns false unless both are plain dotted numbers, so a manifest's text reaches the terminal only when it is a version."
+    },
+    {
+     "kind": "flag",
+     "text": "A usage error answers from the day-old cache like any other command. That error most often comes from skills a new release just updated, which is when the cache most likely predates the release, so the warning can stay silent for up to a day exactly when it would explain the failure. Refreshing on a usage error, still under the timeout, would close that gap."
+    },
+    {
+     "kind": "flag",
+     "text": "A fetch that lands after the two-second wait is dropped, and the record written before it holds off the next try for a day. On a link where the fetch always takes longer, the warning never appears; having the worker call <code>record_release</code> on success would keep a late answer whenever the command outlives it."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The new functions after <code>run_upgrade</code>, and <code>parse</code> and <code>main</code> at the bottom, where the check runs."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for the check",
+   "kicker": "Thirteen tests that drive main() against a local manifest and a temporary cache",
+   "intro": [
+    "<code>StaleReleaseWarningTests</code> serves the manifest from a <code>file://</code> URL, puts the cache in a temporary <code>XDG_CACHE_HOME</code>, and stubs pip's install record and version, so nothing reaches the network or the real cache. Each test runs a whole command through <code>main</code> and reads its stderr.",
+    "Two tests came with the review fixes: one stalls <code>urlopen</code> and checks the command gives up after the timeout, patched to 0.2 seconds, and one puts a regular file where the cache directory belongs and checks three commands make no fetch."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>test_versions_compare_as_numbers</code> fails if versions compare as strings, where <code>0.6.9</code> would look newer than <code>0.6.10</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>test_a_stalled_fetch_gives_up_after_the_timeout</code> releases its stalled thread at cleanup, and the thread's <code>OSError</code> is caught inside the worker."
+    },
+    {
+     "kind": "flag",
+     "text": "Only this class stubs the check. Every other <code>main()</code> test leaves it live, so on an interpreter where <code>projector-cli</code> is installed from a release, the suite would fetch from GitHub and write the real <code>~/.cache</code>. Setting <code>PROJECTOR_OFFLINE</code> and a temporary <code>XDG_CACHE_HOME</code> for the whole module would pin that."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "The new class at the end of the file."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "Where a user learns the warning exists and how to quiet it",
+   "intro": [
+    "<code>docs/cli.md</code> documents the warning under a new \"Know when a release is out\" section beside <code>upgrade</code>: what it prints, when it stays quiet, where the release and cache come from, and the two environment variables that quiet it. The README and <code>docs/plugins.md</code> each gain one sentence pointing there."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The docs' claims match the code: at most once a day, at most two seconds, a failed check waits a day, an unwritable cache skips the check, and <code>PROJECTOR_REF</code> set to a release's tag silences it."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new section is the reference; the other two files link to it."
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
