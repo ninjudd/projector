@@ -67,6 +67,14 @@ Each has a place the plan already has: reuse and replacement among the
 decisions, cost among the constraints, and the correctness proof and the cost
 measurement beside the acceptance criteria.
 
+Write the plan to `../writing.md`. Its reader is the person or agent who
+implements it, who may never have seen this conversation or this part of
+the code. State each decision and its reason rather than pointing at where
+it was discussed (`writing.md` § 2). Keep the implementation sequence, a
+how-to, apart from the decisions, an explanation (§ 3). Put steps,
+alternatives, and criteria in numbered lists, bulleted lists, and tables
+(§ 4), and write to the reader (§ 5).
+
 Number sections and append new sections without renumbering existing ones.
 Write paths and identifiers exactly. Keep durable decisions in the plan rather
 than relying on chat history.
