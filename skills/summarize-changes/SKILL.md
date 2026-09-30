@@ -61,7 +61,10 @@ push to, or approve the pull request unless the user asks.
    Do not read it with `gh pr diff`. GitHub's pull request diff endpoint
    refuses a pull request that changes more than 300 files with HTTP 406,
    and the compare API does not share that limit. For a large diff, delegate
-   the reading to subagents and keep only their conclusions.
+   the reading to subagents and keep only their conclusions. Ask each one
+   for what its files did before the change and do after it, in plain
+   words, the terms a newcomer would need defined, and the line numbers of
+   anything worth a note, taken from inside the diff's hunks.
 4. Fill the spec as `spec.md` describes, and write every piece of prose in
    it for the reader that "Write for someone new to the code" below
    describes. The groups decide whether the page helps:
@@ -108,10 +111,18 @@ nothing by it, and one who does not can review at all.
   group with what that part of the system does and how it behaved before
   the change, then what changes, then why. Describe behavior a user or an
   operator would recognize before naming the code that implements it.
-- **Define every term the first time it appears.** That covers product and
-  vendor names, acronyms such as KYC, and the project's own nicknames, such
-  as "rails" or "hops". Give a code identifier its plain meaning beside it:
+- **Define every term where the reader meets it.** That covers product and
+  vendor names, acronyms such as KYC, and the project's own words, such as
+  "rails" or "hops". Give a code identifier its plain meaning beside it:
   "`Decide`, which turns the two check results into allow or block".
+  Readers jump to a group from the sidebar, so define a term briefly again
+  in each group that uses it, and give the overview a card listing the
+  page's terms when there are more than a few.
+- **Use the code's words once they are defined.** When the project's word
+  is also a name in the code, such as a `rail` type or a `hop` label, define
+  it and then keep using it, so the page and the diff say the same thing.
+  A paraphrase that the code never uses leaves the reader to match two
+  vocabularies.
 - **Name code only when it helps.** An identifier points into the diff; it
   does not explain anything. Prefer a sentence about what happens over a
   list of the functions that make it happen, and keep field numbers, enum
@@ -119,7 +130,9 @@ nothing by it, and one who does not can review at all.
 - **Leave out references the reader cannot follow.** "Decision 4.19",
   "plan § 8", "group 9" and "as the bank link's is" point at things the
   reader has not seen. State the decision, the section or the comparison
-  itself; a citation may follow it, never replace it.
+  itself; a citation may follow it, never replace it. A note on the plan
+  document itself may name the section it sits on, since that section is
+  what the reader is looking at.
 - **Write whole sentences.** No slash-separated lists standing in for
   prose, no telegraphic fragments, and no shorthand the reader has to
   decode. A concrete case, such as what happens when a user types a
@@ -144,9 +157,16 @@ write:
 > checks bank accounts. Then it asks the card network whether the bank that
 > issued the card has that name on file.
 
-Before you build, reread each group intro and note as that newcomer. Where
-a sentence makes sense only to someone who already knows the code, rewrite
-it.
+A summary written this way runs longer than one written for insiders,
+often by half, and that is expected. Cut repetition and detail no reviewer
+would act on, never the context, and keep each group intro to a few short
+paragraphs, with the details in file and line notes.
+
+Before you publish, reread each group intro and note as that newcomer.
+Build as often as you like, since building is how you learn that a note's
+line sits outside the diff, but publish only once the reread is done.
+Where a sentence makes sense only to someone who already knows the code,
+rewrite it.
 
 ## Build the page
 
