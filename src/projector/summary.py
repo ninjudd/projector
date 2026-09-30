@@ -855,18 +855,19 @@ def spec_pr(spec: dict) -> dict:
     return pr
 
 
-def push_decision(repo: str) -> tuple[str, str]:
-    """The URL of the site `publish` pushes a spec to `repo` for, or '' and why the spec stays local.
+def push_decision(repo: str) -> tuple[str | None, str]:
+    """The URL of the site `publish` pushes a spec to `repo` for, or None and why the spec stays local.
 
     Only a repository that hosts its Projector site reads the pushed ref, so
     one without a site gets its spec in this checkout alone, for `site serve`
-    to preview, and nothing is written to the shared repository.
+    to preview, and nothing is written to the shared repository. The answer
+    is `hosting`'s own, so a hosted site whose Pages answer has no URL still
+    counts as hosted, as `site status` counts it.
     """
     try:
-        url, reason = hosting(repo)
+        return hosting(repo)
     except SpecError as error:
-        return "", f"could not tell whether {repo} hosts its Projector site: {error}"
-    return url or "", reason
+        return None, f"could not tell whether {repo} hosts its Projector site: {error}"
 
 
 def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
@@ -932,7 +933,7 @@ def review_page(site: str, number: int) -> str:
 SUMMARY_MARKER = "projector-summary"
 
 
-def comment_summary(repo: str, number: int, head: str, site: str = "") -> str:
+def comment_summary(repo: str, number: int, head: str, site: str | None = None) -> str:
     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
 
     The pull request keeps one such comment per account, naming the head it
@@ -941,7 +942,7 @@ def comment_summary(repo: str, number: int, head: str, site: str = "") -> str:
     repository whose site is not hosted gets no comment. `site` is the site's
     URL when the caller already looked it up. Returns what it did.
     """
-    if not site:
+    if site is None:
         url, reason = hosting(repo)
         if url is None:
             return f"not linking the summary from a comment: {reason}"

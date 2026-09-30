@@ -842,6 +842,12 @@ class CommentSummaryTests(unittest.TestCase):
                          "the comment reuses the site the push decision found")
         self.assertIn("done", out)
 
+    def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(self) -> None:
+        published, commented, _ = self.cli_publish(("", ""))
+
+        self.assertTrue(published[0]["push"], "hosted, as `site status` calls it")
+        self.assertEqual([("owner/repo", 7, HEAD, {"site": ""})], commented)
+
     def test_summary_publish_keeps_the_spec_local_when_the_hosting_check_fails(self) -> None:
         published, commented, _ = self.cli_publish(summary.SpecError("gh api failed: HTTP 502"))
 
