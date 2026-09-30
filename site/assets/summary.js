@@ -171,7 +171,7 @@
                     return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
                 }).join('') + '</div>';
             }
-            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that.</span></div>';
+            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
             return out;
         }
         function headsList() {
@@ -486,8 +486,10 @@
         // so a definition's callers stand out. Clicking it again, clicking code that
         // is not an identifier, or pressing Escape clears the marks. A drag selects
         // text as usual and marks nothing.
-        const IDENTIFIER = /[\p{L}\p{N}_$]+/gu;
-        const IDENTIFIER_CHAR = /[\p{L}\p{N}_$]/u;
+        // Combining marks belong to the name they follow, as a vowel sign does in
+        // Devanagari, and connector punctuation includes the underscore.
+        const IDENTIFIER = /[\p{L}\p{M}\p{N}\p{Pc}$]+/gu;
+        const IDENTIFIER_CHAR = /[\p{L}\p{M}\p{N}\p{Pc}$]/u;
         let token = '';
         function tokenAt(node, offset) {
             if (!(node instanceof Text))
