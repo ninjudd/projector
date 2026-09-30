@@ -513,6 +513,32 @@ when the released installer cannot be downloaded.
 
 `upgrade` has no `--json` mode because the installer owns the output.
 
+### Know when a release is out
+
+A command installed from a release warns on stderr when a newer release is
+out. Every Projector skill runs `project`, so an agent using a skill sees the
+warning too:
+
+```text
+warning: project 0.6.4 is behind the 0.6.6 release; run 'project upgrade' to update the CLI and the Projector plugins
+```
+
+The warning also follows a usage error, because a usage error is what a newer
+skill meets when it calls a subcommand or flag an older command lacks. It
+never changes stdout or the exit status, and `--help`, `--version`, and
+`upgrade` itself do not print it.
+
+The command reads the release's version from the plugin manifest at
+`PROJECTOR_REF` (default `v0`) in the repository it was installed from, which
+is the release `upgrade` installs. It checks at most once a day, waits at
+most two seconds for an answer, and caches the answer in
+`$XDG_CACHE_HOME/projector/release.json` (`~/.cache/projector/release.json`
+by default). A check that fails also waits a day before the next one.
+`PROJECTOR_OFFLINE=1` skips the check and warns only from the cache. To stay
+on a pinned release without the warning, set `PROJECTOR_REF` to its tag, such
+as `v0.6.2`. A command installed from a checkout does not check, because
+`install.sh status` compares it with the checkout instead.
+
 ## Build the Projector site
 
 A repository that sets up the Projector site serves it from GitHub Pages,

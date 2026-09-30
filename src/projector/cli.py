@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import datetime
 import hashlib
+import http.client
 import importlib.metadata as metadata
 import io
 import json
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -160,6 +162,103 @@ def run_upgrade(targets: list[str]) -> int:
         fetch_installer(url, script)
         print(f"+ curl -fsSL {url} | bash -s -- {shlex.join(targets)}".rstrip(), file=sys.stderr)
         return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
+
+
+RELEASE_CHECK_SECONDS = 24 * 60 * 60
+RELEASE_CHECK_TIMEOUT = 2
+
+
+def release_manifest_url(record: dict) -> str:
+    """The plugin manifest of the release `upgrade` would install, which carries the CLI's version too."""
+
+    repository = github_repository(record.get("url", "")) or UPSTREAM
+    ref = os.environ.get("PROJECTOR_REF", "v0")
+    return f"https://raw.githubusercontent.com/{repository}/{ref}/.claude-plugin/plugin.json"
+
+
+def release_cache_file() -> Path:
+    cache = os.environ.get("XDG_CACHE_HOME")
+    return (Path(cache) if cache else Path.home() / ".cache") / "projector" / "release.json"
+
+
+def fetch_release_version(url: str) -> Optional[str]:
+    try:
+        with urlopen(url, timeout=RELEASE_CHECK_TIMEOUT) as response:
+            manifest = json.loads(response.read())
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
+    """When `url` was last checked and the version it gave, or (0, None) when it never was."""
+
+    try:
+        cached = json.loads(path.read_text())
+        if cached["url"] == url:
+            version = cached["version"]
+            return float(cached["checked"]), version if isinstance(version, str) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return 0.0, None
+
+
+def latest_release(url: str) -> Optional[str]:
+    """The version of the release at `url`, fetched at most once a day.
+
+    The fetch runs inline, so its timeout bounds how long one command a day
+    waits on the network. A failed fetch is recorded like a successful one,
+    so an offline machine pays that wait once a day rather than on every
+    command. `PROJECTOR_OFFLINE` skips the fetch and answers from the cache.
+    """
+
+    path = release_cache_file()
+    checked, version = cached_release(path, url)
+    if os.environ.get("PROJECTOR_OFFLINE") or 0 <= time.time() - checked < RELEASE_CHECK_SECONDS:
+        return version
+    version = fetch_release_version(url) or version
+    # Parallel commands, such as a review loop's subagents, write this at
+    # once, so each writes its own file and renames it into place.
+    with contextlib.suppress(OSError):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        scratch = path.with_name(f"{path.name}.{os.getpid()}")
+        scratch.write_text(json.dumps({"url": url, "checked": time.time(), "version": version}))
+        scratch.replace(path)
+    return version
+
+
+def newer_release(release: str, installed: str) -> bool:
+    """Whether `release` is later than `installed`; never when either is not plain dotted numbers, like `unknown`."""
+
+    orders = [tuple(map(int, version.split("."))) for version in (release, installed)
+              if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", version)]
+    return len(orders) == 2 and orders[0] > orders[1]
+
+
+def warn_of_stale_release() -> None:
+    """Say on stderr when this command is older than the release `upgrade` would install.
+
+    Every Projector skill runs this command, so the line reaches the agent
+    using an old install without any skill text of its own. A checkout
+    install is left to `install.sh status`, which compares it with the
+    checkout rather than a release.
+    """
+
+    try:
+        record = install_record()
+    except (EnvironmentError, ValueError):
+        return
+    if "dir_info" in record:
+        return
+    installed = distribution_version()
+    release = latest_release(release_manifest_url(record))
+    if release is not None and newer_release(release, installed):
+        print(
+            f"warning: project {installed} is behind the {release} release;"
+            " run 'project upgrade' to update the CLI and the Projector plugins",
+            file=sys.stderr,
+        )
 
 
 class PackageDir(argparse.Action):
@@ -1263,9 +1362,23 @@ def run(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def parse(argv: list[str] | None) -> argparse.Namespace:
+    try:
+        return parser().parse_args(argv)
+    except SystemExit as stop:
+        # A usage error from an old command is often a newer skill calling a
+        # subcommand or flag it lacks, so the warning follows argparse's.
+        if stop.code:
+            warn_of_stale_release()
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
-        return run(parser().parse_args(argv))
+        arguments = parse(argv)
+        if arguments.command != "upgrade":
+            warn_of_stale_release()
+        return run(arguments)
     except ProjectorError as error:
         print(f"project: {error}", file=sys.stderr)
         return error.exit_code
