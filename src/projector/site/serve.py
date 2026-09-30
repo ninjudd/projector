@@ -3,8 +3,9 @@
 `project site serve` builds the same static site a deploy does into a
 temporary directory and serves it over HTTP. It reads summaries from the
 checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
-site, no workflow, and no network once the ref is fetched. While it runs it
-watches the files the site is built from and rebuilds when they change.
+site and no workflow. While it runs it watches the files the site is built
+from and the summaries ref, fetching the ref again every minute, and
+rebuilds when either changes, as each publish redeploys a Pages site.
 """
 
 from __future__ import annotations
@@ -26,10 +27,17 @@ from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, PAGES_REF, PAGES_ROOT
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 WILDCARD = {"", "0.0.0.0", "::"}
+# How often a running server fetches the summaries ref, in seconds.
+FETCH_INTERVAL = 60.0
 
 
-def run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+def run_git(root: Path, *args: str, detached: bool = False) -> subprocess.CompletedProcess:
+    """Run git in `root`. `detached` runs it in a session of its own with no input and git's prompts off,
+    so neither git nor an ssh it starts can ask for credentials on the server's terminal."""
+    if not detached:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, stdin=subprocess.DEVNULL,
+                          start_new_session=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
 
 
 def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
@@ -37,24 +45,32 @@ def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
     return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
 
 
-def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF) -> str:
+def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool = True) -> str:
     """Update the local copy of the remote's summaries ref, and say why when it cannot.
 
     A repository that has not published since walkthroughs were renamed
     summaries has only the old walkthroughs ref, so that ref is fetched in the
     new one's place, and `summaries_ref` reads it until the new ref exists.
+    A server fetches every minute, so the fetch writes only the tracking ref
+    and never FETCH_HEAD, which the user's own fetch may have just written.
+    Without `prompt`, the fetch runs detached from the terminal, so a remote
+    that wants a password or an ssh key's passphrase fails the fetch rather
+    than asking for it from a thread no one is watching.
     """
+    fetch = ("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote)
     local = tracking_ref(remote, ref)
-    fetched = run_git(root, "fetch", "--quiet", "--no-tags", remote, f"+{ref}:{local}")
+    fetched = run_git(root, *fetch, f"+{ref}:{local}", detached=not prompt)
     if fetched.returncode == 0:
         return ""
     if ref == PAGES_REF:
-        legacy = run_git(root, "fetch", "--quiet", "--no-tags", remote,
-                         f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}")
+        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}",
+                         detached=not prompt)
         if legacy.returncode == 0:
             return ""
+    # Git's first line names what failed; for an unreachable remote the last
+    # is only "and the repository exists."
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
-    return reason[-1] if reason else f"git fetch exited {fetched.returncode}"
+    return reason[0] if reason else f"git fetch exited {fetched.returncode}"
 
 
 def summaries_ref(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> tuple[str, str] | None:
@@ -110,6 +126,51 @@ def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT
             if path.is_file():
                 os.utime(path, (when, when))
     return dest / folder
+
+
+class Summaries:
+    """The summaries published to a checkout's remote, looked up afresh on every look.
+
+    A server outlives the ref it started with: `summary publish` may create
+    the ref after the server starts, and each fetch moves it, so every look
+    finds the ref again rather than keeping the one found at startup.
+    """
+
+    def __init__(self, root: Path, remote: str) -> None:
+        self.root, self.remote = root, remote
+
+    def fetch(self, prompt: bool = True) -> str:
+        """Update the local copy of the remote's summaries, and say why when it cannot."""
+        return fetch_summaries(self.root, self.remote, prompt=prompt)
+
+    def fetch_quietly(self) -> str:
+        """Fetch as a background thread must, failing rather than prompting for credentials."""
+        return self.fetch(prompt=False)
+
+    def version(self) -> tuple:
+        """The ref the summaries are read from and its commit, which move when a summary is published."""
+        found = summaries_ref(self.root, self.remote)
+        return found, ref_commit(self.root, found[0] if found else None)
+
+    def extract(self, dest: Path) -> Path | None:
+        """Write the published specs under `dest`, or return None when nothing is published."""
+        found = summaries_ref(self.root, self.remote)
+        return extract_summaries(self.root, found[0], dest, found[1]) if found else None
+
+
+def keep_fetching(fetch: Callable[[], str], stop: threading.Event, interval: float,
+                  report: Callable[[str], None], last: str = "") -> None:
+    """Fetch the summaries every `interval` seconds until `stop`, reporting a failure once.
+
+    A failure is reported again only when its reason changes, so a remote with
+    nothing published yet does not repeat itself every minute. `last` is the
+    failure already reported, if any.
+    """
+    while not stop.wait(interval):
+        reason = fetch()
+        if reason and reason != last:
+            report(f"could not fetch summaries: {reason}")
+        last = reason
 
 
 def fingerprint(paths: list[Path]) -> tuple:
