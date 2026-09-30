@@ -6,8 +6,11 @@ guide.
 
 The guide follows the Google developer documentation style, which
 Projector's own documentation also uses. A skill says what its own output
-adds to the guide. To cite a section, give its name and number, as
-`writing.md § 2`.
+adds to the guide. Where a skill requires a format, such as the headline a
+review finding opens with, that format wins. A repository's own
+documentation rules outrank this guide where the two disagree, so a plan
+written into a repository with its own style follows that style. Cite a
+section by this file and its section number, as `writing.md § 2`.
 
 This guide adapts many ideas from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), a plugin by

@@ -106,6 +106,8 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 .prose ul, .prose ol { margin: 0 0 12px; padding-left: 22px; max-width: 72ch; } .prose li { margin: 0 0 6px; } .prose li:last-child { margin-bottom: 0; }
 .prose h4 { margin: 18px 0 8px; font-size: 14px; } .prose h4:first-child { margin-top: 0; }
 .prose .tblwrap { margin: 0 0 12px; } .prose > :last-child { margin-bottom: 0; }
+.prose h3 { margin: 20px 0 8px; font-size: 15px; font-weight: 600; } .prose h3:first-child { margin-top: 0; }
+.prose pre { margin: 0 0 12px; background: var(--code-bg); padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; white-space: pre; }
 .statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; }
 .stat-tile .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .stat-tile .l { color: var(--muted); font-size: 12.5px; }
