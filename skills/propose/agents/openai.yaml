@@ -1,4 +1,0 @@
-interface:
-  display_name: "Propose"
-  short_description: "Propose a project as an executable Git-native plan"
-  default_prompt: "Use $propose to plan this project in docs/projects."

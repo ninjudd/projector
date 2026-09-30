@@ -240,7 +240,7 @@ supply a separate reviewer instead of silently weakening a verdict.
 
 Projector adds three project workflow skills:
 
-- `propose` inspects the repository, creates or refines a project plan, records
+- `design` inspects the repository, creates or refines a project plan, records
   decisions and open questions, and assigns `later`, `next`, or `now` from
   the user's intent. It does not claim readiness merely because a plan
   exists.

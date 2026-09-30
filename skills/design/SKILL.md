@@ -1,12 +1,13 @@
 ---
-name: propose
-description: Propose a project as a Git-native plan under docs/projects, or refine an existing plan. Use when the user wants to scope, design, prioritize, or record a project before or alongside implementation.
+name: design
+description: Write a project's technical design doc as a Git-native plan under docs/projects, or refine an existing one. Use when the user wants to scope, design, prioritize, or record a project before or alongside implementation.
 ---
 
-# Propose a project
+# Design a project
 
-Turn the requested outcome into a durable Projector plan that another person or
-agent can execute without reconstructing the conversation.
+Turn the requested outcome into a durable Projector plan, a technical design
+doc that another person or agent can execute without reconstructing the
+conversation.
 
 ## Establish context
 
