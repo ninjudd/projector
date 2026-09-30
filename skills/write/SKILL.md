@@ -17,8 +17,10 @@ says only how to start and how to finish. The guide holds the rules.
 2. Decide who reads the text and what they already know (§ 2). Decide which
    kind of document it is (§ 3).
 3. For a revision, read the text and the code or facts that it describes.
-   Keep every fact. Add no claim that the source does not support, and mark
-   an inference as one (§ 9).
+   Keep every fact that the reader needs. Cut only what the guide tells you
+   to cut: history (§ 11) and detail that nobody would act on (§ 2). Add no
+   claim that the source does not support, and mark an inference as one
+   (§ 9).
 
 ## Write, then reread
 
@@ -41,4 +43,5 @@ Edit a file in place, and match the line wrapping around the edit. Do not
 hard-wrap text bound for GitHub, such as a pull request body or a comment,
 because GitHub renders line breaks. For text the user pasted, give the
 revised text. Then say in a few lines what changed and why, and cite the
-guide's sections. Do not commit, push, or post the text unless the user asks.
+guide's sections. Name each fact that you cut, so that the user can put back
+one they need. Do not commit, push, or post the text unless the user asks.
