@@ -13,9 +13,10 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `design`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-fix-loop`, and `summarize-pr`, which
-summarizes a pull request's changes as a guided review page. Claude invokes a
-plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
+`start-review-loop`, `start-fix-loop`, `summarize-pr`, and `write`.
+`summarize-pr` summarizes a pull request's changes as a guided review page.
+Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+`$<skill>`.
 `design` writes a project's technical design doc under `docs/projects/`.
 `implement` builds from that plan, or from a description of a change small
 enough to need no design, such as `/projector:implement fix the typo in the
@@ -38,8 +39,9 @@ review; `review.summarize` and `review.summarize_min_lines` in
 `skills/guidelines.md`, so the rules one writes to are the rules the others
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, writes it to the writing
-guide in `skills/writing.md`. The core workflows use the local CLI and do not
-require MCP.
+guide in `skills/writing.md`. `write` applies the same guide to any other
+prose you ask for, such as `/projector:write tighten the install section of
+the README`. The core workflows use the local CLI and do not require MCP.
 
 ## Install with one command
 
