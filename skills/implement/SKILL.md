@@ -13,9 +13,10 @@ runtime behavior as authoritative evidence.
 
 When the user describes the work rather than naming a project:
 
-1. Read the repository instructions and run `project list --json`. When a
-   project already covers the work, start from its plan instead, as the next
-   section describes.
+1. Read the repository instructions. When the repository has a
+   `docs/projects/` directory, run `project list --json`, and when a project
+   already covers the work, start from its plan instead, as the next section
+   describes. A repository without that directory has no projects.
 2. Decide whether the work needs design first. It does when it spans several
    parts of the system, changes an interface that other code depends on, or
    leaves a product choice open. Then tell the user, and suggest `design`
@@ -96,7 +97,10 @@ git diff --check
 
 Resolve any warning `project check` prints; `project init` refreshes a stale
 Projector section in `AGENTS.md` without touching the repository's own text.
-Work built from a description has no project, so skip `project show`.
+Work built from a description has no project, so skip `project show`. In a
+repository without `docs/projects/`, skip `project check` as well. Its
+errors there say only that the repository does not use Projector, and
+running `project init` to clear them is not part of the change.
 
 Compare the result against the plan's acceptance criteria, or against the
 description for work without a plan. If required work on a project
