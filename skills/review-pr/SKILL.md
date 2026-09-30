@@ -414,7 +414,7 @@ reads it back as a new finding or as the author answering:
   already says what to do.
 
 Settle only threads that carry the finding marker. Another reviewer's thread,
-a person's or another tool's, is theirs to resolve, never yours. The fix loop
+a person's or another tool's, is theirs to resolve, never yours. `fix-pr`
 answers in a thread with `<!-- projector-reply v=1 -->`; that reply is the
 author speaking, and it is what you weigh when a finding is declined.
 

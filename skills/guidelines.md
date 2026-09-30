@@ -2,7 +2,7 @@
 
 These rules apply to code any Projector skill writes or judges. `implement`
 writes to them, the review method's written-rules pass reads a head against
-them, and the fix loop fixes to them and verifies findings that cite them. One
+them, and `fix-pr` fixes to them and verifies findings that cite them. One
 file carries them so the three skills cannot drift apart: a rule the
 implementer skipped is the rule the reviewer flags, and the fix answers the
 same text the finding cited.

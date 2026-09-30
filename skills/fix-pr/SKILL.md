@@ -98,8 +98,10 @@ head the merge produces, and that head is the one the next review reads.
 1. Fetch, and merge `origin/<baseRefName>` into the branch. Merge rather than
    rebase unless the repository's instructions say otherwise: a merge needs
    no force-push, so review threads stay anchored to their commits. A stacked
-   pull request's base is its parent's branch until the parent merges, and
-   then GitHub retargets it to the default branch.
+   pull request's base is its parent's branch until the parent merges. GitHub
+   then retargets it to the default branch, but only when the merge deletes
+   the parent's branch. Where the repository keeps merged branches, retarget
+   the child yourself with `gh pr edit <number> --base <default-branch>`.
 2. Resolve each conflicted file by reading both sides and the commits that
    made them, with `git log --merge -p <file>`. Keep what each side meant to
    do. When one side already contains the other's change, take that side.
@@ -197,7 +199,10 @@ it, then rerun each affected layer's full gate. Do not patch parent code inside
 a child merely to avoid rebasing.
 
 After a parent merges, verify the child points at the intended base and remains
-mergeable. Use the stack workflow's sync operation when available. Never merge
+mergeable. Use the stack workflow's sync operation when available. When the
+parent was squash-merged, merge the new base into the child even though
+`mergeable` reads `MERGEABLE`: until then the child's diff still carries the
+parent's original commits, and no conflict event will say so. Never merge
 any layer; merging remains the user's checkpoint.
 
 ## Report the result
@@ -240,6 +245,8 @@ request for review that has not been answered yet.
 - Never discard or overwrite uncommitted work to switch branches.
 - Never force-push to resolve a conflict unless the repository's instructions
   call for a rebase, and then use `--force-with-lease`.
+- Never close the pull request and open a replacement to escape a conflict.
+  That discards its review threads; fix the branch in place.
 - Never claim a review or clean state without checking live evidence.
 - Never invoke an external reviewer unless the user names it, and never
   re-request one after fixing its finding.
