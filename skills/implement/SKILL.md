@@ -19,14 +19,15 @@ When the user describes the work rather than naming a project:
    describes. A repository without that directory has no projects.
 2. Decide whether the work needs design first. It does when it spans several
    parts of the system, changes an interface that other code depends on, or
-   leaves a product choice open. Then tell the user, and suggest `design`
-   before you build.
+   leaves a product choice open. Then stop, tell the user why, and suggest
+   `design`. Build it without a design only when the user asks you to.
 3. Otherwise, restate the change in a sentence or two, and build it. Ask the
    user only about a choice that the repository cannot answer.
 
-Work built from a description has no plan to update and no status to set,
-so skip those steps below. Everything else applies: the self-review, the
-validation gate, and handing the work over.
+Work built from a description has no plan and no project, so skip the steps
+below that need one: the status and priority changes, the plan updates, and
+`finish`. Everything else applies: the self-review, the validation gate, and
+handing the work over.
 
 ## Start from the project
 
@@ -76,7 +77,8 @@ constraint or reason the code cannot carry on its own.
 
 When the work has a plan, update it in the same change whenever
 implementation settles a decision, changes scope, reveals a new constraint,
-or completes an acceptance criterion. Append numbered sections rather than
+or completes an acceptance criterion. Write the update to `../writing.md`,
+as `design` writes the plan. Append numbered sections rather than
 renumbering cited sections. Create a nested project only when it has an
 independently useful lifecycle. Put details that belong to the parent in a
 supplemental document.
@@ -106,8 +108,8 @@ Compare the result against the plan's acceptance criteria, or against the
 description for work without a plan. If required work on a project
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
-requires. If every criterion is proven, continue with `finish` in the same
-implementation change.
+requires. If every criterion in the plan is proven, continue with `finish`
+in the same implementation change.
 
 ## Hand the work over
 
