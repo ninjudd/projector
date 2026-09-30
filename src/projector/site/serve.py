@@ -50,7 +50,7 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
 
     A repository that has not published since walkthroughs were renamed
     summaries has only the old walkthroughs ref, so that ref is fetched in the
-    new one's place, and `summaries_ref` reads it until the new ref exists.
+    new one's place, and `summaries_refs` reads it until the new ref exists.
     A server fetches every minute, so the fetch writes only the tracking ref
     and never FETCH_HEAD, which the user's own fetch may have just written.
     Without `prompt`, the fetch runs detached from the terminal, so a remote
@@ -73,22 +73,24 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
     return reason[0] if reason else f"git fetch exited {fetched.returncode}"
 
 
-def summaries_ref(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> tuple[str, str] | None:
-    """The local ref holding published summaries and the folder in it that holds the specs.
+def summaries_refs(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> list[tuple[str, str]]:
+    """The local refs holding summaries, each with the folder in it that holds the specs.
 
-    The remote's copy is preferred to a local ref of the same name. The old
-    walkthroughs ref, with its specs under walkthroughs/, is read only when no
-    copy of the summaries ref exists, as in a repository that has not
-    published since the rename.
+    The remote's copy comes first and this checkout's own ref after it, which
+    `summary publish` writes when it keeps a spec local, so the site shows
+    both and a spec in both is read from the local one. The old walkthroughs
+    ref, with its specs under walkthroughs/, is read only when no summaries
+    ref exists, as in a repository that has not published since the rename,
+    and then only one copy of it, the remote's when there is one.
     """
-    candidates = [(ref, folder)]
-    if ref == PAGES_REF:
-        candidates.append((LEGACY_PAGES_REF, LEGACY_PAGES_ROOT))
-    for name, inside in candidates:
-        for candidate in (tracking_ref(remote, name), name):
-            if run_git(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}").returncode == 0:
-                return candidate, inside
-    return None
+    def exists(name: str) -> bool:
+        return run_git(root, "rev-parse", "--verify", "--quiet", f"{name}^{{commit}}").returncode == 0
+
+    found = [(name, folder) for name in (tracking_ref(remote, ref), ref) if exists(name)]
+    if found or ref != PAGES_REF:
+        return found
+    return [(name, LEGACY_PAGES_ROOT) for name in (tracking_ref(remote, LEGACY_PAGES_REF), LEGACY_PAGES_REF)
+            if exists(name)][:1]
 
 
 def ref_commit(root: Path, ref: str | None) -> str:
@@ -148,14 +150,19 @@ class Summaries:
         return self.fetch(prompt=False)
 
     def version(self) -> tuple:
-        """The ref the summaries are read from and its commit, which move when a summary is published."""
-        found = summaries_ref(self.root, self.remote)
-        return found, ref_commit(self.root, found[0] if found else None)
+        """The refs the summaries are read from and their commits, which move when a summary is published."""
+        return tuple((name, ref_commit(self.root, name)) for name, _ in summaries_refs(self.root, self.remote))
 
     def extract(self, dest: Path) -> Path | None:
-        """Write the published specs under `dest`, or return None when nothing is published."""
-        found = summaries_ref(self.root, self.remote)
-        return extract_summaries(self.root, found[0], dest, found[1]) if found else None
+        """Write the published specs under `dest`, or return None when nothing is published.
+
+        Each ref is written over the one before, so this checkout's own ref
+        wins where it holds the same spec as the remote's copy.
+        """
+        out = None
+        for name, folder in summaries_refs(self.root, self.remote):
+            out = extract_summaries(self.root, name, dest, folder) or out
+        return out
 
 
 def keep_fetching(fetch: Callable[[], str], stop: threading.Event, interval: float,
