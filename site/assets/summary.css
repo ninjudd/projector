@@ -136,9 +136,9 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .group.done .gnum { background: var(--ok); }
 .gname { min-width: 0; }
 .gstats { font-size: 13px; color: var(--muted); white-space: nowrap; }
-.reviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
-.reviewed input { accent-color: var(--ok); width: 16px; height: 16px; margin: 0; }
-.group.done .reviewed { background: var(--ok-bg); border-color: var(--ok); }
+.greviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
+.greviewed input { accent-color: var(--ok); width: 16px; height: 16px; margin: 0; }
+.group.done .greviewed { background: var(--ok-bg); border-color: var(--ok); }
 @media (max-width: 640px) { .gstats { display: none; } }
 .group.folded .gbody { display: none; }
 .kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
