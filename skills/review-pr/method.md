@@ -266,11 +266,12 @@ defend in the thread.
 
 ## 7. Write the review
 
-Write the body and every thread to `../writing.md`. The review's readers
-include people who did not write the change and a reviewer who may not know
-the code. So a finding explains the behavior it rests on (`writing.md` § 2),
-the body uses a list wherever its content is one, such as what was checked
-(§ 4), and every sentence is written to the reader (§ 5).
+Follow the writing guide in `../writing.md` when you write the body and
+every thread. The review's readers include people who did not write the
+change and a reviewer who may not know the code. So a finding explains the
+behavior it rests on (`writing.md` § 2), the body uses a list wherever its
+content is one, such as what was checked (§ 4), and every sentence is
+written to the reader (§ 5).
 
 After the signature line and marker `SKILL.md` requires, the review body
 reads in this order:

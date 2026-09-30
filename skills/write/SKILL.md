@@ -5,9 +5,9 @@ description: Write or revise prose for people to read, to Projector's writing gu
 
 # Write
 
-Write prose to `../writing.md`, the writing guide that every Projector skill
-writes to. Read the whole guide before you start. This skill says only how to
-start and how to finish. The guide holds the rules.
+Write prose that follows the writing guide in `../writing.md`, which every
+Projector skill follows. Read the whole guide before you start. This skill
+says only how to start and how to finish. The guide holds the rules.
 
 ## Start from the reader
 

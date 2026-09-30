@@ -1,16 +1,16 @@
 # Writing guide
 
 Projector's skills write prose for people to read: plans, reviews, pull
-request summaries, and commit messages. Each of those skills writes to this
+request summaries, and commit messages. Each of those skills follows this
 guide. The `write` skill applies it to any other prose you ask for.
 
 The guide follows the Google developer documentation style, which
-Projector's own documentation also uses. A skill says what its own output
-adds to the guide. Where a skill requires a format, such as the headline a
-review finding opens with, that format wins. A repository's own
-documentation rules outrank this guide where the two disagree, so a plan
-written into a repository with its own style follows that style. Cite a
-section by this file and its section number, as `writing.md § 2`.
+Projector's own documentation also uses. A skill states any rules its own
+output needs beyond the guide. Where a skill requires a format, such as
+the headline a review finding opens with, that format wins. A repository's
+own documentation rules outrank this guide where the two disagree, so a
+plan written into a repository with its own style follows that style. Cite
+a section by this file and its section number, as `writing.md § 2`.
 
 This guide adapts many ideas from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), a plugin by
