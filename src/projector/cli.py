@@ -182,13 +182,29 @@ def release_cache_file() -> Path:
 
 
 def fetch_release_version(url: str) -> Optional[str]:
-    try:
-        with urlopen(url, timeout=RELEASE_CHECK_TIMEOUT) as response:
-            manifest = json.loads(response.read())
-    except (OSError, ValueError, http.client.HTTPException):
-        return None
-    version = manifest.get("version") if isinstance(manifest, dict) else None
-    return version if isinstance(version, str) else None
+    """The manifest's version, or None when it does not arrive within RELEASE_CHECK_TIMEOUT.
+
+    `urlopen`'s timeout bounds each socket operation rather than the fetch,
+    and name resolution has none, so the fetch runs in a daemon thread that
+    the command stops waiting for.
+    """
+
+    versions: list[str] = []
+
+    def fetch() -> None:
+        try:
+            with urlopen(url, timeout=RELEASE_CHECK_TIMEOUT) as response:
+                manifest = json.loads(response.read())
+        except (OSError, ValueError, http.client.HTTPException):
+            return
+        version = manifest.get("version") if isinstance(manifest, dict) else None
+        if isinstance(version, str):
+            versions.append(version)
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(RELEASE_CHECK_TIMEOUT)
+    return versions[0] if versions else None
 
 
 def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
@@ -207,8 +223,8 @@ def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
 def latest_release(url: str) -> Optional[str]:
     """The version of the release at `url`, fetched at most once a day.
 
-    The fetch runs inline, so its timeout bounds how long one command a day
-    waits on the network. A failed fetch is recorded like a successful one,
+    One command a day waits up to RELEASE_CHECK_TIMEOUT for the fetch. A
+    failed fetch is recorded like a successful one,
     so an offline machine pays that wait once a day rather than on every
     command. `PROJECTOR_OFFLINE` skips the fetch and answers from the cache.
     """

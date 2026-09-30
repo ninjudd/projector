@@ -6,6 +6,8 @@ import shlex
 import stat
 import subprocess
 import tempfile
+import threading
+import time
 import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -1742,6 +1744,28 @@ class StaleReleaseWarningTests(unittest.TestCase):
         _, _, stderr = self.invoke()
 
         self.assertIn("behind the 0.6.6 release", stderr)
+
+    def test_a_stalled_fetch_gives_up_after_the_timeout(self) -> None:
+        # urlopen's timeout bounds each socket operation, not the fetch, and
+        # name resolution has none, so only the command's own wait is bounded.
+        self.installed("0.6.4")
+        released = threading.Event()
+        self.addCleanup(released.set)
+
+        def stall(*_: object, **__: object) -> None:
+            released.wait(30)
+            raise OSError("released at cleanup")
+
+        self.patch(mock.patch.object(cli, "RELEASE_CHECK_TIMEOUT", 0.2))
+        self.patch(mock.patch.object(cli, "urlopen", side_effect=stall))
+
+        started = time.monotonic()
+        code, _, stderr = self.invoke()
+        waited = time.monotonic() - started
+
+        self.assertEqual(0, code, stderr)
+        self.assertLess(waited, 2)
+        self.assertNotIn("warning", stderr)
 
     def test_an_unreadable_cache_is_fetched_afresh(self) -> None:
         self.installed("0.6.4")
