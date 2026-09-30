@@ -118,18 +118,22 @@ the recurrence it is instead of as new work.
 - Have each subagent work in its own worktree of its pull request's branch,
   so two subagents never share a checkout and none touches the main loop's.
 - Send every later event for that pull request, or for any layer of its
-  stack, to the same subagent as a message; never start a second one for it. Each message is another run of
-  `fix-pr` for the pull request's current head.
+  stack, to the same subagent as a message; never start a second one for it.
+  Each message is another run of `fix-pr` for the pull request's current
+  head.
 - The subagent reports each run back: the head SHA, the merge commit if it
   made one, the fix commits, the declined findings, and the validation
   results. A question for the user comes back to the main loop to ask, and
   the subagent goes on with the pull request's unrelated work meanwhile.
-- When the pull request merges or closes, tell its subagent to finish and
-  remove its worktree. Then close the subagent and delete the pull request's
-  line from the tracked file.
+- When a pull request merges or closes, delete its line from the tracked
+  file at once. Tell its subagent to finish, remove its worktrees, and close
+  only when no layer it owns is still open. A stack merges from the bottom,
+  so the subagent named for the bottom layer keeps that name and goes on
+  fixing the layers above it, starting with the base merge the retargeted
+  child needs.
 - When a subagent is lost, to a session restart for example, start a
-  replacement under the same name. It rebuilds its context from GitHub: the
-  pull request's review threads, the replies on them, and its review bodies.
+  replacement under the same name. It rebuilds its context from GitHub: each
+  open layer's review threads, the replies on them, and its review bodies.
 
 The main loop routes events and records outcomes; it does not inspect code,
 so its own context stays small however many pull requests it tracks. Where
