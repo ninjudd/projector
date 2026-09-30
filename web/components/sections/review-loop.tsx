@@ -15,7 +15,7 @@ const steps = [
   },
   {
     title: "The fix loop fixes it",
-    body: "Each finding is checked, fixed, committed, and pushed. The loop replies with the commit and resolves the thread.",
+    body: "Each finding is checked, fixed, committed, and pushed, and a branch that conflicts with its base gets the base merged in. The loop replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
   },
   {
     title: "The draft becomes ready",
@@ -44,10 +44,10 @@ export function ReviewLoop() {
       title="Automated reviews"
       lead={
         <>
-          <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask.
-          Two more skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run it
-          and fix what it finds in the background while you keep working. The plans and the CLI do
-          not depend on any of them.
+          <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask, and{" "}
+          <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts. Two more
+          skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run them in the
+          background while you keep working. The plans and the CLI do not depend on any of them.
         </>
       }
       size="tight"

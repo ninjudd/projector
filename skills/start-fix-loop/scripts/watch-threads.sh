@@ -11,7 +11,9 @@
 #             its head. Not itself a finding: the work, if any, is in that pull
 #             request's threads and review bodies, and a draft with none is
 #             waiting on a re-review rather than on a change
-#   REVIEW    a submitted review carrying a body — the shape every COMMENT
+#   CONFLICT  a pull request whose branch conflicts with its base, so no
+#             verdict can land it until the base is merged in
+#   REVIEW   a submitted review carrying a body — the shape every COMMENT
 #             review posts, Projector's own included, which never moves
 #             reviewDecision
 #   TRACKED   a problem with the tracked file: a line that is not
@@ -122,13 +124,13 @@ parse_tracked() {
 # the one reading that must never be wrong.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
-    state isDraft reviewDecision headRefOid
+    state isDraft reviewDecision headRefOid mergeable baseRefName
     reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{login} body commit{oid} } }
     reviewThreads(first:100){ nodes{
       id isResolved path line
       comments(last:1){nodes{author{login} body}} } } } } }'
 PR_JQ='.data.repository.pullRequest as $pr
-  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)",
+  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)\t\($pr.mergeable // "UNKNOWN")\t\($pr.baseRefName // "?")",
     (if $pr.reviewDecision == "CHANGES_REQUESTED"
      then $pr.reviews.nodes[]
           | "V\t\(.commit.oid // "?")\t\(.author.login // "?")\t\(.body // "" | gsub("[\r\n\t]+"; " ") | .[0:130])"
@@ -257,7 +259,7 @@ EOF
       continue
     fi
 
-    IFS=$'\t' read -r kind pstate pdraft pdecision psha <<EOF
+    IFS=$'\t' read -r kind pstate pdraft pdecision psha pmergeable pbase <<EOF
 $(printf '%s\n' "$pr" | head -n 1)
 EOF
     # Merged or closed: nothing here is outstanding, and its rows fall out.
@@ -278,6 +280,25 @@ EOF
         last=$now
       elif [ $((now - last)) -ge "$RENOTIFY" ]; then
         echo "DRAFT (still open) $slug#$n head=${psha:0:8} — still not signed off"
+        last=$now
+      fi
+      new_state="$new_state$vid $slug $n $last
+"
+    fi
+
+    # CONFLICT — the branch no longer merges into its base. GitHub computes
+    # mergeability lazily and answers UNKNOWN until it has, so only
+    # CONFLICTING counts, and a later pass sees the settled answer. Keyed on
+    # the head SHA, so a base that moves into conflict under an unchanged head
+    # announces at once, and the push that merges the base retires the row.
+    if [ "$pmergeable" = "CONFLICTING" ]; then
+      vid="conflict:$n:$psha"
+      last=$(awk -v t="$vid" '$1==t {print $4}' "$STATE" 2>/dev/null)
+      if [ -z "$last" ]; then
+        echo "CONFLICT $slug#$n head=${psha:0:8} base=$pbase — the branch conflicts with its base; merge the base and resolve it"
+        last=$now
+      elif [ $((now - last)) -ge "$RENOTIFY" ]; then
+        echo "CONFLICT (still open) $slug#$n head=${psha:0:8} base=$pbase — still conflicts with its base"
         last=$now
       fi
       new_state="$new_state$vid $slug $n $last

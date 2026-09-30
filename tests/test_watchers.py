@@ -136,6 +136,8 @@ class WatcherCase(unittest.TestCase):
         decision=None,
         head=SHA_A,
         ref="feature",
+        base="main",
+        mergeable="MERGEABLE",
         author="operator",
         verdict=None,
         threads=(),
@@ -149,6 +151,8 @@ class WatcherCase(unittest.TestCase):
             "reviewDecision": decision,
             "headRefOid": head,
             "headRefName": ref,
+            "baseRefName": base,
+            "mergeable": mergeable,
             "author": {"login": author},
             "reviews": {"nodes": [verdict] if verdict else []},
             "reviewThreads": {"nodes": list(threads)},
@@ -267,6 +271,57 @@ class WatchThreadsTests(WatcherCase):
             ],
             third.stdout.splitlines(),
         )
+
+    def test_reports_a_conflict_with_the_base_until_a_push_clears_it(self) -> None:
+        self.pull_request(1, base="parent", mergeable="CONFLICTING")
+        self.track("acme/app#1")
+
+        first = self.run_watcher(THREADS)
+        second = self.run_watcher(THREADS)
+        third = self.run_watcher(THREADS, "--renotify", "0")
+        self.pull_request(1, head=SHA_B, base="parent", mergeable="MERGEABLE")
+        merged = self.run_watcher(THREADS)
+
+        self.assert_ok(first)
+        self.assertEqual(
+            [
+                "CONFLICT acme/app#1 head=aaaaaaaa base=parent — "
+                "the branch conflicts with its base; merge the base and resolve it"
+            ],
+            first.stdout.splitlines(),
+        )
+        self.assert_ok(second)
+        self.assertEqual("", second.stdout)
+        self.assert_ok(third)
+        self.assertEqual(
+            ["CONFLICT (still open) acme/app#1 head=aaaaaaaa base=parent — still conflicts with its base"],
+            third.stdout.splitlines(),
+        )
+        self.assert_ok(merged)
+        self.assertEqual("", merged.stdout)
+        self.assertEqual([], self.state_rows())
+
+    def test_a_base_that_moves_into_conflict_announces_under_the_same_head(self) -> None:
+        self.pull_request(1)
+        self.track("acme/app#1")
+        self.assert_ok(self.run_watcher(THREADS))
+
+        self.pull_request(1, mergeable="CONFLICTING")
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(1, len(result.stdout.splitlines()), result.stdout)
+        self.assertTrue(result.stdout.startswith("CONFLICT acme/app#1 head=aaaaaaaa base=main"), result.stdout)
+
+    def test_an_unsettled_mergeability_is_not_a_conflict(self) -> None:
+        self.pull_request(1, mergeable="UNKNOWN")
+        self.track("acme/app#1")
+
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+        self.assertEqual([], self.state_rows())
 
     def test_a_merged_pull_request_falls_silent_and_out_of_the_state(self) -> None:
         self.pull_request(1, draft=True, threads=[thread("T1")])
