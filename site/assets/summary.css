@@ -92,6 +92,7 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
 .prblock a { display: inline; padding: 0; }
 .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.nav .ntitle { overflow-wrap: anywhere; }
 .nav .ncheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
 .nav .ncheck.done { background: var(--ok) var(--check-icon) center / 9px 9px no-repeat; border-color: var(--ok); }
 .nav .extra { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }

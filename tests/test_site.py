@@ -531,6 +531,12 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
         self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
 
+    def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
+        css = (SITE_JS.parent / "summary.css").read_text()
+        title = re.search(r"^\.nav \.ntitle \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(title, "summary.css has no .nav .ntitle rule")
+        self.assertIn("overflow-wrap: anywhere;", title.group(1))
+
 
 def served_spec(number: int, head: str) -> dict:
     """A spec for pull request `number` at `head` that builds against PLAN_DIFF."""
