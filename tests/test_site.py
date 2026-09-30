@@ -524,7 +524,9 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
         self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
         self.assertRegex(wide.group(1), r"overflow-y: auto")
-        self.assertRegex(wide.group(1), r"overscroll-behavior: contain")
+        # A scroll the list cannot take passes to the page, which is what pins
+        # the sidebar and brings a long list's last sections into the window.
+        self.assertNotIn("overscroll-behavior", wide.group(1))
         narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
         self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
