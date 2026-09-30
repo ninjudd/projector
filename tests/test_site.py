@@ -666,6 +666,15 @@ class ServeTests(SiteRepoCase):
         self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
         self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
 
+    def test_a_failed_fetch_says_what_failed(self) -> None:
+        run_git(self.repo, "init", "--quiet")
+        run_git(self.repo, "remote", "add", "origin", str(self.repo / "missing"))
+
+        reason = serve.fetch_summaries(self.repo, "origin")
+
+        self.assertIn("does not appear to be a git repository", reason)
+        self.assertNotIn("and the repository exists", reason)
+
     def assert_fetch_leaves_fetch_head_alone(self) -> None:
         # The user's own `git fetch` may have just written it, for a `git checkout FETCH_HEAD` to follow.
         fetch_head = self.repo / ".git" / "FETCH_HEAD"

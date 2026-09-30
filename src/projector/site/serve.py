@@ -67,8 +67,10 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
                          detached=not prompt)
         if legacy.returncode == 0:
             return ""
+    # Git's first line names what failed; for an unreachable remote the last
+    # is only "and the repository exists."
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
-    return reason[-1] if reason else f"git fetch exited {fetched.returncode}"
+    return reason[0] if reason else f"git fetch exited {fetched.returncode}"
 
 
 def summaries_ref(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> tuple[str, str] | None:
