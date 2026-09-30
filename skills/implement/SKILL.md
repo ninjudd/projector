@@ -1,12 +1,31 @@
 ---
 name: implement
-description: Implement a Projector project while keeping its plan and status current. Use when the user asks to start, continue, or complete work recorded under docs/projects.
+description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no design. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
 ---
 
 # Implement
 
-Use the project plan as the durable statement of intent while treating the
-repository and current runtime behavior as authoritative evidence.
+Build from a project's plan, or from the user's description of work small
+enough to need no design. Either way, treat the repository and current
+runtime behavior as authoritative evidence.
+
+## Start from a description
+
+When the user describes the work rather than naming a project:
+
+1. Read the repository instructions and run `project list --json`. When a
+   project already covers the work, start from its plan instead, as the next
+   section describes.
+2. Decide whether the work needs design first. It does when it spans several
+   parts of the system, changes an interface that other code depends on, or
+   leaves a product choice open. Then tell the user, and suggest `design`
+   before you build.
+3. Otherwise, restate the change in a sentence or two, and build it. Ask the
+   user only about a choice that the repository cannot answer.
+
+Work built from a description has no plan to update and no status to set,
+so skip those steps below. Everything else applies: the self-review, the
+validation gate, and handing the work over.
 
 ## Start from the project
 
@@ -54,11 +73,12 @@ Its first rule is about comments: write code that needs none, simplify a
 stretch before you explain it, and add a comment only to preserve a
 constraint or reason the code cannot carry on its own.
 
-Update the project plan in the same change whenever implementation settles a
-decision, changes scope, reveals a new constraint, or completes an acceptance
-criterion. Append numbered sections rather than renumbering cited sections.
-Create a nested project only when it has an independently useful lifecycle;
-use a supplemental document for details belonging to the parent.
+When the work has a plan, update it in the same change whenever
+implementation settles a decision, changes scope, reveals a new constraint,
+or completes an acceptance criterion. Append numbered sections rather than
+renumbering cited sections. Create a nested project only when it has an
+independently useful lifecycle. Put details that belong to the parent in a
+supplemental document.
 
 Do not infer a parent's status or priority from a child or vice versa. Do not
 move project directories, generate a tracked status index, or duplicate either
@@ -76,8 +96,10 @@ git diff --check
 
 Resolve any warning `project check` prints; `project init` refreshes a stale
 Projector section in `AGENTS.md` without touching the repository's own text.
+Work built from a description has no project, so skip `project show`.
 
-Compare the result against the plan's acceptance criteria. If required work
+Compare the result against the plan's acceptance criteria, or against the
+description for work without a plan. If required work on a project
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
 requires. If every criterion is proven, continue with `finish` in the same
