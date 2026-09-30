@@ -1,0 +1,170 @@
+{
+ "version": 1,
+ "name": "fix-pr and merge conflicts",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 163,
+  "title": "Split fix-pr out of start-fix-loop and watch for merge conflicts",
+  "head": "716359fd0a7f9988aaf8958628aec2231007eb7d",
+  "headRef": "fix-pr",
+  "base": "44080e7b25bda636f8b96816517f6d095e0ad6de",
+  "baseRef": "rename-pr-skills",
+  "basePr": 162
+ },
+ "overview": {
+  "summary": [
+   "The fix loop used to hold every step of a fix inside the loop, so nobody could ask for one pull request's findings to be fixed without starting a watcher, and a branch that stopped merging into its base produced no event at all. This pull request splits the one-shot work into a new <code>fix-pr</code> skill, the way <code>review-pr</code> sits under <code>start-review-loop</code>, and teaches both the skill and the watcher about merge conflicts.",
+   "<code>fix-pr</code> finds the outstanding work on one pull request (a conflict, unresolved threads, a standing <code>CHANGES_REQUESTED</code>, body-only findings), merges the base first when the branch conflicts, then verifies, fixes, replies to, pushes, and resolves each finding by the protocol that used to live in <code>start-fix-loop</code>. <code>start-fix-loop</code> keeps the tracked set and the watcher, and gains a rule that gives each pull request, or each stack, one long-lived fixing subagent that runs <code>fix-pr</code> on every event.",
+   "<code>watch-threads.sh</code> reads <code>mergeable</code> and <code>baseRefName</code> in the query it already makes per pull request and emits a <code>CONFLICT</code> line keyed on the head SHA when GitHub reports <code>CONFLICTING</code>. This pull request is stacked on #162, which renames <code>review-changes</code> and <code>summarize-changes</code> to <code>review-pr</code> and <code>summarize-pr</code>."
+  ],
+  "cards": [
+   {
+    "id": "policy",
+    "title": "How a conflict is resolved",
+    "html": "<ul class=\"tight\"><li>Merge <code>origin/&lt;baseRefName&gt;</code> into the branch by default, so no force-push detaches review threads.</li><li>Rebase only when the repository's instructions call for it, and then push with <code>--force-with-lease</code>.</li><li>Resolve each file from both sides' commits with <code>git log --merge -p</code>; regenerate compiled files with their build command; ask the user when only they can reconcile the two sides.</li><li>Run the full gate, push, and confirm <code>mergeable</code> reads <code>MERGEABLE</code>. Push only the pull request's branch, never its base.</li><li>After a parent squash-merges, merge the new base into the child even when <code>mergeable</code> reads <code>MERGEABLE</code>, and retarget it by hand where the repository keeps merged branches.</li><li>Never close the pull request and open a replacement to escape a conflict.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>365126f</code>: changes requested</b>, two P2 threads. An <code>UNKNOWN</code> reading dropped the conflict row, so a conflict re-announced as new after every base move. And the lifecycle rule closed a stack's subagent when its bottom layer merged, while the layers above were still open.</li><li><b><code>716359f</code>: clean.</b> Both threads were fixed (in <code>c132fcf</code> and <code>cf85e8d</code>) and the author resolved them. The review verified each at this head, and all five earlier suggestions were taken in <code>716359f</code>. The merge <code>0552c32</code> brings in #160 and #161 through #162 and resolves its one <code>README.md</code> conflict by keeping both sides.</li></ul><p class=\"note\">The full gate passed at <code>716359f</code>: 412 tests, the plan check, and both <code>claude plugin validate</code> runs. The remaining suggestions, all optional, are in the review body.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "fix-pr",
+   "title": "The fix-pr skill",
+   "kicker": "One pull request, fixed once: conflicts first, then every finding",
+   "intro": [
+    "This is the new contract. It carries the operator rules, the definition of outstanding work, the new conflict procedure, and the verify, commit, reply, push, and resolve protocol. The protocol sections are the old <code>start-fix-loop</code> text moved across with only wording changes, such as \"this skill's business\" for \"this loop's business\".",
+    "The new parts are the <b>Find the outstanding work</b> list, the <b>Merge the base when the branch conflicts</b> section, a fifth clean condition (the branch merges into its base), and two Never rules: no force-push to resolve a conflict unless the repository calls for a rebase, and no closing the pull request to escape one. The stacked-ownership section now also says to merge the new base into a child whose parent was squash-merged, and to retarget the child by hand where the repository keeps merged branches."
+   ],
+   "concepts": [
+    "A conflict is resolved before findings, because each fix is verified against the head the merge produces.",
+    "The merge commit is a conflict's only record; there is no thread to reply to.",
+    "Replies still open with <code>&lt;!-- projector-reply v=1 --&gt;</code>, which is what <code>watch-prs.sh</code> reads for <code>RESPONDED</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The merge-versus-rebase choice comes from the repository's instructions, and the default needs no force-push."
+    },
+    {
+     "kind": "verify",
+     "text": "The reply, push, resolve, and re-fetch order is unchanged from the base text, marker included."
+    },
+    {
+     "kind": "verify",
+     "text": "Every relative link resolves at this head: <code>../review-pr/method.md</code>, <code>../guidelines.md</code>, <code>../writing.md</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "collapsed": false,
+     "note": "Read the outstanding-work list and the merge section; the rest is moved text."
+    }
+   ]
+  },
+  {
+   "id": "loop",
+   "title": "The loop around it",
+   "kicker": "start-fix-loop keeps the watcher and hands each pull request to a subagent",
+   "intro": [
+    "<code>start-fix-loop</code> now defers to <code>fix-pr</code> for the operator, the definition of work, and the fix protocol. What stays is the tracked file, the watcher setup, the list of event kinds with <code>CONFLICT</code> added, and a new section that gives each pull request one fixing subagent for as long as it stays open.",
+    "A stack gets one subagent for all its layers, named for the bottom layer, because a lower-layer fix is carried up into every layer above it. When the bottom layer merges, that subagent stays and goes on with the layers above, starting with the base merge the retargeted child needs. The main loop routes events and records outcomes and never inspects code. Where the host has no subagents, the main loop runs <code>fix-pr</code> itself."
+   ],
+   "concepts": [
+    "A <code>DRAFT</code> line alone is not work; any work behind it arrives as its own event.",
+    "The subagent's carried context is what lets it read a reopened thread as a recurrence."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A merged or closed pull request leaves the tracked file at once, but a stack's subagent finishes only when no layer it owns is still open, and it keeps the bottom layer's name while it goes on fixing the layers above."
+    },
+    {
+     "kind": "verify",
+     "text": "Nothing the old Never list forbade is lost: the rules that moved out are in <code>fix-pr</code>'s Never list, which the no-subagent path also follows."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "collapsed": false,
+     "note": "Read the new subagent section; most deletions moved to fix-pr."
+    }
+   ]
+  },
+  {
+   "id": "watcher",
+   "title": "Conflict detection in the watcher",
+   "kicker": "CONFLICT from the existing per-pull-request query",
+   "intro": [
+    "The GraphQL query gains <code>mergeable</code> and <code>baseRefName</code>, and the pull request row carries them as two more tab-separated fields, each defaulted so an empty field cannot shift the ones after it. No new GitHub call is made.",
+    "A <code>CONFLICTING</code> reading writes a <code>conflict:&lt;n&gt;:&lt;head&gt;</code> state row and announces once, then repeats as <code>(still open)</code> at the renotify interval. <code>UNKNOWN</code>, which GitHub reports until it has recomputed mergeability, for example after the base moves, keeps an existing row for this head without announcing it, and never creates one. A push that makes the branch mergeable changes the head and retires the row, and a failed query carries the pull request's rows forward as before."
+   ],
+   "concepts": [
+    "State rows are rebuilt every pass from what is outstanding now, so a row survives only a pass that re-reads it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "An <code>UNKNOWN</code> pass carries only an existing <code>conflict:</code> row for this head, with its original timestamp, so it never creates a conflict on its own, and a conflict that outlasts GitHub's recomputation repeats only at <code>--renotify</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "The three new tests drive the real script through a fake <code>gh</code> on <code>PATH</code> with fixtures in a temporary directory, so they never reach GitHub."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-fix-loop/scripts/watch-threads.sh",
+     "note": "The new CONFLICT block and the widened query and read."
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Four new tests: announce and retire, a base moving into conflict, a conflict kept through UNKNOWN, and UNKNOWN alone staying silent."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Packaging and documentation",
+   "kicker": "Publish fix-pr and describe it everywhere the skills are listed",
+   "intro": [
+    "The packaging test adds <code>fix-pr</code> to the exact published skill set; both manifests already publish <code>./skills/</code>, so no manifest changes. <code>README.md</code>, <code>docs/plugins.md</code>, and the marketing site's reviews section describe the new skill, and <code>docs/cli.md</code> names <code>fix-pr</code> as the reader of <code>fix.resolve_human_threads</code>. <code>skills/guidelines.md</code> and <code>skills/review-pr/SKILL.md</code> now name <code>fix-pr</code> where they said \"the fix loop\"."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin validate skills</code> passes with the new skill directory."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_packaging.py"
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "skills/guidelines.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "web/components/sections/review-loop.tsx",
+     "note": "Two strings on the marketing site."
+    }
+   ]
+  }
+ ]
+}
