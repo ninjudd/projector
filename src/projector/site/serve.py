@@ -50,7 +50,7 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
 
     A repository that has not published since walkthroughs were renamed
     summaries has only the old walkthroughs ref, so that ref is fetched in the
-    new one's place, and `summaries_ref` reads it until the new ref exists.
+    new one's place, and `summaries_refs` reads it until the new ref exists.
     A server fetches every minute, so the fetch writes only the tracking ref
     and never FETCH_HEAD, which the user's own fetch may have just written.
     Without `prompt`, the fetch runs detached from the terminal, so a remote
@@ -91,12 +91,6 @@ def summaries_refs(root: Path, remote: str, ref: str = PAGES_REF, folder: str = 
         return found
     return [(name, LEGACY_PAGES_ROOT) for name in (tracking_ref(remote, LEGACY_PAGES_REF), LEGACY_PAGES_REF)
             if exists(name)][:1]
-
-
-def summaries_ref(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> tuple[str, str] | None:
-    """The first of `summaries_refs`: the remote's copy when there is one."""
-    found = summaries_refs(root, remote, ref, folder)
-    return found[0] if found else None
 
 
 def ref_commit(root: Path, ref: str | None) -> str:

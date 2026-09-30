@@ -171,8 +171,9 @@ the default branch builds and deploys them with Projector's shared action.
 site, which a repository accepts by setting hosting up; anywhere else the
 spec stays in the checkout, as the section above describes.
 
-Always publish with `project summary publish`, run directly. Do not wrap it in a script
-of your own, and do not commit to the ref or send the dispatch yourself. The
+Always publish with `project summary publish`, run directly. Do not wrap it
+in a script of your own, and do not commit to the ref or send the dispatch
+yourself. The
 command already builds the spec and refuses one that does not build, and a
 wrapper only hides what is being written from the user and from the host's
 permission checks. You do not need to build the page first; `page` is a

@@ -800,32 +800,54 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
         self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.comments[1]["body"])
 
+    def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
+        with mock.patch.object(summary, "gh", side_effect=self.gh), \
+             mock.patch.object(summary, "hosting", side_effect=AssertionError("the caller already found the site")):
+            summary.comment_summary("owner/repo", 7, HEAD, site="https://owner.github.io/repo/")
+
+        self.assertEqual([f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n"],
+                         self.summary_comments())
+
     def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
         self.hosted = (None, "Pages is not enabled")
         with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
              mock.patch.object(summary, "hosting", return_value=self.hosted):
             self.assertIn("Pages is not enabled", summary.comment_summary("owner/repo", 7, HEAD))
 
-    def cli_publish(self, hosted: tuple[str | None, str], *flags: str) -> tuple[list[dict], list[tuple], str]:
-        """Run `summary publish` with the repository's hosting answering `hosted`; return what it asked of publish."""
+    def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -> tuple[list[dict], list[tuple], str]:
+        """Run `summary publish` with the repository's hosting answering, or raising, `hosted`.
+
+        Returns the keyword arguments publish got, the comments made, and the output.
+        """
         spec = Path(tempfile.mkdtemp()) / "summary.json"
-        spec.write_text(json.dumps({"pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+        spec.write_text(json.dumps({"version": summary.SPEC_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
         published: list[dict] = []
         commented: list[tuple] = []
         out = io.StringIO()
+        answer = {"side_effect": hosted} if isinstance(hosted, Exception) else {"return_value": hosted}
         with mock.patch.object(summary, "publish", side_effect=lambda *a, **k: published.append(k)), \
-             mock.patch.object(summary, "hosting", return_value=hosted), \
-             mock.patch.object(summary, "comment_summary", side_effect=lambda *a: commented.append(a) or "done"), \
+             mock.patch.object(summary, "hosting", **answer) as lookup, \
+             mock.patch.object(summary, "comment_summary",
+                               side_effect=lambda *a, **k: commented.append((*a, k)) or "done"), \
              redirect_stdout(out):
             self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec), *flags]))
+        self.assertLessEqual(lookup.call_count, 1, "hosting is looked up at most once")
         return published, commented, out.getvalue()
 
     def test_summary_publish_comments_the_link_for_the_specs_head(self) -> None:
         published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""))
 
         self.assertTrue(published[0]["push"])
-        self.assertEqual([("owner/repo", 7, HEAD)], commented)
+        self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented,
+                         "the comment reuses the site the push decision found")
         self.assertIn("done", out)
+
+    def test_summary_publish_keeps_the_spec_local_when_the_hosting_check_fails(self) -> None:
+        published, commented, _ = self.cli_publish(summary.SpecError("gh api failed: HTTP 502"))
+
+        self.assertFalse(published[0]["push"])
+        self.assertIn("could not tell whether owner/repo hosts its Projector site", published[0]["reason"])
+        self.assertEqual([], commented)
 
     def test_summary_publish_keeps_the_spec_local_where_the_site_is_not_hosted(self) -> None:
         published, commented, _ = self.cli_publish((None, "owner/repo has no GitHub Pages site"))

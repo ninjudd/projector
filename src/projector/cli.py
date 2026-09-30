@@ -746,24 +746,20 @@ def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
         summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
     else:
-        pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8")).get("pr") or {}
-        if arguments.local:
-            push, reason = False, "--local asked for a local preview"
-        elif pr.get("repo"):
-            push, reason = summary.push_decision(pr["repo"])
-        else:
-            push, reason = True, ""  # publish refuses a spec with no repository before writing anything
+        pr = summary.spec_pr(json.loads(Path(arguments.spec).read_text(encoding="utf-8")))
+        site, reason = ("", "--local asked for a local preview") if arguments.local \
+            else summary.push_decision(pr["repo"])
         summary.publish(
             Path(arguments.spec),
             arguments.remote,
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
-            push=push,
+            push=bool(site),
             reason=reason,
         )
         # A spec kept in this checkout has no page on GitHub to link.
-        if push:
-            print(summary.comment_summary(pr["repo"], pr["number"], pr["head"]))
+        if site:
+            print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
     return 0
 
 

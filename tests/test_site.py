@@ -513,6 +513,15 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def served_spec(number: int, head: str) -> dict:
+    """A spec for pull request `number` at `head` that builds against PLAN_DIFF."""
+    return {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
+            "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                   "base": "b" * 40, "baseRef": "main"},
+            "groups": [{"id": "all", "title": "All",
+                        "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
+
+
 class ServeTests(SiteRepoCase):
     def setUp(self) -> None:
         super().setUp()
@@ -615,11 +624,7 @@ class ServeTests(SiteRepoCase):
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
             folder = remote / root / "9" / head
             folder.mkdir(parents=True)
-            spec = {"version": 1, "name": "Summary 9", "overview": {"summary": [], "cards": []},
-                    "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": head,
-                           "base": "b" * 40, "baseRef": "main"},
-                    "groups": [{"id": "all", "title": "All", "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
-            (folder / "spec.json").write_text(json.dumps(spec))
+            (folder / "spec.json").write_text(json.dumps(served_spec(9, head)))
             (folder / "diff.patch").write_text(PLAN_DIFF)
             run_git(remote, "add", ".")
             run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
@@ -639,24 +644,25 @@ class ServeTests(SiteRepoCase):
         self.published_remote()
 
         self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
-        found = serve.summaries_ref(self.repo, "origin")
-        self.assertEqual(("refs/projector/remotes/origin/summaries", "summaries"), found)
-        self.assert_serves_both_heads(*found)
+        found = serve.summaries_refs(self.repo, "origin")
+        self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries")], found)
+        self.assert_serves_both_heads(*found[0])
 
     def test_serves_the_old_walkthroughs_ref_while_the_summaries_ref_does_not_exist(self) -> None:
         self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT)
 
         self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
-        found = serve.summaries_ref(self.repo, "origin")
-        self.assertEqual(("refs/projector/remotes/origin/walkthroughs", "walkthroughs"), found)
-        self.assert_serves_both_heads(*found)
+        found = serve.summaries_refs(self.repo, "origin")
+        self.assertEqual([("refs/projector/remotes/origin/walkthroughs", "walkthroughs")], found)
+        self.assert_serves_both_heads(*found[0])
 
     def test_the_summaries_ref_wins_over_the_old_walkthroughs_ref(self) -> None:
         remote = self.published_remote()
         run_git(remote, "update-ref", summary.LEGACY_PAGES_REF, "HEAD~1")
 
         self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
-        self.assertEqual(("refs/projector/remotes/origin/summaries", "summaries"), serve.summaries_ref(self.repo, "origin"))
+        self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries")],
+                         serve.summaries_refs(self.repo, "origin"))
         old = serve.run_git(self.repo, "rev-parse", "--verify", "--quiet", "refs/projector/remotes/origin/walkthroughs")
         self.assertNotEqual(0, old.returncode, "the old ref is not fetched once the new one exists")
 
@@ -664,7 +670,7 @@ class ServeTests(SiteRepoCase):
         run_git(self.repo, "init", "--quiet")
 
         self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
-        self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
+        self.assertEqual([], serve.summaries_refs(self.repo, "origin"))
 
     def publish_locally(self, number: int, head: str) -> None:
         """Commit a spec for pull request `number` to this checkout's own summaries ref, as a local publish does."""
@@ -675,11 +681,7 @@ class ServeTests(SiteRepoCase):
             return subprocess.run(["git", *args], cwd=self.repo, env=env, input=text, check=True, capture_output=True,
                                   text=True).stdout.strip()
 
-        spec = {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
-                "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
-                       "base": "b" * 40, "baseRef": "main"},
-                "groups": [{"id": "all", "title": "All", "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
-        for name, content in (("spec.json", json.dumps(spec)), ("diff.patch", PLAN_DIFF)):
+        for name, content in (("spec.json", json.dumps(served_spec(number, head))), ("diff.patch", PLAN_DIFF)):
             blob = git("hash-object", "-w", "--stdin", text=content)
             git("update-index", "--add", "--cacheinfo", f"100644,{blob},summaries/{number}/{head}/{name}")
         git("update-ref", summary.PAGES_REF, git("commit-tree", git("write-tree"), "-m", "Publish locally"))

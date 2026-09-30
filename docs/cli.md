@@ -689,9 +689,9 @@ serves the summaries already fetched; `--no-fetch` skips the fetch, and
 `--summaries` serves a directory of specs instead of the ref. It serves the
 summaries in this checkout's own `refs/projector/summaries` too, the ones a
 local `summary publish` keeps, beside the fetched ones, and reads a spec in
-both from the local ref. While it
-runs it checks `README.md`, `docs/`, a configured `projects.dir`, and the
-summaries every second and rebuilds when any of them change;
+both from the local ref. While it runs it checks `README.md`, `docs/`, a
+configured `projects.dir`, and the summaries every second and rebuilds
+when any of them change;
 `--no-watch` builds once. It finds the summaries ref again on every check,
 so a server started before the first `summary publish` shows the summary
 once that publish writes the ref. It also fetches the ref again every
