@@ -808,6 +808,16 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n"],
                          self.summary_comments())
 
+    def test_a_hosted_site_with_no_pages_url_gets_no_comment(self) -> None:
+        for site in ("", None):
+            with self.subTest(site=site), \
+                 mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
+                 mock.patch.object(summary, "hosting", return_value=("", "")):
+                result = summary.comment_summary("owner/repo", 7, HEAD, site=site)
+
+                self.assertIn("GitHub's Pages answer for owner/repo has no URL", result)
+        self.assertEqual([], self.summary_comments(), "a relative reviews/7/ would link nowhere")
+
     def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
         self.hosted = (None, "Pages is not enabled")
         with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")), \
@@ -841,6 +851,12 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented,
                          "the comment reuses the site the push decision found")
         self.assertIn("done", out)
+
+    def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(self) -> None:
+        published, commented, _ = self.cli_publish(("", ""))
+
+        self.assertTrue(published[0]["push"], "hosted, as `site status` calls it")
+        self.assertEqual([("owner/repo", 7, HEAD, {"site": ""})], commented)
 
     def test_summary_publish_keeps_the_spec_local_when_the_hosting_check_fails(self) -> None:
         published, commented, _ = self.cli_publish(summary.SpecError("gh api failed: HTTP 502"))
