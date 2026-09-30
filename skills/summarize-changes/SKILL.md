@@ -100,48 +100,29 @@ push to, or approve the pull request unless the user asks.
 
 ## Write for someone new to the code
 
-Write the summary for a reviewer who may be seeing this code, and this part
-of the system, for the first time. They know the language and general
-engineering practice, but not this codebase, its history, its plans, or the
-words its authors use among themselves. The page should make sense to them
-without opening another document. A reviewer who knows the code loses
-nothing by it, and one who does not can review at all.
+Write every intro, note and card as `../writing.md` describes: for a
+reviewer who may be seeing this code and this part of the system for the
+first time (§ 1), with structure (§ 2), in the Google style's voice (§ 3).
+A summary adds these to it:
 
-- **Start from what the reader already knows.** Open the overview and each
-  group with what that part of the system does and how it behaved before
-  the change, then what changes, then why. Describe behavior a user or an
-  operator would recognize before naming the code that implements it.
-- **Define every term where the reader meets it.** That covers product and
-  vendor names, acronyms such as KYC, and the project's own words, such as
-  "rails" or "hops". Give a code identifier its plain meaning beside it:
-  "`Decide`, which turns the two check results into allow or block".
-  Readers jump to a group from the sidebar, so define a term briefly again
-  in each group that uses it, and give the overview a card listing the
-  page's terms when there are more than a few.
-- **Use the code's words once they are defined.** When the project's word
-  is also a name in the code, such as a `rail` type or a `hop` label, define
-  it and then keep using it, so the page and the diff say the same thing.
-  A paraphrase that the code never uses leaves the reader to match two
-  vocabularies.
-- **Name code only when it helps.** An identifier points into the diff; it
-  does not explain anything. Prefer a sentence about what happens over a
-  list of the functions that make it happen, and keep field numbers, enum
-  values and commit hashes out of the prose unless the reader needs them.
-- **Leave out references the reader cannot follow.** "Decision 4.19",
-  "plan § 8", "group 9" and "as the bank link's is" point at things the
-  reader has not seen. State the decision, the section or the comparison
-  itself; a citation may follow it, never replace it. A note on the plan
-  document itself may name the section it sits on, since that section is
-  what the reader is looking at.
-- **Write whole sentences.** No slash-separated lists standing in for
-  prose, no telegraphic fragments, and no shorthand the reader has to
-  decode. A concrete case, such as what happens when a user types a
-  nickname on their card, often explains more than a paragraph of
-  abstraction.
-- **Keep notes self-contained.** A `verify` note says in plain words what
-  should be true and why it matters before it names the function to trace.
-  A `flag` note says what could go wrong for a user or for the data, not
-  only which line looks suspect.
+- **Define terms in each group.** Readers jump to a group from the
+  sidebar, so each group defines the terms it uses, and the overview gets a
+  card listing the page's terms when there are more than a few.
+- **Give a list, table or heading an item of its own.** In an intro or the
+  overview, an item that starts with a block, such as
+  `"<ol><li>…</li></ol>"`, renders as written rather than inside a
+  paragraph. Wrap a table in `<div class="tblwrap"><table class="tbl">`,
+  and split a long intro with an `<h4>`.
+- **Let the kicker and the intro divide the work.** A group's `kicker` is
+  its one line on what the group covers. The intro's opening sentences say
+  what the group does and why, adding to the kicker rather than repeating
+  it.
+- **Let a note on the plan document name its section**, since that section
+  is what the reader is looking at.
+- **Expect the page to grow.** A summary written this way runs longer than
+  one written for insiders, often by half. Cut repetition and detail no
+  reviewer would act on, never the context, and keep each group intro to a
+  few short paragraphs, with the details in file and line notes.
 
 For example, instead of:
 
@@ -149,46 +130,6 @@ For example, instead of:
 > (4.19); hop 2 reads the issuer check.
 
 write:
-
-> When someone adds a debit card, the engine now checks that the name on
-> the card belongs to the account holder, in two steps. First it compares
-> the name the user typed on the card with the legal name the account was
-> verified under, using the same fuzzy matcher, `namematch`, that already
-> checks bank accounts. Then it asks the card network whether the bank that
-> issued the card has that name on file.
-
-## Give the prose structure
-
-Write in the Google developer documentation style, as Projector's own
-documentation is: lead with the point, keep paragraphs short, and let the
-shape of the content choose its form instead of writing everything as
-paragraphs.
-
-- **Lead with what matters.** Open each group with one or two sentences
-  that say what the group does and why, so a reader who stops there has
-  the gist. Put the detail after them.
-- **Use a numbered list for a sequence**, such as what happens, in order,
-  when a user adds a card.
-- **Use a bulleted list for parallel items**, such as the steps of a check,
-  the outcomes it can reach, or the settings that control it. Open each
-  item with a short bold lead-in that names the thing, then explain it in
-  full sentences.
-- **Use a table for anything with two dimensions**, such as which
-  combinations of results allow or block a card, or each setting's default
-  and effect. Wrap it in `<div class="tblwrap"><table class="tbl">`.
-- **Keep a paragraph to a few sentences about one idea.** A longer
-  paragraph usually holds a list or a table.
-- **Write in the present tense and the active voice.** Say "the engine
-  refuses the card", not "the card will be refused". Address the reviewer
-  as "you" when you tell them what to check. Put code, file names, values
-  and commands in `<code>`.
-- **Use a heading to split a long intro.** An `<h4>` such as "Before",
-  "What changes" or "Why" helps a reader find their place in an intro that
-  runs past three paragraphs. Write headings in sentence case.
-
-In an intro or the overview, give a list, table or heading an item of its
-own, such as `"<ol><li>…</li></ol>"`, and it renders as written rather
-than inside a paragraph. The example above reads better as:
 
 > When someone adds a debit card, the engine now checks that the name on
 > the card belongs to the account holder. The card must pass both steps:
@@ -200,17 +141,11 @@ than inside a paragraph. The example above reads better as:
 > 2. **The card's bank knows that name.** The engine asks the card network
 >    whether the bank that issued the card has the typed name on file.
 
-A summary written this way runs longer than one written for insiders,
-often by half, and that is expected. Cut repetition and detail no reviewer
-would act on, never the context, and keep each group intro to a few short
-paragraphs, with the details in file and line notes.
-
-Before you publish, reread each group intro and note as that newcomer,
-and check that each has the structure its content calls for.
-Build as often as you like, since building is how you learn that a note's
-line sits outside the diff, but publish only once the reread is done.
-Where a sentence makes sense only to someone who already knows the code,
-rewrite it.
+Before you publish, reread each group intro and note as that newcomer, and
+check that each has the structure its content calls for. Build as often as
+you like, since building is how you learn that a note's line sits outside
+the diff, but publish only once the reread is done. Where a sentence makes
+sense only to someone who already knows the code, rewrite it.
 
 ## Build the page
 

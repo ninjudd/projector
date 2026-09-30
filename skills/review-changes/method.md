@@ -266,6 +266,13 @@ defend in the thread.
 
 ## 7. Write the review
 
+Write the body and every thread as `../writing.md` describes. The review's
+readers include people who did not write the change and a reviewer who may
+not know the code, so a finding explains the behavior it rests on
+(`writing.md` § 1), the body uses lists where its content is a list, such
+as what was checked (§ 2), and every sentence is in the Google style's voice
+(§ 3).
+
 After the signature line and marker `SKILL.md` requires, the review body
 reads in this order:
 
