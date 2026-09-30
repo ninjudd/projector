@@ -66,26 +66,39 @@ function renderSummary(data: SummaryData): void {
       const key = `${c.side === 'old' ? 'old' : 'new'}:${String(c.line)}`;
       (atLine[key] ??= []).push(c);
     });
+    // Only a side the file has gets a line-number column: a new file has no
+    // old numbers, and a deleted file no new ones.
+    const kinds = new Set(f.hunks.flatMap(function (h) { return h.lines.map(function (l) { return l[0]; }); }));
+    const oldSide = kinds.has('d') || kinds.has('c') || !kinds.has('a');
+    const newSide = kinds.has('a') || kinds.has('c') || !kinds.has('d');
+    const sides = Number(oldSide) + Number(newSide);
+    const gutter = `<td class="ln" colspan="${String(sides)}"></td>`;
+    // A fixed table layout sizes its columns from the first row, a hunk header
+    // whose gutter spans them all, so the columns are sized here instead.
+    const columns = `<colgroup>${'<col class="lncol">'.repeat(sides)}<col></colgroup>`;
+    function numbers(l: SummaryLine): string {
+      return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
+    }
     function notesAt(l: SummaryLine): string {
       const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
       const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-      return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
+      return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
     }
     let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
     if (f.new === true) badges += '<span class="badge new">new</span>';
     if (f.deleted === true) badges += '<span class="badge deleted">deleted</span>';
     if (f.kind !== '') badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
     const hunks = f.hunks.map(function (h) {
-      const rows = [`<tr class="hunk"><td class="ln" colspan="2"></td><td class="code">${esc(h.header)}</td></tr>`];
+      const rows = [`<tr class="hunk">${gutter}<td class="code">${esc(h.header)}</td></tr>`];
       h.lines.forEach(function (l) {
         const t = l[0];
-        if (t === 'm') { rows.push(`<tr class="meta"><td class="ln" colspan="2"></td><td class="code">${esc(l[3])}</td></tr>`); return; }
+        if (t === 'm') { rows.push(`<tr class="meta">${gutter}<td class="code">${esc(l[3])}</td></tr>`); return; }
         const cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
         const sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
-        rows.push(`<tr class="${cls}"><td class="ln">${lineNumber(l[1])}</td><td class="ln">${lineNumber(l[2])}</td><td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+        rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
         rows.push(notesAt(l));
       });
-      return `<table class="diff">${rows.join('')}</table>`;
+      return `<table class="diff">${columns}${rows.join('')}</table>`;
     }).join('') || '<p class="fnote">No content changes.</p>';
     return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
       '<div class="fsentinel" aria-hidden="true"></div>' +
@@ -435,6 +448,72 @@ function wireSummary(): void {
     resizeTimer = setTimeout(setupStuck, 200);
   });
 
+  // Clicking an identifier in the code marks every instance of it on the page,
+  // so a definition's callers stand out. Clicking it again, clicking code that
+  // is not an identifier, or pressing Escape clears the marks. A drag selects
+  // text as usual and marks nothing.
+  const IDENTIFIER = /[\p{L}\p{N}_$]+/gu;
+  const IDENTIFIER_CHAR = /[\p{L}\p{N}_$]/u;
+  let token = '';
+  function tokenAt(node: Node | null, offset: number): string {
+    if (!(node instanceof Text)) return '';
+    const s = node.data;
+    let start = offset, end = offset;
+    while (start > 0 && IDENTIFIER_CHAR.test(s.charAt(start - 1))) start--;
+    while (end < s.length && IDENTIFIER_CHAR.test(s.charAt(end))) end++;
+    const word = s.slice(start, end);
+    // A bare number is a literal, not a name worth tracing.
+    return /[^\p{N}]/u.test(word) ? word : '';
+  }
+  function clearTokens(): void {
+    document.querySelectorAll('mark.tok').forEach(function (m) {
+      const parent = m.parentNode;
+      if (parent === null) return;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    });
+  }
+  function markTokens(root: ParentNode): void {
+    if (token === '') return;
+    root.querySelectorAll('table.diff .src').forEach(function (src) {
+      const walker = document.createTreeWalker(src, NodeFilter.SHOW_TEXT);
+      const texts: Text[] = [];
+      for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+        if (n instanceof Text && n.data.includes(token) && n.parentElement?.closest('mark.tok') == null) texts.push(n);
+      }
+      texts.forEach(function (t) {
+        const s = t.data;
+        const parts: (string | Node)[] = [];
+        let last = 0;
+        for (const m of s.matchAll(IDENTIFIER)) {
+          if (m[0] !== token) continue;
+          const mark = document.createElement('mark');
+          mark.className = 'tok';
+          mark.textContent = token;
+          parts.push(s.slice(last, m.index), mark);
+          last = m.index + token.length;
+        }
+        if (parts.length === 0) return;
+        parts.push(s.slice(last));
+        t.replaceWith(...parts);
+      });
+    });
+  }
+  document.addEventListener('click', function (ev) {
+    if (!(ev.target instanceof Element) || ev.target.closest('table.diff .src') === null) return;
+    const selection = window.getSelection();
+    if (selection?.isCollapsed !== true) return;
+    const word = tokenAt(selection.anchorNode, selection.anchorOffset);
+    clearTokens();
+    token = word === token ? '' : word;
+    markTokens(document);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape' || token === '') return;
+    clearTokens();
+    token = '';
+  });
+
   // Syntax highlighting: each hunk is highlighted as two whole texts (the
   // old side: context + removed lines; the new side: context + added lines)
   // so tokens that span lines survive, then split back into rows. Files that
@@ -488,6 +567,8 @@ function wireSummary(): void {
       if (oldH?.length === oldR.length) oldR.forEach(function (s, k) { const h = oldH[k]; if (s !== null && h !== undefined) s.innerHTML = h; });
     });
     f.dataset.hl = '1';
+    // Highlighting rewrote the rows, and with them any marks of the clicked token.
+    markTokens(f);
   }
   const hlQueue = Array.from(document.querySelectorAll<HTMLElement>('.group:not(.folded) .file:not(.collapsed)'));
   function pump(): void {
