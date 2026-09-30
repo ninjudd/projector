@@ -1,7 +1,7 @@
 """The mechanical steps of a review: set up a head, follow a moved head, count
 findings, run the repository's gate, and publish.
 
-`review-changes` does its judgment in prose and its bookkeeping here, so the
+`review-pr` does its judgment in prose and its bookkeeping here, so the
 checks a hand-built helper kept skipping run every time. Every SHA comes from
 GitHub or the review's state file, never from an argument; the repository is
 passed to `gh` explicitly, so a command runs from any directory; a comment is
@@ -34,7 +34,7 @@ from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
 # The mark that opens both the start comment and the review's signature line, as
-# review-changes/SKILL.md § Label every review and finding writes it.
+# review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
@@ -131,7 +131,7 @@ def reviewer_token(login: str) -> str:
 # Trust
 
 def trusted_head(repo: str, pr: dict, operator: str) -> tuple[bool, str]:
-    """Whether the head's code may run, by review-changes § Run a head's code only when the
+    """Whether the head's code may run, by review-pr § Run a head's code only when the
     head is trusted, and why not when it may not."""
     head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
     if head_repo != repo:
@@ -299,7 +299,7 @@ def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_s
                           "run; review it by reading")
     if not command:
         raise ReviewError("review.gate is not set in .projector.toml, so there is nothing to run; run the "
-                          "repository's checks as review-changes describes")
+                          "repository's checks as review-pr describes")
     worktree = Path(state["worktree"])
     environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
     ran_at = now()
@@ -655,7 +655,7 @@ def read_record(root: Path, loop: str) -> list[dict]:
 
 
 def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str) -> None:
-    """The collision check review-changes § Publish one review describes, read from the loop's record."""
+    """The collision check review-pr § Publish one review describes, read from the loop's record."""
     earlier = reviewer_verdicts(state["repo"], state["number"], state["reviewer"], state["sha"])
     if loop is not None:
         mine = {r["review_id"] for r in read_record(root, loop)
@@ -717,7 +717,7 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
               + (f"effort={effort} " if effort else "")
               + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
-        raise ReviewError("the signature line or marker does not match review-changes/SKILL.md; check the "
+        raise ReviewError("the signature line or marker does not match review-pr/SKILL.md; check the "
                           f"model in the review's state ({state['model']})")
     return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
 

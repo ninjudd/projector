@@ -1,20 +1,20 @@
 ---
 name: start-review-loop
-description: Monitor the operator's pull requests in the current GitHub repository and run review-changes on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
+description: Monitor the operator's pull requests in the current GitHub repository and run review-pr on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
 ---
 
 # Start Review Loop
 
 Run a persistent exact-head review loop for the current repository. The loop
 watches pull requests and decides when a head needs a review; each review is
-the `review-changes` skill, in `../review-changes/SKILL.md`, run once for that
+the `review-pr` skill, in `../review-pr/SKILL.md`, run once for that
 head. That skill defines the reviewer and operator identities, the two review
 modes, what a review inspects, and how it publishes, so this file covers only
 the loop around it.
 
 ## Resolve the operator and scope
 
-Resolve the reviewer and the operator as `../review-changes/SKILL.md`
+Resolve the reviewer and the operator as `../review-pr/SKILL.md`
 describes; the watcher needs the operator's login for `--author`.
 
 Watch only the repository containing the current working directory. The loop
@@ -34,7 +34,7 @@ nothing open.
 
 ## Establish the loop
 
-1. Read repository instructions, `../review-changes/SKILL.md`, and applicable
+1. Read repository instructions, `../review-pr/SKILL.md`, and applicable
    review or GitHub workflow skills.
 2. Resolve the repository, checked-out branch, the operator's open pull
    requests, any the user assigned, and the total open count:
@@ -109,10 +109,10 @@ reads the new head against that history instead of rediscovering it.
   carries the number, such as `review-<number>`. Give it the repository, the
   pull request, the head SHA, the reviewer and operator logins, the review
   mode, the loop's id to pass as `--loop`, and the path of
-  `../review-changes/SKILL.md`, and have it run that skill for the head.
+  `../review-pr/SKILL.md`, and have it run that skill for the head.
 - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
   same subagent as a message; never start a second one for it. Each message
-  is another run of `review-changes`, for the head it names; a `RESPONDED`
+  is another run of `review-pr`, for the head it names; a `RESPONDED`
   re-review of an unmoved head runs `project review setup` with
   `--rereview`. A `NEW HEAD`
   that arrives mid-review is the moved-head case that skill's start-comment
@@ -141,7 +141,7 @@ adopts the same author's pull requests tracks the same ones.
 
 The main loop routes events and records outcomes; it does not inspect code, so
 its own context stays small however many pull requests it tracks. Where the
-host has no subagents, the main loop runs `review-changes` itself for each
+host has no subagents, the main loop runs `review-pr` itself for each
 head.
 
 ## Continue after fixes

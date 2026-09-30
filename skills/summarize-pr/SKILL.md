@@ -1,5 +1,5 @@
 ---
-name: summarize-changes
+name: summarize-pr
 description: Summarize a GitHub pull request's changes as a guided review page, grouped in reading order, with each logical change explained, review notes on each group, file and line, and every hunk syntax-highlighted. Use when the user asks for help walking through, understanding, summarizing, or reviewing a big PR diff.
 ---
 

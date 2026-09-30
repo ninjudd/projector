@@ -7,7 +7,7 @@ owner: ninjudd
 
 ## 1. Outcome
 
-`review-changes` does its mechanical work through `project review` commands
+`review-pr` does its mechanical work through `project review` commands
 that ship with Projector, and keeps its prose for the judgment: what to flag,
 how to verify, and what to write. A review loop no longer rebuilds helpers in
 a job directory that is cleaned up behind it, and the mistakes those helpers
@@ -16,7 +16,7 @@ kept making are refused by code that is tested once.
 ## 2. Problem
 
 `start-review-loop` ships one script, `watch-prs.sh`. Everything else a review
-does is prose in `review-changes/SKILL.md` with inline `gh` snippets, so each
+does is prose in `review-pr/SKILL.md` with inline `gh` snippets, so each
 loop session rebuilds the same helpers, and they vanish when its job directory
 is cleaned up. One review loop rebuilt them several times after 2026-09-19,
 and its record shows the hand-built versions failing the same ways:
@@ -40,7 +40,7 @@ None of these needs judgment. Each is a check a command can make every time.
 ## 3. Acceptance criteria
 
 - `project review setup`, `move`, `census`, and `publish` exist, are
-  documented in `docs/cli.md`, and are what `review-changes/SKILL.md` tells
+  documented in `docs/cli.md`, and are what `review-pr/SKILL.md` tells
   the reviewer to run in place of its inline `gh` snippets.
 - Each failure in § 2 has a test that reproduces it against the command and
   shows the command refusing, with a non-zero exit, or doing it right.
@@ -57,7 +57,7 @@ None of these needs judgment. Each is a check a command can make every time.
 ### 4.1 Commands in the CLI, not scripts beside the skill
 
 The proposal this plan comes from put four shell scripts under
-`review-changes/scripts/`. They belong in the `project` CLI instead, as
+`review-pr/scripts/`. They belong in the `project` CLI instead, as
 `project review <step>`:
 
 - Several failures in § 2 are portability failures: date arithmetic, a Python
@@ -65,7 +65,7 @@ The proposal this plan comes from put four shell scripts under
   Python 3.11 or newer on every host Projector supports, and `date` and `jq`
   differ between GNU and BSD.
 - The CLI already talks to GitHub for `project summary publish` and
-  `project site status`, and `review-changes` already calls both, so the skill
+  `project site status`, and `review-pr` already calls both, so the skill
   gains no new dependency.
 - The commands are tested with `unittest` and a fake `gh`, the way the site
   and summary commands are, rather than through a shell harness.
@@ -177,7 +177,7 @@ applies, and a review of an untrusted head skips it and says so.
 
 ### 4.5 The skill
 
-`review-changes/SKILL.md` replaces each inline `gh` snippet with the command
+`review-pr/SKILL.md` replaces each inline `gh` snippet with the command
 that does it and keeps the rules those snippets served as the commands'
 documented behavior. Its prose shrinks to identity, the two review modes,
 verifying findings, what to flag, and how to write a finding.
@@ -213,7 +213,7 @@ Shipped. The review's mechanical steps are the `project review` commands
 `setup`, `move`, `census`, `release`, `publish`, and `gate`, delivered in the
 stacked pull requests #128 (`setup`, `move`, `census`, and `release`), #132
 (`publish`), and the one that adds `gate` and `review.gate`. Each failure in
-§ 2 has a test in `tests/test_review.py`, and `review-changes/SKILL.md` and
+§ 2 has a test in `tests/test_review.py`, and `review-pr/SKILL.md` and
 `start-review-loop/SKILL.md` call the commands in place of their inline `gh`
 snippets. The one departure from the proposal this plan came from is § 4.1:
 the steps are commands in the `project` CLI rather than shell scripts beside

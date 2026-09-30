@@ -900,7 +900,7 @@ class PublishRefusalTests(PublishCase):
         state["model"] = "has space"
         path.write_text(json.dumps(state))
 
-        self.refused(self.publish("clean"), "does not match review-changes/SKILL.md")
+        self.refused(self.publish("clean"), "does not match review-pr/SKILL.md")
 
     def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])

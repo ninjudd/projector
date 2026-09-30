@@ -1,9 +1,9 @@
 ---
-name: review-changes
+name: review-pr
 description: Review a pull request's current head locally by Projector's written review method and publish one labeled review, setting the pull request's draft state to match the verdict. Use when the user asks to review a pull request or a change once.
 ---
 
-# Review Changes
+# Review a pull request
 
 Review one pull request's current head, exactly as pushed, and publish one
 review of it. The review runs once and starts no watcher; `start-review-loop`
@@ -554,8 +554,8 @@ closes.
 ## Summarize a large pull request
 
 After the review is published, give a large pull request a summary its human
-reviewers can read, with the `summarize-changes` skill in
-`../summarize-changes/SKILL.md`. A summary reads the whole diff and writes a
+reviewers can read, with the `summarize-pr` skill in
+`../summarize-pr/SKILL.md`. A summary reads the whole diff and writes a
 page of prose, so it costs about as much as the review again: summarize only
 when all three hold.
 
@@ -576,7 +576,7 @@ when all three hold.
    a Projector site there is nowhere to publish unattended, so skip the
    summary rather than publishing an Artifact nobody asked for.
 
-Then follow `summarize-changes` for this head, with two differences from a
+Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
 - **Update rather than start over.** When the summaries ref already holds a

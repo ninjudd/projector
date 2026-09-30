@@ -211,7 +211,7 @@ function renderSummary(data: SummaryData): void {
         `<ol>${nav}</ol></nav></aside>` +
       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
         `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
-        `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-changes</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+        `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
       '</main></div></div>';
   }
 
