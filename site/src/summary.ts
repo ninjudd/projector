@@ -435,6 +435,72 @@ function wireSummary(): void {
     resizeTimer = setTimeout(setupStuck, 200);
   });
 
+  // Clicking an identifier in the code marks every instance of it on the page,
+  // so a definition's callers stand out. Clicking it again, clicking code that
+  // is not an identifier, or pressing Escape clears the marks. A drag selects
+  // text as usual and marks nothing.
+  const IDENTIFIER = /[\p{L}\p{N}_$]+/gu;
+  const IDENTIFIER_CHAR = /[\p{L}\p{N}_$]/u;
+  let token = '';
+  function tokenAt(node: Node | null, offset: number): string {
+    if (!(node instanceof Text)) return '';
+    const s = node.data;
+    let start = offset, end = offset;
+    while (start > 0 && IDENTIFIER_CHAR.test(s.charAt(start - 1))) start--;
+    while (end < s.length && IDENTIFIER_CHAR.test(s.charAt(end))) end++;
+    const word = s.slice(start, end);
+    // A bare number is a literal, not a name worth tracing.
+    return /[^\p{N}]/u.test(word) ? word : '';
+  }
+  function clearTokens(): void {
+    document.querySelectorAll('mark.tok').forEach(function (m) {
+      const parent = m.parentNode;
+      if (parent === null) return;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    });
+  }
+  function markTokens(root: ParentNode): void {
+    if (token === '') return;
+    root.querySelectorAll('table.diff .src').forEach(function (src) {
+      const walker = document.createTreeWalker(src, NodeFilter.SHOW_TEXT);
+      const texts: Text[] = [];
+      for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+        if (n instanceof Text && n.data.includes(token) && n.parentElement?.closest('mark.tok') == null) texts.push(n);
+      }
+      texts.forEach(function (t) {
+        const s = t.data;
+        const parts: (string | Node)[] = [];
+        let last = 0;
+        for (const m of s.matchAll(IDENTIFIER)) {
+          if (m[0] !== token) continue;
+          const mark = document.createElement('mark');
+          mark.className = 'tok';
+          mark.textContent = token;
+          parts.push(s.slice(last, m.index), mark);
+          last = m.index + token.length;
+        }
+        if (parts.length === 0) return;
+        parts.push(s.slice(last));
+        t.replaceWith(...parts);
+      });
+    });
+  }
+  document.addEventListener('click', function (ev) {
+    if (!(ev.target instanceof Element) || ev.target.closest('table.diff .src') === null) return;
+    const selection = window.getSelection();
+    if (selection?.isCollapsed !== true) return;
+    const word = tokenAt(selection.anchorNode, selection.anchorOffset);
+    clearTokens();
+    token = word === token ? '' : word;
+    markTokens(document);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape' || token === '') return;
+    clearTokens();
+    token = '';
+  });
+
   // Syntax highlighting: each hunk is highlighted as two whole texts (the
   // old side: context + removed lines; the new side: context + added lines)
   // so tokens that span lines survive, then split back into rows. Files that
@@ -488,6 +554,8 @@ function wireSummary(): void {
       if (oldH?.length === oldR.length) oldR.forEach(function (s, k) { const h = oldH[k]; if (s !== null && h !== undefined) s.innerHTML = h; });
     });
     f.dataset.hl = '1';
+    // Highlighting rewrote the rows, and with them any marks of the clicked token.
+    markTokens(f);
   }
   const hlQueue = Array.from(document.querySelectorAll<HTMLElement>('.group:not(.folded) .file:not(.collapsed)'));
   function pump(): void {
