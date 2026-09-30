@@ -534,6 +534,30 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
 
 
+class SummarySidebarTests(unittest.TestCase):
+    def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
+        # The sidebar is sticky on a wide screen, so a list taller than the
+        # window has no other way to reach its last sections. On a narrow
+        # screen it sits above the content and scrolls with the page.
+        css = (SITE_JS.parent / "summary.css").read_text()
+        wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
+        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
+        self.assertRegex(wide.group(1), r"overflow-y: auto")
+        # A scroll the list cannot take passes to the page, which is what pins
+        # the sidebar and brings a long list's last sections into the window.
+        self.assertNotIn("overscroll-behavior", wide.group(1))
+        narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
+        self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
+        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
+
+    def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
+        css = (SITE_JS.parent / "summary.css").read_text()
+        title = re.search(r"^\.nav \.ntitle \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(title, "summary.css has no .nav .ntitle rule")
+        self.assertIn("overflow-wrap: anywhere;", title.group(1))
+
+
 def served_spec(number: int, head: str) -> dict:
     """A spec for pull request `number` at `head` that builds against PLAN_DIFF."""
     return {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
