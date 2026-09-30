@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .core import ProjectorError
+from .core import FileAction, ProjectorError
 
 SPEC_VERSION = 1
 CHECK_KINDS = ("context", "verify", "flag")
@@ -144,18 +144,19 @@ class NeedsAdmin(SpecError):
     """Setting up the site needs changes on GitHub that only an admin can make.
 
     `commands` are the `gh` commands that make them, in order, for the user
-    to hand an admin.
+    to hand an admin; `workflow` is the site workflow `init` wrote beside them.
     """
 
     def __init__(self, repo: str, needed: str, commands: list[str]) -> None:
         super().__init__(repo, needed, commands)
         self.reason = f"you are not an admin of {repo}, so init cannot {needed}"
         self.commands = commands
+        self.workflow: FileAction | None = None
 
     def steps(self) -> str:
-        """What the user does next: the admin's commands, one per line, then `init` again."""
-        return ("ask an admin to run these commands, then run `project init` again to write the site workflow:"
-                + "".join(f"\n    {command}" for command in self.commands))
+        """What the user does next: the admin's commands, one per line."""
+        return ("ask an admin to run these commands; the site deploys once they have and the site workflow is on "
+                "the default branch:" + "".join(f"\n    {command}" for command in self.commands))
 
     def __str__(self) -> str:
         return f"{self.reason}; {self.steps()}"

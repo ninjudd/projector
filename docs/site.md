@@ -34,9 +34,9 @@ is the GitHub repository:
    Enterprise Cloud. Then it writes the workflow. When it cannot set the site
    up, for example because you are not an admin, it says why on stderr and
    adopts the repository anyway; pass `--site` to make that an error.
-   Without admin rights, it also prints the `gh` commands an admin runs to
-   finish the setup; run `init` again once they have. Run it again at any
-   time; it changes only what is out of date.
+   Without admin rights, it still writes the workflow, and prints the `gh`
+   commands an admin runs to finish the setup. Run it again at any time; it
+   changes only what is out of date.
 
 2. Commit the workflow to the default branch through a pull request. GitHub
    runs the dispatched workflow only from the default branch, and deploys
