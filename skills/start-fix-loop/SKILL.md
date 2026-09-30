@@ -151,7 +151,8 @@ and report the recurrence before changing it again.
 
 ## Commit, reply, push, resolve
 
-For every accepted finding, preserve this order:
+Write each commit message and thread reply to `../writing.md`. For every
+accepted finding, preserve this order:
 
 1. Commit the validated fix locally.
 2. Reply in its review thread under the operator identity, opening the reply
