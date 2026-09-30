@@ -4,7 +4,7 @@ Projector can host a site for a repository on GitHub Pages, built from content
 Projector keeps in the repository itself. Its menu has three sections:
 **Projects**, the home page, lists the projects under `docs/projects` with
 each one's priority, and its owner when any plan names one;
-**Reviews** lists the pull request summaries the `summarize-changes` skill
+**Reviews** lists the pull request summaries the `summarize-pr` skill
 publishes; and **Docs** renders `README.md` beside a sidebar of every other
 document under `docs/`. A document is Markdown, which the site renders, or an
 HTML page, which it shows as it is inside the site, with the files beside it,
@@ -115,7 +115,7 @@ is the GitHub repository:
    you have not read never runs its code unasked.
 
 3. Publish something. Once the workflow is on the default branch, the
-   `summarize-changes` skill publishes to the site by default: ask your agent
+   `summarize-pr` skill publishes to the site by default: ask your agent
    for a summary of a pull request and it pushes the spec to the hidden
    ref, starts the workflow, and hands you the link. Until then, it keeps
    the spec in your checkout's own `refs/projector/summaries` and pushes

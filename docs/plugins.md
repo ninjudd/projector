@@ -12,22 +12,22 @@ manifest at `.claude-plugin/plugin.json` and the Codex manifest at
 instructions and supporting scripts without a generated copy or host-specific
 fork.
 
-The plugin provides `design`, `implement`, `finish`, `review-changes`,
-`start-review-loop`, `start-fix-loop`, and `summarize-changes`, which
+The plugin provides `design`, `implement`, `finish`, `review-pr`,
+`start-review-loop`, `start-fix-loop`, and `summarize-pr`, which
 summarizes a pull request's changes as a guided review page. Claude invokes a
 plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
-`review-changes` reviews a pull request's current head once, by the method in
-`skills/review-changes/method.md`, and publishes one labeled review;
+`review-pr` reviews a pull request's current head once, by the method in
+`skills/review-pr/method.md`, and publishes one labeled review;
 `start-review-loop` runs it on every new head of your pull requests, and the
 fix loop verifies findings by the same protocol. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
 what it checked rather than on who clicked resolve. For a pull request of 400
 changed lines or more, in a repository with a Projector site,
-`review-changes` then runs `summarize-changes` and links the summary from its
+`review-pr` then runs `summarize-pr` and links the summary from its
 review; `review.summarize` and `review.summarize_min_lines` in
 `.projector.toml` change that. All three of `implement`,
-`review-changes`, and the fix loop share the code guidelines in
+`review-pr`, and the fix loop share the code guidelines in
 `skills/guidelines.md`, so the rules one writes to are the rules the others
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, writes it to the writing
