@@ -69,10 +69,23 @@
                 const key = `${c.side === 'old' ? 'old' : 'new'}:${String(c.line)}`;
                 (atLine[key] ?? (atLine[key] = [])).push(c);
             });
+            // Only a side the file has gets a line-number column: a new file has no
+            // old numbers, and a deleted file no new ones.
+            const kinds = new Set(f.hunks.flatMap(function (h) { return h.lines.map(function (l) { return l[0]; }); }));
+            const oldSide = kinds.has('d') || kinds.has('c') || !kinds.has('a');
+            const newSide = kinds.has('a') || kinds.has('c') || !kinds.has('d');
+            const sides = Number(oldSide) + Number(newSide);
+            const gutter = `<td class="ln" colspan="${String(sides)}"></td>`;
+            // A fixed table layout sizes its columns from the first row, a hunk header
+            // whose gutter spans them all, so the columns are sized here instead.
+            const columns = `<colgroup>${'<col class="lncol">'.repeat(sides)}<col></colgroup>`;
+            function numbers(l) {
+                return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
+            }
             function notesAt(l) {
                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
                 const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-                return found.length > 0 ? `<tr class="noterow"><td class="ln" colspan="2"></td><td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
+                return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
             }
             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
             if (f.new === true)
@@ -82,19 +95,19 @@
             if (f.kind !== '')
                 badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
             const hunks = f.hunks.map(function (h) {
-                const rows = [`<tr class="hunk"><td class="ln" colspan="2"></td><td class="code">${esc(h.header)}</td></tr>`];
+                const rows = [`<tr class="hunk">${gutter}<td class="code">${esc(h.header)}</td></tr>`];
                 h.lines.forEach(function (l) {
                     const t = l[0];
                     if (t === 'm') {
-                        rows.push(`<tr class="meta"><td class="ln" colspan="2"></td><td class="code">${esc(l[3])}</td></tr>`);
+                        rows.push(`<tr class="meta">${gutter}<td class="code">${esc(l[3])}</td></tr>`);
                         return;
                     }
                     const cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
                     const sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
-                    rows.push(`<tr class="${cls}"><td class="ln">${lineNumber(l[1])}</td><td class="ln">${lineNumber(l[2])}</td><td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+                    rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
                     rows.push(notesAt(l));
                 });
-                return `<table class="diff">${rows.join('')}</table>`;
+                return `<table class="diff">${columns}${rows.join('')}</table>`;
             }).join('') || '<p class="fnote">No content changes.</p>';
             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
                 '<div class="fsentinel" aria-hidden="true"></div>' +

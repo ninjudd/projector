@@ -209,7 +209,8 @@ input.nbox { cursor: pointer; }
 table.diff { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.45; table-layout: fixed; }
 table.diff + table.diff { border-top: 1px solid var(--border); }
 table.diff td { padding: 0 8px; vertical-align: top; }
-table.diff td.ln { width: 46px; text-align: right; color: var(--ctx-ln); user-select: none; font-variant-numeric: tabular-nums; font-size: 11.5px; padding-top: 1px; }
+table.diff col.lncol { width: 46px; }
+table.diff td.ln { text-align: right; color: var(--ctx-ln); user-select: none; font-variant-numeric: tabular-nums; font-size: 11.5px; padding-top: 1px; }
 table.diff td.code { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 table.diff .sign { display: inline-block; width: 1ch; margin-right: .5ch; color: var(--ctx-ln); }
 /* Every instance of the identifier last clicked in the code. */
