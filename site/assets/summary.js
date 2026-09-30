@@ -177,7 +177,7 @@
                     return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
                 }).join('') + '</div>';
             }
-            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that.</span></div>';
+            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
             return out;
         }
         function headsList() {
@@ -492,21 +492,25 @@
         // so a definition's callers stand out. Clicking it again, clicking code that
         // is not an identifier, or pressing Escape clears the marks. A drag selects
         // text as usual and marks nothing.
-        const IDENTIFIER = /[\p{L}\p{N}_$]+/gu;
-        const IDENTIFIER_CHAR = /[\p{L}\p{N}_$]/u;
+        // Combining marks belong to the name they follow, as a vowel sign does in
+        // Devanagari, and connector punctuation includes the underscore.
+        const IDENTIFIER = /[\p{L}\p{M}\p{N}\p{Pc}$]+/gu;
+        // A run of digits or marks alone, a number or an emoji's variation
+        // selector, is not a name worth tracing.
+        const NAME = /[\p{L}\p{Pc}$]/u;
         let token = '';
         function tokenAt(node, offset) {
             if (!(node instanceof Text))
                 return '';
-            const s = node.data;
-            let start = offset, end = offset;
-            while (start > 0 && IDENTIFIER_CHAR.test(s.charAt(start - 1)))
-                start--;
-            while (end < s.length && IDENTIFIER_CHAR.test(s.charAt(end)))
-                end++;
-            const word = s.slice(start, end);
-            // A bare number is a literal, not a name worth tracing.
-            return /[^\p{N}]/u.test(word) ? word : '';
+            // The same match that marks the page finds the clicked name, so the two
+            // always agree, a name with a letter beyond one UTF-16 unit included.
+            for (const m of node.data.matchAll(IDENTIFIER)) {
+                if (m.index > offset)
+                    break;
+                if (offset <= m.index + m[0].length)
+                    return NAME.test(m[0]) ? m[0] : '';
+            }
+            return '';
         }
         function clearTokens() {
             document.querySelectorAll('mark.tok').forEach(function (m) {
