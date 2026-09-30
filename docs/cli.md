@@ -461,7 +461,7 @@ These are the keys Projector reads today:
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of a large pull request to the repository's Projector site after each review |
 | `review.summarize_min_lines` | integer | `400` | `review-pr`, as the added and deleted lines at which a pull request gets a summary |
-| `fix.resolve_human_threads` | boolean | `true` | `start-fix-loop`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+| `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

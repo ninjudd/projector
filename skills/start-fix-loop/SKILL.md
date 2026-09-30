@@ -1,42 +1,25 @@
 ---
 name: start-fix-loop
-description: Watch chat-owned GitHub pull requests for review findings, verify and fix each one, then reply, push, and resolve it. Use when the user asks to keep fixing review feedback as it arrives or drive PRs to a clean review.
+description: Watch chat-owned GitHub pull requests for review findings and merge conflicts, and run fix-pr on each one that has work, one subagent per pull request. Use when the user asks to keep fixing review feedback as it arrives or drive PRs to a clean review.
 ---
 
 # Start Fix Loop
 
 Run a persistent background loop alongside foreground work. Watch only pull
 requests this conversation created or explicitly adopted, and keep watching
-until the user stops the loop.
+until the user stops the loop. The loop decides when a pull request has work;
+the work itself is the `fix-pr` skill, in `../fix-pr/SKILL.md`, run for that
+pull request. That skill defines the operator, what counts as outstanding
+work, how to merge a conflicting base, and how to verify, fix, reply, and
+resolve, so this file covers only the loop around it.
+
+## Resolve the operator and scope
+
+Resolve the operator as `../fix-pr/SKILL.md` describes, once for the loop.
 
 Watch only the repository containing the current working directory. Covering a
 second repository requires starting this skill from that repository with its
 own tracked set and watcher state.
-
-## Resolve ownership
-
-The **operator** owns the pull request branches and is the identity allowed to
-push fixes. Resolve that login once from explicit user input, then repository
-instructions. Confirm it with `gh auth status` and `gh api user --jq .login`
-under the token used for pushes.
-
-The operator is deliberately not a `.projector.toml` setting, though other
-Projector behavior is. Every fix is pushed and every reply posted through the
-operator's token, so a file naming a different account could only disagree
-with the identity actually doing the work. Ownership follows the token, not a
-file that can disagree with it.
-
-A review loop may run under a different reviewer identity. If the ambient
-identity is not the operator, do not push through it. Hold the validated
-operator login literally; never use `@me`.
-
-Findings arrive from two kinds of reviewer and both are answered the same way.
-A **cross-author** reviewer — a teammate, Codex, Bugbot, or a review loop run by
-someone else — posts real `CHANGES_REQUESTED` verdicts. A **self-review** loop,
-which GitHub allows only to post `COMMENT` reviews on the operator's own pull
-requests, records its outcome in the review body's verdict line and in draft
-state instead. Read both signals; never treat an unmoved `reviewDecision` as
-evidence that nothing is outstanding.
 
 The tracked set is not every operator pull request. Build it from pull
 requests created by this conversation plus any pull request the user
@@ -49,13 +32,14 @@ adopted it. Never list a pull request you would not push to.
 
 ## Establish the loop
 
-1. Read repository instructions, `AGENTS.md` or `CLAUDE.md`, and applicable
-   GitHub skills.
+1. Read repository instructions, `AGENTS.md` or `CLAUDE.md`,
+   `../fix-pr/SKILL.md`, and applicable GitHub skills.
 2. Resolve the repository, checked-out branch, exact tracked pull request set,
-   each base and head SHA, author, state, review decision, and unresolved review
-   threads. Include every layer of a stack created by this conversation.
-   Baseline only already-resolved threads. Never baseline an unresolved thread;
-   every finding already waiting when the loop starts remains outstanding.
+   each base and head SHA, author, state, mergeability, review decision, and
+   unresolved review threads. Include every layer of a stack created by this
+   conversation. Baseline only already-resolved threads. Never baseline an
+   unresolved thread; every finding already waiting when the loop starts
+   remains outstanding.
 3. Verify the operator can push each tracked branch. Do not test with an empty
    commit or direct push.
 4. Write the tracked set to a durable tracked file, one `owner/repo#number`
@@ -75,11 +59,11 @@ adopted it. Never list a pull request you would not push to.
    `owner/repo#number` or a number that names no pull request, and it
    distinguishes a lookup that failed for network or auth reasons from a
    missing pull request. Compare its output with the unresolved threads,
-   verdicts, and body-only reviews you fetched in step 2: a finding missing
-   from the output is a pull request missing from the file, and an empty
-   output over outstanding work is a file that lists the wrong set. The pass
-   records what it announced, so the running watcher repeats those findings
-   only at the renotification interval; work from this output.
+   verdicts, body-only reviews, and conflicts you fetched in step 2: work
+   missing from the output is a pull request missing from the file, and an
+   empty output over outstanding work is a file that lists the wrong set.
+   The pass records what it announced, so the running watcher repeats that
+   work only at the renotification interval; dispatch it from this output.
 6. Run the same script without `--once`, with the same state file, an
    interval of at least 30 seconds, and a finite renotification interval,
    under the host's persistent process or monitor facility. Every event it
@@ -87,154 +71,80 @@ adopted it. Never list a pull request you would not push to.
    `TRACKED` line is a problem with the file itself, announced once, and the
    fix is to the file rather than to a pull request.
 
-Before adopting an existing watcher, fetch unresolved threads, verdicts, and
-body-only reviews directly. Confirm its tracked file is the set this
-conversation owns -- a watcher another session started watches that session's
-set -- and verify its state file contains every expected unresolved row.
-Restart the watcher when its script changed after it started; a live process
-cannot prove which file version it loaded.
+Before adopting an existing watcher, fetch unresolved threads, verdicts,
+body-only reviews, and mergeability directly. Confirm its tracked file is the
+set this conversation owns -- a watcher another session started watches that
+session's set -- and verify its state file contains every expected unresolved
+row. Restart the watcher when its script changed after it started; a live
+process cannot prove which file version it loaded.
 
 The watcher is level-triggered:
 
 - `FINDING` reports an unresolved inline thread.
 - `VERDICT` reports a real `CHANGES_REQUESTED`, including a review whose
   findings exist only in its body.
+- `CONFLICT` reports a branch that conflicts with its base. It clears when a
+  push makes the branch mergeable again.
+- `REVIEW` reports a review body that has no inline thread, the shape every
+  `COMMENT` review posts.
 - `DRAFT` reports a pull request a review loop has not signed off. It clears
   when the review loop marks the pull request ready, which is that loop's
   sign-off on the current head.
-- `REVIEW` reports a review body that has no inline thread, the shape every
-  `COMMENT` review posts.
 - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
 
-Read review bodies and compare them with the thread set. A Projector review
-body carries a verdict line; read it rather than inferring the outcome. Dispose
-of a body-only finding in a pull-request-level comment because there is no
-thread to reply to or resolve.
+A `DRAFT` line alone is not work. It says the head has not been signed off,
+and any work behind it arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or
+`REVIEW` line. A draft with nothing else outstanding is waiting on the review
+loop to re-review, not on a code change.
 
-A `Suggestions` list in a Projector review body is not a body-only finding,
-and no item on it is outstanding work. Weigh each item yourself: take it when
-the improvement is worth a push and the review cycle that follows, and leave
-it when it is not. A clean verdict above such a list is a clean head either
-way, and an item you leave needs no reply.
+## Give each pull request its own subagent
 
-A `DRAFT` line is not itself a finding. It says the head has not been signed
-off, so look for the work in that pull request's threads and review bodies. A
-draft with no outstanding finding is waiting on the review loop to re-review,
-not on a code change.
+Where the host can keep a subagent alive and send it later messages, each
+tracked pull request gets one fixing subagent for as long as it stays open.
+The main loop owns the watcher and the tracked file; the subagent owns every
+fix on its pull request. Fix context that carries over is the point: on a new
+round the subagent already knows the findings it answered, the ones it
+declined and why, and the commits it pushed, so it reads a reopened thread as
+the recurrence it is instead of as new work.
 
-## Verify and fix findings
+- On a pull request's first `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW`,
+  start its subagent with a name that carries the number, such as
+  `fix-<number>`. Give it the repository, the pull request, the operator
+  login, the event lines, and the path of `../fix-pr/SKILL.md`, and have it
+  run that skill for the pull request.
+- Give a stack one subagent for all its layers, named for the bottom layer.
+  A fix to a lower layer is carried up into every layer above it, so two
+  subagents working one stack would push the same branches.
+- Have each subagent work in its own worktree of its pull request's branch,
+  so two subagents never share a checkout and none touches the main loop's.
+- Send every later event for that pull request, or for any layer of its
+  stack, to the same subagent as a message; never start a second one for it.
+  Each message is another run of `fix-pr` for the pull request's current
+  head.
+- The subagent reports each run back: the head SHA, the merge commit if it
+  made one, the fix commits, the declined findings, and the validation
+  results. A question for the user comes back to the main loop to ask, and
+  the subagent goes on with the pull request's unrelated work meanwhile.
+- When a pull request merges or closes, delete its line from the tracked
+  file at once. Tell its subagent to finish, remove its worktrees, and close
+  only when no layer it owns is still open. A stack merges from the bottom,
+  so the subagent named for the bottom layer keeps that name and goes on
+  fixing the layers above it, starting with the base merge the retargeted
+  child needs.
+- When a subagent is lost, to a session restart for example, start a
+  replacement under the same name. It rebuilds its context from GitHub: each
+  open layer's review threads, the replies on them, and its review bodies.
 
-Handle findings in posting order, batching only related findings that touch the
-same code:
-
-1. Verify the claim against the exact pushed head and surrounding code by the
-   four-step protocol in `../review-pr/method.md` § 5: quote the
-   lines, walk the execution, write the triggering sequence, and look for
-   what already stops it. Decline a false finding by naming that guard with
-   the quoted code that shows it, rather than changing correct behavior.
-2. Reproduce a valid defect with a failing test, error, or measurement.
-3. Implement the narrow fix in the branch that owns the code, written to
-   `../guidelines.md`, the code guidelines the review read the head against.
-   A finding that cites a section of that file is verified against that
-   section, and declined only by showing the rule does not apply to the
-   quoted code. Read the lines around an insertion anchor before editing so
-   an attribute, decorator, or comment is not silently detached.
-4. Prove a regression test fails without the fix and passes with it.
-5. Run the repository's full test, lint, format, documentation, and validation
-   gate.
-6. Keep independent fixes in independent commits; batch findings that share one
-   cause.
-
-If the correct behavior requires a user decision, ask instead of guessing and
-keep watching unrelated findings. If a finding recurs after a pushed fix, stop
-and report the recurrence before changing it again.
-
-## Commit, reply, push, resolve
-
-Write each commit message and thread reply to `../writing.md`. For every
-accepted finding, preserve this order:
-
-1. Commit the validated fix locally.
-2. Reply in its review thread under the operator identity, opening the reply
-   with `<!-- projector-reply v=1 -->` so a loop sharing this login never reads
-   it back as a new finding. Name the commit and state what was reproduced and
-   changed.
-3. Push the pull request branch, never its base branch.
-4. Resolve the thread only after the push succeeds.
-5. Re-fetch `reviewThreads` and confirm `isResolved: true`.
-
-Resolving says the fix is pushed; it is not the final word on a Projector
-finding. The review loop verifies every one of its findings on the next head,
-resolves any you left open, and reopens one whose fix does not hold, replying
-with `<!-- projector-verify v=1 result=reopened -->`. A reopened thread comes
-back as a `FINDING`: treat it as the recurrence below, not as new work.
-
-Resolve a person's thread the same way once its fix is pushed, so a reviewer
-who never resolves threads does not leave the pull request looking
-unanswered. Where `project config get fix.resolve_human_threads --default
-true` prints `false`, reply to a person's thread and leave resolving it to
-them. A Projector finding or another tool's thread is resolved either way.
-
-Reply before pushing so a reviewer triggered by the push sees the reasoning,
-but push promptly because the named commit is briefly local-only. If a push
-fails, post that fact, leave the thread unresolved, and report the blocker.
-
-Fixing an external reviewer's finding is not a reason to ask that reviewer for
-another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
-request buys nothing and spends someone's money to add noise to the pull
-request. This is the moment the temptation is strongest, because the fix looks
-incomplete until somebody confirms it; the push is the confirmation.
-
-Do not wait for one either. Those services are slow beside a local loop, and
-their findings are worth fixing without their latency being worth inheriting.
-Fix what they raise, push, and carry on; whether their re-review has landed is
-not this loop's business.
-
-Never resolve a finding you declined or could not fix. An open declined thread
-is the user's merge decision. Re-read and rerun the pull request body's
-`Testing` commands after each fix batch, and update stale claims in unwrapped
-GitHub prose.
-
-## Preserve stacked ownership
-
-Fix code on the stack branch that introduced it. When a lower layer changes,
-use the installed stack workflow to cascade-rebase and push every layer above
-it, then rerun each affected layer's full gate. Do not patch parent code inside
-a child merely to avoid rebasing.
-
-After a parent merges, verify the child points at the intended base and remains
-mergeable. Use the stack workflow's sync operation when available. Never merge
-any layer; merging remains the user's checkpoint.
+The main loop routes events and records outcomes; it does not inspect code,
+so its own context stays small however many pull requests it tracks. Where
+the host has no subagents, the main loop runs `fix-pr` itself for each pull
+request with work, in the order the events arrived.
 
 ## Report clean state and continue
 
-A pull request is clean only when:
-
-- a clean verdict names its current head,
-- no unresolved threads remain,
-- the current head is the one actually reviewed, and
-- the reviewer's own sign-off signal is clear: `reviewDecision` is not
-  `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
-  request is no longer a draft, which is how that loop signs off.
-
-An external reviewer is not one of those conditions. A pending or absent
-re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
-report on the review loop's verdict and let theirs arrive whenever it does. A
-standing `CHANGES_REQUESTED` from one is a real verdict and does block, exactly
-as any other cross-author verdict would.
-
-Report that state with the head SHA, fix commits, declined findings, and
-validation results, then keep watching. A stale `CHANGES_REQUESTED`, or a pull
-request still in draft after all fixes, is a wait for re-review rather than
-another code change. Do not manufacture an empty commit to trigger it.
-
-Never mark a draft pull request ready yourself. A clean review is what clears
-a draft, so undrafting by hand sends the work to human reviewers carrying a
-sign-off nothing gave it. If you opened it as a draft, you do not undraft it —
-not when the reason you drafted it is resolved. That is the case that feels
-justified: the red test you drafted around is passing, so the draft reads as
-stale state left over from a fixed problem. It is not. It is a standing
-request for review that has not been answered yet.
+After each subagent report, check the pull request against the clean
+conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
+fix commits, declined findings, and validation results, then keep watching.
 
 Delete closed or merged pull requests from the tracked file. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this
@@ -245,10 +155,7 @@ every remaining finding on a pull request is deliberately declined.
 ## Never
 
 - Never merge.
-- Never push through the reviewer identity or to an unowned branch.
 - Never list a pull request in the tracked file that this conversation did not
   create and the user did not assign.
-- Never discard or overwrite uncommitted work to switch branches.
+- Never let two subagents push to the same branch.
 - Never claim a watcher, review, or clean state without checking live evidence.
-- Never invoke an external reviewer unless the user names it, and never
-  re-request one after fixing its finding.
