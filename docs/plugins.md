@@ -57,10 +57,12 @@ installs the CLI with `pipx` from the source archive of `PROJECTOR_REF`
 environment under `~/.local/share/projector` with `project` linked into
 `~/.local/bin`. It adds the `PROJECTOR_REPO` marketplace (default
 `ninjudd/projector`) to each host. `status` compares the installed versions
-with the release's. `project upgrade` downloads and runs the same installer.
-projector.bot serves `install.sh` from the `v0` tag, so it is always the
-newest release's installer. Set `PROJECTOR_REF` to install a particular
-release, such as `v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
+with the release's. `project upgrade` downloads and runs the same installer,
+and every `project` command warns on stderr when a newer release is out (see
+[the CLI guide](cli.md#know-when-a-release-is-out)). projector.bot serves
+`install.sh` from the `v0` tag, so it is always the newest release's
+installer. Set `PROJECTOR_REF` to install a particular release, such as
+`v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
 
 ## Install only the CLI
 
