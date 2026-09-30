@@ -117,9 +117,12 @@ is the GitHub repository:
 3. Publish something. Once the workflow is on the default branch, the
    `summarize-changes` skill publishes to the site by default: ask your agent
    for a summary of a pull request and it pushes the spec to the hidden
-   ref, starts the workflow, and hands you the link. Ask for a Claude
-   Artifact instead when you want a private page. The site's Reviews section
-   lists every summary, and each pull request's newest version is at
+   ref, starts the workflow, and hands you the link. Until then, it keeps
+   the spec in your checkout's own `refs/projector/summaries` and pushes
+   nothing, so you can preview summaries with `project site serve` before
+   the site is set up. Ask for a Claude Artifact instead when you want a
+   private page. The site's Reviews section lists every summary, and each
+   pull request's newest version is at
    `reviews/<number>/`. The projects and the docs appear on the first
    deploy, without publishing anything.
 
@@ -133,9 +136,12 @@ rebuilding it whenever `README.md`, `docs/`, or the plans change:
 project site serve
 ```
 
-It fetches the published summaries from `origin` first, so the Reviews menu
-matches what the repository has published. Publish a summary without
-starting a deploy with `project summary publish --no-dispatch`. To host
+It fetches the published summaries from `origin` first, and its Reviews
+menu lists them beside the summaries this checkout keeps in its own
+`refs/projector/summaries`. `project summary publish` keeps a summary there,
+pushing nothing, while the repository does not host its site, and
+`project summary publish --local` does the same where it does, so you can
+preview a summary before anyone else sees it. To host
 the site somewhere other than GitHub Pages, run `project site build --out
 DIR --base PATH` and serve `DIR` from any static host that answers a missing
 path with `404.html`.

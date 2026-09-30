@@ -830,32 +830,79 @@ def dispatch(repo: str) -> None:
     gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}")
 
 
-def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
-            diff_path: Path | None = None) -> str | None:
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+def ref_exists(ref: str) -> bool:
+    return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                          capture_output=True).returncode == 0
+
+
+def spec_tree(parent: str, folder: str, spec: dict, diff: str) -> str:
+    """The tree of `parent`, or an empty one, with the spec and its diff written under `folder`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+        if parent:
+            git("read-tree", parent, env=env)
+        for name, content in (("spec.json", json.dumps(spec, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
+            blob = git("hash-object", "-w", "--stdin", input=content)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
+        return git("write-tree", env=env)
+
+
+def spec_pr(spec: dict) -> dict:
+    """The spec's pull request, refusing a spec that cannot say where it is published."""
     pr = spec.get("pr") or {}
     if spec.get("version") != SPEC_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
         raise SpecError("the spec needs version, pr.repo, pr.number and pr.head")
+    return pr
+
+
+def push_decision(repo: str) -> tuple[str, str]:
+    """The URL of the site `publish` pushes a spec to `repo` for, or '' and why the spec stays local.
+
+    Only a repository that hosts its Projector site reads the pushed ref, so
+    one without a site gets its spec in this checkout alone, for `site serve`
+    to preview, and nothing is written to the shared repository.
+    """
+    try:
+        url, reason = hosting(repo)
+    except SpecError as error:
+        return "", f"could not tell whether {repo} hosts its Projector site: {error}"
+    return url or "", reason
+
+
+def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+            diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
+    """Commit the spec and its diff to the summaries ref, and push them unless `push` is false.
+
+    Without `push`, the commit goes on this checkout's own `ref` and nothing
+    leaves it, no dispatch included; `reason` says why, for the report.
+    """
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    pr = spec_pr(spec)
     slug = repo_slug(git("remote", "get-url", remote))
     if slug and slug.lower() != pr["repo"].lower():
         raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
     diff = diff_path.read_text(encoding="utf-8") if diff_path else spec_diff(spec)
     prepare_page(spec, diff=diff, at_head=True)
+    folder = f"{root}/{pr['number']}/{pr['head']}"
+    message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+    if not push:
+        parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
+        tree = spec_tree(parent, folder, spec, diff)
+        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+            print(f"{ref} in this checkout already has this spec; nothing to publish")
+            return None
+        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        git("update-ref", ref, commit, parent)
+        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/spec.json and {DIFF_FILE}; nothing was "
+              f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
+        return commit
     local = tracking_ref(remote, ref)
     parent = fetch_ref(remote, ref)
     seeded = False
     if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
         parent = seed_from_legacy(remote)
         seeded = bool(parent)
-    with tempfile.TemporaryDirectory() as tmp:
-        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
-        if parent:
-            git("read-tree", parent, env=env)
-        folder = f"{root}/{pr['number']}/{pr['head']}"
-        for name, content in (("spec.json", json.dumps(spec, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
-            blob = git("hash-object", "-w", "--stdin", input=content)
-            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
-        tree = git("write-tree", env=env)
+    tree = spec_tree(parent, folder, spec, diff)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
         if not seeded:
             print(f"{ref} already has this spec; nothing to publish")
@@ -863,7 +910,6 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
         # The old ref already had this spec, but the new ref still needs creating.
         commit = parent
     else:
-        message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
     git("push", "--quiet", remote, f"{commit}:{ref}")
     git("update-ref", local, commit)
@@ -886,18 +932,21 @@ def review_page(site: str, number: int) -> str:
 SUMMARY_MARKER = "projector-summary"
 
 
-def comment_summary(repo: str, number: int, head: str) -> str:
+def comment_summary(repo: str, number: int, head: str, site: str = "") -> str:
     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
 
     The pull request keeps one such comment per account, naming the head it
     summarizes: a later head's summary updates it in place rather than adding
     another, and a comment that already names this head is left alone. A
-    repository whose site is not hosted gets no comment. Returns what it did.
+    repository whose site is not hosted gets no comment. `site` is the site's
+    URL when the caller already looked it up. Returns what it did.
     """
-    url, reason = hosting(repo)
-    if url is None:
-        return f"not linking the summary from a comment: {reason}"
-    page = review_page(url, number)
+    if not site:
+        url, reason = hosting(repo)
+        if url is None:
+            return f"not linking the summary from a comment: {reason}"
+        site = url
+    page = review_page(site, number)
     body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
     login = gh("api", "user", "--jq", ".login").strip()
     rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
