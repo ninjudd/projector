@@ -129,7 +129,7 @@ same code:
    what already stops it. Decline a false finding by naming that guard with
    the quoted code that shows it, rather than changing correct behavior.
 2. Reproduce a valid defect with a failing test, error, or measurement.
-3. Implement the narrow fix in the branch that owns the code, written to
+3. Implement the narrow fix in the branch that owns the code, following
    `../guidelines.md`, the code guidelines the review read the head against.
    A finding that cites a section of that file is verified against that
    section, and declined only by showing the rule does not apply to the
@@ -147,8 +147,8 @@ and report the recurrence before changing it again.
 
 ## Commit, reply, push, resolve
 
-Write each commit message and thread reply to `../writing.md`. For every
-accepted finding, preserve this order:
+Follow the writing guide in `../writing.md` when you write each commit message
+and thread reply. For every accepted finding, preserve this order:
 
 1. Commit the validated fix locally.
 2. Reply in its review thread under the operator identity, opening the reply

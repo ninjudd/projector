@@ -63,10 +63,11 @@ The plugin gives Claude Code and Codex the same skills: `design`, `implement`,
 and `finish` a project, where `implement` also builds a small change from a
 description; `review-pr` to review a pull request once; `fix-pr` to fix its
 findings and merge conflicts once; `start-review-loop` and `start-fix-loop`
-to run those two on every pull request continuously; and `summarize-pr`,
-which summarizes a pull request's changes as a guided review page. Claude
-invokes a skill as `/projector:<skill>` and
-Codex as `$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
+to run those two on every pull request continuously; `summarize-pr`, which
+summarizes a pull request's changes as a guided review page; and `write`,
+which writes or revises any prose so that it follows Projector's writing
+guide. Claude invokes a skill as `/projector:<skill>` and Codex as
+`$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
 work together.
 
 ## Publish a site

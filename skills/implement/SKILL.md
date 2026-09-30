@@ -68,20 +68,20 @@ nearly every change:
   commented-out block, and no compatibility wrapper the plan did not ask
   for.
 
-Write to `../guidelines.md`, the code guidelines every Projector skill shares.
-The review loop reads your head against them and the fix loop fixes to them,
-so a rule skipped here comes back as a finding citing the section you skipped.
-Its first rule is about comments: write code that needs none, simplify a
-stretch before you explain it, and add a comment only to preserve a
+Follow `../guidelines.md`, the code guidelines every Projector skill shares.
+The review loop reads your head against them and the fix loop follows them in
+each fix, so a rule skipped here comes back as a finding citing the section
+you skipped. Its first rule is about comments: write code that needs none,
+simplify a stretch before you explain it, and add a comment only to preserve a
 constraint or reason the code cannot carry on its own.
 
 When the work has a plan, update it in the same change whenever
 implementation settles a decision, changes scope, reveals a new constraint,
-or completes an acceptance criterion. Write the update to `../writing.md`,
-as `design` writes the plan. Append numbered sections rather than
-renumbering cited sections. Create a nested project only when it has an
-independently useful lifecycle. Put details that belong to the parent in a
-supplemental document.
+or completes an acceptance criterion. Follow the writing guide in
+`../writing.md` when you write the update, as `design` does. Append numbered
+sections rather than renumbering cited sections. Create a nested project
+only when it has an independently useful lifecycle. Put details that belong
+to the parent in a supplemental document.
 
 Do not infer a parent's status or priority from a child or vice versa. Do not
 move project directories, generate a tracked status index, or duplicate either
@@ -137,12 +137,12 @@ Open it as a draft. A review loop marks it ready on a clean head, so the
 draft says the work has not been signed off yet; never mark it ready
 yourself.
 
-Write the title, the body, and each commit message to `../writing.md`,
-§ 10 in particular. Write an imperative title and a body that explains why
-the change exists, because a squash merge makes the body the commit message.
-End every body with
-a `## Testing` section: the exact commands, in order, that you ran yourself
-from the directory you name; what the reader should see; the signal that
-would show the change is wrong; and what needs building first and what state
-the commands leave behind. Where a change cannot be exercised by hand, say so
+Follow the writing guide in `../writing.md`, § 10 in particular, when you
+write the title, the body, and each commit message. Write an imperative
+title and a body that explains why the change exists, because a squash merge
+makes the body the commit message. End every body with a `## Testing`
+section: the exact commands, in order, that you ran yourself from the
+directory you name; what the reader should see; the signal that would show
+the change is wrong; and what needs building first and what state the
+commands leave behind. Where a change cannot be exercised by hand, say so
 and point at the test that covers it.
