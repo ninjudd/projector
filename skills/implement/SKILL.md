@@ -108,8 +108,10 @@ Open it as a draft. A review loop marks it ready on a clean head, so the
 draft says the work has not been signed off yet; never mark it ready
 yourself.
 
-Write an imperative title and a body that explains why the change exists,
-because a squash merge makes the body the commit message. End every body with
+Write the title, the body, and each commit message to `../writing.md`,
+§ 10 in particular. Write an imperative title and a body that explains why
+the change exists, because a squash merge makes the body the commit message.
+End every body with
 a `## Testing` section: the exact commands, in order, that you ran yourself
 from the directory you name; what the reader should see; the signal that
 would show the change is wrong; and what needs building first and what state

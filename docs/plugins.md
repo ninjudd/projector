@@ -29,7 +29,9 @@ review; `review.summarize` and `review.summarize_min_lines` in
 `.projector.toml` change that. All three of `implement`,
 `review-changes`, and the fix loop share the code guidelines in
 `skills/guidelines.md`, so the rules one writes to are the rules the others
-review and fix against. The core workflows use the local CLI and do not
+review and fix against. Every skill that writes prose a person reads, such as
+a plan, a review, a summary, or a pull request body, writes it to the writing
+guide in `skills/writing.md`. The core workflows use the local CLI and do not
 require MCP.
 
 ## Install with one command

@@ -747,18 +747,18 @@ def run_summary(arguments: argparse.Namespace) -> int:
         summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
     else:
         pr = summary.spec_pr(json.loads(Path(arguments.spec).read_text(encoding="utf-8")))
-        site, reason = ("", "--local asked for a local preview") if arguments.local \
+        site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
         summary.publish(
             Path(arguments.spec),
             arguments.remote,
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
-            push=bool(site),
+            push=site is not None,
             reason=reason,
         )
         # A spec kept in this checkout has no page on GitHub to link.
-        if site:
+        if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
     return 0
 

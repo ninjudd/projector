@@ -61,16 +61,22 @@ push to, or approve the pull request unless the user asks.
    Do not read it with `gh pr diff`. GitHub's pull request diff endpoint
    refuses a pull request that changes more than 300 files with HTTP 406,
    and the compare API does not share that limit. For a large diff, delegate
-   the reading to subagents and keep only their conclusions.
-4. Fill the spec as `spec.md` describes. The groups decide whether the page
-   helps:
+   the reading to subagents and keep only their conclusions. Ask each one
+   for what its files did before the change and do after it, in plain
+   words, the terms a newcomer would need defined, and the line numbers of
+   anything worth a note, taken from inside the diff's hunks.
+4. Fill the spec as `spec.md` describes, and write every piece of prose in
+   it for the reader that "Write for someone new to the code" below
+   describes. The groups decide whether the page helps:
    - **Order groups from the contract outward.** API and schema first, then
      the shared core, then persistence and configuration, then adapters, then
      the callers that drive it all, then tooling and documentation.
    - **Put every changed file in exactly one group.** `build` refuses a spec
      that misses a file, repeats one, or names one that is not in the diff.
-   - **Explain why, not only what.** Cite the plan decisions or review
-     threads behind a design choice.
+   - **Explain why, not only what.** Give the reason itself. A plan
+     decision or review thread can back it up, but its number alone, such
+     as "decision 4.19", explains nothing to someone who has not read the
+     plan.
    - **Write notes a reviewer can act on.** A `context` note is what to hold
      in mind while reading. A `verify` note names an invariant worth tracing.
      A `flag` note is your own observation that needs a decision; confirm it
@@ -83,10 +89,63 @@ push to, or approve the pull request unless the user asks.
      note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
      collapsed unless a file's `collapsed` says otherwise. Give the files a
-     reviewer must read a one-line `note`.
-   - **Use the overview for the few facts every group depends on**, such as
-     a decision table, the configuration surface, what earlier review rounds
-     settled, and what the pull request leaves for later.
+     reviewer must read a one-line `note` that says what the file is for and
+     what changed in it, not a list of the names it defines.
+   - **Open the overview with orientation.** Say first what the part of the
+     system this pull request touches is for, what problem the change
+     solves, and how, in plain words. Then give the few facts every group
+     depends on, such as a decision table, the configuration surface, what
+     earlier review rounds settled, and what the pull request leaves for
+     later.
+
+## Write for someone new to the code
+
+Write every intro, note and card to `../writing.md`: for a reviewer who
+may be seeing this code and this part of the system for the first time
+(§ 2), with structure (§ 4), written to the reader (§ 5). A summary adds
+these to it:
+
+- **Define terms in each group.** Readers jump to a group from the
+  sidebar, so each group defines the terms it uses, and the overview gets a
+  card listing the page's terms when there are more than a few.
+- **Give a list, table or heading an item of its own.** In an intro or the
+  overview, an item that starts with a block, such as
+  `"<ol><li>…</li></ol>"`, renders as written rather than inside a
+  paragraph. Wrap a table in `<div class="tblwrap"><table class="tbl">`,
+  and split a long intro with an `<h4>`.
+- **Let the kicker and the intro divide the work.** A group's `kicker` is
+  its one line on what the group covers. The intro's opening sentences say
+  what the group does and why, adding to the kicker rather than repeating
+  it.
+- **Let a note on the plan document name its section**, since that section
+  is what the reader is looking at.
+- **Expect the page to grow.** A summary written this way runs longer than
+  one written for insiders, often by half. Cut repetition and detail no
+  reviewer would act on, never the context, and keep each group intro to a
+  few short paragraphs, with the details in file and line notes.
+
+For example, instead of:
+
+> Hop 1 scores the typed name against the KYC name with `namematch`
+> (4.19); hop 2 reads the issuer check.
+
+write:
+
+> When someone adds a debit card, the engine now checks that the name on
+> the card belongs to the account holder. The card must pass both steps:
+>
+> 1. **The typed name matches the account holder.** The engine compares the
+>    name the user typed on the card with the legal name the account was
+>    verified under, using `namematch`, the fuzzy matcher that already
+>    checks bank accounts.
+> 2. **The card's bank knows that name.** The engine asks the card network
+>    whether the bank that issued the card has the typed name on file.
+
+Before you publish, reread each group intro and note as that newcomer, and
+check that each has the structure its content calls for. Build as often as
+you like, since building is how you learn that a note's line sits outside
+the diff, but publish only once the reread is done. Where a sentence makes
+sense only to someone who already knows the code, rewrite it.
 
 ## Build the page
 
