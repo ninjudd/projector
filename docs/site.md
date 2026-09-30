@@ -136,9 +136,12 @@ rebuilding it whenever `README.md`, `docs/`, or the plans change:
 project site serve
 ```
 
-It fetches the published summaries from `origin` first, so the Reviews menu
-matches what the repository has published. Publish a summary without
-starting a deploy with `project summary publish --no-dispatch`. To host
+It fetches the published summaries from `origin` first, and its Reviews
+menu lists them beside the summaries this checkout keeps in its own
+`refs/projector/summaries`. `project summary publish` keeps a summary there,
+pushing nothing, while the repository does not host its site, and
+`project summary publish --local` does the same where it does, so you can
+preview a summary before anyone else sees it. To host
 the site somewhere other than GitHub Pages, run `project site build --out
 DIR --base PATH` and serve `DIR` from any static host that answers a missing
 path with `404.html`.
