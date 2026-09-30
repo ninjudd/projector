@@ -855,7 +855,6 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
     repo = site_repo(root)
     base = "/" + arguments.base.strip("/") + "/" if arguments.base.strip("/") else "/"
     given = Path(arguments.summaries).resolve() if arguments.summaries else None
-    # Summaries come from the published ref unless --summaries names a folder.
     published = serve.Summaries(root, arguments.remote) if given is None else None
     fetched = ""
     if published is not None and not arguments.no_fetch:
