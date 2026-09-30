@@ -62,15 +62,18 @@ push to, or approve the pull request unless the user asks.
    refuses a pull request that changes more than 300 files with HTTP 406,
    and the compare API does not share that limit. For a large diff, delegate
    the reading to subagents and keep only their conclusions.
-4. Fill the spec as `spec.md` describes. The groups decide whether the page
-   helps:
+4. Fill the spec as `spec.md` describes, and write every piece of prose in
+   it for the reader that "Write for someone new to the code" below
+   describes. The groups decide whether the page helps:
    - **Order groups from the contract outward.** API and schema first, then
      the shared core, then persistence and configuration, then adapters, then
      the callers that drive it all, then tooling and documentation.
    - **Put every changed file in exactly one group.** `build` refuses a spec
      that misses a file, repeats one, or names one that is not in the diff.
-   - **Explain why, not only what.** Cite the plan decisions or review
-     threads behind a design choice.
+   - **Explain why, not only what.** Give the reason itself. A plan
+     decision or review thread can back it up, but its number alone, such
+     as "decision 4.19", explains nothing to someone who has not read the
+     plan.
    - **Write notes a reviewer can act on.** A `context` note is what to hold
      in mind while reading. A `verify` note names an invariant worth tracing.
      A `flag` note is your own observation that needs a decision; confirm it
@@ -83,10 +86,67 @@ push to, or approve the pull request unless the user asks.
      note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
      collapsed unless a file's `collapsed` says otherwise. Give the files a
-     reviewer must read a one-line `note`.
-   - **Use the overview for the few facts every group depends on**, such as
-     a decision table, the configuration surface, what earlier review rounds
-     settled, and what the pull request leaves for later.
+     reviewer must read a one-line `note` that says what the file is for and
+     what changed in it, not a list of the names it defines.
+   - **Open the overview with orientation.** Say first what the part of the
+     system this pull request touches is for, what problem the change
+     solves, and how, in plain words. Then give the few facts every group
+     depends on, such as a decision table, the configuration surface, what
+     earlier review rounds settled, and what the pull request leaves for
+     later.
+
+## Write for someone new to the code
+
+Write the summary for a reviewer who may be seeing this code, and this part
+of the system, for the first time. They know the language and general
+engineering practice, but not this codebase, its history, its plans, or the
+words its authors use among themselves. The page should make sense to them
+without opening another document. A reviewer who knows the code loses
+nothing by it, and one who does not can review at all.
+
+- **Start from what the reader already knows.** Open the overview and each
+  group with what that part of the system does and how it behaved before
+  the change, then what changes, then why. Describe behavior a user or an
+  operator would recognize before naming the code that implements it.
+- **Define every term the first time it appears.** That covers product and
+  vendor names, acronyms such as KYC, and the project's own nicknames, such
+  as "rails" or "hops". Give a code identifier its plain meaning beside it:
+  "`Decide`, which turns the two check results into allow or block".
+- **Name code only when it helps.** An identifier points into the diff; it
+  does not explain anything. Prefer a sentence about what happens over a
+  list of the functions that make it happen, and keep field numbers, enum
+  values and commit hashes out of the prose unless the reader needs them.
+- **Leave out references the reader cannot follow.** "Decision 4.19",
+  "plan § 8", "group 9" and "as the bank link's is" point at things the
+  reader has not seen. State the decision, the section or the comparison
+  itself; a citation may follow it, never replace it.
+- **Write whole sentences.** No slash-separated lists standing in for
+  prose, no telegraphic fragments, and no shorthand the reader has to
+  decode. A concrete case, such as what happens when a user types a
+  nickname on their card, often explains more than a paragraph of
+  abstraction.
+- **Keep notes self-contained.** A `verify` note says in plain words what
+  should be true and why it matters before it names the function to trace.
+  A `flag` note says what could go wrong for a user or for the data, not
+  only which line looks suspect.
+
+For example, instead of:
+
+> Hop 1 scores the typed name against the KYC name with `namematch`
+> (4.19); hop 2 reads the issuer check.
+
+write:
+
+> When someone adds a debit card, the engine now checks that the name on
+> the card belongs to the account holder, in two steps. First it compares
+> the name the user typed on the card with the legal name the account was
+> verified under, using the same fuzzy matcher, `namematch`, that already
+> checks bank accounts. Then it asks the card network whether the bank that
+> issued the card has that name on file.
+
+Before you build, reread each group intro and note as that newcomer. Where
+a sentence makes sense only to someone who already knows the code, rewrite
+it.
 
 ## Build the page
 
