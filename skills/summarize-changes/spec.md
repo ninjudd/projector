@@ -58,6 +58,10 @@ it. The spec is JSON:
   request. `init` records both; keep them when you edit a spec by hand.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
+- Each item of `overview.summary` and of a group's `intro` renders as a
+  paragraph, except an item that starts with a block, `<ul>`, `<ol>`,
+  `<table>`, `<div>`, `<pre>`, `<h3>`, `<h4>` or `<p>`, which renders as
+  written. Give a list, table or heading an item of its own.
 - `overview.cards` lay out two per row. A card with an `id` also gets a
   link in the sidebar, under Overview and above the groups, in page order.
 - `groups[].id` must be unique; it is the section anchor.
