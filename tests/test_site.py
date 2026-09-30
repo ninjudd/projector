@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -511,6 +512,22 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
     if when is not None:
         env.update(GIT_AUTHOR_DATE=f"{when} +0000", GIT_COMMITTER_DATE=f"{when} +0000")
     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class SummarySidebarTests(unittest.TestCase):
+    def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
+        # The sidebar is sticky on a wide screen, so a list taller than the
+        # window has no other way to reach its last sections. On a narrow
+        # screen it sits above the content and scrolls with the page.
+        css = (SITE_JS.parent / "summary.css").read_text()
+        wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
+        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
+        self.assertRegex(wide.group(1), r"overflow-y: auto")
+        self.assertRegex(wide.group(1), r"overscroll-behavior: contain")
+        narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
+        self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
+        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
 
 
 def served_spec(number: int, head: str) -> dict:
