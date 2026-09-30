@@ -95,7 +95,7 @@ job, and give a second job its own section.
 | Tutorial | Teach by doing | Steps a learner follows, each with a result they can see |
 | How-to | Get a known task done | Steps for a reader who knows the basics, with no teaching |
 | Reference | Look something up | A complete, exact, and neutral description, with no instructions or opinions |
-| Explanation | Understand why | One bounded topic, with its design decisions, history, constraints, and alternatives |
+| Explanation | Understand why | One bounded topic, with its design decisions, constraints, and alternatives |
 
 In a plan, the implementation sequence is a how-to, and the decisions are
 an explanation. In a summary, the group intros explain, and the notes tell
@@ -244,3 +244,23 @@ body has one job.
   message, so write the body to last.
 - **Leave out logs and lists of commits.** Summarize what they show.
 - **Keep each path, symbol, and command true** at the commit that lands.
+
+## 11. Leave history to the commit log
+
+Write what is true now, and why. How the code or the text came to be is
+history, and history belongs in commit messages and pull request bodies.
+There, `git log` and `git blame` keep it next to the change that made it.
+
+- **Leave out what used to be true.** Phrases such as "was renamed from",
+  "no longer", "used to", and "previously" send the reader to a past they
+  never saw. Describe the current behavior instead.
+- **Give a reason as a reason, not as a story.** Write "The fetch runs in
+  its own session, so it cannot ask for a passphrase", not "After a review
+  found that the fetch could prompt, it moved into its own session."
+- **Keep history only when it changes what the reader does.** A reader may
+  still meet an old name in old records, or have data that an older version
+  wrote. Say what they meet and what to do, in as few words as that takes.
+- **Know that a change's before and after is not history.** A pull request
+  summary or a review explains what a change does, so the old behavior is
+  part of its content. A plan's rejected alternatives are not history
+  either. They explain its decisions.
