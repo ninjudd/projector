@@ -6,8 +6,8 @@ import { DOCS } from "@/lib/links";
 
 const steps: { title: string; invoke: string; body: ReactNode }[] = [
   {
-    title: "Ask for a plan",
-    invoke: "/projector:plan a session chooser opened by the detach key",
+    title: "Propose a project",
+    invoke: "/projector:propose a session chooser opened by the detach key",
     body: (
       <>
         The agent reads the repository and the existing projects first, asks only what the code
@@ -71,7 +71,7 @@ export function Agents() {
         ))}
       </ol>
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
-        In Codex the same skills are <Code>$plan</Code>, <Code>$implement</Code>, and{" "}
+        In Codex the same skills are <Code>$propose</Code>, <Code>$implement</Code>, and{" "}
         <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
         <Code>summarize-changes</Code>, which summarizes the changes in a large pull request as a guided page for
         its reviewers; and <Code>gh-stack</Code>, for splitting a large change into a chain of
