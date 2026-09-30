@@ -539,8 +539,25 @@ ref without touching the checkout, and starts the repository's site workflow.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the spec's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
-When the site is hosted, `summary publish` then comments a link to the
-summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
+
+`summary publish` pushes only to a repository that hosts its site, which
+`site status` reports as hosted. Anywhere else nothing on GitHub reads the
+ref, so it commits the spec and the diff to this checkout's own
+`refs/projector/summaries` and pushes nothing, starts no workflow, and
+comments nothing. `site serve` then previews the summary before the site is
+set up on GitHub Pages:
+
+```console
+$ project summary publish --spec summary.json
+committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/spec.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
+```
+
+Pass `--local` to keep a spec local even where the site is hosted, to
+preview it before it goes live. A spec kept local stays in that checkout.
+Once the site is hosted, publish the spec again to push it.
+
+When `summary publish` pushes to a hosted site, it then comments a link to
+the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
 It keeps one such comment per account and pull request, updating it in
 place for a later head and leaving it alone when it already names this
 one.
@@ -669,7 +686,10 @@ Before building, it fetches the summaries ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/summaries`
 copy that `summary publish` keeps. When the fetch fails it says why and
 serves the summaries already fetched; `--no-fetch` skips the fetch, and
-`--summaries` serves a directory of specs instead of the ref. While it
+`--summaries` serves a directory of specs instead of the ref. It serves the
+summaries in this checkout's own `refs/projector/summaries` too, the ones a
+local `summary publish` keeps, beside the fetched ones, and reads a spec in
+both from the local ref. While it
 runs it checks `README.md`, `docs/`, a configured `projects.dir`, and the
 summaries every second and rebuilds when any of them change;
 `--no-watch` builds once. It finds the summaries ref again on every check,

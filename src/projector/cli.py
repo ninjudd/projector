@@ -316,6 +316,11 @@ def parser() -> argparse.ArgumentParser:
     summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
     )
+    summary_publish.add_argument(
+        "--local", action="store_true",
+        help="commit the spec to this checkout's summaries ref for `site serve` to preview, and push nothing "
+        "(the default when the repository does not host its site)",
+    )
 
     review_parser = subcommands.add_parser("review", help="the mechanical steps of a pull request review")
     review_commands = review_parser.add_subparsers(dest="review_command", required=True)
@@ -741,14 +746,24 @@ def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
         summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
     else:
+        pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8")).get("pr") or {}
+        if arguments.local:
+            push, reason = False, "--local asked for a local preview"
+        elif pr.get("repo"):
+            push, reason = summary.push_decision(pr["repo"])
+        else:
+            push, reason = True, ""  # publish refuses a spec with no repository before writing anything
         summary.publish(
             Path(arguments.spec),
             arguments.remote,
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
+            push=push,
+            reason=reason,
         )
-        pr = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))["pr"]
-        print(summary.comment_summary(pr["repo"], pr["number"], pr["head"]))
+        # A spec kept in this checkout has no page on GitHub to link.
+        if push:
+            print(summary.comment_summary(pr["repo"], pr["number"], pr["head"]))
     return 0
 
 

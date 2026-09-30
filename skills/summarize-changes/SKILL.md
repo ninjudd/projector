@@ -32,10 +32,13 @@ push to, or approve the pull request unless the user asks.
      --repo OWNER/NAME --pr NUMBER --spec WORKDIR/summary.json
    ```
 
-   Keep `WORKDIR` somewhere you can reach again this session, and put it in
-   the host's scratch directory when you will publish to Claude Artifacts,
-   which accepts supporting files only from the working directory or the
-   scratch directory. The spec is what you edit when the pull request moves.
+   Keep `WORKDIR` somewhere you can reach again this session. When you will
+   publish to Claude Artifacts, the Artifact tool accepts files only from the
+   working directory or its own scratchpad directory, which the host names in
+   its instructions. Build `WORKDIR` in that scratchpad, or else under the
+   working directory. `$TMPDIR`, `/tmp`, and a background job's temporary
+   directory are outside both, and the publish refuses files from them. The
+   spec is what you edit when the pull request moves.
 3. Read enough to explain the change: the pull request body, the full diff,
    plan or design documents the change touches, and the review threads.
    Take the diff from the spec's `pr.base` to its `pr.head` through the
@@ -108,31 +111,37 @@ The output directory holds `index.html` with the data embedded, plus the
 site's renderer files beside it. Opening `index.html` from disk works in any
 browser.
 
-## Publish the page
+## Publish the summary
 
-Publish to the repository's own site when it hosts summaries, and to a
-Claude Artifact otherwise. Ask which applies:
+The summary is the spec. Publish it to the repository's hidden summaries
+ref, where the repository's Projector site reads it, whether that site is
+its GitHub Pages site or `project site serve` on the user's machine. From a
+checkout whose `origin` is the repository, run:
 
 ```sh
-project site status --repo OWNER/NAME --pr NUMBER
+project summary publish --spec WORKDIR/summary.json
 ```
 
-- **Exit 0** prints the summary's URL. The repository is set up: it has
-  the Projector site workflow on its default branch and a Pages site. Setting
-  that up was the reviewed decision to host summaries there, so publish to
-  the site as the next section describes without asking again, and hand over
-  the printed URL.
-- **Exit 3** prints why the repository is not set up. Publish an Artifact,
-  and tell the user in one sentence that the repository can host its own
+`publish` decides where the spec goes, and says which:
+
+- **The repository hosts its site**, meaning the Projector site workflow is
+  on its default branch and it has a Pages site. `publish` pushes the spec,
+  starts the deploy, and links the summary from the pull request. Setting
+  that up was the reviewed decision to host summaries there, so publish
+  without asking again. Get the page's URL with
+  `project site status --repo OWNER/NAME --pr NUMBER` and hand it over.
+- **It does not.** `publish` commits the spec to this checkout's own
+  `refs/projector/summaries` and pushes nothing, so nothing on GitHub
+  changes. Tell the user to preview it with `project site serve` from that
+  checkout, at `reviews/NUMBER/`, which a server already running picks up
+  within seconds. Say in one sentence that the repository can host its own
   summaries, pointing at the "Set up the Projector site" section of
   Projector's README.
-- **Any other exit** means the check itself failed, for example because
-  `gh` could not reach GitHub. Publish an Artifact and say the hosting check
-  did not run.
 
-An explicit request wins either way. Publish an Artifact when the user asks
-for one or says not to publish, and publish to a site the user names even
-where `status` would have chosen otherwise.
+Pass `--local` to keep the spec in the checkout even where the site is
+hosted, when the user wants to preview a summary before it goes live.
+Publish a Claude Artifact instead only when the user asks for one, or when
+no checkout of the repository is at hand to publish from, and say which.
 
 ### Publish to a Claude Artifact
 
@@ -158,14 +167,11 @@ A repository can host its own summaries. Specs live on the hidden ref
 `refs/projector/summaries`, which is not a branch: GitHub lists no branch
 and offers no pull request for it, and clones do not fetch it. A workflow on
 the default branch builds and deploys them with Projector's shared action.
-Publishing writes to that hidden ref, which a repository accepts by setting
-hosting up; do it when `status` exits 0 or the user asks.
+`publish` pushes to that hidden ref only in a repository that hosts its
+site, which a repository accepts by setting hosting up; anywhere else the
+spec stays in the checkout, as the section above describes.
 
-```sh
-project summary publish --spec WORKDIR/summary.json
-```
-
-Always publish with this command, run directly. Do not wrap it in a script
+Always publish with `project summary publish`, run directly. Do not wrap it in a script
 of your own, and do not commit to the ref or send the dispatch yourself. The
 command already builds the spec and refuses one that does not build, and a
 wrapper only hides what is being written from the user and from the host's
@@ -235,10 +241,14 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
    only that a line is still in its file's diff, not that it still holds the
    code the note is about. Resolve or remove `flag` checks the new commits
    fixed.
-3. Rebuild, then republish to the same artifact: publish the same file path
-   again in the conversation that created it, or pass the artifact's URL as
-   `url` after reading it from any other conversation. On a Pages site,
-   `publish` the revised spec; it becomes a new version beside the old one.
+3. `publish` the revised spec, which becomes a new version beside the old
+   one, pushed to a hosted site or kept in the checkout as the first time.
+   A spec kept in the checkout is found there later with
+   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/spec.json`.
+   For an artifact the user asked for, rebuild and republish to the same
+   one: publish the same file path again in the conversation that created
+   it, or pass the artifact's URL as `url` after reading it from any other
+   conversation.
 
 Summarize for the user what changed in the pull request and which parts of
 the page moved.

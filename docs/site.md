@@ -117,7 +117,10 @@ is the GitHub repository:
 3. Publish something. Once the workflow is on the default branch, the
    `summarize-changes` skill publishes to the site by default: ask your agent
    for a summary of a pull request and it pushes the spec to the hidden
-   ref, starts the workflow, and hands you the link. Ask for a Claude
+   ref, starts the workflow, and hands you the link. Until then, it keeps
+   the spec in your checkout's own `refs/projector/summaries` and pushes
+   nothing, so you can preview summaries with `project site serve` before
+   the site is set up. Ask for a Claude
    Artifact instead when you want a private page. The site's Reviews section
    lists every summary, and each pull request's newest version is at
    `reviews/<number>/`. The projects and the docs appear on the first

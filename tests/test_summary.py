@@ -569,6 +569,23 @@ class PublishTests(unittest.TestCase):
         self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
         self.assertEqual([], self.dispatches)
 
+    def test_a_local_publish_commits_to_the_checkouts_ref_and_pushes_nothing(self) -> None:
+        before = run(self.repo, "git", "rev-parse", "HEAD")
+
+        first = self.publish("a" * 40, push=False, reason="owner/repo has no GitHub Pages site")
+        second = self.publish("c" * 40, push=False)
+
+        local = run(self.repo, "git", "ls-tree", "-r", "--name-only", "refs/projector/summaries").splitlines()
+        self.assertIn(f"summaries/7/{'a' * 40}/spec.json", local)
+        self.assertIn(f"summaries/7/{'c' * 40}/diff.patch", local)
+        self.assertEqual(first, run(self.repo, "git", "log", "--format=%P", "-1", "refs/projector/summaries"))
+        self.assertEqual(second, run(self.repo, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertIsNone(self.publish("c" * 40, push=False), "an unchanged spec commits nothing")
+        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing reaches the remote")
+        self.assertEqual("", run(self.repo, "git", "for-each-ref", "refs/projector/remotes"), "nor its copy here")
+        self.assertEqual([], self.dispatches)
+        self.assertEqual(before, run(self.repo, "git", "rev-parse", "HEAD"))
+
     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
         self.publish("a" * 40, send_dispatch=False)
         self.assertEqual([], self.dispatches)
@@ -789,17 +806,39 @@ class CommentSummaryTests(unittest.TestCase):
              mock.patch.object(summary, "hosting", return_value=self.hosted):
             self.assertIn("Pages is not enabled", summary.comment_summary("owner/repo", 7, HEAD))
 
-    def test_summary_publish_comments_the_link_for_the_specs_head(self) -> None:
+    def cli_publish(self, hosted: tuple[str | None, str], *flags: str) -> tuple[list[dict], list[tuple], str]:
+        """Run `summary publish` with the repository's hosting answering `hosted`; return what it asked of publish."""
         spec = Path(tempfile.mkdtemp()) / "summary.json"
         spec.write_text(json.dumps({"pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+        published: list[dict] = []
         commented: list[tuple] = []
         out = io.StringIO()
-        with mock.patch.object(summary, "publish"), \
+        with mock.patch.object(summary, "publish", side_effect=lambda *a, **k: published.append(k)), \
+             mock.patch.object(summary, "hosting", return_value=hosted), \
              mock.patch.object(summary, "comment_summary", side_effect=lambda *a: commented.append(a) or "done"), \
              redirect_stdout(out):
-            self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec)]))
+            self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec), *flags]))
+        return published, commented, out.getvalue()
+
+    def test_summary_publish_comments_the_link_for_the_specs_head(self) -> None:
+        published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""))
+
+        self.assertTrue(published[0]["push"])
         self.assertEqual([("owner/repo", 7, HEAD)], commented)
-        self.assertIn("done", out.getvalue())
+        self.assertIn("done", out)
+
+    def test_summary_publish_keeps_the_spec_local_where_the_site_is_not_hosted(self) -> None:
+        published, commented, _ = self.cli_publish((None, "owner/repo has no GitHub Pages site"))
+
+        self.assertEqual([(False, "owner/repo has no GitHub Pages site")], [(k["push"], k["reason"]) for k in published])
+        self.assertEqual([], commented, "a spec kept local has no page on GitHub to link")
+
+    def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> None:
+        with mock.patch.object(summary, "push_decision", side_effect=AssertionError("--local asks GitHub nothing")):
+            published, commented, _ = self.cli_publish(("https://owner.github.io/repo/", ""), "--local")
+
+        self.assertFalse(published[0]["push"])
+        self.assertEqual([], commented)
 
 
 if __name__ == "__main__":

@@ -666,6 +666,39 @@ class ServeTests(SiteRepoCase):
         self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
         self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
 
+    def publish_locally(self, number: int, head: str) -> None:
+        """Commit a spec for pull request `number` to this checkout's own summaries ref, as a local publish does."""
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
+                   GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+
+        def git(*args: str, text: str | None = None) -> str:
+            return subprocess.run(["git", *args], cwd=self.repo, env=env, input=text, check=True, capture_output=True,
+                                  text=True).stdout.strip()
+
+        spec = {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
+                "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                       "base": "b" * 40, "baseRef": "main"},
+                "groups": [{"id": "all", "title": "All", "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
+        for name, content in (("spec.json", json.dumps(spec)), ("diff.patch", PLAN_DIFF)):
+            blob = git("hash-object", "-w", "--stdin", text=content)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},summaries/{number}/{head}/{name}")
+        git("update-ref", summary.PAGES_REF, git("commit-tree", git("write-tree"), "-m", "Publish locally"))
+
+    def test_a_server_shows_summaries_kept_local_beside_the_remotes(self) -> None:
+        self.published_remote()
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        published = serve.Summaries(self.repo, "origin")
+        before = published.version()
+
+        self.publish_locally(10, "e" * 40)
+
+        self.assertNotEqual(before, published.version(), "a local publish is a change the server rebuilds for")
+        self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries"), (summary.PAGES_REF, "summaries")],
+                         serve.summaries_refs(self.repo, "origin"))
+        site = self.site(summaries=published.extract(Path(tempfile.mkdtemp())))
+        manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+        self.assertEqual({9, 10}, {review["number"] for review in manifest["reviews"]})
+
     def test_a_failed_fetch_says_what_failed(self) -> None:
         run_git(self.repo, "init", "--quiet")
         run_git(self.repo, "remote", "add", "origin", str(self.repo / "missing"))
