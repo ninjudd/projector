@@ -12,7 +12,7 @@ manifest at `.claude-plugin/plugin.json` and the Codex manifest at
 instructions and supporting scripts without a generated copy or host-specific
 fork.
 
-The plugin provides `plan`, `implement`, `finish`, `review-changes`,
+The plugin provides `design`, `implement`, `finish`, `review-changes`,
 `start-review-loop`, `start-fix-loop`, and `summarize-changes`, which
 summarizes a pull request's changes as a guided review page. Claude invokes a
 plugin skill as `/projector:<skill>`; Codex invokes it as `$<skill>`.
@@ -77,7 +77,7 @@ claude plugin install projector@projector --scope user
 Invoke a skill with the plugin namespace, for example:
 
 ```text
-/projector:plan plan a safer deploy workflow
+/projector:design a safer deploy workflow
 ```
 
 Validate a checkout before publishing it:
@@ -99,7 +99,7 @@ codex plugin add projector@projector
 Invoke a skill directly, for example:
 
 ```text
-$plan plan a safer deploy workflow
+$design a safer deploy workflow
 ```
 
 The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
