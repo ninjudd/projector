@@ -666,6 +666,23 @@ class ServeTests(SiteRepoCase):
         self.assertNotEqual("", serve.fetch_summaries(self.repo, "origin"))
         self.assertIsNone(serve.summaries_ref(self.repo, "origin"))
 
+    def assert_fetch_leaves_fetch_head_alone(self) -> None:
+        # The user's own `git fetch` may have just written it, for a `git checkout FETCH_HEAD` to follow.
+        fetch_head = self.repo / ".git" / "FETCH_HEAD"
+        fetch_head.write_text("0123456789012345678901234567890123456789\t\tbranch 'topic' of elsewhere\n")
+        before = fetch_head.read_text()
+
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assertEqual(before, fetch_head.read_text())
+
+    def test_fetching_summaries_leaves_the_checkouts_fetch_head_alone(self) -> None:
+        self.published_remote()
+        self.assert_fetch_leaves_fetch_head_alone()
+
+    def test_fetching_the_old_walkthroughs_ref_leaves_fetch_head_alone_too(self) -> None:
+        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT)
+        self.assert_fetch_leaves_fetch_head_alone()
+
     def test_a_running_server_serves_summaries_published_after_it_started(self) -> None:
         remote = self.published_remote()
         published = serve.Summaries(self.repo, "origin")

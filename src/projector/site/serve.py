@@ -46,14 +46,16 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF) -> str:
     A repository that has not published since walkthroughs were renamed
     summaries has only the old walkthroughs ref, so that ref is fetched in the
     new one's place, and `summaries_ref` reads it until the new ref exists.
+    A server fetches every minute, so the fetch writes only the tracking ref
+    and never FETCH_HEAD, which the user's own fetch may have just written.
     """
+    fetch = ("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote)
     local = tracking_ref(remote, ref)
-    fetched = run_git(root, "fetch", "--quiet", "--no-tags", remote, f"+{ref}:{local}")
+    fetched = run_git(root, *fetch, f"+{ref}:{local}")
     if fetched.returncode == 0:
         return ""
     if ref == PAGES_REF:
-        legacy = run_git(root, "fetch", "--quiet", "--no-tags", remote,
-                         f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}")
+        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}")
         if legacy.returncode == 0:
             return ""
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
