@@ -1,0 +1,904 @@
+diff --git a/README.md b/README.md
+index 5c29e3e..1e1245d 100644
+--- a/README.md
++++ b/README.md
+@@ -35,10 +35,11 @@ project check
+ 
+ `init` writes the convention to `docs/projects/README.md` and Projector's
+ conventions into `AGENTS.md`, linked as `CLAUDE.md`, so every agent session in
+-the repository follows them. Run at a terminal, it adds a Claude Code rule to
+-`.claude/settings.json` that lets a review loop publish its review of your own
+-pull request in auto mode. When `origin` is on GitHub, it also sets up the
+-[Projector site](docs/site.md). `create` writes the plan at
++the repository follows them. Run at a terminal, it adds a rule to your own
++Claude Code settings, `~/.claude/settings.json`, that lets a review loop
++publish its review of your own pull request in auto mode. When `origin` is on
++GitHub, it also sets up the [Projector site](docs/site.md). `create` writes
++the plan at
+ `docs/projects/cool-new-feature/readme.md`. A project can hold supporting
+ documents and nested projects:
+ 
+diff --git a/docs/cli.md b/docs/cli.md
+index c087fc7..90b6527 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -27,10 +27,11 @@ $ project init
+ created docs/projects/README.md
+ created AGENTS.md
+ created CLAUDE.md
+-created .claude/settings.json
++updated ~/.claude/settings.json
+ ```
+ 
+-`init` manages four files and reports what it did to each:
++`init` manages three files in the repository and one of yours, and reports
++what it did to each:
+ 
+ - `docs/projects/README.md` states the convention, links to the Projector
+   repository, and shows how to install the CLI, so a reader who meets
+@@ -54,25 +55,30 @@ created .claude/settings.json
+   an import. When the two are genuinely distinct files, each with its own
+   content and no import between them, each gets the section, because an import
+   would change everything Claude Code reads rather than only Projector's part.
+-- `.claude/settings.json` gains the Claude Code permission rule
+-  `Bash(project review publish *)` in `permissions.allow`. Claude Code's auto
+-  mode otherwise refuses a review loop's clean review of your own pull request
+-  as self-approval, although the review is a `COMMENT` that moves no
+-  `reviewDecision` and a person still merges. An allow rule resolves the
+-  command before the classifier runs, and Claude Code applies a repository's
+-  allow rules only after its workspace trust dialog has listed them to you.
+-  Because the rule exempts a command from the classifier, `init` adds it only
+-  when you run `init` at a terminal, or when you pass `--publish-rule`. Run
+-  without a terminal, as an agent refreshing the instructions runs it, `init`
+-  reports the file as `kept` and says on stderr how to add the rule, and
+-  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+-  to leave the file alone for one run. `init` adds the rule to the file's
+-  existing settings, keeps every other setting, and writes the file back as
+-  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
++- `~/.claude/settings.json`, your own Claude Code settings, gains the
++  permission rule `Bash(project review publish *)` in `permissions.allow`.
++  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
++  directory instead. Claude Code's auto mode otherwise refuses a review loop's
++  clean review of your own pull request as self-approval, although the review
++  is a `COMMENT` that moves no `reviewDecision` and a person still merges. An
++  allow rule resolves the command before the classifier runs. The rule goes in
++  your settings rather than the repository's, so it holds in every repository,
++  clone, and worktree you open, whether or not the repository commits or
++  ignores `.claude/`, and no repository has to carry a permission for everyone
++  who opens it. `init` never touches the repository's own
++  `.claude/settings.json`. Because the rule exempts a command from the
++  classifier, `init` adds it only when you run `init` at a terminal, or when
++  you pass `--publish-rule`. Run without a terminal, as an agent refreshing the
++  instructions runs it, `init` reports the file as `kept` and says on stderr
++  how to add the rule, and `review.publish_rule = true` does not change that.
++  Pass `--no-publish-rule` to leave the file alone for one run. `init` adds
++  the rule to the file's existing settings, keeps every other setting, writes
++  through a symlink such as one into a dotfiles repository, and writes the file
++  back as two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
+   settings of an unexpected shape, sits under a `.claude` that is not a
+-  directory, or links outside the repository, and says on stderr how to add
+-  the rule yourself. Auto mode reads no `autoMode` block from a repository,
+-  so this rule, not an `autoMode` exception, is what a repository can carry.
++  directory, or cannot be written, as one linked into a read-only directory
++  such as the Nix store cannot, and says on stderr how to add the rule
++  yourself. `init` still exits 0.
+ 
+ Git checks a committed symlink out as a small plain file holding the link text
+ wherever `core.symlinks` is false, which is Git for Windows' default without
+@@ -93,8 +99,10 @@ never writes; the file is a symlink checked out as a plain file, as above; or
+ the markers in the file do not delimit exactly one section, for example a
+ begin marker with no end marker. In that last case `init` still writes the
+ other instruction files, then exits 65 and names the repair, and prints no
+-JSON document in `--json` mode. `.claude/settings.json` is kept for the
+-reasons its entry above names, and `init` still exits 0.
++JSON document in `--json` mode. Your Claude Code settings file is kept for
++the reasons its entry above names, and `init` still exits 0. It is reported
++with your home directory as `~`, in `--json` mode too, or by its full path
++when `CLAUDE_CONFIG_DIR` points outside your home directory.
+ 
+ To keep Projector out of your instruction files, set in `.projector.toml`:
+ 
+@@ -103,9 +111,10 @@ To keep Projector out of your instruction files, set in `.projector.toml`:
+ enabled = false
+ ```
+ 
+-With that key false, `init` manages only the projects README and
+-`.claude/settings.json`, and `check` says nothing about `AGENTS.md` or
+-`CLAUDE.md`. To leave `.claude/settings.json` alone, set:
++With that key false, `init` manages only the projects README and your Claude
++Code settings, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`. To
++leave your Claude Code settings alone when `init` runs in this repository,
++set:
+ 
+ ```toml
+ [review]
+@@ -182,27 +191,39 @@ Changing Pages or the website link takes admin rights on the repository.
+ Without them, `init` changes nothing on GitHub and prints the `gh` commands
+ an admin runs to make those changes: turning Pages on or switching it to
+ GitHub Actions, making a private repository's site private, setting the
+-domain `--url` names, and linking the website to the site. Hand them to an
+-admin, then run `init` again to write the workflow:
++domain `--url` names, and linking the website to the site. It still writes
++the workflow, because proposing the workflow needs no admin. Hand the
++commands to an admin and merge the workflow through a pull request, in
++either order; the site deploys once both are done:
+ 
+ ```console
+ $ project init
+ project: site not set up: you are not an admin of owner/example, so init cannot turn on its GitHub Pages site; pass --no-site, or set site.enabled = false, to stop setting it up
+-project: to finish setting it up, ask an admin to run these commands, then run `project init` again to write the site workflow:
++project: to finish setting it up, ask an admin to run these commands; the site deploys once they have and the site workflow is on the default branch:
+     gh api -X POST repos/owner/example/pages -f build_type=workflow
+     gh api -X PATCH repos/owner/example -f homepage="$(gh api repos/owner/example/pages --jq '.html_url | rtrimstr("/")')"
++project: commit .github/workflows/projector-site.yml to the default branch through a pull request; GitHub runs the site workflow only from there
++unchanged docs/projects/README.md
++unchanged AGENTS.md
++unchanged CLAUDE.md
++unchanged ~/.claude/settings.json
++created .github/workflows/projector-site.yml
+ ```
+ 
+-`init` still writes the workflow when an admin has already set Pages up,
+-because proposing the workflow needs no admin.
+-
+-The workflow is written only once the site is safe to deploy to. When `gh`
+-is missing, you are not an admin and Pages needs changing, the repository
+-already deploys its own site, or GitHub refuses to make a private
+-repository's site private, as it does without private Pages (GitHub
+-Enterprise Cloud), `init` adopts the repository as usual, skips the site
+-with a note on stderr, and exits 0. If `init` created the Pages site in
+-that same run and cannot make it private, it deletes the site again, so a
++A workflow that reaches the default branch first cannot publish too early.
++Its run fails at `actions/configure-pages` until the Pages site exists, and
++its build refuses to deploy a private repository's site while that site is
++public. Once the admin is done, start it with
++`gh workflow run projector-site.yml`, or rerun the failed run from the
++repository's Actions tab.
++
++When `gh` is missing, the repository already deploys its own site, or GitHub
++refuses to make a private repository's site private, as it does without
++private Pages (GitHub Enterprise Cloud), `init` writes no workflow. In those
++cases, and when you are not an admin and Pages needs changing, `init` adopts
++the repository as usual, skips the site with a note on stderr, and exits 0.
++If `init` created the Pages site in that same run and cannot make it
++private, it deletes the site again, so a
+ private repository is never left with a public site; it never deletes a
+ site it did not create. A repository whose `origin` is not on GitHub skips
+ the site without a note. `project site serve` still serves the site
+@@ -436,7 +457,7 @@ These are the keys Projector reads today:
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-changes` and `start-review-loop`, as the GitHub login that posts reviews |
+ | `review.allow_approve` | boolean | `false` | `review-changes` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+-| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to `.claude/settings.json` |
++| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.summarize` | boolean | `true` | `review-changes`, to publish a summary of a large pull request to the repository's Projector site after each review |
+ | `review.summarize_min_lines` | integer | `400` | `review-changes`, as the added and deleted lines at which a pull request gets a summary |
+diff --git a/docs/site.md b/docs/site.md
+index 65b4cd6..09760df 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -34,9 +34,9 @@ is the GitHub repository:
+    Enterprise Cloud. Then it writes the workflow. When it cannot set the site
+    up, for example because you are not an admin, it says why on stderr and
+    adopts the repository anyway; pass `--site` to make that an error.
+-   Without admin rights, it also prints the `gh` commands an admin runs to
+-   finish the setup; run `init` again once they have. Run it again at any
+-   time; it changes only what is out of date.
++   Without admin rights, it still writes the workflow, and prints the `gh`
++   commands an admin runs to finish the setup. Run it again at any time; it
++   changes only what is out of date.
+ 
+ 2. Commit the workflow to the default branch through a pull request. GitHub
+    runs the dispatched workflow only from the default branch, and deploys
+diff --git a/skills/review-changes/SKILL.md b/skills/review-changes/SKILL.md
+index fe7e64c..157b29d 100644
+--- a/skills/review-changes/SKILL.md
++++ b/skills/review-changes/SKILL.md
+@@ -522,14 +522,14 @@ around a permission failure, and never read GitHub's refusal of a self-review
+ verdict as one.
+ 
+ Claude Code's auto mode refuses a clean self-review's publish as
+-self-approval unless the repository's `.claude/settings.json` allows
+-`Bash(project review publish *)`, the rule `project init` adds. Run `publish`
+-as a command of its own so the rule matches it. If the host refuses it
+-anyway, do not retry it in another form: keep the lock and the body, and ask
+-the user to run `project init` in a terminal and commit
+-`.claude/settings.json`, or to run the publish command themselves. `init`
+-adds the rule only for a person at a terminal, so do not run it to add the
+-rule yourself.
++self-approval unless the user's Claude Code settings, or the repository's,
++allow `Bash(project review publish *)`, the rule `project init` adds to the
++user's `~/.claude/settings.json`. Run `publish` as a command of its own so
++the rule matches it. If the host refuses it anyway, do not retry it in
++another form: keep the lock and the body, and ask the user to run
++`project init` in a terminal, which adds the rule to their own settings, or
++to run the publish command themselves. `init` adds the rule only for a
++person at a terminal, so do not run it to add the rule yourself.
+ 
+ After submitting, `publish` sets draft state for a self-review, re-reads the
+ review it posted and the pull request's `isDraft`, adds the review id to the
+diff --git a/skills/summarize-changes/SKILL.md b/skills/summarize-changes/SKILL.md
+index 0400399..15d2f5e 100644
+--- a/skills/summarize-changes/SKILL.md
++++ b/skills/summarize-changes/SKILL.md
+@@ -212,9 +212,10 @@ project init --site
+ It enables Pages with the GitHub Actions source, makes a private
+ repository's site private, links an empty repository website to the site,
+ and writes `.github/workflows/projector-site.yml`. `--site` makes it fail
+-rather than skip the site. When it fails because the user is not an admin
+-or GitHub refuses to make a private repository's site private, it writes no
+-workflow; report why, relay any `gh` commands it prints for an admin to run before `project init` is run again, and offer `project site serve` or an Artifact meanwhile. Then add the workflow to the default branch through a
++rather than skip the site. When it fails because the user is not an admin,
++it still writes the workflow and prints the `gh` commands an admin runs;
++relay those commands. When GitHub refuses to make a private repository's
++site private, it writes no workflow; report why. Either way, offer `project site serve` or an Artifact meanwhile. Then add the workflow to the default branch through a
+ pull request, because GitHub runs dispatched workflows only from there.
+ 
+ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index f28034a..002077b 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -218,11 +218,12 @@ def parser() -> argparse.ArgumentParser:
+         "--publish-rule",
+         action="store_true",
+         default=None,
+-        help="add the Claude Code rule allowing `project review publish` to .claude/settings.json even without "
+-        "a terminal (default: add it when run at a terminal)",
++        help="add the Claude Code rule allowing `project review publish` to your Claude Code user settings even "
++        "without a terminal (default: add it when run at a terminal)",
+     )
+     rule_choice.add_argument(
+-        "--no-publish-rule", action="store_false", dest="publish_rule", help="leave .claude/settings.json alone"
++        "--no-publish-rule", action="store_false", dest="publish_rule",
++        help="leave your Claude Code user settings alone",
+     )
+     add_output(init)
+ 
+@@ -1032,8 +1033,11 @@ def site_address(value: str) -> str:
+ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = "") -> tuple[dict, FileAction]:
+     """Set up the Projector site: its Pages site first, then the workflow that deploys to it.
+ 
+-    The workflow is written only once the Pages site is safe to deploy to, so
+-    a private repository whose site cannot be made private gets no workflow.
++    A private repository whose site `init` cannot make private gets no
++    workflow. When the Pages changes need an admin, the workflow is written
++    beside the commands the admin runs and rides on the `NeedsAdmin` raised,
++    because its deploy step refuses a private repository's public site, so
++    it cannot publish before the admin is done.
+     Without `takeover`, a repository that already deploys its own Pages site,
+     from a branch or from another workflow, keeps it. With `url`, the site is
+     served at that custom domain, and the repository's website links to it
+@@ -1052,8 +1056,8 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
+     if shutil.which("gh") is None:
+         raise summary.SpecError("the gh CLI is not installed, and setting up Pages needs it")
+     details = json.loads(summary.gh("api", f"repos/{repo}"))
+-    # Only an admin can change Pages or the website link. Without admin, a site
+-    # already set up still gets its workflow, which needs no admin to propose.
++    # Only an admin can change Pages or the website link. The workflow needs no
++    # admin to propose, so a non-admin gets it either way.
+     admin = bool((details.get("permissions") or {}).get("admin"))
+     current = (details.get("homepage") or "").strip()
+     try:
+@@ -1064,6 +1068,7 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
+         # a subdomain of its own, so otherwise the command reads it back.
+         if not current or (url and not summary.same_link(current, url)):
+             error.commands.append(summary.homepage_command(repo, url))
++        error.workflow = write_site_workflow(root, site_workflow_text(root, action_ref))
+         raise
+     # The website link is a convenience; failing to set it must not cost the workflow.
+     try:
+@@ -1138,9 +1143,10 @@ def run(arguments: argparse.Namespace) -> int:
+             raise UsageError("--url sets the site's address, but --no-site or site.enabled = false leaves the site "
+                              "alone")
+         # The publish rule exempts a command from Claude Code's auto-mode
+-        # classifier, so it is added only when a person runs `init` at a
+-        # terminal or names --publish-rule; an agent refreshing the
+-        # instructions gets a note instead. Configuration can only turn it off.
++        # classifier in the person's own settings, so it is added only when a
++        # person runs `init` at a terminal or names --publish-rule; an agent
++        # refreshing the instructions gets a note instead. Configuration can
++        # only turn it off.
+         if arguments.publish_rule is not None:
+             publish_rule = "add" if arguments.publish_rule else None
+         elif publish_rule_enabled(root):
+@@ -1150,16 +1156,18 @@ def run(arguments: argparse.Namespace) -> int:
+         try:
+             files = store.init(instructions_enabled(root))
+             if publish_rule:
+-                files.append(allow_publish(root, apply=publish_rule == "add"))
++                files.append(allow_publish(apply=publish_rule == "add"))
+             pages = None
+             if wanted:
+                 try:
+                     pages, workflow = init_site(root, arguments.action_ref, takeover=bool(arguments.site), url=url)
+                     files.append(workflow)
+                 except ProjectorError as error:
++                    needs_admin = isinstance(error, summary.NeedsAdmin)
++                    if needs_admin and error.workflow is not None:
++                        files.append(error.workflow)
+                     if arguments.site:
+                         raise InitError(str(error), files) from error
+-                    needs_admin = isinstance(error, summary.NeedsAdmin)
+                     reason = error.reason if needs_admin else str(error)
+                     pages = {"skipped": reason, **({"admin_commands": error.commands} if needs_admin else {})}
+                     # A repository with no GitHub origin has no site to miss.
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index f4a63bf..1688d4f 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -1,47 +1,60 @@
+-"""The Claude Code permission rule `init` adds to a repository's settings.
++"""The Claude Code permission rule `init` adds to the user's Claude Code settings.
+ 
+ Claude Code's auto mode refuses a session's clean review of a pull request its
+ own GitHub account opened, as self-approval, although the review is a COMMENT
+ that moves no reviewDecision and a person still merges. An allow rule for
+-`project review publish` in the repository's `.claude/settings.json` resolves
+-that command before the classifier runs. Claude Code applies a repository's
+-allow rules only after its workspace trust dialog lists them, so each person
+-sees the rule before it takes effect.
++`project review publish` resolves that command before the classifier runs. The
++rule goes in the person's own settings, so it holds in every repository, clone,
++and worktree they open, and no repository has to carry a permission for
++everyone who opens it.
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
++import os
++from collections.abc import Mapping
+ from pathlib import Path
+ 
+ from .core import FileAction, write_through
+ 
+-SETTINGS_PATH = ".claude/settings.json"
+ RULE = "Bash(project review publish *)"
+ 
+ 
+-def allow_publish(root: Path, apply: bool = True) -> FileAction:
+-    """Add the rule to `permissions.allow` in the repository's Claude Code settings.
++def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
++    """The user's Claude Code settings: `$CLAUDE_CONFIG_DIR/settings.json`, or `~/.claude/settings.json`."""
+ 
+-    Everything else in the file is kept. A file `init` cannot read as settings,
+-    or one that links outside the repository, is left alone with a note.
+-    Without `apply`, a file that lacks the rule is only reported, with how to
+-    add it.
++    configured = environ.get("CLAUDE_CONFIG_DIR")
++    if configured:
++        return Path(configured).expanduser() / "settings.json"
++    return Path(environ.get("HOME") or Path.home()) / ".claude" / "settings.json"
++
++
++def shown(path: Path, environ: Mapping[str, str] = os.environ) -> str:
++    """`path` as `init` reports it, with the home directory written as `~`."""
++
++    home = Path(environ.get("HOME") or Path.home())
++    return f"~/{path.relative_to(home).as_posix()}" if path.is_relative_to(home) else str(path)
++
++
++def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -> FileAction:
++    """Add the rule to `permissions.allow` in the user's Claude Code settings.
++
++    Everything else in the file is kept, and a file linked into a dotfiles
++    repository is written through its link. A file `init` cannot read as
++    settings is left alone with a note. Without `apply`, a file that lacks the
++    rule is only reported, with how to add it.
+     """
+ 
+-    path = root / SETTINGS_PATH
++    path = settings_path(environ)
++    name = shown(path, environ)
+ 
+     def kept(reason: str) -> FileAction:
+-        return FileAction(SETTINGS_PATH, "kept", f"{SETTINGS_PATH} {reason}, so the rule allowing "
+-                                                 f"`project review publish` was not added; add {RULE} to "
+-                                                 "permissions.allow yourself")
+-
+-    target = path.resolve()
+-    if not target.is_relative_to(root.resolve()):
+-        return kept(f"links outside the repository ({target})")
+-    # A committed `.claude` link checks out as a plain file where Git makes no symlinks.
++        return FileAction(name, "kept", f"{name} {reason}, so the rule allowing `project review publish` was not "
++                                        f"added; add {RULE} to permissions.allow yourself")
++
+     if path.parent.exists() and not path.parent.is_dir():
+-        return kept("cannot be written, because .claude is not a directory")
++        return kept(f"cannot be written, because {shown(path.parent, environ)} is not a directory")
+     existed = path.exists()
+     try:
+         text = path.read_text(encoding="utf-8") if existed else ""
+@@ -62,12 +75,16 @@ def kept(reason: str) -> FileAction:
+     if not isinstance(allow, list):
+         return kept("has a `permissions.allow` that is not a list")
+     if RULE in allow:
+-        return FileAction(SETTINGS_PATH, "unchanged")
++        return FileAction(name, "unchanged")
+     if not apply:
+-        return FileAction(SETTINGS_PATH, "kept", f"{SETTINGS_PATH} lacks {RULE}, without which Claude Code's auto "
+-                                                 "mode refuses a review loop's clean review of your own pull "
+-                                                 "request; run `project init` yourself in a terminal, or pass "
+-                                                 "--publish-rule, to add it")
++        return FileAction(name, "kept", f"{name} lacks {RULE}, without which Claude Code's auto mode refuses a "
++                                        "review loop's clean review of your own pull request unless the "
++                                        "repository's own settings allow it; run `project init` yourself in a "
++                                        "terminal, or pass --publish-rule, to add it")
+     allow.append(RULE)
+-    write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+-    return FileAction(SETTINGS_PATH, "updated" if existed else "created")
++    try:
++        write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
++    except OSError as error:
++        # A file linked into a read-only directory, such as the Nix store.
++        return kept(f"could not be written ({error.strerror})")
++    return FileAction(name, "updated" if existed else "created")
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 87a1eca..322ef74 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -23,7 +23,7 @@
+ from pathlib import Path
+ from urllib.parse import urlparse
+ 
+-from .core import ProjectorError
++from .core import FileAction, ProjectorError
+ 
+ SPEC_VERSION = 1
+ CHECK_KINDS = ("context", "verify", "flag")
+@@ -144,18 +144,19 @@ class NeedsAdmin(SpecError):
+     """Setting up the site needs changes on GitHub that only an admin can make.
+ 
+     `commands` are the `gh` commands that make them, in order, for the user
+-    to hand an admin.
++    to hand an admin; `workflow` is the site workflow `init` wrote beside them.
+     """
+ 
+     def __init__(self, repo: str, needed: str, commands: list[str]) -> None:
+         super().__init__(repo, needed, commands)
+         self.reason = f"you are not an admin of {repo}, so init cannot {needed}"
+         self.commands = commands
++        self.workflow: FileAction | None = None
+ 
+     def steps(self) -> str:
+-        """What the user does next: the admin's commands, one per line, then `init` again."""
+-        return ("ask an admin to run these commands, then run `project init` again to write the site workflow:"
+-                + "".join(f"\n    {command}" for command in self.commands))
++        """What the user does next: the admin's commands, one per line."""
++        return ("ask an admin to run these commands; the site deploys once they have and the site workflow is on "
++                "the default branch:" + "".join(f"\n    {command}" for command in self.commands))
+ 
+     def __str__(self) -> str:
+         return f"{self.reason}; {self.steps()}"
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index ce362cc..b5596ae 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -48,18 +48,23 @@ def setUp(self) -> None:
+         # instruction scenario removes or alters exactly what it tests.
+         (self.root / "AGENTS.md").write_text(self.block() + "\n", encoding="utf-8")
+         os.symlink("AGENTS.md", self.root / "CLAUDE.md")
+-        (self.root / ".claude").mkdir()
+-        (self.root / ".claude" / "settings.json").write_text(
+-            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
+-        )
+         # Every command now reads layered configuration, and the user layer
+-        # lives at $HOME/.projector.toml. Point HOME at an empty directory so
+-        # a real one on the machine running the tests cannot reach them.
+-        self.home = self.root / "home"
+-        self.home.mkdir()
++        # lives at $HOME/.projector.toml; `init` also writes the user's Claude
++        # Code settings under $HOME/.claude. Point HOME at an empty directory,
++        # outside the repository so a test that replaces the repository keeps
++        # it, and unset CLAUDE_CONFIG_DIR, so real ones on the machine running
++        # the tests cannot reach them.
++        home = tempfile.TemporaryDirectory()
++        self.addCleanup(home.cleanup)
++        self.home = Path(home.name)
+         environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+         environment.start()
+         self.addCleanup(environment.stop)
++        os.environ.pop("CLAUDE_CONFIG_DIR", None)
++        self.settings().parent.mkdir()
++        self.settings().write_text(
++            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
++        )
+         # Commands run as an agent would, without a terminal, whatever runs the
+         # tests; a test that stands for a person at a terminal says so.
+         self.enterContext(mock.patch("sys.stdin.isatty", return_value=False))
+@@ -67,6 +72,10 @@ def setUp(self) -> None:
+     def at_a_terminal(self) -> None:
+         self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
+ 
++    def settings(self) -> Path:
++        """The user's Claude Code settings, which `init` gives the publish rule."""
++        return self.home / ".claude" / "settings.json"
++
+     def tearDown(self) -> None:
+         self.temporary.cleanup()
+ 
+@@ -563,10 +572,12 @@ def test_edit_refuses_a_noninteractive_session(self) -> None:
+         self.assertEqual(69, code)
+         self.assertIn("interactive terminal", stderr)
+ 
+-    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md", ".claude/settings.json")
++    ADOPTED = ("docs/projects/README.md", "AGENTS.md", "CLAUDE.md")
+ 
+     def snapshot(self) -> dict[str, bytes]:
+-        return {name: (self.root / name).read_bytes() for name in self.ADOPTED}
++        return {name: (self.root / name).read_bytes() for name in self.ADOPTED} | {
++            "settings": self.settings().read_bytes()
++        }
+ 
+     def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+         self.at_a_terminal()
+@@ -574,11 +585,12 @@ def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+         self.temporary = tempfile.TemporaryDirectory()
+         self.root = Path(self.temporary.name)
+         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
++        self.settings().unlink()
+ 
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\ncreated .claude/settings.json\n", stdout
++            "created docs/projects/README.md\ncreated AGENTS.md\ncreated CLAUDE.md\ncreated ~/.claude/settings.json\n", stdout
+         )
+         self.assertEqual("", stderr)
+         convention = (self.root / "docs" / "projects" / "README.md").read_text()
+@@ -593,6 +605,8 @@ def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
+         self.assertEqual(1, len(modes), modes)
+         self.assertTrue(modes.pop() & stat.S_IRGRP)
++        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
++        self.assertFalse((self.root / ".claude").exists(), "the rule is the user's, not the repository's")
+ 
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+ 
+@@ -600,7 +614,7 @@ def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
++            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
+             stdout,
+         )
+         self.assertEqual(before, self.snapshot())
+@@ -613,7 +627,7 @@ def test_init_adds_a_missing_convention_file_to_an_existing_tree(self) -> None:
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "created docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+         self.assertTrue((self.projects / "alpha" / "readme.md").exists())
+ 
+@@ -628,7 +642,7 @@ def test_distinct_instruction_files_each_get_the_block_and_keep_their_bytes(self
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\nupdated AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+         written = agents.read_bytes()
+         self.assertTrue(written.startswith(b"# House rules\r\n\r\nBe kind.  \r\n\r\n<!-- projector:begin"))
+@@ -650,7 +664,7 @@ def test_distinct_instruction_files_each_get_the_block_and_keep_their_bytes(self
+         self.assertNotIn("AGENTS.md:", stderr)
+         code, stdout, _ = self.invoke("init")
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+ 
+     def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
+@@ -664,7 +678,7 @@ def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\ncreated AGENTS.md\nupdated CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+         self.assertTrue(agents.is_symlink())
+         self.assertEqual("CLAUDE.md", os.readlink(agents))
+@@ -673,7 +687,7 @@ def test_a_claude_first_repository_links_agents_md_to_claude_md(self) -> None:
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+         code, stdout, _ = self.invoke("init")
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+ 
+     def test_a_link_checked_out_as_a_plain_file_is_left_alone(self) -> None:
+@@ -715,7 +729,7 @@ def test_init_restores_an_edited_block_that_check_warned_about(self) -> None:
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+         self.assertEqual(self.block() + "\n", agents.read_text())
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+@@ -736,7 +750,7 @@ def test_init_keeps_a_newer_block_and_check_says_to_upgrade(self) -> None:
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code)
+         self.assertEqual(
+-            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout
++            "unchanged docs/projects/README.md\nkept AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout
+         )
+         self.assertIn(f"version {shipped + 98}", stderr)
+         self.assertEqual(before, agents.read_bytes())
+@@ -818,7 +832,7 @@ def test_a_symlink_in_either_direction_gets_one_block_and_no_import(self) -> Non
+ 
+             self.assertEqual(0, code, stderr)
+             self.assertEqual(
+-                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
++                "unchanged docs/projects/README.md\nupdated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
+                 stdout,
+                 link.name,
+             )
+@@ -830,7 +844,7 @@ def test_a_symlink_in_either_direction_gets_one_block_and_no_import(self) -> Non
+             self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+             code, stdout, _ = self.invoke("init")
+             self.assertEqual(
+-                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n",
++                "unchanged docs/projects/README.md\nunchanged AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n",
+                 stdout,
+             )
+ 
+@@ -881,7 +895,7 @@ def test_the_block_names_a_configured_projects_dir(self) -> None:
+         code, stdout, stderr = self.invoke("init")
+ 
+         self.assertEqual(0, code, stderr)
+-        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\nunchanged .claude/settings.json\n", stdout)
++        self.assertEqual("created plans/README.md\ncreated AGENTS.md\nunchanged CLAUDE.md\nunchanged ~/.claude/settings.json\n", stdout)
+         self.assertIn("`plans/README.md`", (self.root / "AGENTS.md").read_text())
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+ 
+@@ -890,7 +904,7 @@ def test_instructions_can_be_disabled_in_configuration(self) -> None:
+         (self.root / "AGENTS.md").unlink()
+         (self.root / "CLAUDE.md").unlink()
+ 
+-        self.assertEqual((0, "unchanged docs/projects/README.md\nunchanged .claude/settings.json\n", ""),
++        self.assertEqual((0, "unchanged docs/projects/README.md\nunchanged ~/.claude/settings.json\n", ""),
+                          self.invoke("init"))
+         self.assertFalse((self.root / "AGENTS.md").exists())
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+@@ -934,14 +948,11 @@ def test_init_json_keeps_action_and_path_and_adds_files(self) -> None:
+                 {"path": "docs/projects/README.md", "action": "unchanged"},
+                 {"path": "AGENTS.md", "action": "unchanged"},
+                 {"path": "CLAUDE.md", "action": "created"},
+-                {"path": ".claude/settings.json", "action": "unchanged"},
++                {"path": "~/.claude/settings.json", "action": "unchanged"},
+             ],
+             payload["files"],
+         )
+ 
+-    def settings(self) -> Path:
+-        return self.root / ".claude" / "settings.json"
+-
+     def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
+         self.at_a_terminal()
+         existing = {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)"], "deny": ["Read(.env)"]}}
+@@ -950,13 +961,13 @@ def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self
+         code, stdout, stderr = self.invoke("init")
+ 
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("updated .claude/settings.json\n", stdout)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+         self.assertEqual(
+             {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", permissions.RULE], "deny": ["Read(.env)"]}},
+             json.loads(self.settings().read_text()),
+         )
+         before = self.settings().read_bytes()
+-        self.assertIn("unchanged .claude/settings.json\n", self.invoke("init")[1])
++        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
+         self.assertEqual(before, self.settings().read_bytes())
+ 
+     def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
+@@ -972,65 +983,107 @@ def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
+                 code, stdout, stderr = self.invoke("init")
+ 
+                 self.assertEqual(0, code, stderr)
+-                self.assertIn("kept .claude/settings.json\n", stdout)
++                self.assertIn("kept ~/.claude/settings.json\n", stdout)
+                 self.assertIn(reason, stderr)
+                 self.assertIn(permissions.RULE, stderr)
+                 self.assertEqual(text, self.settings().read_text())
+ 
+-    def test_init_leaves_claude_settings_that_link_outside_the_repository(self) -> None:
+-        elsewhere = tempfile.TemporaryDirectory()
+-        self.addCleanup(elsewhere.cleanup)
+-        outside = Path(elsewhere.name)
+-        (outside / "settings.json").write_text("{}\n", encoding="utf-8")
++    def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) -> None:
++        dotfiles = tempfile.TemporaryDirectory()
++        self.addCleanup(dotfiles.cleanup)
++        shared = Path(dotfiles.name) / "claude" / "settings.json"
++        shared.parent.mkdir()
++        shared.write_text("{}\n", encoding="utf-8")
+         self.settings().unlink()
+-        (self.root / ".claude").rmdir()
+-        os.symlink(outside, self.root / ".claude")
++        os.symlink(shared, self.settings())
+ 
+-        code, stdout, stderr = self.invoke("init")
++        code, stdout, stderr = self.invoke("init", "--publish-rule")
+ 
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("kept .claude/settings.json\n", stdout)
+-        self.assertIn("links outside the repository", stderr)
+-        self.assertEqual("{}\n", (outside / "settings.json").read_text())
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertTrue(self.settings().is_symlink())
++        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
+ 
+-    def test_init_writes_through_a_settings_link_inside_the_repository(self) -> None:
+-        shared = self.root / "config" / "claude.json"
++    @unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root writes a read-only directory anyway")
++    def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
++        # A settings file linked into a read-only directory, as home-manager
++        # links it into the Nix store.
++        store = tempfile.TemporaryDirectory()
++        self.addCleanup(store.cleanup)
++        shared = Path(store.name) / "claude" / "settings.json"
+         shared.parent.mkdir()
+         shared.write_text("{}\n", encoding="utf-8")
++        shared.parent.chmod(0o555)
++        self.addCleanup(shared.parent.chmod, 0o755)
+         self.settings().unlink()
+-        os.symlink("../config/claude.json", self.settings())
++        os.symlink(shared, self.settings())
++        (self.root / "CLAUDE.md").unlink()
+ 
+         code, stdout, stderr = self.invoke("init", "--publish-rule")
+ 
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("updated .claude/settings.json\n", stdout)
+-        self.assertTrue(self.settings().is_symlink())
+-        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
++        self.assertIn("created CLAUDE.md\n", stdout, "the files init did write are still reported")
++        self.assertIn("kept ~/.claude/settings.json\n", stdout)
++        self.assertIn("could not be written", stderr)
++        self.assertIn(permissions.RULE, stderr)
++        self.assertEqual("{}\n", shared.read_text())
++
++    def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
++        self.at_a_terminal()
++        configured = tempfile.TemporaryDirectory()
++        self.addCleanup(configured.cleanup)
++        before = self.settings().read_bytes()
++
++        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": configured.name}):
++            code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn(f"created {Path(configured.name) / 'settings.json'}\n", stdout)
++        self.assertEqual({"permissions": {"allow": [permissions.RULE]}},
++                         json.loads((Path(configured.name) / "settings.json").read_text()))
++        self.assertEqual(before, self.settings().read_bytes())
++
++    def test_init_leaves_the_repositorys_own_claude_settings_alone(self) -> None:
++        self.at_a_terminal()
++        self.settings().unlink()
++        repository = self.root / ".claude" / "settings.json"
++        repository.parent.mkdir()
++        for text in ('{"permissions": {"allow": ["Bash(npm test)"]}}\n',
++                     json.dumps({"permissions": {"allow": [permissions.RULE]}}) + "\n"):
++            with self.subTest(text=text):
++                repository.write_text(text, encoding="utf-8")
++
++                code, stdout, stderr = self.invoke("init")
++
++                self.assertEqual(0, code, stderr)
++                self.assertEqual(text, repository.read_text())
++                self.assertNotIn("\nunchanged .claude/settings.json", "\n" + stdout)
++                self.assertTrue(self.settings().exists(), "the user's settings get the rule either way")
+ 
+     def test_init_adds_the_publish_rule_only_at_a_terminal_or_when_asked(self) -> None:
+         self.settings().unlink()
+ 
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("kept .claude/settings.json\n", stdout)
++        self.assertIn("kept ~/.claude/settings.json\n", stdout)
+         self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
+         self.assertFalse(self.settings().exists())
+ 
+         (self.root / ".projector.toml").write_text("[review]\npublish_rule = true\n")
+-        self.assertIn("kept .claude/settings.json\n", self.invoke("init")[1])
++        self.assertIn("kept ~/.claude/settings.json\n", self.invoke("init")[1])
+         self.assertFalse(self.settings().exists(), "configuration cannot add the rule without a terminal")
+ 
+         (self.root / ".projector.toml").write_text("[review]\npublish_rule = false\n")
+         code, stdout, stderr = self.invoke("init", "--publish-rule")
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("created .claude/settings.json\n", stdout)
++        self.assertIn("created ~/.claude/settings.json\n", stdout)
+         self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
+ 
+         self.settings().unlink()
+         self.at_a_terminal()
+         self.assertNotIn(".claude/settings.json", self.invoke("init", "--no-publish-rule")[1])
+         (self.root / ".projector.toml").unlink()
+-        self.assertIn("created .claude/settings.json\n", self.invoke("init")[1])
++        self.assertIn("created ~/.claude/settings.json\n", self.invoke("init")[1])
+ 
+     def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+         self.at_a_terminal()
+@@ -1054,15 +1107,15 @@ def test_init_keeps_a_plain_file_claude_and_undecodable_settings(self) -> None:
+         self.settings().write_bytes(b'{"env": {"NAME": "caf\xe9"}}')
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("kept .claude/settings.json\n", stdout)
++        self.assertIn("kept ~/.claude/settings.json\n", stdout)
+         self.assertIn("is not UTF-8", stderr)
+ 
+         self.settings().unlink()
+-        (self.root / ".claude").rmdir()
+-        (self.root / ".claude").write_text(str(self.home / ".claude"), encoding="utf-8")
++        self.settings().parent.rmdir()
++        self.settings().parent.write_text("not a directory\n", encoding="utf-8")
+         code, stdout, stderr = self.invoke("init")
+         self.assertEqual(0, code, stderr)
+-        self.assertIn("kept .claude/settings.json\n", stdout)
++        self.assertIn("kept ~/.claude/settings.json\n", stdout)
+         self.assertIn("is not a directory", stderr)
+ 
+ 
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 0b7c27c..c7fd58f 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -1180,7 +1180,7 @@ def test_links_a_custom_domain_website_without_a_trailing_slash(self) -> None:
+         self.assertEqual("https://docs.example.com", github.homepage)
+         self.assertIn("updated repository website https://docs.example.com\n", out)
+ 
+-    def test_warns_a_non_admin_and_writes_the_workflow_only_for_a_site_already_set_up(self) -> None:
++    def test_writes_the_workflow_for_a_non_admin_whether_or_not_the_site_is_set_up(self) -> None:
+         github = FakeGitHub(admin=False, pages=SITE_READY)
+ 
+         code, out, err = self.init(github)
+@@ -1197,12 +1197,13 @@ def test_warns_a_non_admin_and_writes_the_workflow_only_for_a_site_already_set_u
+             with self.subTest(flags=flags):
+                 github = FakeGitHub(admin=False)
+ 
+-                code, _, err = self.init(github, *flags)
++                code, out, err = self.init(github, *flags)
+ 
+                 self.assertEqual(expected, code)
+                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
+                 self.assertIn("you are not an admin of owner/example, so init cannot turn on its GitHub Pages site", err)
+-                self.assertFalse(self.workflow().exists())
++                self.assertIn(f"created {summary.WORKFLOW_PATH}", out, "the workflow comes with the admin's commands")
++                self.workflow().unlink()
+ 
+     def run_as_admin(self, github: FakeGitHub, commands: list[str]) -> None:
+         """Run `commands` in a shell, as the admin would, applying each one's calls to `github` before the next."""
+@@ -1259,19 +1260,21 @@ def test_hands_a_non_admin_the_commands_that_finish_the_site(self) -> None:
+ 
+                 self.assertEqual(65 if "--site" in flags else 0, code)
+                 self.assertEqual([], github.writes(), "nothing is attempted without admin")
+-                self.assertIn("ask an admin to run these commands, then run `project init` again", err)
++                self.assertIn("ask an admin to run these commands; the site deploys once they have and the site "
++                              "workflow is on the default branch:", err)
+                 self.assertIn("".join(f"\n    {command}" for command in commands), err)
+-                self.assertNotIn("project init --site", err)
++                self.assertNotIn("project init", err, "the workflow is written now, so no second init is needed")
+                 if "--site" not in flags:
+                     self.assertEqual(commands, json.loads(out)["site"]["admin_commands"])
+-                self.assertFalse(self.workflow().exists())
++                    self.assertIn({"path": summary.WORKFLOW_PATH, "action": "created"}, json.loads(out)["files"])
++                self.assertTrue(self.workflow().exists())
+ 
+                 self.run_as_admin(github, commands)
+                 code, out, err = self.init(github, *flags)
+ 
+                 self.assertEqual(0, code, err)
+                 self.assertEqual([], github.writes(), "the rerun needs no admin")
+-                self.assertIn(f"created {summary.WORKFLOW_PATH}", out)
++                self.assertIn(f"unchanged {summary.WORKFLOW_PATH}", out)
+                 self.assertNotIn("not an admin", err)
+                 self.assertEqual("workflow", github.pages["build_type"])
+                 self.assertEqual(not github.private, github.pages["public"])

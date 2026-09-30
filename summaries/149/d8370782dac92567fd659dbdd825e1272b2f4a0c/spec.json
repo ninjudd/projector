@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "name": "User-level publish rule and non-admin site workflow",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 149,
+  "title": "Add the publish rule to the user's Claude Code settings, and write the site workflow for a non-admin",
+  "head": "d8370782dac92567fd659dbdd825e1272b2f4a0c",
+  "headRef": "init-global-publish-rule",
+  "base": "b7c923cc11bc5a4c397978c12b145c01ccafd8f4",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> used to add the Claude Code allow rule <code>Bash(project review publish *)</code> to the repository's <code>.claude/settings.json</code>. In a repository that ignores <code>.claude/</code>, the rule lived only in the one checkout where someone ran <code>init</code>, so fresh clones and background worktrees had their clean self-review publishes refused as self-approval. Committing the file instead would make an auto-mode exemption team policy. This pull request moves the rule into the person's own settings: <code>~/.claude/settings.json</code>, or <code>settings.json</code> in <code>$CLAUDE_CONFIG_DIR</code>.",
+   "The gate does not change. <code>init</code> adds the rule only at a terminal or with <code>--publish-rule</code>, an agent run only reports it, and configuration can only turn it off. The file is written through a symlink, such as one into a dotfiles repository, and reported with the home directory shown as <code>~</code>. A repository's own <code>.claude/settings.json</code> is never read or written.",
+   "The second change lets a non-admin's <code>init</code> write the site workflow beside the <code>gh</code> commands it prints for an admin, instead of asking for a second <code>init</code> run. A workflow merged before the admin acts fails at <code>actions/configure-pages</code> while no Pages site exists, and <code>site build --check-visibility</code> refuses a private repository's public site, so it cannot publish early."
+  ],
+  "cards": [
+   {
+    "id": "where",
+    "title": "Which settings file init writes",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Situation</th><th>Result</th></tr></thead><tbody><tr><td><code>CLAUDE_CONFIG_DIR</code> set</td><td class=\"r\"><code>$CLAUDE_CONFIG_DIR/settings.json</code></td></tr><tr><td>Unset</td><td class=\"r\"><code>$HOME/.claude/settings.json</code></td></tr><tr><td>File is a symlink</td><td class=\"r\">Written at the link's target; the link stays</td></tr><tr><td>Not UTF-8, not JSON, wrong shape, or <code>.claude</code> not a directory</td><td class=\"r\"><code>kept</code>, with a note</td></tr><tr><td>Cannot be written, such as a link into the Nix store</td><td class=\"r\"><code>kept</code>, with a note; <code>init</code> exits 0</td></tr><tr><td>Repository <code>.claude/settings.json</code></td><td class=\"r\">Never touched</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "workflow",
+    "title": "When init writes the site workflow",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Case</th><th>Workflow</th></tr></thead><tbody><tr><td>Admin, site set up or created</td><td class=\"r\">Written</td></tr><tr><td>Non-admin, Pages needs an admin's change</td><td class=\"r\">Written (new)</td></tr><tr><td>Non-admin, site already set up</td><td class=\"r\">Written</td></tr><tr><td>Admin, GitHub refuses to make a private site private</td><td class=\"r\">None</td></tr><tr><td>Branch site or another deployer, without <code>--site</code></td><td class=\"r\">None</td></tr><tr><td><code>gh</code> missing</td><td class=\"r\">None</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Head <code>9a4c1b6</code>: changes requested, with one P2 at <code>src/projector/permissions.py:84</code>: an unwritable settings file made <code>init</code> exit 65.</li><li>Head <code>d837078</code>: <code>64ef8aa</code> keeps that file with a note and exits 0, with a test, and <code>d837078</code> qualifies the agent-facing note and reflows two long lines. The finding thread is resolved and verified fixed, and no finding thread is open.</li><li>Gate: 393 tests OK with one skip, <code>Project plans are valid.</code>, both plugin validations passed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "publish-rule",
+   "title": "The publish rule moves to the user's settings",
+   "kicker": "permissions.py finds the user's Claude Code settings and writes the rule through any link",
+   "intro": [
+    "<code>allow_publish</code> no longer takes the repository root. <code>settings_path</code> picks <code>$CLAUDE_CONFIG_DIR/settings.json</code> when that variable is set, and <code>$HOME/.claude/settings.json</code> otherwise. <code>shown</code> reports the path with the home directory as <code>~</code>. The base's guard that kept a file linking outside the repository is gone, because a user settings file linked into a dotfiles repository is the common case. <code>write_through</code> already swaps the new content in at the link's resolved target.",
+    "The tests move the settings fixture from the repository into a temporary <code>HOME</code> created outside the repository, and unset <code>CLAUDE_CONFIG_DIR</code>, so the suite cannot reach real settings. New tests cover writing through a dotfiles link, <code>CLAUDE_CONFIG_DIR</code>, and leaving a repository's own settings file byte-for-byte unchanged. <code>test_init_keeps_settings_it_cannot_write_and_reports_the_rest</code> links the settings file into a directory without write permission, and skips under root."
+   ],
+   "concepts": [
+    "User-level allow rules take effect without Claude Code's workspace trust dialog, so the terminal-or-<code>--publish-rule</code> gate is now the only human checkpoint.",
+    "Report mode, which is how an agent's <code>init</code> runs, reads the user file and never writes it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every test that can reach <code>allow_publish</code> runs under <code>RepositoryTestCase.setUp</code>, with <code>HOME</code> at a temporary directory and <code>CLAUDE_CONFIG_DIR</code> unset, or passes <code>--no-publish-rule</code>, as <code>InitSiteTests.init</code> does."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>publish_rule</code> is <code>add</code> only with <code>--publish-rule</code> or when stdin is a terminal. <code>review.publish_rule = true</code> without a terminal still only reports."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>allow_publish</code> wraps <code>write_through</code> in <code>except OSError</code> and returns <code>kept</code>, so a settings file linked into a read-only directory no longer stops <code>init</code> from reporting the other files or setting up the site."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "settings_path, shown, and allow_publish without the repository root; a write that fails with OSError keeps the file with a note"
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "setUp isolates HOME and CLAUDE_CONFIG_DIR; new link, CLAUDE_CONFIG_DIR, repository-settings, and unwritable-settings tests",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "site-workflow",
+   "title": "A non-admin gets the site workflow",
+   "kicker": "NeedsAdmin carries the workflow init wrote, and init reports it with the admin's commands",
+   "intro": [
+    "When <code>enable_pages</code> raises <code>NeedsAdmin</code>, <code>init_site</code> appends the homepage command as before and now writes the workflow, attaching the result to the error as <code>workflow</code> before re-raising. <code>run</code> appends that file action to the files it reports, whether or not <code>--site</code> turns the skip into an <code>InitError</code>. <code>NeedsAdmin.steps</code> no longer tells the user to run <code>init</code> again.",
+    "Every other refusal still raises a plain <code>SpecError</code> before a workflow is written: a branch site or another deployer without <code>--site</code>, a missing <code>gh</code>, and an admin whose private site GitHub will not make private."
+   ],
+   "concepts": [
+    "A workflow on the default branch is harmless before Pages exists: <code>configure-pages</code> fails without a site, and <code>--check-visibility</code> refuses a private repository's public site."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>error.workflow</code> is set only in the <code>NeedsAdmin</code> handler of <code>init_site</code>, and <code>NeedsAdmin.__init__</code> defaults it to <code>None</code>, so the <code>isinstance</code> check in <code>run</code> covers every raise."
+    },
+    {
+     "kind": "verify",
+     "text": "With <code>--site</code>, the workflow is written and listed in <code>InitError.files</code> before <code>init</code> exits 65, which is what <code>test_writes_the_workflow_for_a_non_admin_whether_or_not_the_site_is_set_up</code> asserts."
+    },
+    {
+     "kind": "verify",
+     "text": "The rerun after the admin's commands reports the workflow as <code>unchanged</code> and makes no GitHub writes."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "init_site writes the workflow on NeedsAdmin; run reports it; allow_publish loses its root argument"
+    },
+    {
+     "path": "src/projector/summary.py",
+     "note": "NeedsAdmin gains workflow and a steps text without a second init"
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Non-admin runs now expect the workflow created, then unchanged on the rerun",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Docs and skills",
+   "kicker": "The CLI reference, site guide, README, and two skills follow both changes",
+   "intro": [
+    "<code>docs/cli.md</code> rewrites the settings entry for the user file, adds how <code>~</code> and <code>CLAUDE_CONFIG_DIR</code> show in output, and replaces the non-admin example with one that writes the workflow, then says how to start the workflow once the admin is done. <code>review-changes</code> now asks a refused publisher's user to run <code>project init</code> at a terminal instead of committing <code>.claude/settings.json</code>. <code>summarize-changes</code> relays the admin's commands and no longer says a non-admin gets no workflow. The settings entry also lists a file that cannot be written among the ones <code>init</code> keeps."
+   ],
+   "concepts": [],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The non-admin console sample in <code>docs/cli.md</code> matches the order <code>run</code> prints: the site note, the admin's steps, the workflow note from <code>emit_files</code>, then one line per file."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Settings entry, output paths, and the non-admin site flow"
+    },
+    {
+     "path": "docs/site.md"
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "skills/review-changes/SKILL.md",
+     "note": "What to ask the user when the host refuses a clean publish"
+    },
+    {
+     "path": "skills/summarize-changes/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
