@@ -2,7 +2,7 @@
 
 Projector's skills write prose for people to read: plans, reviews, pull
 request summaries, and commit messages. Each of those skills follows this
-guide. The `write` skill applies it to any other prose you ask for.
+guide. The `write` skill applies it to any other prose a user asks for.
 
 The guide follows the Google developer documentation style, which
 Projector's own documentation also uses. A skill states any rules its own
