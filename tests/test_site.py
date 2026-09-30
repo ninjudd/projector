@@ -741,6 +741,21 @@ class ServeTests(SiteRepoCase):
             process.terminate()
             process.communicate(timeout=10)
 
+    def test_the_background_fetch_fails_rather_than_prompting_for_credentials(self) -> None:
+        published = serve.Summaries(self.repo, "origin")
+        envs: list[dict | None] = []
+
+        def run_git(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+            envs.append(env)
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+        with mock.patch.object(serve, "run_git", side_effect=run_git):
+            published.fetch()
+            published.fetch_quietly()
+
+        self.assertIsNone(envs[0], "the startup fetch keeps the user's environment, prompts included")
+        self.assertEqual("0", (envs[1] or {}).get("GIT_TERMINAL_PROMPT"))
+
     def test_keep_fetching_reports_a_failure_once_and_again_only_when_it_changes(self) -> None:
         stop = threading.Event()
         reasons = iter(["couldn't find remote ref", "", "couldn't find remote ref", "offline", "offline"])

@@ -915,7 +915,7 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             # deploy; here it arrives with the next fetch, which the watch sees.
             if published is not None and not arguments.no_fetch:
                 threading.Thread(target=serve.keep_fetching, daemon=True,
-                                 args=(published.fetch, stop, serve.FETCH_INTERVAL, report, fetched)).start()
+                                 args=(published.fetch_quietly, stop, serve.FETCH_INTERVAL, report, fetched)).start()
         print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:

@@ -31,8 +31,8 @@ WILDCARD = {"", "0.0.0.0", "::"}
 FETCH_INTERVAL = 60.0
 
 
-def run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+def run_git(root: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, env=env)
 
 
 def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
@@ -40,7 +40,7 @@ def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
     return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
 
 
-def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF) -> str:
+def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool = True) -> str:
     """Update the local copy of the remote's summaries ref, and say why when it cannot.
 
     A repository that has not published since walkthroughs were renamed
@@ -48,14 +48,17 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF) -> str:
     new one's place, and `summaries_ref` reads it until the new ref exists.
     A server fetches every minute, so the fetch writes only the tracking ref
     and never FETCH_HEAD, which the user's own fetch may have just written.
+    Without `prompt`, a remote that wants typed credentials fails the fetch
+    rather than asking for them from a thread no one is watching.
     """
     fetch = ("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote)
+    env = None if prompt else {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     local = tracking_ref(remote, ref)
-    fetched = run_git(root, *fetch, f"+{ref}:{local}")
+    fetched = run_git(root, *fetch, f"+{ref}:{local}", env=env)
     if fetched.returncode == 0:
         return ""
     if ref == PAGES_REF:
-        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}")
+        legacy = run_git(root, *fetch, f"+{LEGACY_PAGES_REF}:{tracking_ref(remote, LEGACY_PAGES_REF)}", env=env)
         if legacy.returncode == 0:
             return ""
     reason = fetched.stderr.decode(errors="replace").strip().splitlines()
@@ -128,9 +131,13 @@ class Summaries:
     def __init__(self, root: Path, remote: str) -> None:
         self.root, self.remote = root, remote
 
-    def fetch(self) -> str:
+    def fetch(self, prompt: bool = True) -> str:
         """Update the local copy of the remote's summaries, and say why when it cannot."""
-        return fetch_summaries(self.root, self.remote)
+        return fetch_summaries(self.root, self.remote, prompt=prompt)
+
+    def fetch_quietly(self) -> str:
+        """Fetch as a background thread must, failing rather than prompting for credentials."""
+        return self.fetch(prompt=False)
 
     def version(self) -> tuple:
         """The ref the summaries are read from and its commit, which move when a summary is published."""

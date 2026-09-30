@@ -678,9 +678,12 @@ once that publish writes the ref. It also fetches the ref again every
 minute, so a summary published from another checkout appears within about
 a minute, as a Pages site shows it after the deploy that each publish
 starts. A fetch that keeps failing is reported once, and again only when
-the reason changes; `--no-fetch` turns the periodic fetch off too. A path the build has no file for gets `404.html`
-with status 404, as GitHub Pages answers it. `--base` serves the site under
-a path, as `site build` builds it.
+the reason changes; `--no-fetch` turns the periodic fetch off too. The
+periodic fetch never prompts for credentials, so a remote that needs typed
+ones reports the failure instead, and no fetch touches `FETCH_HEAD`. A path
+the build has no file for gets `404.html` with status 404, as GitHub Pages
+answers it. `--base` serves the site under a path, as `site build` builds
+it.
 
 `site status` exits 0 and prints the site's URL, or with `--pr` the pull
 request's review URL, when the repository has the site workflow on its
