@@ -95,7 +95,7 @@ job, and give a second job its own section.
 | Tutorial | Teach by doing | Steps a learner follows, each with a result they can see |
 | How-to | Get a known task done | Steps for a reader who knows the basics, with no teaching |
 | Reference | Look something up | A complete, exact, and neutral description, with no instructions or opinions |
-| Explanation | Understand why | One bounded topic, with its design decisions, history, constraints, and alternatives |
+| Explanation | Understand why | One bounded topic, with its design decisions, constraints, and alternatives |
 
 In a plan, the implementation sequence is a how-to, and the decisions are
 an explanation. In a summary, the group intros explain, and the notes tell
