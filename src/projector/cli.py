@@ -325,7 +325,9 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
 
-    init = subcommands.add_parser("init", help="adopt the project convention")
+    init = subcommands.add_parser(
+        "init", help="adopt the project convention; outside a repository, set up only the permission rules"
+    )
     site_choice = init.add_mutually_exclusive_group()
     site_choice.add_argument(
         "--site",
@@ -347,12 +349,12 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help="add the Claude Code rule allowing `project review publish` to your Claude Code user settings even "
-        "without a terminal (default: add it when run at a terminal)",
+        help="add the rules allowing `project review publish` and `project summary publish` to your Claude Code "
+        "settings and Codex rules even without a terminal (default: add them when run at a terminal)",
     )
     rule_choice.add_argument(
         "--no-publish-rule", action="store_false", dest="publish_rule",
-        help="leave your Claude Code user settings alone",
+        help="leave your Claude Code settings and Codex rules alone",
     )
     add_output(init)
 
@@ -684,24 +686,24 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None) -> None:
+def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None,
+               readme: bool = True) -> None:
     """Report what `init` did, one line per file, or one JSON document.
 
-    The top-level `action` and `path` still describe the projects README, as
-    they did before `init` managed more than that file, so a consumer written
-    against the earlier shape keeps working; `files` lists everything.
+    In a repository, the top-level `action` and `path` still describe the
+    projects README, as they did before `init` managed more than that file, so
+    a consumer written against the earlier shape keeps working; `files` lists
+    everything. Outside one there is no README, and `files` is the whole report.
     """
 
     for entry in files:
         if entry.note:
             print(f"project: {entry.note}", file=sys.stderr)
     if json_output:
-        readme = files[0]
         print(
             json_text(
                 {
-                    "action": readme.action,
-                    "path": readme.path,
+                    **({"action": files[0].action, "path": files[0].path} if readme else {}),
                     "files": [{"path": entry.path, "action": entry.action} for entry in files],
                     **({"site": pages} if pages is not None else {}),
                 }
@@ -1237,7 +1239,7 @@ def site_enabled(root: Path) -> bool:
 
 
 def publish_rule_enabled(root: Path) -> bool:
-    """`review.publish_rule` from configuration; unset means `init` adds the rule."""
+    """`review.publish_rule` from configuration; unset means `init` adds the rules."""
 
     value = load_config(root).get("review.publish_rule")
     if value is None:
@@ -1245,6 +1247,36 @@ def publish_rule_enabled(root: Path) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
     return value
+
+
+def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
+    """Whether `init` adds the publish rules ("add"), only reports them ("report"), or leaves them (None).
+
+    The rules exempt two commands from each host's automatic approval in the
+    person's own settings, so `init` adds them only when a person runs it at a
+    terminal or names --publish-rule; an agent refreshing the instructions gets
+    a note instead. Configuration can only turn them off.
+    """
+
+    if arguments.publish_rule is not None:
+        return "add" if arguments.publish_rule else None
+    if publish_rule_enabled(start):
+        return "add" if sys.stdin.isatty() else "report"
+    return None
+
+
+def init_permissions_only(arguments: argparse.Namespace) -> int:
+    """`init` outside a Git repository: set up the user's publish rules, which belong to no repository."""
+
+    if arguments.site or arguments.url:
+        raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
+    publish_rule = publish_rule_mode(arguments, Path.cwd())
+    files = allow_publish(apply=publish_rule == "add") if publish_rule else []
+    emit_files(files, arguments.json_output, readme=False)
+    done = "set up only the permission rules" if files else "did nothing, because the permission rules are off"
+    print(f"project: not inside a Git repository, so init {done}; run `project init` inside a repository to "
+          "adopt the project convention there", file=sys.stderr)
+    return 0
 
 
 def emit_site(pages: dict) -> None:
@@ -1269,7 +1301,12 @@ def run(arguments: argparse.Namespace) -> int:
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
-    root = arguments.root.resolve() if arguments.root else discover_git_root(Path.cwd())
+    try:
+        root = arguments.root.resolve() if arguments.root else discover_git_root(Path.cwd())
+    except EnvironmentError:
+        if arguments.command != "init":
+            raise
+        return init_permissions_only(arguments)
     projects_dir = arguments.projects_dir
     if projects_dir is None:
         projects_dir = configured_projects_dir(root)
@@ -1285,21 +1322,11 @@ def run(arguments: argparse.Namespace) -> int:
         if url and not wanted:
             raise UsageError("--url sets the site's address, but --no-site or site.enabled = false leaves the site "
                              "alone")
-        # The publish rule exempts a command from Claude Code's auto-mode
-        # classifier in the person's own settings, so it is added only when a
-        # person runs `init` at a terminal or names --publish-rule; an agent
-        # refreshing the instructions gets a note instead. Configuration can
-        # only turn it off.
-        if arguments.publish_rule is not None:
-            publish_rule = "add" if arguments.publish_rule else None
-        elif publish_rule_enabled(root):
-            publish_rule = "add" if sys.stdin.isatty() else "report"
-        else:
-            publish_rule = None
+        publish_rule = publish_rule_mode(arguments, root)
         try:
             files = store.init(instructions_enabled(root))
             if publish_rule:
-                files.append(allow_publish(apply=publish_rule == "add"))
+                files.extend(allow_publish(apply=publish_rule == "add"))
             pages = None
             if wanted:
                 try:
