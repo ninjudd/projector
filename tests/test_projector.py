@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -52,10 +53,11 @@ class RepositoryTestCase(unittest.TestCase):
         os.symlink("AGENTS.md", self.root / "CLAUDE.md")
         # Every command now reads layered configuration, and the user layer
         # lives at $HOME/.projector.toml; `init` also writes the user's Claude
-        # Code settings under $HOME/.claude. Point HOME at an empty directory,
+        # Code settings under $HOME/.claude, and Codex rules under $HOME/.codex
+        # when that directory exists. Point HOME at an empty directory,
         # outside the repository so a test that replaces the repository keeps
-        # it, and unset CLAUDE_CONFIG_DIR, so real ones on the machine running
-        # the tests cannot reach them.
+        # it, and unset CLAUDE_CONFIG_DIR and CODEX_HOME, so real ones on the
+        # machine running the tests cannot reach them.
         home = tempfile.TemporaryDirectory()
         self.addCleanup(home.cleanup)
         self.home = Path(home.name)
@@ -63,9 +65,10 @@ class RepositoryTestCase(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        os.environ.pop("CODEX_HOME", None)
         self.settings().parent.mkdir()
         self.settings().write_text(
-            json.dumps({"permissions": {"allow": [permissions.RULE]}}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"permissions": {"allow": list(permissions.RULES)}}, indent=2) + "\n", encoding="utf-8"
         )
         # Commands run as an agent would, without a terminal, whatever runs the
         # tests; a test that stands for a person at a terminal says so.
@@ -607,7 +610,7 @@ class MutationTests(RepositoryTestCase):
         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
         self.assertEqual(1, len(modes), modes)
         self.assertTrue(modes.pop() & stat.S_IRGRP)
-        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
+        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
         self.assertFalse((self.root / ".claude").exists(), "the rule is the user's, not the repository's")
 
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -965,7 +968,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertEqual(
-            {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", permissions.RULE], "deny": ["Read(.env)"]}},
+            {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", *permissions.RULES], "deny": ["Read(.env)"]}},
             json.loads(self.settings().read_text()),
         )
         before = self.settings().read_bytes()
@@ -987,7 +990,7 @@ class MutationTests(RepositoryTestCase):
                 self.assertEqual(0, code, stderr)
                 self.assertIn("kept ~/.claude/settings.json\n", stdout)
                 self.assertIn(reason, stderr)
-                self.assertIn(permissions.RULE, stderr)
+                self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
                 self.assertEqual(text, self.settings().read_text())
 
     def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) -> None:
@@ -1004,7 +1007,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertTrue(self.settings().is_symlink())
-        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(shared.read_text()))
+        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(shared.read_text()))
 
     @unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root writes a read-only directory anyway")
     def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
@@ -1027,7 +1030,7 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("created CLAUDE.md\n", stdout, "the files init did write are still reported")
         self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("could not be written", stderr)
-        self.assertIn(permissions.RULE, stderr)
+        self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
         self.assertEqual("{}\n", shared.read_text())
 
     def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
@@ -1041,7 +1044,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertIn(f"created {Path(configured.name) / 'settings.json'}\n", stdout)
-        self.assertEqual({"permissions": {"allow": [permissions.RULE]}},
+        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}},
                          json.loads((Path(configured.name) / "settings.json").read_text()))
         self.assertEqual(before, self.settings().read_bytes())
 
@@ -1051,7 +1054,7 @@ class MutationTests(RepositoryTestCase):
         repository = self.root / ".claude" / "settings.json"
         repository.parent.mkdir()
         for text in ('{"permissions": {"allow": ["Bash(npm test)"]}}\n',
-                     json.dumps({"permissions": {"allow": [permissions.RULE]}}) + "\n"):
+                     json.dumps({"permissions": {"allow": list(permissions.RULES)}}) + "\n"):
             with self.subTest(text=text):
                 repository.write_text(text, encoding="utf-8")
 
@@ -1079,7 +1082,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init", "--publish-rule")
         self.assertEqual(0, code, stderr)
         self.assertIn("created ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": [permissions.RULE]}}, json.loads(self.settings().read_text()))
+        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
 
         self.settings().unlink()
         self.at_a_terminal()
@@ -1104,6 +1107,110 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(78, code)
         self.assertIn("review.publish_rule must be true or false", stderr)
         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
+
+    def test_init_adds_the_summary_rule_beside_an_existing_review_rule(self) -> None:
+        self.at_a_terminal()
+        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
+                                                    "Bash(project summary publish *)"]}},
+                         json.loads(self.settings().read_text()))
+
+    def codex_rules(self) -> Path:
+        """Projector's rules file in the user's Codex configuration."""
+        return self.home / ".codex" / "rules" / "projector.rules"
+
+    def test_init_writes_the_codex_rules_where_codex_is_installed(self) -> None:
+        self.at_a_terminal()
+        (self.home / ".codex").mkdir()
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("created ~/.codex/rules/projector.rules\n", stdout)
+        self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text())
+        self.assertIn("unchanged ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
+
+        self.codex_rules().write_text("# edited\n")
+        self.assertIn("updated ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
+        self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text())
+
+    def test_init_leaves_codex_alone_where_codex_is_not_installed(self) -> None:
+        self.at_a_terminal()
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertNotIn(".codex", stdout + stderr)
+        self.assertFalse((self.home / ".codex").exists(), "init creates no Codex directory")
+
+    def test_init_writes_the_codex_rules_where_codex_home_points(self) -> None:
+        self.at_a_terminal()
+        configured = tempfile.TemporaryDirectory()
+        self.addCleanup(configured.cleanup)
+
+        with mock.patch.dict(os.environ, {"CODEX_HOME": configured.name}):
+            code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        rules = Path(configured.name) / "rules" / "projector.rules"
+        self.assertIn(f"created {rules}\n", stdout)
+        self.assertEqual(permissions.CODEX_RULES, rules.read_text())
+
+    def test_init_only_reports_missing_codex_rules_without_a_terminal(self) -> None:
+        (self.home / ".codex").mkdir()
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
+        self.assertFalse(self.codex_rules().exists())
+
+    @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
+    def test_codex_allows_exactly_the_two_publish_commands_under_the_rule(self) -> None:
+        rules = self.home / "projector.rules"
+        rules.write_text(permissions.CODEX_RULES)
+
+        def decision(*command: str) -> str:
+            result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), *command],
+                                    check=True, capture_output=True, text=True)
+            return json.loads(result.stdout).get("decision", "none")
+
+        self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
+        self.assertEqual("allow", decision("project", "summary", "publish", "--spec", "summary.json"))
+        self.assertEqual("none", decision("project", "site", "serve"))
+        self.assertEqual("none", decision("project", "summary", "init"))
+
+    def test_init_outside_a_repository_sets_up_only_the_permission_rules(self) -> None:
+        self.at_a_terminal()
+        self.settings().unlink()
+        (self.home / ".codex").mkdir()
+
+        code, stdout, stderr = self.invoke("init", cwd=self.home)
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("created ~/.claude/settings.json\ncreated ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("not inside a Git repository, so init set up only the permission rules", stderr)
+        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
+        self.assertFalse((self.home / "docs").exists(), "init adopts no convention outside a repository")
+
+        code, stdout, _ = self.invoke("init", "--json", cwd=self.home)
+        self.assertEqual(0, code)
+        payload = json.loads(stdout)
+        self.assertNotIn("action", payload, "no projects README to describe outside a repository")
+        self.assertEqual([{"path": "~/.claude/settings.json", "action": "unchanged"},
+                          {"path": "~/.codex/rules/projector.rules", "action": "unchanged"}], payload["files"])
+
+    def test_init_outside_a_repository_refuses_to_set_up_a_site(self) -> None:
+        code, _, stderr = self.invoke("init", "--site", cwd=self.home)
+
+        self.assertEqual(2, code)
+        self.assertIn("run `project init` inside that repository", stderr)
 
     def test_init_keeps_a_plain_file_claude_and_undecodable_settings(self) -> None:
         self.settings().write_bytes(b'{"env": {"NAME": "caf\xe9"}}')
