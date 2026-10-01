@@ -562,13 +562,13 @@ when all three hold.
 1. **Summaries are on.** `project config get review.summarize --default true`
    prints anything but `false`.
 2. **The pull request is large.** Its added and deleted lines together reach
-   `review.summarize_min_lines`, 200 unless configuration sets another
+   `review.summarize_min_lines`, 20 unless configuration sets another
    number:
 
    ```sh
    gh pr view <number> --repo <owner>/<repo> --json additions,deletions \
      --jq '.additions + .deletions'
-   project config get review.summarize_min_lines --default 200
+   project config get review.summarize_min_lines --default 20
    ```
 
 3. **The repository hosts summaries.** `project site status --repo

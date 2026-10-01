@@ -30,7 +30,7 @@ it, one subagent per pull request, whenever its watcher reports work on one
 this conversation owns. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
-what it checked rather than on who clicked resolve. For a pull request of 200
+what it checked rather than on who clicked resolve. For a pull request of 20
 changed lines or more, in a repository with a Projector site,
 `review-pr` then runs `summarize-pr` and links the summary from its
 review; `review.summarize` and `review.summarize_min_lines` in
