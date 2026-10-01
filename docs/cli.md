@@ -394,7 +394,7 @@ discarding the rest:
 # ~/ninjudd/.projector.toml — every repository in this directory
 [review]
 username = "minjudd"
-summarize_min_lines = 800
+summarize = false
 model = "sonnet"
 ```
 
@@ -408,14 +408,14 @@ The `[review]` table is where identity and review policy live together, so
 `review.username` sits beside `review.allow_approve` rather than floating at
 the top level as though `operator` might join it.
 
-Together those resolve `review.summarize_min_lines` to `800` and `review.model` to
+Together those resolve `review.summarize` to `false` and `review.model` to
 `fable`. Arrays replace rather than append.
 
 Read one value with a dotted key, which reaches into a table:
 
 ```sh
-project config get review.summarize_min_lines
-project config get review.summarize_min_lines --default 20
+project config get review.summarize
+project config get review.summarize --default true
 ```
 
 `get` exits `1` when the key is unset and no `--default` is given, so a caller
@@ -432,15 +432,15 @@ each value came from, which is the quickest way to find out why a setting is
 not what you expected:
 
 ```sh
-project config get review.summarize_min_lines --json
+project config get review.summarize --json
 ```
 
 ```json
 {
-  "key": "review.summarize_min_lines",
+  "key": "review.summarize",
   "schema_version": 2,
   "source": "/Users/you/ninjudd/.projector.toml",
-  "value": 800
+  "value": false
 }
 ```
 
@@ -459,8 +459,7 @@ These are the keys Projector reads today:
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
-| `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of a large pull request to the repository's Projector site after each review |
-| `review.summarize_min_lines` | integer | `20` | `review-pr`, as the added and deleted lines at which a pull request gets a summary |
+| `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means

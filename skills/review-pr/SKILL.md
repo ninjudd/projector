@@ -551,27 +551,18 @@ which a summary reads for context. A `start-review-loop` subagent may instead
 keep it for the pull request's next head and remove it when the pull request
 closes.
 
-## Summarize a large pull request
+## Summarize the pull request
 
-After the review is published, give a large pull request a summary its human
+After the review is published, give the pull request a summary its human
 reviewers can read, with the `summarize-pr` skill in
-`../summarize-pr/SKILL.md`. A summary reads the whole diff and writes a
-page of prose, so it costs about as much as the review again: summarize only
-when all three hold.
+`../summarize-pr/SKILL.md`. The summary comes after the review because it
+builds on it: the review has read the whole diff and checked what it claims,
+and its open findings become the summary's flags. A pull request too small
+to summarize is too small to send for review. Summarize when both hold.
 
 1. **Summaries are on.** `project config get review.summarize --default true`
    prints anything but `false`.
-2. **The pull request is large.** Its added and deleted lines together reach
-   `review.summarize_min_lines`, 20 unless configuration sets another
-   number:
-
-   ```sh
-   gh pr view <number> --repo <owner>/<repo> --json additions,deletions \
-     --jq '.additions + .deletions'
-   project config get review.summarize_min_lines --default 20
-   ```
-
-3. **The repository hosts summaries.** `project site status --repo
+2. **The repository hosts summaries.** `project site status --repo
    <owner>/<repo> --pr <number>` exits 0 and prints the summary's URL. Without
    a Projector site there is nowhere to publish unattended, so skip the
    summary rather than publishing an Artifact nobody asked for.

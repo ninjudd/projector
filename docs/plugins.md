@@ -30,11 +30,10 @@ it, one subagent per pull request, whenever its watcher reports work on one
 this conversation owns. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
-what it checked rather than on who clicked resolve. For a pull request of 20
-changed lines or more, in a repository with a Projector site,
-`review-pr` then runs `summarize-pr` and links the summary from its
-review; `review.summarize` and `review.summarize_min_lines` in
-`.projector.toml` change that. All three of `implement`,
+what it checked rather than on who clicked resolve. In a repository with a
+Projector site, `review-pr` then runs `summarize-pr` on every pull request it
+reviews and links the summary from its review; `review.summarize = false` in
+`.projector.toml` turns that off. All three of `implement`,
 `review-pr`, and `fix-pr` share the code guidelines in
 `skills/guidelines.md`, so the rules one follows are the rules the others
 review and fix against. Every skill that writes prose a person reads, such as

@@ -84,10 +84,9 @@ in section 2 holds.
 - The migration tests seed the new ref from the old one, keeping each spec's
   publish date so a pull request's newest head stays newest. They also
   exercise the site action's own fallback script against temporary remotes.
-- `review-pr` summarizes when `review.summarize` is not `false`, the
-  pull request's added and deleted lines reach `review.summarize_min_lines`
-  (default 20; 400 when it shipped), and `project site status` reports a
-  site. It updates the
-  existing summary on a new head, carries the review's open findings into it
+- `review-pr` summarizes when `review.summarize` is not `false` and
+  `project site status` reports a site. It shipped with a 400-line minimum,
+  `review.summarize_min_lines`, since removed so every reviewed pull request
+  gets a summary. It updates the existing summary on a new head, carries the review's open findings into it
   as `flag` checks, and appends the summary's URL to the review it posted. A
   summary that fails never changes the review's verdict.
