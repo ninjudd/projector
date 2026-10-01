@@ -155,7 +155,7 @@ input.nbox { cursor: pointer; }
 .notes li.checked .chip, .notes li.checked .ntext { opacity: .5; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
 .chip.context { background: var(--info-bg); color: var(--info); }
-.chip.verify { background: var(--warn-bg); color: var(--warn); }
+.chip.verify { background: var(--ok-bg); color: var(--ok); }
 .chip.flag { background: var(--accent-soft); color: var(--accent); }
 @media (max-width: 480px) { .notes li { grid-template-columns: 16px 1fr; gap: 4px 10px; } .notes .ntext { grid-column: 2; } }
 
@@ -232,7 +232,7 @@ table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, sy
 .inotes { gap: 6px; }
 .inotes li { padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 6px 6px 0; }
 .inotes li.context { border-left-color: var(--info); }
-.inotes li.verify { border-left-color: var(--warn); }
+.inotes li.verify { border-left-color: var(--ok); }
 .inotes li.flag { border-left-color: var(--accent); background: var(--accent-soft); }
 /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
 .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
