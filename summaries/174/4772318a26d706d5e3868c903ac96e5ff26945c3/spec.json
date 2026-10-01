@@ -1,0 +1,155 @@
+{
+ "version": 1,
+ "name": "Init Publish Rules for Both Hosts",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 174,
+  "title": "Have init allow both publish commands for Claude Code and Codex, inside a repository or not",
+  "head": "4772318a26d706d5e3868c903ac96e5ff26945c3",
+  "headRef": "init-codex-permissions",
+  "base": "f35082757782aef865265cc6ec3e7d4a14700ff3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> used to add one Claude Code allow rule, for <code>project review publish</code>, and failed outside a Git repository. Codex's approval reviewer then refused <code>project summary publish</code> twice as sending repository content to another host, so summaries stopped at local previews.",
+   "This change covers both publish commands on both hosts. The user's Claude Code settings gain <code>Bash(project summary publish *)</code> beside the review rule. Where Codex's configuration directory already exists, <code>init</code> writes a Projector-owned <code>rules/projector.rules</code> holding one <code>prefix_rule</code> that allows <code>project review publish</code> and <code>project summary publish</code>. Outside a repository, <code>init</code> now sets up only those two user-level files, says on stderr whether it wrote them or only reported them, and exits 0.",
+   "The terminal, <code>--publish-rule</code>, <code>--no-publish-rule</code> and <code>review.publish_rule</code> decide both hosts together. Without a terminal, <code>init</code> only reports each file as <code>kept</code> and says how to add the rules."
+  ],
+  "cards": [
+   {
+    "id": "decision",
+    "title": "Who decides whether the rules are written",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Input</th><th>Result</th></tr></thead><tbody><tr><td><code>--publish-rule</code></td><td class=\"r\">add</td></tr><tr><td><code>--no-publish-rule</code></td><td class=\"r\">leave alone</td></tr><tr><td><code>review.publish_rule = false</code></td><td class=\"r\">leave alone</td></tr><tr><td>at a terminal</td><td class=\"r\">add</td></tr><tr><td>no terminal (an agent)</td><td class=\"r\">report as <code>kept</code></td></tr></tbody></table></div><p class=\"note\">One decision, made by <code>publish_rule_mode</code>, covers the Claude Code settings and the Codex rules file.</p>"
+   },
+   {
+    "id": "review",
+    "title": "What the reviews settled",
+    "html": "<ul class=\"tight\"><li><b>Fixed in 62c0dc2:</b> outside a repository without a terminal, <code>init</code> said it set up rules it had only reported. The note now follows each file's action: all kept, some kept, or none.</li><li><b>Fixed in 9a25b74:</b> <code>docs/cli.md</code> now says <code>init</code> manages two of your files and names the four reasons it keeps <code>projector.rules</code>.</li><li><b>Taken in 4772318:</b> the README names both rules files, the docs and the Codex kept note show the rule, one <code>read_user_file</code> helper reads both files, and new tests cover the Codex writer's kept cases and its write through a link.</li><li><b>Checked:</b> <code>codex execpolicy check</code> allows exactly the two publish commands under the written file, the documented rule, and the one-line rule.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rules",
+   "title": "The rules and the two writers",
+   "kicker": "What init writes into each host's user settings, and how it handles a file it cannot use",
+   "intro": [
+    "<code>RULES</code> replaces the single <code>RULE</code> with both Claude Code patterns. <code>CODEX_RULES</code> is the whole Codex file. Codex loads every <code>*.rules</code> file in its <code>rules/</code> directory and saves the approvals a person grants to <code>default.rules</code>. So Projector owns <code>projector.rules</code> and rewrites it whole rather than merging into the user's file.",
+    "<code>allow_publish</code> now returns a list: the Claude Code action from <code>allow_in_claude</code>, plus a Codex action from <code>allow_in_codex</code> when <code>codex_home()</code> (<code>$CODEX_HOME</code> or <code>~/.codex</code>) is a directory. Both writers read through <code>read_user_file</code>, which returns the text or the reason <code>init</code> cannot use the file. Both write through symlinks with <code>write_through</code>. A file they cannot use is kept with a note: the Claude Code note names the two rules, and the Codex note gives <code>CODEX_RULE</code>, the one-line rule to add."
+   ],
+   "concepts": [
+    "A Codex <code>prefix_rule</code> with <code>decision = \"allow\"</code> runs the matched command without prompting and outside Codex's sandbox.",
+    "Codex counts as installed only when its configuration directory exists, so <code>init</code> never creates one."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>allow_in_claude</code> appends only the missing rules, so a file holding only the review rule gains the summary rule and keeps the user's order."
+    },
+    {
+     "kind": "verify",
+     "text": "The pattern <code>[\"project\", [\"review\", \"summary\"], \"publish\"]</code> matches the two publish commands and nothing else, such as <code>project summary init</code> or <code>project site serve</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>allow_in_codex</code> reports <code>unchanged</code> only when the file is byte-for-byte <code>CODEX_RULES</code>, so a hand edit is overwritten and reported <code>updated</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>CODEX_RULE</code>, the one-line rule in the kept note, matches the pattern and decision in <code>CODEX_RULES</code>, so following the note gives the same allowance."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The two rule constants, <code>codex_home</code>, and the new <code>allow_in_codex</code> beside the renamed <code>allow_in_claude</code>."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "One decision, and init outside a repository",
+   "kicker": "How the CLI decides the rules once for both hosts, and what init does where there is no repository",
+   "intro": [
+    "<code>publish_rule_mode</code> lifts the inline decision out of <code>run</code> so both paths share it. It returns <code>\"add\"</code>, <code>\"report\"</code>, or <code>None</code>.",
+    "<code>run</code> now catches the <code>EnvironmentError</code> that <code>discover_git_root</code> raises, for <code>init</code> only, and hands off to <code>init_permissions_only</code>. That path refuses <code>--site</code> and <code>--url</code> with exit 2, writes only the user's rules files, and reports them. Its closing stderr note is worded from the files' actions: it says it added no rules when every file was kept, some when only some were, and that it set them up only when none was kept. <code>emit_files</code> gains <code>readme=False</code>, so that path's JSON lists only <code>files</code>, with no top-level <code>action</code> or <code>path</code> describing a projects README that does not exist."
+   ],
+   "concepts": [
+    "In a repository, the top-level <code>action</code> and <code>path</code> in <code>--json</code> still describe the projects README, for older consumers."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The closing note in <code>init_permissions_only</code> claims rules were set up only when no file is <code>kept</code>, so an agent relaying it never reports a rule the next publish still lacks."
+    },
+    {
+     "kind": "verify",
+     "text": "Only <code>init</code> falls through to <code>init_permissions_only</code>; every other command still raises on a missing repository."
+    },
+    {
+     "kind": "verify",
+     "text": "In a repository, <code>publish_rule_mode</code> still runs before any file is written, so a bad <code>review.publish_rule</code> refuses first."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>publish_rule_mode</code>, <code>init_permissions_only</code>, the <code>EnvironmentError</code> catch in <code>run</code>, and <code>emit_files(readme=...)</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Every test that reaches the writers runs under a temporary HOME",
+   "intro": [
+    "<code>RepositoryTestCase</code> already pointed <code>HOME</code> at a temporary directory and unset <code>CLAUDE_CONFIG_DIR</code>. It now also unsets <code>CODEX_HOME</code>, so a real Codex configuration cannot be reached. New tests cover the summary rule joining an existing review rule; the Codex file created, unchanged, and restored; <code>CODEX_HOME</code>; no Codex directory; report mode; <code>init</code> outside a repository; and a <code>codex execpolicy check</code> of the rule, which is skipped where <code>codex</code> is missing. Later commits add tests for the all-kept and partly-kept notes outside a repository, for each way the Codex writer keeps <code>projector.rules</code>, and for its write through a link."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every new test runs under the suite's temporary <code>HOME</code>, and the link test's target is its own temporary directory, so no test reaches a real Claude Code or Codex configuration."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "The CLI reference and the two skills that tell an agent what to do when a publish is refused",
+   "intro": [
+    "<code>docs/cli.md</code> describes the second Claude Code rule, the Codex rules file with the rule it holds and when <code>init</code> keeps it, and <code>init</code> outside a repository. It also says that Codex runs an <code>allow</code>ed command without asking and outside its sandbox. The README names both rules files. <code>summarize-pr</code> gains the instruction <code>review-pr</code> already had: when a host refuses <code>publish</code>, do not retry it in another form, and ask the user to run <code>project init</code> in a terminal or to run <code>publish</code> themselves. <code>review-pr</code> now mentions the Codex rules too."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>docs/cli.md</code> says <code>init</code> manages two of your files, and its list of reasons for keeping <code>projector.rules</code> matches <code>read_user_file</code> and the write failure in <code>allow_in_codex</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "Both skills say <code>init</code> adds the rules only for a person at a terminal, so an agent never runs it to add them."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new Codex entry, and the paragraph on <code>init</code> outside a repository."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "README.md"
+    }
+   ]
+  }
+ ]
+}
