@@ -86,7 +86,8 @@ in section 2 holds.
   exercise the site action's own fallback script against temporary remotes.
 - `review-pr` summarizes when `review.summarize` is not `false`, the
   pull request's added and deleted lines reach `review.summarize_min_lines`
-  (default 400), and `project site status` reports a site. It updates the
+  (default 200; 400 when it shipped), and `project site status` reports a
+  site. It updates the
   existing summary on a new head, carries the review's open findings into it
   as `flag` checks, and appends the summary's URL to the review it posted. A
   summary that fails never changes the review's verdict.

@@ -415,7 +415,7 @@ Read one value with a dotted key, which reaches into a table:
 
 ```sh
 project config get review.summarize_min_lines
-project config get review.summarize_min_lines --default 400
+project config get review.summarize_min_lines --default 200
 ```
 
 `get` exits `1` when the key is unset and no `--default` is given, so a caller
@@ -460,7 +460,7 @@ These are the keys Projector reads today:
 | `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of a large pull request to the repository's Projector site after each review |
-| `review.summarize_min_lines` | integer | `400` | `review-pr`, as the added and deleted lines at which a pull request gets a summary |
+| `review.summarize_min_lines` | integer | `200` | `review-pr`, as the added and deleted lines at which a pull request gets a summary |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
