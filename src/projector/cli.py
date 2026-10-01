@@ -1273,7 +1273,17 @@ def init_permissions_only(arguments: argparse.Namespace) -> int:
     publish_rule = publish_rule_mode(arguments, Path.cwd())
     files = allow_publish(apply=publish_rule == "add") if publish_rule else []
     emit_files(files, arguments.json_output, readme=False)
-    done = "set up only the permission rules" if files else "did nothing, because the permission rules are off"
+    # Said from what was written, because an agent relays this line: a rule
+    # only reported is a rule the next publish still lacks.
+    kept = sum(entry.action == "kept" for entry in files)
+    if not files:
+        done = "did nothing, because the permission rules are off"
+    elif kept == len(files):
+        done = "added no permission rules and only reported what is missing, above"
+    elif kept:
+        done = "set up some of the permission rules and reported the rest, above"
+    else:
+        done = "set up only the permission rules"
     print(f"project: not inside a Git repository, so init {done}; run `project init` inside a repository to "
           "adopt the project convention there", file=sys.stderr)
     return 0
