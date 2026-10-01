@@ -1206,6 +1206,26 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual([{"path": "~/.claude/settings.json", "action": "unchanged"},
                           {"path": "~/.codex/rules/projector.rules", "action": "unchanged"}], payload["files"])
 
+    def test_init_outside_a_repository_says_it_only_reported_rules_it_did_not_add(self) -> None:
+        self.settings().unlink()
+        (self.home / ".codex").mkdir()
+
+        code, stdout, stderr = self.invoke("init", cwd=self.home)
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("kept ~/.claude/settings.json\nkept ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("so init added no permission rules and only reported what is missing", stderr)
+        self.assertNotIn("set up", stderr)
+        self.assertFalse(self.settings().exists())
+        self.assertFalse(self.codex_rules().exists())
+
+        self.at_a_terminal()
+        self.settings().write_text("{not json", encoding="utf-8")
+        code, stdout, stderr = self.invoke("init", cwd=self.home)
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept ~/.claude/settings.json\ncreated ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("so init set up some of the permission rules and reported the rest", stderr)
+
     def test_init_outside_a_repository_refuses_to_set_up_a_site(self) -> None:
         code, _, stderr = self.invoke("init", "--site", cwd=self.home)
 
