@@ -78,10 +78,13 @@ push to, or approve the pull request unless the user asks.
      as "decision 4.19", explains nothing to someone who has not read the
      plan.
    - **Write notes a reviewer can act on.** A `context` note is what to hold
-     in mind while reading. A `verify` note names an invariant worth tracing.
-     A `flag` note is your own observation that needs a decision; confirm it
-     against the code before you write it, and say plainly what is wrong or
-     risky.
+     in mind while reading. A `verify` note states an invariant you checked
+     and how: a test you ran, a call you traced, a mutation that failed. The
+     page labels it verified with no checkbox, so never write one you did
+     not check; an invariant you want the reader to trace is a `context`
+     note. A `flag` note is your own observation that needs a decision;
+     confirm it against the code before you write it, and say plainly what
+     is wrong or risky.
    - **Put each note at the smallest scope that holds it.** A reader cannot
      carry a list of notes across twenty files and hundreds of lines. A note
      about one line goes on its file with that `line`, and renders under

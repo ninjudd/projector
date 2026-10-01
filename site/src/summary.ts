@@ -35,7 +35,7 @@ function renderSummary(data: SummaryData): void {
 
   const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
 
-  const CHIPS: Record<string, string> = { context: 'context', verify: 'verify', flag: 'concern' };
+  const CHIPS: Record<string, string> = { context: 'context', verify: 'verified', flag: 'concern' };
   function kindOf(c: SummaryCheck): string { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
   // A note's checkbox state is keyed by where it sits and what it says, so a
   // note carried unchanged to a later head stays checked and a rewritten one
@@ -50,9 +50,9 @@ function renderSummary(data: SummaryData): void {
     if (checks.length === 0) return '';
     return `<ul class="notes ${cls}">` + checks.map(function (c) {
       const k = kindOf(c);
-      const label = k === 'flag' ? 'Handled' : 'Verified';
-      const box = k === 'context' ? '<span class="nbox"></span>'
-        : `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="${label}" title="${label}">`;
+      const box = k === 'flag'
+        ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
+        : '<span class="nbox"></span>';
       return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
     }).join('') + '</ul>';
   }
@@ -158,7 +158,7 @@ function renderSummary(data: SummaryData): void {
     const s = data.stats;
     const summary = (o.summary ?? []).map(block).join('');
     let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
-      '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verify</span> for an invariant worth tracing, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off verify and concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+      '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
     const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
       [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
     out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
@@ -353,7 +353,7 @@ function wireSummary(): void {
     });
   });
 
-  // A file's note badge counts its verify and concern notes still unchecked.
+  // A file's note badge counts its concern notes still unchecked.
   function refreshNoteBadge(f: HTMLElement): void {
     const badge = f.querySelector<HTMLElement>('.badge.notes');
     if (badge === null) return;

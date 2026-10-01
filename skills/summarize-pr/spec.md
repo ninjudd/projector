@@ -35,7 +35,7 @@ it. The spec is JSON:
       "files": [
         {"path": "src/core/check.go", "note": "What to look at in this file",
          "checks": [
-           {"kind": "verify", "text": "An invariant worth tracing in this file"},
+           {"kind": "verify", "text": "An invariant checked in this file, and how"},
            {"kind": "flag", "text": "An observation that needs a decision", "line": 42}
          ]},
         {"path": "src/core/check_test.go", "collapsed": true}
@@ -67,7 +67,9 @@ it. The spec is JSON:
 - `groups[].id` must be unique; it is the section anchor.
 - `checks` are review notes, on a group or on one of its files. Each has a
   `kind`: `context` for what to hold in mind, `verify` for an invariant
-  worth tracing, or `flag` for something that needs a decision. A file's
+  the author checked, or `flag` for something that needs a decision. The
+  page shows a `verify` note as verified, so write one only for what you
+  checked, and say how. A file's
   note may name a `line` its diff shows, on the new side unless `side` is
   `"old"`, and then renders under that line; `build` refuses a line the diff
   does not show. A group's notes take no `line`. A group's older `concepts`
@@ -75,7 +77,7 @@ it. The spec is JSON:
 - The reader marks each file Reviewed, which collapses it. Marking a group
   Reviewed closes the group and its files without marking any file, and a
   group is marked for the reader once all its files are. The reader can
-  also check off each `verify` and `flag` note; a `context` note has no box.
+  also check off each `flag` note; `context` and `verify` notes have no box.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
 
