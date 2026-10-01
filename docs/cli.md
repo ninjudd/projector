@@ -30,7 +30,7 @@ created CLAUDE.md
 updated ~/.claude/settings.json
 ```
 
-`init` manages three files in the repository and one of yours, and reports
+`init` manages three files in the repository and two of yours, and reports
 what it did to each:
 
 - `docs/projects/README.md` states the convention, links to the Projector
@@ -91,8 +91,23 @@ what it did to each:
   grant to `default.rules`, so `init` rewrites `projector.rules` whole and
   leaves your other rules alone. The terminal, `--publish-rule`, and
   `review.publish_rule` decide it exactly as they decide the Claude Code
-  rules. To see what the rule allows, run
+  rules. The file holds one rule:
+
+  ```text
+  prefix_rule(
+      pattern = ["project", ["review", "summary"], "publish"],
+      decision = "allow",
+  )
+  ```
+
+  Codex runs a command that an `allow` rule matches without asking, and
+  outside its sandbox, so a publish reaches GitHub and the site. To see what
+  the rule allows, run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+  `init` keeps the file, and says on stderr how to add the rule yourself, when
+  the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+  a read-only directory cannot, or when `rules` is not a directory. `init`
+  still exits 0.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without
