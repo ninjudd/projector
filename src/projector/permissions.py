@@ -28,6 +28,7 @@ RULES = ("Bash(project review publish *)", "Bash(project summary publish *)")
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rule in a
 # file of its own and rewrites that file whole.
+CODEX_RULE = 'prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")'
 CODEX_RULES = """\
 # Written by `project init`, which replaces this file. Put your own rules in another file.
 prefix_rule(
@@ -65,6 +66,21 @@ def shown(path: Path, environ: Mapping[str, str] = os.environ) -> str:
     return f"~/{path.relative_to(home).as_posix()}" if path.is_relative_to(home) else str(path)
 
 
+def read_user_file(path: Path, environ: Mapping[str, str] = os.environ) -> tuple[str, Optional[str]]:
+    """The text of one of the user's files, "" when it does not exist, and why `init` cannot read it, if it cannot."""
+
+    if path.parent.exists() and not path.parent.is_dir():
+        return "", f"cannot be written, because {shown(path.parent, environ)} is not a directory"
+    if not path.exists():
+        return "", None
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except UnicodeDecodeError:
+        return "", "is not UTF-8"
+    except OSError as error:
+        return "", f"could not be read ({error.strerror})"
+
+
 def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -> list[FileAction]:
     """Add the publish rules for Claude Code, and for Codex where Codex is installed.
 
@@ -94,15 +110,10 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ)
         return FileAction(name, "kept", f"{name} {reason}, so the rules allowing {COMMANDS} were not added; add "
                                         f"{' and '.join(RULES)} to permissions.allow yourself")
 
-    if path.parent.exists() and not path.parent.is_dir():
-        return kept(f"cannot be written, because {shown(path.parent, environ)} is not a directory")
     existed = path.exists()
-    try:
-        text = path.read_text(encoding="utf-8") if existed else ""
-    except UnicodeDecodeError:
-        return kept("is not UTF-8")
-    except OSError as error:
-        return kept(f"could not be read ({error.strerror})")
+    text, unreadable = read_user_file(path, environ)
+    if unreadable:
+        return kept(unreadable)
     try:
         settings = json.loads(text) if text.strip() else {}
     except json.JSONDecodeError:
@@ -148,18 +159,13 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ) 
     name = shown(path, environ)
 
     def kept(reason: str) -> FileAction:
-        return FileAction(name, "kept", f"{name} {reason}, so the Codex rule allowing {COMMANDS} was not added; "
-                                        "write it there yourself, as `project init` would")
+        return FileAction(name, "kept", f"{name} {reason}, so the Codex rule allowing {COMMANDS} was not added; add "
+                                        f"{CODEX_RULE} to a .rules file in {shown(path.parent, environ)} yourself")
 
-    if path.parent.exists() and not path.parent.is_dir():
-        return kept(f"cannot be written, because {shown(path.parent, environ)} is not a directory")
     existed = path.exists()
-    try:
-        text = path.read_text(encoding="utf-8") if existed else ""
-    except UnicodeDecodeError:
-        return kept("is not UTF-8")
-    except OSError as error:
-        return kept(f"could not be read ({error.strerror})")
+    text, unreadable = read_user_file(path, environ)
+    if unreadable:
+        return kept(unreadable)
     if text == CODEX_RULES:
         return FileAction(name, "unchanged")
     if not apply:

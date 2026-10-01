@@ -1226,6 +1226,59 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("kept ~/.claude/settings.json\ncreated ~/.codex/rules/projector.rules\n", stdout)
         self.assertIn("so init set up some of the permission rules and reported the rest", stderr)
 
+    def test_init_keeps_codex_rules_it_cannot_read_or_write_and_says_how_to_add_them(self) -> None:
+        self.at_a_terminal()
+        rules = self.codex_rules()
+        rules.parent.parent.mkdir()
+
+        def case(reason: str) -> None:
+            code, stdout, stderr = self.invoke("init")
+            self.assertEqual(0, code, stderr)
+            self.assertIn("kept ~/.codex/rules/projector.rules\n", stdout)
+            self.assertIn(reason, stderr)
+            self.assertIn(permissions.CODEX_RULE, stderr)
+
+        with self.subTest("rules is a file"):
+            rules.parent.write_text("not a directory\n")
+            case("is not a directory")
+            rules.parent.unlink()
+        rules.parent.mkdir()
+        with self.subTest("not UTF-8"):
+            rules.write_bytes(b"# caf\xe9\n")
+            case("is not UTF-8")
+            self.assertEqual(b"# caf\xe9\n", rules.read_bytes())
+            rules.unlink()
+        if getattr(os, "geteuid", lambda: -1)() != 0:
+            with self.subTest("unreadable"):
+                rules.write_text("# mine\n")
+                rules.chmod(0o000)
+                self.addCleanup(lambda: rules.exists() and rules.chmod(0o644))
+                case("could not be read")
+                rules.chmod(0o644)
+                rules.unlink()
+            with self.subTest("unwritable directory"):
+                rules.parent.chmod(0o555)
+                self.addCleanup(rules.parent.chmod, 0o755)
+                case("could not be written")
+                rules.parent.chmod(0o755)
+                self.assertFalse(rules.exists())
+
+    def test_init_writes_codex_rules_through_a_link(self) -> None:
+        self.at_a_terminal()
+        dotfiles = tempfile.TemporaryDirectory()
+        self.addCleanup(dotfiles.cleanup)
+        shared = Path(dotfiles.name) / "projector.rules"
+        shared.write_text("# old\n", encoding="utf-8")
+        self.codex_rules().parent.mkdir(parents=True)
+        os.symlink(shared, self.codex_rules())
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.codex/rules/projector.rules\n", stdout)
+        self.assertTrue(self.codex_rules().is_symlink())
+        self.assertEqual(permissions.CODEX_RULES, shared.read_text())
+
     def test_init_outside_a_repository_refuses_to_set_up_a_site(self) -> None:
         code, _, stderr = self.invoke("init", "--site", cwd=self.home)
 
