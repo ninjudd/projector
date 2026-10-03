@@ -96,10 +96,10 @@ step instead of failing. The workflow `project site workflow` writes gains a
   and `/<number>/` walkthrough addresses were not redirected: they were
   public for a day.
 - **Generate each walkthrough's data at deploy, not in the browser.** The
-  page could parse the stored diff and sanitize the spec itself, making the
+  page could parse the stored diff and sanitize the summary itself, making the
   deploy a pure copy, but only by porting the Python parser and checks to
   JavaScript while `publish` and `site page` keep the Python ones. Two
-  implementations of one set of rules drift, and a bad spec would fail in a
+  implementations of one set of rules drift, and a bad summary would fail in a
   reader's browser instead of at publish or deploy.
 - **Copy Markdown, do not pre-render it.** The deploy stays a copy plus one
   manifest, in line with walkthroughs (`pr-walkthrough` section 8), and a
@@ -119,7 +119,7 @@ step instead of failing. The workflow `project site workflow` writes gains a
 ## 5. Deferred
 
 - Linking a plan to the walkthroughs of the pull requests that implement it,
-  which `pr-walkthrough` section 6 describes. Nothing in a spec names its
+  which `pr-walkthrough` section 6 describes. Nothing in a summary names its
   project yet.
 - Search across documents, rather than filtering the projects view by name.
 - Non-Markdown files under `docs/`, such as images, which the site does not
@@ -203,7 +203,7 @@ still read its site. `project site serve` builds the site a deploy builds
 into a temporary directory and serves it over HTTP from the standard
 library's `http.server`, so it adds no dependency. It fetches the
 walkthroughs ref into the copy `walkthrough publish` keeps, extracts it with
-`git archive`, and dates each spec by the commit that last changed it,
+`git archive`, and dates each summary by the commit that last changed it,
 because the build orders a pull request's walkthroughs by that date and an
 archive stamps every file with the ref's newest commit.
 

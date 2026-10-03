@@ -2,10 +2,10 @@ name: Projector site
 description: Build the Projector site from the content Projector keeps in the repository, its README, docs and project plans and the summaries under refs/projector/summaries, and deploy it to GitHub Pages.
 inputs:
   ref:
-    description: The hidden ref holding <root>/<number>/<head>/spec.json files.
+    description: The hidden ref holding <root>/<number>/<head>/summary.json files.
     default: refs/projector/summaries
   root:
-    description: Directory inside the ref that holds the specs.
+    description: Directory inside the ref that holds the summaries.
     default: summaries
   prepare:
     description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module, in place of the repository's site.prepare setting. Set up any toolchain it needs in earlier steps.
@@ -18,7 +18,7 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-    - name: Fetch the summary specs
+    - name: Fetch the summaries
       shell: bash
       env:
         REF: ${{ inputs.ref }}
@@ -26,7 +26,7 @@ runs:
       # A repository that has published no summary yet has no ref to fetch,
       # and still gets a site of its README, docs and plans. One that has not
       # published since walkthroughs were renamed summaries has only the old
-      # walkthroughs ref, with its specs under walkthroughs/, so the default
+      # walkthroughs ref, with its summaries under walkthroughs/, so the default
       # ref falls back to it until the next publish seeds the new one.
       run: |
         if [ "$REF" = refs/projector/summaries ] && [ "$ROOT" = summaries ] \
@@ -37,8 +37,8 @@ runs:
         fi
         if git ls-remote --exit-code origin "$REF" >/dev/null; then
           git fetch --no-tags origin "+$REF:$REF"
-          git worktree add --detach "$RUNNER_TEMP/summary-specs" "$REF"
-          echo "SUMMARIES=$RUNNER_TEMP/summary-specs/$ROOT" >> "$GITHUB_ENV"
+          git worktree add --detach "$RUNNER_TEMP/summaries-ref" "$REF"
+          echo "SUMMARIES=$RUNNER_TEMP/summaries-ref/$ROOT" >> "$GITHUB_ENV"
         fi
     - id: pages
       uses: actions/configure-pages@v5

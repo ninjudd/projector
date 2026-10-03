@@ -1,7 +1,7 @@
-# Summary spec
+# Summary format
 
 `project summary init` writes the skeleton and `project site page` reads
-it. The spec is JSON:
+it. The summary is JSON:
 
 ```json
 {
@@ -55,7 +55,7 @@ it. The spec is JSON:
   page shows the diff from `pr.base` to `pr.head`.
 - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
   request's head, are what the site's review list uses to mark a stacked pull
-  request. `init` records both; keep them when you edit a spec by hand.
+  request. `init` records both; keep them when you edit a summary by hand.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and a legend itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a
@@ -86,7 +86,7 @@ it. The spec is JSON:
 Every text field except `name`, `pr` and the file paths is inserted as HTML,
 so write `<code>`, `<b>` and links directly and escape a literal `<` as
 `&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
-page, because a Pages site deploys whatever spec is on its ref: the tags
+page, because a Pages site deploys whatever summary is on its ref: the tags
 `a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
 `span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
 classes below; and `href` only for `http`, `https` and `#` links. Anything

@@ -1,10 +1,10 @@
-"""Pull request summary specs: the data a summary page is built from.
+"""Pull request summaries: the data a summary page is built from.
 
-A spec records a pull request's merge base and head and assigns every changed
+A summary records a pull request's merge base and head and assigns every changed
 file to a group with its explanation and checks. This module writes skeleton
-specs, checks a spec against its diff, publishes specs to the hidden ref
+summaries, checks a summary against its diff, publishes summaries to the hidden ref
 refs/projector/summaries, and says whether a repository hosts a site that
-serves them. Rendering specs into pages is `projector.site`'s job.
+serves them. Rendering summaries into pages is `projector.site`'s job.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from .core import FileAction, ProjectorError
 
-SPEC_VERSION = 1
+SUMMARY_VERSION = 1
 CHECK_KINDS = ("context", "verify", "flag")
 PAGES_REF = "refs/projector/summaries"
 DISPATCH_EVENT = "projector-summaries"
@@ -34,7 +34,7 @@ DIFF_FILE = "diff.patch"
 WORKFLOW_PATH = ".github/workflows/projector-site.yml"
 LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
 # The names summaries were published under when they were called walkthroughs.
-# A repository that published under them keeps its specs on the old ref, under
+# A repository that published under them keeps its summaries on the old ref, under
 # the old root, until its next publish seeds the new ref from them, and its
 # site workflow may still listen for the old event.
 LEGACY_PAGES_REF = "refs/projector/walkthroughs"
@@ -136,11 +136,11 @@ jobs:
 )
 
 
-class SpecError(ProjectorError):
+class SummaryError(ProjectorError):
     pass
 
 
-class NeedsAdmin(SpecError):
+class NeedsAdmin(SummaryError):
     """Setting up the site needs changes on GitHub that only an admin can make.
 
     `commands` are the `gh` commands that make them, in order, for the user
@@ -295,9 +295,9 @@ def gh(*args: str) -> str:
     try:
         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
     except FileNotFoundError as exc:
-        raise SpecError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
+        raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
     except subprocess.CalledProcessError as exc:
-        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+        raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
 def gh_lookup(*args: str) -> str | None:
@@ -305,11 +305,11 @@ def gh_lookup(*args: str) -> str | None:
     try:
         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
     except FileNotFoundError as exc:
-        raise SpecError("the gh CLI is not installed") from exc
+        raise SummaryError("the gh CLI is not installed") from exc
     except subprocess.CalledProcessError as exc:
         if "HTTP 404" in exc.stderr:
             return None
-        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+        raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
 def exposure(repo: str, pages: dict) -> str:
@@ -328,10 +328,10 @@ def require_private_site(repo: str) -> None:
     """Refuse to deploy when a private repository's Pages site is public."""
     raw = gh_lookup("api", f"repos/{repo}/pages")
     if raw is None:
-        raise SpecError(f"{repo} has no GitHub Pages site to deploy to")
+        raise SummaryError(f"{repo} has no GitHub Pages site to deploy to")
     exposed = exposure(repo, json.loads(raw))
     if exposed:
-        raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
+        raise SummaryError(f"{exposed}; make the site private or the repository public before deploying")
 
 
 def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str = "") -> dict:
@@ -352,7 +352,7 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
     """
     raw = gh_lookup("api", f"repos/{repo}/pages")
     if raw is not None and not takeover and json.loads(raw).get("build_type") != "workflow":
-        raise SpecError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
+        raise SummaryError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
                         "with the Projector site")
     domain = urlparse(url).hostname or ""
     if not admin:
@@ -391,14 +391,14 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
             gh("api", "-X", "PUT", f"repos/{repo}/pages", "-F", "public=false")
             pages = json.loads(gh("api", f"repos/{repo}/pages"))
             failure = refusal if exposure(repo, pages) else ""
-        except SpecError as exc:
+        except SummaryError as exc:
             failure = f"{refusal}: {exc}"
         if failure:
             # A site this call created would stay public on a private repository.
             if action == "created":
                 gh("api", "-X", "DELETE", f"repos/{repo}/pages")
                 failure += "; the public Pages site init created was deleted"
-            raise SpecError(failure)
+            raise SummaryError(failure)
         visibility = "updated"
     # The domain is set once the site is private, so a failure leaves no public site behind.
     if domain and pages.get("cname") != domain:
@@ -530,7 +530,7 @@ def fetch_diff(repo: str, base: str, head: str) -> str:
     return gh("api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/compare/{base}...{head}")
 
 
-# Sanitizing spec HTML
+# Sanitizing summary HTML
 
 ALLOWED_TAGS = {"a", "b", "br", "code", "div", "em", "h3", "h4", "i", "li", "ol", "p", "pre", "span", "strong",
                 "table", "tbody", "td", "th", "thead", "tr", "ul"}
@@ -540,7 +540,7 @@ ALLOWED_CLASSES = {"tblwrap", "tbl", "r", "note", "tight", "count", "mono"}
 
 
 class Sanitizer(HTMLParser):
-    """Rebuild spec HTML from the tags, classes and links spec.md documents."""
+    """Rebuild summary HTML from the tags, classes and links format.md documents."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
@@ -613,16 +613,16 @@ def sanitize_html(text: object) -> str:
     return parser.result()
 
 
-def sanitized(spec: dict) -> tuple[dict, list[dict]]:
-    """The spec's overview and groups with every HTML field sanitized."""
-    o = spec.get("overview") or {}
+def sanitized(summary: dict) -> tuple[dict, list[dict]]:
+    """The summary's overview and groups with every HTML field sanitized."""
+    o = summary.get("overview") or {}
     overview = {
         "summary": [sanitize_html(p) for p in o.get("summary") or []],
         "cards": [{"id": str(c.get("id") or ""), "title": sanitize_html(c.get("title") or ""), "html": sanitize_html(c.get("html") or "")}
                   for c in o.get("cards") or []],
     }
     groups = []
-    for g in spec["groups"]:
+    for g in summary["groups"]:
         context = [{"kind": "context", "text": c} for c in g.get("concepts") or []]
         groups.append({
             "id": str(g["id"]),
@@ -650,17 +650,17 @@ def sanitized_file(f: dict) -> dict:
     return out
 
 
-# Specs and pages
+# Summaries and pages
 
-def validate(spec: dict, files: list[dict]) -> None:
-    if spec.get("version") != SPEC_VERSION:
-        raise SpecError(f"spec version must be {SPEC_VERSION}")
+def validate(summary: dict, files: list[dict]) -> None:
+    if summary.get("version") != SUMMARY_VERSION:
+        raise SummaryError(f"summary version must be {SUMMARY_VERSION}")
     for key in ("repo", "number", "head", "title"):
-        if not spec.get("pr", {}).get(key):
-            raise SpecError(f"pr.{key} is required")
-    groups = spec.get("groups") or []
+        if not summary.get("pr", {}).get(key):
+            raise SummaryError(f"pr.{key} is required")
+    groups = summary.get("groups") or []
     if not groups:
-        raise SpecError("the spec has no groups")
+        raise SummaryError("the summary has no groups")
     by_path = {f["path"]: f for f in files}
     seen: dict[str, str] = {}
     problems: list[str] = []
@@ -699,7 +699,7 @@ def validate(spec: dict, files: list[dict]) -> None:
     for path in sorted(set(by_path) - set(seen)):
         problems.append(f"{path} is in no group")
     if problems:
-        raise SpecError("the spec does not match the diff:\n  " + "\n  ".join(problems))
+        raise SummaryError("the summary does not match the diff:\n  " + "\n  ".join(problems))
 
 
 def diff_lines(f: dict, side: str) -> set[int]:
@@ -719,33 +719,33 @@ def stats(files: list[dict]) -> dict:
     return out
 
 
-def spec_diff(spec: dict) -> str:
-    pr = spec["pr"]
+def summary_diff(summary: dict) -> str:
+    pr = summary["pr"]
     base = pr.get("base") or merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
     return fetch_diff(pr["repo"], base, pr["head"])
 
 
-def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
-    pr = dict(spec.get("pr") or {})
+def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+    pr = dict(summary.get("pr") or {})
     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
-        raise SpecError("pr.repo, pr.number and pr.head are required")
+        raise SummaryError("pr.repo, pr.number and pr.head are required")
     if not at_head:
         try:
             live = pr_metadata(pr["repo"], int(pr["number"]), stack=False)
-        except SpecError as exc:
+        except SummaryError as exc:
             if diff is None:
                 raise
             print(f"summary: could not check whether the PR moved past {pr['head'][:9]} ({exc}); building from the given diff", file=sys.stderr)
         else:
             if live["head"] != pr["head"]:
-                raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
+                raise SummaryError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the summary for the new head before building")
     if diff is None:
-        diff = spec_diff(spec)
+        diff = summary_diff(summary)
     files = parse_diff(diff)
-    validate(spec, files)
-    overview, groups = sanitized(spec)
+    validate(summary, files)
+    overview, groups = sanitized(summary)
     payload = {
-        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
+        "name": summary.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
         "pr": pr,
         "overview": overview,
         "groups": groups,
@@ -763,7 +763,7 @@ def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
     try:
         return subprocess.run(["git", *args], check=True, capture_output=True, text=True, env=env, input=input).stdout.strip()
     except subprocess.CalledProcessError as exc:
-        raise SpecError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+        raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
 
 def repo_slug(remote_url: str) -> str:
@@ -790,16 +790,16 @@ def fetch_ref(remote: str, ref: str) -> str:
 
 
 def seed_from_legacy(remote: str) -> str:
-    """The head of a history for the summaries ref that carries the old walkthroughs ref's specs, or ''.
+    """The head of a history for the summaries ref that carries the old walkthroughs ref's summaries, or ''.
 
-    The site dates each spec by the last commit that touched its path, and a
-    path-limited log does not follow a move, so one commit moving every spec
+    The site dates each summary by the last commit that touched its path, and a
+    path-limited log does not follow a move, so one commit moving every summary
     to summaries/ would date them all at the move and let an older head of a
     pull request tie with, or outrank, its newest. Each old commit is replayed
     instead, with its walkthroughs/ folder at summaries/ and its author,
-    committer, dates, and message kept, so every spec keeps the date it was
+    committer, dates, and message kept, so every summary keeps the date it was
     published. Nothing is pushed here; the publish that asked for the seed
-    pushes it with its own spec on top. The old ref stays on the remote, and
+    pushes it with its own summary on top. The old ref stays on the remote, and
     the repository can delete it once the new ref exists.
     """
     old = fetch_ref(remote, LEGACY_PAGES_REF)
@@ -808,10 +808,10 @@ def seed_from_legacy(remote: str) -> str:
     head = ""
     for commit in git("rev-list", "--reverse", "--first-parent", old).split():
         try:
-            specs = git("rev-parse", "--verify", "--quiet", f"{commit}:{LEGACY_PAGES_ROOT}")
-        except SpecError:
+            summaries = git("rev-parse", "--verify", "--quiet", f"{commit}:{LEGACY_PAGES_ROOT}")
+        except SummaryError:
             continue  # A commit from before the folder held anything.
-        tree = git("mktree", input=f"040000 tree {specs}\t{PAGES_ROOT}\n")
+        tree = git("mktree", input=f"040000 tree {summaries}\t{PAGES_ROOT}\n")
         fields = git("show", "-s", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commit).split("\0", 6)
         env = {**os.environ,
                "GIT_AUTHOR_NAME": fields[0], "GIT_AUTHOR_EMAIL": fields[1], "GIT_AUTHOR_DATE": fields[2],
@@ -835,66 +835,66 @@ def ref_exists(ref: str) -> bool:
                           capture_output=True).returncode == 0
 
 
-def spec_tree(parent: str, folder: str, spec: dict, diff: str) -> str:
-    """The tree of `parent`, or an empty one, with the spec and its diff written under `folder`."""
+def summary_tree(parent: str, folder: str, summary: dict, diff: str) -> str:
+    """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`."""
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
         if parent:
             git("read-tree", parent, env=env)
-        for name, content in (("spec.json", json.dumps(spec, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
+        for name, content in (("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
             blob = git("hash-object", "-w", "--stdin", input=content)
             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
         return git("write-tree", env=env)
 
 
-def spec_pr(spec: dict) -> dict:
-    """The spec's pull request, refusing a spec that cannot say where it is published."""
-    pr = spec.get("pr") or {}
-    if spec.get("version") != SPEC_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
-        raise SpecError("the spec needs version, pr.repo, pr.number and pr.head")
+def summary_pr(summary: dict) -> dict:
+    """The summary's pull request, refusing a summary that cannot say where it is published."""
+    pr = summary.get("pr") or {}
+    if summary.get("version") != SUMMARY_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+        raise SummaryError("the summary needs version, pr.repo, pr.number and pr.head")
     return pr
 
 
 def push_decision(repo: str) -> tuple[str | None, str]:
-    """The URL of the site `publish` pushes a spec to `repo` for, or None and why the spec stays local.
+    """The URL of the site `publish` pushes a summary to `repo` for, or None and why the summary stays local.
 
     Only a repository that hosts its Projector site reads the pushed ref, so
-    one without a site gets its spec in this checkout alone, for `site serve`
+    one without a site gets its summary in this checkout alone, for `site serve`
     to preview, and nothing is written to the shared repository. The answer
     is `hosting`'s own, so a hosted site whose Pages answer has no URL still
     counts as hosted, as `site status` counts it.
     """
     try:
         return hosting(repo)
-    except SpecError as error:
+    except SummaryError as error:
         return None, f"could not tell whether {repo} hosts its Projector site: {error}"
 
 
-def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
-    """Commit the spec and its diff to the summaries ref, and push them unless `push` is false.
+    """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
 
     Without `push`, the commit goes on this checkout's own `ref` and nothing
     leaves it, no dispatch included; `reason` says why, for the report.
     """
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    pr = spec_pr(spec)
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    pr = summary_pr(summary)
     slug = repo_slug(git("remote", "get-url", remote))
     if slug and slug.lower() != pr["repo"].lower():
-        raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
-    diff = diff_path.read_text(encoding="utf-8") if diff_path else spec_diff(spec)
-    prepare_page(spec, diff=diff, at_head=True)
+        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
+    prepare_page(summary, diff=diff, at_head=True)
     folder = f"{root}/{pr['number']}/{pr['head']}"
     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
     if not push:
         parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
-        tree = spec_tree(parent, folder, spec, diff)
+        tree = summary_tree(parent, folder, summary, diff)
         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-            print(f"{ref} in this checkout already has this spec; nothing to publish")
+            print(f"{ref} in this checkout already has this summary; nothing to publish")
             return None
         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
         git("update-ref", ref, commit, parent)
-        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/spec.json and {DIFF_FILE}; nothing was "
+        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/summary.json and {DIFF_FILE}; nothing was "
               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
         return commit
     local = tracking_ref(remote, ref)
@@ -903,20 +903,20 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
     if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
         parent = seed_from_legacy(remote)
         seeded = bool(parent)
-    tree = spec_tree(parent, folder, spec, diff)
+    tree = summary_tree(parent, folder, summary, diff)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
         if not seeded:
-            print(f"{ref} already has this spec; nothing to publish")
+            print(f"{ref} already has this summary; nothing to publish")
             return None
-        # The old ref already had this spec, but the new ref still needs creating.
+        # The old ref already had this summary, but the new ref still needs creating.
         commit = parent
     else:
         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
     git("push", "--quiet", remote, f"{commit}:{ref}")
     git("update-ref", local, commit)
-    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/spec.json and {DIFF_FILE}")
+    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}")
     if seeded:
-        print(f"carried the specs on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
+        print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
               "once every site reads the new ref")
     if send_dispatch:
         dispatch(pr["repo"])
@@ -1014,25 +1014,25 @@ def default_branch(remote: str = "origin", root: Path | None = None) -> str:
     within = ["-C", str(root)] if root is not None else []
     try:
         head = git(*within, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
-    except SpecError:
+    except SummaryError:
         return "main"
     return head.split("/", 1)[1] if "/" in head else head
 
 
-def init(repo: str, number: int, spec_path: str, diff_path: str | None = None) -> None:
+def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
     meta = pr_metadata(repo, number)
     diff = Path(diff_path).read_text(encoding="utf-8") if diff_path else fetch_diff(repo, meta["base"], meta["head"])
     files = parse_diff(diff)
-    spec = {
-        "version": SPEC_VERSION,
+    summary = {
+        "version": SUMMARY_VERSION,
         "name": "",
         "pr": meta,
         "overview": {"summary": [], "cards": []},
         "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
                     "files": [{"path": f["path"]} for f in files]}],
     }
-    Path(spec_path).write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {spec_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
+    Path(summary_path).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {summary_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
     for f in files:
         flag = f" [{f['kind']}]" if f["kind"] else ""
         print(f"  +{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}")
