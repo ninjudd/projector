@@ -169,7 +169,7 @@ class VisibilityTests(SiteRepoCase):
         def lookup(*gh_args: str) -> str | None:
             endpoint = gh_args[1]
             if endpoint not in answers:
-                raise summary.SpecError(f"gh api {endpoint} failed: connection refused")
+                raise summary.SummaryError(f"gh api {endpoint} failed: connection refused")
             return answers[endpoint]
 
         err = io.StringIO()
@@ -225,7 +225,7 @@ index 3333333..4444444 100644
 
 class SiteContentTests(SiteRepoCase):
     def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
-        spec = {
+        data = {
             "version": 1,
             "name": f"Summary {number}",
             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
@@ -235,10 +235,10 @@ class SiteContentTests(SiteRepoCase):
                         "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
         }
         if projects is not None:
-            spec["projects"] = projects
-        folder = self.specs / str(number) / head
+            data["projects"] = projects
+        folder = self.summaries / str(number) / head
         folder.mkdir(parents=True)
-        (folder / "spec.json").write_text(json.dumps(spec))
+        (folder / "summary.json").write_text(json.dumps(data))
         (folder / "diff.patch").write_text(PLAN_DIFF)
 
     def setUp(self) -> None:
@@ -248,7 +248,7 @@ class SiteContentTests(SiteRepoCase):
         hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
         hidden.parent.mkdir()
         self.repo = Path(shutil.move(str(self.repo), str(hidden)))
-        self.specs = Path(tempfile.mkdtemp()) / "summaries"
+        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
         (self.repo / "docs/images").mkdir(parents=True)
         (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
         (self.repo / "docs/.hidden").write_text("not served")
@@ -257,7 +257,7 @@ class SiteContentTests(SiteRepoCase):
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
-                             "--summaries", str(self.specs)])
+                             "--summaries", str(self.summaries)])
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
 
@@ -269,7 +269,7 @@ class SiteContentTests(SiteRepoCase):
             head = next(a for a in args if a.startswith("head=")).split(":", 1)[1]
             asked.append(head)
             if pulls is None:
-                raise summary.SpecError("gh api failed: offline")
+                raise summary.SummaryError("gh api failed: offline")
             return pulls.get(head, "") + "\n"
 
         with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
@@ -283,12 +283,12 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual(({9: None, 10: 9}, []), self.stacks(), "a review's head branch answers without GitHub")
 
-    def test_a_spec_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
+    def test_a_summary_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a", basePr=7)
 
         self.assertEqual(({10: 7}, []), self.stacks())
 
-    def test_an_older_spec_asks_github_once_per_base_branch(self) -> None:
+    def test_an_older_summary_asks_github_once_per_base_branch(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a")
         self.publish(11, "e" * 40, baseRef="feature-a")
         self.publish(12, "f" * 40, baseRef="release")
@@ -340,7 +340,7 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual("/reviews/", data["indexUrl"])
         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
 
-    def test_a_spec_can_name_a_project_its_diff_does_not_touch(self) -> None:
+    def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
         self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
 
         manifest = self.build()
@@ -558,8 +558,8 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
 
 
-def served_spec(number: int, head: str) -> dict:
-    """A spec for pull request `number` at `head` that builds against PLAN_DIFF."""
+def served_summary(number: int, head: str) -> dict:
+    """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""
     return {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
                    "base": "b" * 40, "baseRef": "main"},
@@ -669,7 +669,7 @@ class ServeTests(SiteRepoCase):
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
             folder = remote / root / "9" / head
             folder.mkdir(parents=True)
-            (folder / "spec.json").write_text(json.dumps(served_spec(9, head)))
+            (folder / "summary.json").write_text(json.dumps(served_summary(9, head)))
             (folder / "diff.patch").write_text(PLAN_DIFF)
             run_git(remote, "add", ".")
             run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
@@ -682,7 +682,7 @@ class ServeTests(SiteRepoCase):
         site = self.site(summaries=serve.extract_summaries(self.repo, ref, Path(tempfile.mkdtemp()), root))
         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
         self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
-                         "each spec is dated by its own commit, not the ref's newest")
+                         "each summary is dated by its own commit, not the ref's newest")
         self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
 
     def test_serves_summaries_from_the_fetched_ref_newest_head_first(self) -> None:
@@ -718,7 +718,7 @@ class ServeTests(SiteRepoCase):
         self.assertEqual([], serve.summaries_refs(self.repo, "origin"))
 
     def publish_locally(self, number: int, head: str) -> None:
-        """Commit a spec for pull request `number` to this checkout's own summaries ref, as a local publish does."""
+        """Commit a summary for pull request `number` to this checkout's own summaries ref, as a local publish does."""
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
                    GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
 
@@ -726,7 +726,7 @@ class ServeTests(SiteRepoCase):
             return subprocess.run(["git", *args], cwd=self.repo, env=env, input=text, check=True, capture_output=True,
                                   text=True).stdout.strip()
 
-        for name, content in (("spec.json", json.dumps(served_spec(number, head))), ("diff.patch", PLAN_DIFF)):
+        for name, content in (("summary.json", json.dumps(served_summary(number, head))), ("diff.patch", PLAN_DIFF)):
             blob = git("hash-object", "-w", "--stdin", text=content)
             git("update-index", "--add", "--cacheinfo", f"100644,{blob},summaries/{number}/{head}/{name}")
         git("update-ref", summary.PAGES_REF, git("commit-tree", git("write-tree"), "-m", "Publish locally"))
@@ -777,8 +777,8 @@ class ServeTests(SiteRepoCase):
         published = serve.Summaries(self.repo, "origin")
 
         def build(out: Path) -> str:
-            with tempfile.TemporaryDirectory() as specs, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                return cli.build_checkout(self.repo.resolve(), out, published.extract(Path(specs)), "/", "owner/example")
+            with tempfile.TemporaryDirectory() as extracted, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                return cli.build_checkout(self.repo.resolve(), out, published.extract(Path(extracted)), "/", "owner/example")
 
         site = serve.Site(build, lambda: (serve.fingerprint([self.repo / "docs"]), published.version()))
         self.sites.append(site)
@@ -1123,7 +1123,7 @@ class FakeGitHub:
             return None if self.pages is None else json.dumps(self.pages)
         if endpoint == "repos/owner/example":
             return "true\n" if self.private else "false\n"
-        raise summary.SpecError(f"unexpected lookup {args}")
+        raise summary.SummaryError(f"unexpected lookup {args}")
 
     def gh(self, *args: str) -> str:
         self.calls.append(args)
@@ -1133,7 +1133,7 @@ class FakeGitHub:
             return json.dumps({"private": self.private, "homepage": self.homepage or None,
                                "permissions": {"admin": self.admin, "push": True, "pull": True}})
         if not self.admin:
-            raise summary.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
+            raise summary.SummaryError("gh api failed: HTTP 403 Must have admin rights to Repository.")
         if args == ("api", "-X", "DELETE", "repos/owner/example/pages"):
             self.pages = None
             return ""
@@ -1145,7 +1145,7 @@ class FakeGitHub:
             self.pages["build_type"] = "workflow"
         elif (method, endpoint, field) == ("PUT", "repos/owner/example/pages", "public=false"):
             if not self.private_pages:
-                raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
+                raise summary.SummaryError("gh api failed: HTTP 422 private Pages are not available")
             self.pages["public"] = False
             # GitHub serves a private site at its own subdomain unless it has a custom domain.
             if not self.pages.get("cname"):
@@ -1157,7 +1157,7 @@ class FakeGitHub:
         elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
             self.homepage = field.removeprefix("homepage=")
         else:
-            raise summary.SpecError(f"unexpected call {args}")
+            raise summary.SummaryError(f"unexpected call {args}")
         return "{}"
 
     def writes(self) -> list[tuple[str, ...]]:
@@ -1545,9 +1545,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('${PREPARE:+--prepare "$PREPARE"}', action[build:action.index("upload-pages-artifact")])
 
     def fetch_step(self) -> str:
-        """The shell script of the action's step that fetches the specs."""
+        """The shell script of the action's step that fetches the summaries."""
         lines = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text().splitlines()
-        start = lines.index("    - name: Fetch the summary specs")
+        start = lines.index("    - name: Fetch the summaries")
         start = lines.index("      run: |", start) + 1
         end = next(i for i in range(start, len(lines)) if not lines[i].startswith("        "))
         return "\n".join(line[8:] for line in lines[start:end]) + "\n"
@@ -1574,7 +1574,7 @@ class WorkflowTests(unittest.TestCase):
                         return subprocess.run(["git", *args], cwd=remote, check=True, capture_output=True, text=True,
                                               input=text).stdout.strip()
 
-                    blob = git_in("hash-object", "-w", "--stdin", text="spec\n")
+                    blob = git_in("hash-object", "-w", "--stdin", text="summary\n")
                     tree = git_in("mktree", text=f"100644 blob {blob}\t{root}\n")
                     run_git(remote, "update-ref", ref, run_git(remote, "commit-tree", tree, "-m", root))
                 checkout = tmp / "checkout"
@@ -1589,8 +1589,8 @@ class WorkflowTests(unittest.TestCase):
                 if expected is None:
                     self.assertEqual("", written, "no ref: the site builds without reviews")
                 else:
-                    self.assertEqual(f"SUMMARIES={tmp}/summary-specs/{expected}\n", written)
-                    self.assertTrue((tmp / "summary-specs" / expected).is_file())
+                    self.assertEqual(f"SUMMARIES={tmp}/summaries-ref/{expected}\n", written)
+                    self.assertTrue((tmp / "summaries-ref" / expected).is_file())
 
     def test_the_workflow_listens_only_for_the_summaries_event(self) -> None:
         text = summary.workflow_text("v0", "main")

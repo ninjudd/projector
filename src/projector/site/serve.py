@@ -74,12 +74,12 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool 
 
 
 def summaries_refs(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> list[tuple[str, str]]:
-    """The local refs holding summaries, each with the folder in it that holds the specs.
+    """The local refs holding summaries, each with the folder in it that holds the summaries.
 
     The remote's copy comes first and this checkout's own ref after it, which
-    `summary publish` writes when it keeps a spec local, so the site shows
-    both and a spec in both is read from the local one. The old walkthroughs
-    ref, with its specs under walkthroughs/, is read only when no summaries
+    `summary publish` writes when it keeps a summary local, so the site shows
+    both and a summary in both is read from the local one. The old walkthroughs
+    ref, with its summaries under walkthroughs/, is read only when no summaries
     ref exists, as in a repository that has not published since the rename,
     and then only one copy of it, the remote's when there is one.
     """
@@ -101,11 +101,11 @@ def ref_commit(root: Path, ref: str | None) -> str:
 
 
 def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT) -> Path | None:
-    """Write the specs on `ref` under `dest`, each dated by the commit that last changed it.
+    """Write the summaries on `ref` under `dest`, each dated by the commit that last changed it.
 
-    The build orders a pull request's summaries by when each spec was
+    The build orders a pull request's summaries by when each summary was
     committed. An archive stamps every file with the ref's newest commit, so
-    each spec's time is set from its own history instead.
+    each summary's time is set from its own history instead.
     """
     archive = run_git(root, "archive", "--format=tar", ref, folder)
     if archive.returncode != 0:
@@ -154,10 +154,10 @@ class Summaries:
         return tuple((name, ref_commit(self.root, name)) for name, _ in summaries_refs(self.root, self.remote))
 
     def extract(self, dest: Path) -> Path | None:
-        """Write the published specs under `dest`, or return None when nothing is published.
+        """Write the published summaries under `dest`, or return None when nothing is published.
 
         Each ref is written over the one before, so this checkout's own ref
-        wins where it holds the same spec as the remote's copy.
+        wins where it holds the same summary as the remote's copy.
         """
         out = None
         for name, folder in summaries_refs(self.root, self.remote):
