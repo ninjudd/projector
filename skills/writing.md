@@ -151,7 +151,7 @@ paragraph.
   prose.
 - **Make link text say where the link goes.** Never write "click here" or
   "this link".
-- **Use the serial comma**: "the spec, the diff, and the page".
+- **Use the serial comma**: "the summary, the diff, and the page".
 
 ## 6. Make every sentence easy on the first read
 
@@ -170,7 +170,7 @@ sense the first time through.
   "schema changes can cause issues".
 - **Give a warning before the step that it guards**, not after the step.
 - **Give each word one meaning, and each action one verb.** If you
-  "publish" a spec in one paragraph, do not "push" it in the next, unless
+  "publish" a summary in one paragraph, do not "push" it in the next, unless
   you mean a different action.
 - **Keep the small words that show a sentence's structure**, such as "the",
   "a", and "that". When you drop them to save space, a sentence can have

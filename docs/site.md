@@ -116,9 +116,9 @@ is the GitHub repository:
 
 3. Publish something. Once the workflow is on the default branch, the
    `summarize-pr` skill publishes to the site by default: ask your agent
-   for a summary of a pull request and it pushes the spec to the hidden
+   for a summary of a pull request and it pushes the summary to the hidden
    ref, starts the workflow, and hands you the link. Until then, it keeps
-   the spec in your checkout's own `refs/projector/summaries` and pushes
+   the summary in your checkout's own `refs/projector/summaries` and pushes
    nothing, so you can preview summaries with `project site serve` before
    the site is set up. Ask for a Claude Artifact instead when you want a
    private page. The site's Reviews section lists every summary, and each
@@ -149,12 +149,12 @@ path with `404.html`.
 ## Update a site set up for walkthroughs
 
 Summaries were once called walkthroughs, and a repository set up then has a
-workflow that listens for the `projector-walkthroughs` event and specs on
+workflow that listens for the `projector-walkthroughs` event and summaries on
 `refs/projector/walkthroughs`. It keeps working: `project summary publish`
 sends both `projector-summaries` and `projector-walkthroughs`, and the site
 action reads the old ref until the new one exists. The first
 `project summary publish` creates `refs/projector/summaries` from the old
-ref's specs and history, and leaves the old ref in place.
+ref's summaries and history, and leaves the old ref in place.
 
 To finish moving, regenerate the workflow so it listens for the new event,
 and commit it to the default branch through a pull request:

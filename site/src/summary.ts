@@ -16,7 +16,7 @@ function renderSummary(data: SummaryData): void {
   }
   function num(n: number): string { return n.toLocaleString('en-US'); }
   // A paragraph of prose is wrapped in <p>; a list, table, heading or code
-  // block the spec wrote as an item of its own is placed as it is, since a
+  // block the summary wrote as an item of its own is placed as it is, since a
   // block inside <p> ends the paragraph early.
   function block(html: string): string {
     return /^\s*<(ul|ol|table|div|pre|h3|h4|p)[\s>]/i.test(html) ? html : `<p>${html}</p>`;
@@ -57,13 +57,13 @@ function renderSummary(data: SummaryData): void {
     }).join('') + '</ul>';
   }
 
-  function renderFile(spec: SummaryGroup['files'][number]): string {
-    const f = fileAt(spec.path);
-    const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+  function renderFile(entry: SummaryGroup['files'][number]): string {
+    const f = fileAt(entry.path);
+    const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
     const slash = f.path.lastIndexOf('/');
     const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
     const base = f.path.slice(slash + 1);
-    const checks = spec.checks ?? [];
+    const checks = entry.checks ?? [];
     // A note with a line sits under that line of the diff; the rest sit at the top of the file.
     const atLine: Record<string, SummaryCheck[]> = {};
     const loose: SummaryCheck[] = [];
@@ -121,7 +121,7 @@ function renderSummary(data: SummaryData): void {
           `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
         '</span>' +
       '</header>' +
-      (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
+      (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
       notesList(loose, 'fnotes', f.path) +
       `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
     '</article>';

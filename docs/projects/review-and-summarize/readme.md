@@ -48,10 +48,10 @@ read `refs/projector/summaries` and fall back to `refs/projector/walkthroughs`
 and its `walkthroughs/` folder only when the new ref does not exist. The first
 `project summary publish` after the rename seeds the new ref by replaying
 each old commit with the old folder at `summaries/`, keeping its author,
-dates, and message. The site dates a spec by the last commit that touched its
+dates, and message. The site dates a summary by the last commit that touched its
 path, and a path-limited log does not follow a move, so a single commit
-moving every spec would date them all at the move and let an older head of a
-pull request outrank its newest; the replay keeps each spec's date. Publishing sends both
+moving every summary would date them all at the move and let an older head of a
+pull request outrank its newest; the replay keeps each summary's date. Publishing sends both
 events: a workflow generated before the rename listens only for the old one,
 and one generated since listens only for the new one, so each repository
 builds once. A later release stops sending the old event.
@@ -81,7 +81,7 @@ Shipped in three stacked pull requests: the rename with its migration (#106),
 the `review-pr` split (#107), and the automatic summary. Every criterion
 in section 2 holds.
 
-- The migration tests seed the new ref from the old one, keeping each spec's
+- The migration tests seed the new ref from the old one, keeping each summary's
   publish date so a pull request's newest head stays newest. They also
   exercise the site action's own fallback script against temporary remotes.
 - `review-pr` summarizes when `review.summarize` is not `false` and

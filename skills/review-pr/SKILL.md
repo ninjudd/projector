@@ -571,7 +571,7 @@ Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
 - **Update rather than start over.** When the summaries ref already holds a
-  spec for an earlier head of this pull request, start from that spec and
+  summary for an earlier head of this pull request, start from that summary and
   update it as the skill's "Update the page when the pull request moves"
   section describes, so a fix-cycle head costs a revision, not a rewrite.
 - **Carry the review into it.** Every finding thread still open after this
