@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Plans lead with problem and solution",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 184,
+  "title": "Lead a plan with the problem and the solution",
+  "head": "ec62b808192074a12a08df1ba8859a91bcf2d5b6",
+  "headRef": "worktree-design-plan-leads-with-problem-and-solution",
+  "base": "cecf5dbb34cff747318ac0a8c66b4eed01b20e2b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps each project's plan in the repository, at <code>docs/projects/&lt;name&gt;/readme.md</code>, with numbered <code>## N.</code> sections that code and other documents cite. Two things shape a new plan: <code>project create</code> writes a starter file, and the plan-writing skill tells an agent what to put in it. That skill is <code>skills/design/SKILL.md</code> on this branch; <code>main</code> has since renamed it to <code>spec</code>.",
+   "Before this change, the skill asked for an outcome, constraints, acceptance evidence, an implementation sequence, and a list of decisions, and the starter file opened with <code>## 1. Outcome</code> and <code>## 2. Acceptance criteria</code>. The design ended up split three ways: the outcome described its effects, each decision held one piece of it, and the implementation sequence described it again as file edits. In the plan that prompted this change, the first line of the design arrived at line 152 of 288, and the reader could not find the fix.",
+   "Now a plan leads with what a reviewer needs first. Under the title, one sentence says what the project makes true. Section 1 states the problem for a reader new to the area, and section 2 states the whole solution in one place. The reasons for the design, the acceptance criteria, and, when they have content, cost, rollout, open questions, and background follow in that order. The skill, the starter file, the writing guide, and the two documents that describe plans all change to match."
+  ],
+  "cards": [
+   {
+    "id": "shape",
+    "title": "The plan shape this change asks for",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Part</th><th>What it holds</th></tr></thead><tbody><tr><td>Summary</td><td>One sentence under the title: what the project makes true</td></tr><tr><td>1. Problem</td><td>What the system does and why, what goes wrong and how, how much it matters, with one or two pieces of evidence</td></tr><tr><td>2. Solution</td><td>One paragraph with the whole fix, then the runtime flow, each data shape as a table, and a table of each file's change</td></tr><tr><td>Why this design</td><td>Rationale and rejected alternatives only; repeats none of the solution</td></tr><tr><td>Acceptance criteria</td><td>Observable evidence that the project is complete</td></tr><tr><td>Cost, Rollout, Open questions, Background</td><td>Each only when it has content; background (logs, counts, code archaeology) comes last</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>ec62b80</code> opened two findings, both about how this branch fits the rest of the plan guidance. <code>main</code> renamed the plan-writing skill from <code>design</code> to <code>spec</code> after this branch was cut. GitHub reports the branch as conflicting, but a local merge with <code>main</code> is clean and carries the skill edits into <code>skills/spec/SKILL.md</code>.</p><ul class=\"tight\"><li><code>docs/projects/README.md</code> line 114 names the <code>design</code> skill, which <code>main</code> no longer has.</li><li><code>skills/design/SKILL.md</code> line 112 tells an agent to reshape an existing plan in a way that changes what its cited sections hold.</li></ul><p class=\"note\">The validation gate passes on this head.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The skill asks for the problem, then the solution",
+   "kicker": "The plan-writing skill's new placement rules and hand-over check",
+   "intro": [
+    "The skill's middle section, which told the agent which parts a plan states and where the three things the review loop checks belong, becomes <b>Lead with the problem, then the solution</b>. It names the first screen a reader sees, the summary, the problem, and the opening paragraph of the solution, and the sections that may follow, in order.",
+    "Two smaller rules come with it. A rollout is a numbered sequence only when the steps depend on each other or happen in order across releases; otherwise the solution's file table already says what to change. An existing plan keeps its section numbers and moves toward the shape by rewriting what its first sections say.",
+    "The hand-over check at the end of the skill becomes a list, led by whether a reviewer can say what the problem and the fix are after the first screen, and whether the plan describes the design once."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Correctness, cost, and reuse, the three things the review loop checks, keep a home: the acceptance criteria, the cost section, and the reasons for the design. The detail the old bullets carried now sits in those section descriptions."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/design/SKILL.md",
+     "note": "The placement rules (lines 47 to 127) and the hand-over check (lines 142 to 158) are the substance of the change.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 112,
+       "text": "Open review finding: this paragraph keeps an existing plan's section numbers but tells the agent to rewrite its first sections and gather the design near the top. A plan from the previous starter file has <code>## 2. Acceptance criteria</code>; reshaped as told, § 2 becomes the solution, so a citation of § 2 lands on different content. The finding asks the skill to keep each numbered section on its subject and put the problem and the fix in the unnumbered lead under the title."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "scaffold",
+   "title": "<code>project create</code> writes the same headings",
+   "kicker": "The starter plan and the test that pins its headings",
+   "intro": [
+    "<code>ProjectStore.create</code> builds the starter <code>readme.md</code> as one string. It now writes a placeholder summary sentence under the title and four numbered sections: <code>Problem</code>, <code>Solution</code>, <code>Why this design</code>, and <code>Acceptance criteria</code>. The optional sections are left out, because the skill adds each only when it has content.",
+    "A new test creates a plan and checks the exact headings, their order, the summary placeholder, and that the old <code>Outcome</code> heading is gone."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "Only the scaffold string changes; the frontmatter and the exclusive create around it are untouched.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran <code>project create</code> and a nested <code>project create --parent</code> from this head in a scratch repository: both plans carry the summary placeholder and the four headings in order, and <code>project check</code> prints <code>Project plans are valid.</code>"
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passes on this head: 429 tests, <code>OK (skipped=1)</code>. The skip is the compiled-script check, which needs <code>npm ci</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The guides describe the same shape",
+   "kicker": "The projects README, the CLI reference, and the writing guide",
+   "intro": [
+    "Three documents describe plans, and each now matches the skill. <code>docs/projects/README.md</code> is the convention every adopting repository reads before it changes a plan; its <b>Write a project plan</b> section now spells out the shape. <code>docs/cli.md</code> says what <code>project create</code> writes. The writing guide's § 3 sorts each part of a plan by the job it does, and now says the problem and the solution describe the system while the reasons explain it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/README.md",
+     "note": "The new paragraph describes the shape and names the skill that fills the scaffold.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 114,
+       "text": "Open review finding: this line names the <code>design</code> skill, but <code>main</code> renamed it to <code>spec</code>. A merge with <code>main</code> raises no conflict here, so the line needs changing by hand to name <code>spec</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "One added sentence on what the starter plan contains, matching <code>core.py</code>."
+    },
+    {
+     "path": "skills/writing.md",
+     "note": "Replaces the sentence that called the implementation sequence a how-to and the decisions an explanation."
+    }
+   ]
+  }
+ ]
+}
