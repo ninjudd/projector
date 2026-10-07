@@ -1,0 +1,270 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 18a2df9..f7fc14f 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -317,7 +317,10 @@ project create payments --status ready --priority next
+ project create invoices --parent payments --priority later
+ ```
+ 
+-`create` defaults to `--status draft` and `--priority later`.
++`create` defaults to `--status draft` and `--priority later`. The new plan
++opens with a one-sentence summary to fill in, then numbered sections for the
++problem, the solution, the reasons for the design, and the acceptance
++criteria, in that order, so the design leads and the evidence follows.
+ 
+ `create` opens the new plan when stdin and stdout are interactive. Pass
+ `--no-edit` to leave the generated plan ready for another command. In a
+diff --git a/docs/projects/README.md b/docs/projects/README.md
+index 4aede69..89ccad9 100644
+--- a/docs/projects/README.md
++++ b/docs/projects/README.md
+@@ -104,10 +104,18 @@ Use numbered sections so code and later documents can cite a stable decision,
+ for example `docs/projects/cool-new-feature/readme.md § 4`. Do not renumber
+ existing sections. Add new sections at the end.
+ 
+-Write the smallest plan that makes the intended outcome, constraints,
+-decisions, verification, and unresolved questions clear. Keep the reason for a
+-status or priority change in the body rather than adding more field values.
+-Split material into a supplemental file when it obscures the main plan.
++Lead with the problem, then the solution. Open with one sentence that says
++what the project makes true. Section 1 states the problem briefly, for a reader
++new to the area: what the system does today, what goes wrong and how, and how
++much it matters. Section 2 states the solution as one concrete unit: the flow
++after the change, each new data shape, and each file's change. The reasons
++for the design, the acceptance criteria, cost, rollout, open questions, and
++background follow, each only when it has content. `project create` writes
++this scaffold, and the `spec` skill fills it.
++
++Write the smallest plan that makes those clear. Keep the reason for a status
++or priority change in the body rather than adding more field values. Split
++material into a supplemental file when it obscures the main plan.
+ 
+ ## Find projects before the CLI exists
+ 
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index 8879554..65ca2d8 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -44,38 +44,87 @@ status:
+ - Use `next` when it should become current as capacity opens.
+ - Use `later` for recorded but unscheduled work.
+ 
+-Keep the plan proportional to the work. State the outcome, constraints,
+-acceptance evidence, implementation sequence, decisions with rejected
+-alternatives, and genuinely open questions. Add supporting files only when
+-they hold real content that would make the entry point unwieldy.
+-
+-Settle three things the review loop checks on every head, so the
+-implementation gives the review nothing to find:
+-
+-- **Correctness.** Name the behavior that must hold, the inputs and states
+-  that could break it, and the test or observation that will prove it. A
+-  criterion nobody can observe is a hope, not evidence.
+-- **Performance.** Name the paths where cost matters, the load they carry,
+-  and how the change will be measured against it, or say that cost does not
+-  matter here and why. A plan silent on cost leaves the implementer and the
+-  reviewer to guess which paths are hot.
+-- **Reuse.** Name the existing code the change extends rather than
+-  duplicates, the logic more than one part of the change needs so it is
+-  built once before those parts, and for anything the change replaces, what
+-  is removed and every caller that moves to the replacement. Logic written
+-  twice is a finding the review will file.
+-
+-Each has a place the plan already has: reuse and replacement among the
+-decisions, cost among the constraints, and the correctness proof and the cost
+-measurement beside the acceptance criteria.
+-
+-Follow the writing guide in `../writing.md` when you write the plan. The
+-plan's reader is the person or agent who implements it, who may never have
+-seen this conversation or this part of the code. State each decision and its
+-reason rather than pointing at where it was discussed (`writing.md` § 2).
+-Keep the implementation sequence, a how-to, apart from the decisions, an
+-explanation (§ 3). Put steps, alternatives, and criteria in numbered lists,
+-bulleted lists, and tables (§ 4), and write to the reader (§ 5).
++### Lead with the problem, then the solution
++
++The plan's reader is the person or agent who implements or reviews it. They
++may never have seen this conversation or this part of the code, and they
++need two things before anything else: what is wrong, and what the change
++is. Give them both on the first screen, in this order.
++
++1. **The title and a one-sentence summary.** Under the title, say in one
++   sentence what the project makes true.
++2. **Section 1, the problem.** Keep it short, and write it for someone new
++   to the area. Say what the existing system does and why it exists, what
++   goes wrong today and through which mechanism, and how much it matters,
++   with one or two pieces of evidence. The rest of the evidence goes in the
++   background section.
++3. **Section 2, the solution.** Open with one paragraph that states the
++   change whole, so a reader who stops there knows the fix. Then describe
++   it concretely, as one unit, in subsections: the runtime flow after the
++   change as a numbered sequence, each new or changed data shape as a table
++   of fields and values, and a table that maps each file or component to
++   its change. The solution holds every piece of the design. A design
++   spread across an outcome, a list of decisions, and an implementation
++   sequence makes the reader assemble it.
++
++Add the sections below after those two, each only when it has content, in
++this order.
++
++- **Why this design.** Rationale only: why the solution has this shape, and
++  which alternatives were rejected and why. Name the existing code the
++  solution extends rather than duplicates, the logic more than one part of
++  the change needs so it is built once, and for anything the change
++  replaces, what is removed and every caller that moves to the replacement.
++  The solution reads whole without this section, and this section repeats
++  none of it.
++- **Acceptance criteria.** The evidence that proves the project complete:
++  the behavior that must hold, the inputs and states that could break it,
++  and the test or observation that proves it. A table of what to do and
++  what to expect, followed by the tests that fail before the change, works
++  well. A criterion nobody can observe is a hope, not evidence.
++- **Cost.** The paths where cost matters, the load they carry, and how the
++  change is measured against it, or that cost does not matter here and
++  why. A plan silent on cost leaves the implementer and the reviewer to
++  guess which paths are hot.
++- **Rollout.** A numbered sequence only for steps that depend on each other
++  or that happen in order across releases, environments, or flags. When the
++  order of the code changes does not matter, the solution's file table
++  already says what to change, so write no implementation sequence that
++  repeats it.
++- **Open questions.** Each with an owner or a deliberate deferral.
++- **Background.** The evidence and the code archaeology behind the problem
++  and the solution: logs, counts, queries, and what you found when you read
++  the code. It comes after the design, never before it. A reader who trusts
++  the problem statement never needs it, and a reader who doubts it finds it
++  here.
++
++Those sections give the three things the review loop checks on every head
++their places: correctness in the acceptance criteria, performance in the
++cost section, and reuse and replacement among the reasons for the design.
++Settle each there, so the implementation gives the review nothing to find.
++
++Keep the plan proportional to the work. A plan for one new branch and one
++new record fits on a few screens. One that runs to hundreds of lines is
++describing the design more than once or carrying background the reader did
++not ask for. Add supporting files only when they hold real content that
++would make the entry point unwieldy.
++
++An existing plan keeps its section numbers, and each numbered section keeps
++its subject, because code and other documents cite both. A citation that
++meant the acceptance criteria must not land on the solution after the plan
++is reshaped. Bring the problem and the solution to the top of such a plan in
++the unnumbered lead under the title: the one-sentence summary, a short
++paragraph that states the problem, and a paragraph that states the fix
++whole. Leave the design where its numbered sections already describe it, and
++add a full new section only at the end, with the next number.
++
++Follow the writing guide in `../writing.md` when you write the plan. State
++each decision and its reason rather than pointing at where it was discussed
++(`writing.md` § 2). The problem and the solution describe the system, the
++reasons for the design explain it, and a rollout is a how-to, so keep each
++to its job (§ 3). Put steps, alternatives, criteria, fields, and file
++changes in numbered lists, bulleted lists, and tables (§ 4), and write to
++the reader (§ 5).
+ 
+ Number sections and append new sections without renumbering existing ones.
+ Write paths and identifiers exactly. Keep durable decisions in the plan rather
+@@ -94,9 +143,21 @@ git diff --check
+ Resolve any warning `project check` prints; `project init` refreshes a stale
+ Projector section in `AGENTS.md` without touching the repository's own text.
+ 
+-Confirm that the status makes an honest readiness claim, the priority matches
+-the user's real scheduling intent, the acceptance criteria are observable, the
+-plan says what it reuses, replaces, and measures or why cost does not matter,
+-and every open question has an owner or deliberate deferral. Leave the plan
+-changes visible for ordinary Git review; do not commit, push, or open a pull
+-request unless the user or repository workflow asks for those actions.
++Then read the plan as its reviewer would, and confirm each of these:
++
++- A reviewer can say what the problem is and what the fix is after the first
++  screen: the summary, the problem, and the paragraph that opens the
++  solution. If they would have to read further, move the design up, or
++  state it in the lead of an existing plan.
++- The plan is proportional. It describes the design once, and the
++  background follows the design rather than leading to it.
++- The status makes an honest readiness claim, and the priority matches the
++  user's real scheduling intent.
++- The acceptance criteria are observable.
++- The plan says what it reuses, replaces, and measures, or why cost does not
++  matter.
++- Every open question has an owner or a deliberate deferral.
++
++Leave the plan changes visible for ordinary Git review; do not commit, push,
++or open a pull request unless the user or repository workflow asks for those
++actions.
+diff --git a/skills/writing.md b/skills/writing.md
+index 4baf672..6781a9d 100644
+--- a/skills/writing.md
++++ b/skills/writing.md
+@@ -97,9 +97,12 @@ job, and give a second job its own section.
+ | Reference | Look something up | A complete, exact, and neutral description, with no instructions or opinions |
+ | Explanation | Understand why | One bounded topic, with its design decisions, constraints, and alternatives |
+ 
+-In a plan, the implementation sequence is a how-to, and the decisions are
+-an explanation. In a summary, the group intros explain, and the notes tell
+-the reader what to check. A review reports what it found.
++In a plan, the problem and the solution describe the system as it is and
++as the change leaves it, the reasons for the design are an explanation,
++and a rollout is a how-to. The solution holds the whole design in one
++place, so the reasons explain it without repeating it. In a summary, the
++group intros explain, and the notes tell the reader what to check. A
++review reports what it found.
+ 
+ ## 4. Give the prose structure
+ 
+diff --git a/src/projector/core.py b/src/projector/core.py
+index c5f17eb..a9d434f 100644
+--- a/src/projector/core.py
++++ b/src/projector/core.py
+@@ -424,8 +424,16 @@ def create(
+         title = name.rsplit("/", 1)[-1].replace("-", " ").title()
+         body = (
+             f"---\nstatus: {status}\npriority: {priority}\n---\n\n# {title}\n\n"
+-            "## 1. Outcome\n\nDescribe the result this project produces.\n\n"
+-            "## 2. Acceptance criteria\n\n"
++            "Say in one sentence what this project makes true.\n\n"
++            "## 1. Problem\n\n"
++            "Describe what the system does today, what goes wrong and how, and how much"
++            " it matters.\n\n"
++            "## 2. Solution\n\n"
++            "Describe the change whole: the flow after the change, each new data shape,"
++            " and each file's change.\n\n"
++            "## 3. Why this design\n\n"
++            "Give the reasons for this shape and the alternatives it rejects.\n\n"
++            "## 4. Acceptance criteria\n\n"
+             "- Define the evidence that proves the project is complete.\n"
+         )
+         self._create_exclusive(path, body)
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 84062ac..0457f52 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -343,6 +343,27 @@ def test_create_supports_nested_projects_without_moving_the_parent(self) -> None
+         self.assertIn("status: ready", created)
+         self.assertIn("priority: next", created)
+ 
++    def test_create_scaffolds_the_problem_before_the_solution(self) -> None:
++        code, stdout, stderr = self.invoke("create", "card-limit", "--no-edit")
++
++        self.assertEqual(0, code, stderr)
++        self.assertEqual("docs/projects/card-limit/readme.md\n", stdout)
++        created = (self.projects / "card-limit" / "readme.md").read_text()
++        headings = [line for line in created.splitlines() if line.startswith("#")]
++        self.assertEqual(
++            [
++                "# Card Limit",
++                "## 1. Problem",
++                "## 2. Solution",
++                "## 3. Why this design",
++                "## 4. Acceptance criteria",
++            ],
++            headings,
++        )
++        summary = created.split("# Card Limit\n\n", 1)[1].split("\n", 1)[0]
++        self.assertEqual("Say in one sentence what this project makes true.", summary)
++        self.assertNotIn("Outcome", created)
++
+     def test_create_refuses_invalid_or_existing_names(self) -> None:
+         self.plan("alpha")
+         code, _, stderr = self.invoke("create", "alpha", "--no-edit")
