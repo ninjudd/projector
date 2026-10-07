@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec"
+  short_description: "Write a project's technical spec as a Git-native plan"
+  default_prompt: "Use $spec to spec this project in docs/projects."

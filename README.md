@@ -61,7 +61,7 @@ query time. Projector never writes a tracked status index.
 
 ## Work with coding agents
 
-The plugin gives Claude Code and Codex the same skills: `design`, `implement`,
+The plugin gives Claude Code and Codex the same skills: `spec`, `implement`,
 and `finish` a project, where `implement` also builds a small change from a
 description; `review-pr` to review a pull request once; `fix-pr` to fix its
 findings and merge conflicts once; `start-review-loop` and `start-fix-loop`
