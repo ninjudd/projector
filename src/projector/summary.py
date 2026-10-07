@@ -909,13 +909,9 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
         seeded = bool(parent)
     tree = summary_tree(parent, folder, summary, diff)
     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-        if not seeded:
-            print(f"{ref} already has this summary; nothing to publish")
-            return None
-        # The old ref already had this summary, but the new ref still needs creating.
-        commit = parent
-    else:
-        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        print(f"{ref} already has this summary; nothing to publish")
+        return None
+    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
     git("push", "--quiet", remote, f"{commit}:{ref}")
     git("update-ref", local, commit)
     print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}")
