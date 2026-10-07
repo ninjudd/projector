@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import importlib.metadata
 import json
 import os
 import re
@@ -133,6 +134,24 @@ def write_through(path: Path, content: str) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+DISTRIBUTION = "projector-cli"
+
+
+def distribution_version() -> str:
+    """The version of the installed distribution, not of this source tree.
+
+    `install.sh status` compares this against the plugin manifest's version,
+    which is the CLI's too, to tell a stale install from a current one, and
+    `project review` names it in the reviews it writes. A checkout that was
+    never installed has no distribution to report, which is itself the answer.
+    """
+
+    try:
+        return importlib.metadata.version(DISTRIBUTION)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def discover_git_root(start: Path) -> Path:

@@ -29,6 +29,7 @@ from .summary import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
 from .core import (
+    DISTRIBUTION,
     PRIORITIES,
     STATUSES,
     EnvironmentError,
@@ -38,27 +39,11 @@ from .core import (
     ProjectStore,
     UsageError,
     discover_git_root,
+    distribution_version,
     grouped_projects,
     json_scalar,
     json_text,
 )
-
-
-DISTRIBUTION = "projector-cli"
-
-
-def distribution_version() -> str:
-    """The version of the installed distribution, not of this source tree.
-
-    `install.sh status` compares this against the plugin manifest's version,
-    which is the CLI's too, to tell a stale install from a current one. A checkout that was never installed has no
-    distribution to report, which is itself the answer.
-    """
-
-    try:
-        return metadata.version(DISTRIBUTION)
-    except metadata.PackageNotFoundError:
-        return "unknown"
 
 
 UPSTREAM = "ninjudd/projector"
