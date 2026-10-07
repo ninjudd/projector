@@ -349,13 +349,13 @@ threads:
 
 - **P1.** A defect the change introduces or worsens, with concrete impact on
   users, data, money, availability, or security. A thread; blocks.
-- **P2.** A defect the change introduces with bounded impact, or a violation
-  of a rule the repository wrote down or of a section of `../guidelines.md`.
-  A thread; blocks.
+- **P2.** A defect the change introduces or worsens, with bounded impact, or
+  a violation of a rule the repository wrote down or of a section of
+  `../guidelines.md`. A thread; blocks.
 - **P3.** A change the code is correct without: a simplification, dead code,
   a gap between a written rule and practice, a defect already present at the
-  base. One line in the body's `Suggestions` list; never a thread, never
-  blocks.
+  base that the change does not worsen. One line in the body's `Suggestions`
+  list; never a thread, never blocks.
 
 The visible text of a thread's first comment has three parts, the shape
 `method.md` § 7 shows with an example:
@@ -523,13 +523,14 @@ verdict as one.
 
 Claude Code's auto mode refuses a clean self-review's publish as
 self-approval unless the user's Claude Code settings, or the repository's,
-allow `Bash(project review publish *)`, the rule `project init` adds to the
-user's `~/.claude/settings.json`. Run `publish` as a command of its own so
-the rule matches it. If the host refuses it anyway, do not retry it in
-another form: keep the lock and the body, and ask the user to run
-`project init` in a terminal, which adds the rule to their own settings, or
-to run the publish command themselves. `init` adds the rule only for a
-person at a terminal, so do not run it to add the rule yourself.
+allow `Bash(project review publish *)`, a rule `project init` adds to the
+user's `~/.claude/settings.json`. For Codex, `init` adds the same allowance to
+the user's Codex rules. Run `publish` as a command of its own so the rule
+matches it. If the host refuses it anyway, do not retry it in another form:
+keep the lock and the body, and ask the user to run `project init` in a
+terminal, which adds the rules to their own settings, or to run the publish
+command themselves. `init` adds the rules only for a person at a terminal, so
+do not run it to add them yourself.
 
 After submitting, `publish` sets draft state for a self-review, re-reads the
 review it posted and the pull request's `isDraft`, adds the review id to the

@@ -240,6 +240,15 @@ wrapper only hides what is being written from the user and from the host's
 permission checks. You do not need to build the page first; `page` is a
 local preview.
 
+A host's automatic approval can refuse `publish` as sending repository content
+to another host, unless the user's own settings allow it. `project init`, run
+by a person at a terminal, adds that allow rule to their Claude Code settings
+and to their Codex rules, inside a repository or outside one. If the host
+refuses `publish`, do not retry it in another form. Ask the user to run
+`project init` in a terminal, or to run the `publish` command themselves.
+`init` adds the rules only for a person at a terminal, so do not run it to
+add them yourself.
+
 `publish` fetches the diff once, builds the summary against it, and refuses one
 that does not build. It then commits the summary and that diff to
 `summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,

@@ -194,6 +194,10 @@ change touches:
 - Where the change adds a requirement on inputs, alters what it returns,
   raises something new, or changes a side effect, confirm every existing
   caller can live with it.
+- Where the change adds an optional parameter, hook, or field, every caller
+  that leaves it out gets the default. Judge each such caller against its own
+  behavior at the base. A behavior that differs there is one the change
+  introduced, even though that caller's code did not change.
 - Look at when each caller runs. A guard evaluated on entry protects nothing
   if the effect lands later, from a queue, a batch, or a retry.
 - Where a value now flows to a new destination, trace it back to every place
@@ -243,7 +247,11 @@ Apply these rules to the verified set, in this order:
 - **Every finding names its fix** in one sentence. A finding that cannot say
   what to change is an observation and is dropped.
 - **The change must introduce or worsen the defect.** Compare against the
-  base. A defect already present at the base is at most a P3 and says so.
+  base. A defect already present at the base is at most a P3 and says so,
+  unless the change worsens it. A change worsens a defect when the defect
+  reaches more callers or data, or when it can no longer be repaired, as when
+  the change erases the record that a repair would read. A worsened defect is
+  the change's own, and its impact sets its priority.
 - **A rule violation cites its rule** by document and section. Without a
   citation it is a style opinion and is dropped.
 - **One root cause is one finding.** The same defect at several sites becomes
@@ -255,7 +263,7 @@ Apply these rules to the verified set, in this order:
   ship.
 
 Then assign a priority, as `SKILL.md` defines them: P1 and P2 are defects the
-change introduces and violations of a written rule, a section of
+change introduces or worsens and violations of a written rule, a section of
 `../guidelines.md` included, and they post as threads and block; P3 is a
 change the code is correct without and no written rule requires, and it goes
 in the review body under a `Suggestions` heading, never as a thread.
