@@ -1,12 +1,12 @@
 ---
 name: implement
-description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no design. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
+description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no spec. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
 ---
 
 # Implement
 
 Build from a project's plan, or from the user's description of work small
-enough to need no design. Either way, treat the repository and current
+enough to need no spec. Either way, treat the repository and current
 runtime behavior as authoritative evidence.
 
 ## Start from a description
@@ -17,10 +17,10 @@ When the user describes the work rather than naming a project:
    project already covers the work, start from its plan instead, as the next
    section describes. When the command exits 66 with `projects directory not
    found`, the repository has not adopted Projector and has no projects.
-2. Decide whether the work needs design first. It does when it spans several
+2. Decide whether the work needs a spec first. It does when it spans several
    parts of the system, changes an interface that other code depends on, or
    leaves a product choice open. Then stop, tell the user why, and suggest
-   `design`. Build it without a design only when the user asks you to.
+   `spec`. Build it without a spec only when the user asks you to.
 3. Otherwise, restate the change in a sentence or two, and build it. Ask the
    user only about a choice that the repository cannot answer.
 
@@ -78,7 +78,7 @@ constraint or reason the code cannot carry on its own.
 When the work has a plan, update it in the same change whenever
 implementation settles a decision, changes scope, reveals a new constraint,
 or completes an acceptance criterion. Follow the writing guide in
-`../writing.md` when you write the update, as `design` does. Append numbered
+`../writing.md` when you write the update, as `spec` does. Append numbered
 sections rather than renumbering cited sections. Create a nested project
 only when it has an independently useful lifecycle. Put details that belong
 to the parent in a supplemental document.

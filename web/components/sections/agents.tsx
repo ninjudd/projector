@@ -6,8 +6,8 @@ import { DOCS } from "@/lib/links";
 
 const steps: { title: string; invoke: string; body: ReactNode }[] = [
   {
-    title: "Design a project",
-    invoke: "/projector:design a session chooser opened by the detach key",
+    title: "Spec a project",
+    invoke: "/projector:spec a session chooser opened by the detach key",
     body: (
       <>
         The agent reads the repository and the existing projects first, asks only what the code
@@ -71,7 +71,7 @@ export function Agents() {
         ))}
       </ol>
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
-        In Codex the same skills are <Code>$design</Code>, <Code>$implement</Code>, and{" "}
+        In Codex the same skills are <Code>$spec</Code>, <Code>$implement</Code>, and{" "}
         <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
         <Code>summarize-pr</Code>, which summarizes the changes in a large pull request as a guided page for
         its reviewers; <Code>write</Code>, which writes or revises any prose so that it follows
