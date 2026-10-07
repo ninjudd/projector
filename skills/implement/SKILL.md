@@ -138,22 +138,14 @@ draft says the work has not been signed off yet; never mark it ready
 yourself.
 
 Follow the writing guide in `../writing.md`, § 10 in particular, when you
-write the title, the body, and each commit message. Before `gh pr create`,
-read the subjects of the default branch's recent commits:
-
-```sh
-git log --format=%s -20 origin/<default-branch>
-```
-
-When they follow a pattern, such as Conventional Commits
-(`type(scope): summary`), a ticket in brackets at the end, or a component
-prefix, write the title in that pattern, with the same casing, and write
-each commit subject in it too. A squash merge makes the title the subject
-of the commit on the default branch, so a title outside the pattern breaks
-a history every other commit keeps. Write a plain imperative sentence only
-when the history has no pattern. Read the title back against those
-subjects before you hand over the URL, and when you delegate the pull
-request to a subagent, pass it the pattern you found.
+write each commit message, the title, and the body. Its first rule starts
+before your first commit: read the default branch's recent subjects and
+write every commit subject, and later the title, in the pattern they
+follow. Before you hand over the URL, read each title back against those
+subjects. `gh stack submit` writes a layer's title itself, so retitle one
+that falls outside the pattern with `gh pr edit <number> --title`. When
+you delegate the pull request to a subagent, pass it the pattern you
+found.
 
 Write a body that explains why the change exists, because a squash merge
 makes the body the commit message. End every body with a `## Testing`
