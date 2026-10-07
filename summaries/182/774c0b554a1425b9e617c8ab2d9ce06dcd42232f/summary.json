@@ -1,0 +1,145 @@
+{
+ "version": 1,
+ "name": "Rename the design skill to spec",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 182,
+  "title": "Rename the design skill to spec",
+  "head": "774c0b554a1425b9e617c8ab2d9ce06dcd42232f",
+  "headRef": "rename-design-to-spec",
+  "base": "f144faedfe448888c93107368121e2c11dad7a2f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's plugin gives Claude Code and Codex the same set of <em>skills</em>, written procedures an agent follows when the user invokes them by name. One of those skills writes a project's plan, the technical document under <code>docs/projects/</code> that another person or agent implements later. Until this change, that skill was called <code>design</code>.",
+   "The name collides with Claude Code itself. On accounts whose organization enables Claude Design, a bare <code>/design</code> opens Claude Design's &ldquo;Make a new Design artifact&rdquo; command, so the skill is reachable there only by its namespaced form, <code>/projector:design</code>. This pull request renames the skill to <code>spec</code>, which names what the skill writes and which no Claude Code command or bundled skill uses.",
+   "The rename touches every place that names the skill: its folder and Codex interface file, the <code>implement</code> skill that points users at it, the packaging test that lists the published skills, the README, the plugin guide, two completed plans, and the marketing site. Prose that uses &ldquo;design&rdquo; in its ordinary sense stays, and so does the Codex manifest's example prompt, &ldquo;Plan this project with Projector.&rdquo;, which reaches the skill through its description rather than its name.",
+   "Once this merges and a user updates the plugin, <code>/projector:spec</code> and <code>$spec</code> invoke the skill, and <code>/projector:design</code> and <code>$design</code> no longer do. The skill's description still lists &ldquo;design&rdquo; among the requests it handles, so asking an agent to design a project still reaches it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Skill</b>: a folder under <code>skills/</code> holding a <code>SKILL.md</code>. Its frontmatter <code>name</code> must match the folder name.</li><li><b>Plugin namespace</b>: Claude Code invokes a plugin skill as <code>/projector:&lt;skill&gt;</code>, and also as a bare <code>/&lt;skill&gt;</code> when no built-in command has that name.</li><li><b>Codex invocation</b>: Codex invokes the same skill as <code>$&lt;skill&gt;</code>, and reads its display name and default prompt from <code>agents/openai.yaml</code> inside the skill's folder.</li><li><b>Plan</b>: a project's <code>readme.md</code> under <code>docs/projects/</code>, which this skill writes.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>774c0b5</code> is clean, with no finding threads. It suggests one change to the pull request body: the <code>## Testing</code> section's <code>git grep</code> uses <code>\\b</code>, which git's default extended regular expressions on macOS do not support, so its <code>\\$design\\b</code> alternative never matches there. A plain <code>\\$design</code> search at this head finds nothing, so the body's claim holds.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The skill moves to skills/spec",
+   "kicker": "The skill's folder, frontmatter, heading, Codex interface file, and the test that lists published skills.",
+   "intro": [
+    "Both plugin manifests publish the whole <code>skills/</code> folder, so a skill's name is its folder name. Moving <code>skills/design</code> to <code>skills/spec</code> is what renames the command. The frontmatter <code>name</code> and the heading follow the folder, and the Codex interface file moves with it, carrying a new display name and a <code>$spec</code> default prompt.",
+    "The packaging test is the only list of skill names in code. It checks that the folders under <code>skills/</code> are exactly the published set and that each skill's frontmatter <code>name</code> matches its folder, so a half-done rename fails it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "At this head, <code>git grep</code> finds no <code>`design`</code>, <code>$design</code>, <code>projector:design</code>, <code>skills/design</code>, &ldquo;design skill&rdquo;, or &ldquo;Design a project&rdquo; anywhere in the repository. Neither marketplace file, nor any code under <code>src/</code>, <code>.github/</code>, or <code>install.sh</code>, names a skill folder."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "The skill itself, moved from <code>skills/design/SKILL.md</code>. Only the frontmatter, the heading, and the opening paragraph change.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3,
+       "text": "The description still lists &ldquo;design&rdquo; among the requests the skill handles, beside the new &ldquo;specify&rdquo;. An agent picks a skill from its description, so a user who asks to design a project still reaches this one. Line 18's &ldquo;Do not design from the request alone&rdquo; uses the word in its ordinary sense and stays."
+      }
+     ]
+    },
+    {
+     "path": "skills/design/agents/openai.yaml",
+     "note": "Codex's interface file for the old name, deleted. Its replacement is the next file."
+    },
+    {
+     "path": "skills/spec/agents/openai.yaml",
+     "note": "The same interface file under the new folder, with <code>display_name</code> <code>Spec</code> and a <code>$spec</code> default prompt. It has the same shape as the files beside <code>implement</code>, <code>finish</code>, and <code>write</code>."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "The published skill set names <code>spec</code> instead of <code>design</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 11,
+       "text": "The full suite runs 442 tests OK at this head, with one skip, the compiled-script check that needs <code>npm ci</code> in <code>site/</code>. The packaging tests among them confirm that the folders under <code>skills/</code> match this set and that <code>skills/spec/SKILL.md</code> declares <code>name: spec</code>. <code>claude plugin validate .</code> and <code>claude plugin validate skills</code> both pass."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "references",
+   "title": "Skills and documents that name it",
+   "kicker": "The implement skill, the README, the plugin guide, and two completed plans.",
+   "intro": [
+    "Each of these files names the skill, and each edit swaps the name and nothing else. The <code>implement</code> skill matters most, because it tells an agent to stop and suggest the planning skill when a described change is too big to build directly. It now suggests <code>spec</code> and says the work needs &ldquo;a spec&rdquo;.",
+    "The two plans, <code>agent-instructions</code> and <code>projector</code>, are both <code>completed</code>, so they make no readiness claim. Their edits make them name the skills that exist now."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Points users at <code>spec</code> for work that needs a plan first.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 23,
+       "text": "This is the one instruction an agent acts on: when work spans several parts of the system, changes an interface, or leaves a product choice open, the agent stops and suggests <code>spec</code>. A stale name here would send users to a command that no longer exists."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The plugin guide's skill list, the skill's one-line description, and both invocation examples.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 90,
+       "text": "The Claude Code 2.1.292 binary registers built-in commands named <code>design</code> and <code>plan</code> but none named <code>spec</code>, checked with <code>strings</code> on the installed binary. A bare <code>/spec</code> therefore reaches this skill, and the namespaced <code>/projector:spec</code> shown here always does."
+      }
+     ]
+    },
+    {
+     "path": "README.md",
+     "note": "The README's list of plugin skills."
+    },
+    {
+     "path": "docs/projects/agent-instructions/readme.md",
+     "note": "A completed plan's list of skills whose validation step changed."
+    },
+    {
+     "path": "docs/projects/projector/readme.md",
+     "note": "A completed plan's description of the planning skill."
+    }
+   ]
+  },
+  {
+   "id": "site",
+   "title": "The marketing site",
+   "kicker": "The agents section's first step and its Codex line.",
+   "intro": [
+    "The marketing site walks a reader through three steps, each with the command that runs it. The first step's title becomes &ldquo;Spec a project&rdquo;, its command becomes <code>/projector:spec</code>, and the Codex line below the steps names <code>$spec</code>. Only the three strings change, and the site's preview deployment for this head succeeded."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "web/components/sections/agents.tsx",
+     "note": "Three strings in the agents section: a step title, its command, and the Codex skill list."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,204 @@
+diff --git a/README.md b/README.md
+index c40a992..7aa98eb 100644
+--- a/README.md
++++ b/README.md
+@@ -61,7 +61,7 @@ query time. Projector never writes a tracked status index.
+ 
+ ## Work with coding agents
+ 
+-The plugin gives Claude Code and Codex the same skills: `design`, `implement`,
++The plugin gives Claude Code and Codex the same skills: `spec`, `implement`,
+ and `finish` a project, where `implement` also builds a small change from a
+ description; `review-pr` to review a pull request once; `fix-pr` to fix its
+ findings and merge conflicts once; `start-review-loop` and `start-fix-loop`
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 83c2424..4dc0e57 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -12,14 +12,14 @@ manifest at `.claude-plugin/plugin.json` and the Codex manifest at
+ instructions and supporting scripts without a generated copy or host-specific
+ fork.
+ 
+-The plugin provides `design`, `implement`, `finish`, `review-pr`, `fix-pr`,
++The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
+ `start-review-loop`, `start-fix-loop`, `summarize-pr`, and `write`.
+ `summarize-pr` summarizes a pull request's changes as a guided review page.
+ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+ `$<skill>`.
+-`design` writes a project's technical design doc under `docs/projects/`.
++`spec` writes a project's technical spec under `docs/projects/`.
+ `implement` builds from that plan, or from a description of a change small
+-enough to need no design, such as `/projector:implement fix the typo in the
++enough to need no spec, such as `/projector:implement fix the typo in the
+ install docs`.
+ `review-pr` reviews a pull request's current head once, by the method in
+ `skills/review-pr/method.md`, and publishes one labeled review;
+@@ -87,7 +87,7 @@ claude plugin install projector@projector --scope user
+ Invoke a skill with the plugin namespace, for example:
+ 
+ ```text
+-/projector:design a safer deploy workflow
++/projector:spec a safer deploy workflow
+ ```
+ 
+ Validate a checkout before publishing it:
+@@ -109,7 +109,7 @@ codex plugin add projector@projector
+ Invoke a skill directly, for example:
+ 
+ ```text
+-$design a safer deploy workflow
++$spec a safer deploy workflow
+ ```
+ 
+ The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
+diff --git a/docs/projects/agent-instructions/readme.md b/docs/projects/agent-instructions/readme.md
+index 552fbf0..6ec0e80 100644
+--- a/docs/projects/agent-instructions/readme.md
++++ b/docs/projects/agent-instructions/readme.md
+@@ -229,7 +229,7 @@ adopted repository, and the validation gate in `AGENTS.md` already runs it.
+ - `docs/plugins.md`: one paragraph saying that skills load only when invoked
+   and that the block is how conventions reach every session, so a reader does
+   not look for a hook or a plugin `CLAUDE.md`.
+-- `design`, `implement`, and `finish` skills: the validation step says to
++- `spec`, `implement`, and `finish` skills: the validation step says to
+   resolve any warning `project check` prints, and that `project init`
+   refreshes a stale Projector section.
+ 
+diff --git a/docs/projects/projector/readme.md b/docs/projects/projector/readme.md
+index bef5c43..ede26ad 100644
+--- a/docs/projects/projector/readme.md
++++ b/docs/projects/projector/readme.md
+@@ -240,7 +240,7 @@ supply a separate reviewer instead of silently weakening a verdict.
+ 
+ Projector adds three project workflow skills:
+ 
+-- `design` inspects the repository, creates or refines a project plan, records
++- `spec` inspects the repository, creates or refines a project plan, records
+   decisions and open questions, and assigns `later`, `next`, or `now` from
+   the user's intent. It does not claim readiness merely because a plan
+   exists.
+diff --git a/skills/design/agents/openai.yaml b/skills/design/agents/openai.yaml
+deleted file mode 100644
+index 9420f72..0000000
+--- a/skills/design/agents/openai.yaml
++++ /dev/null
+@@ -1,4 +0,0 @@
+-interface:
+-  display_name: "Design"
+-  short_description: "Write a project's technical design doc as a Git-native plan"
+-  default_prompt: "Use $design to design this project in docs/projects."
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 549b404..8011df6 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -1,12 +1,12 @@
+ ---
+ name: implement
+-description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no design. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
++description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no spec. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
+ ---
+ 
+ # Implement
+ 
+ Build from a project's plan, or from the user's description of work small
+-enough to need no design. Either way, treat the repository and current
++enough to need no spec. Either way, treat the repository and current
+ runtime behavior as authoritative evidence.
+ 
+ ## Start from a description
+@@ -17,10 +17,10 @@ When the user describes the work rather than naming a project:
+    project already covers the work, start from its plan instead, as the next
+    section describes. When the command exits 66 with `projects directory not
+    found`, the repository has not adopted Projector and has no projects.
+-2. Decide whether the work needs design first. It does when it spans several
++2. Decide whether the work needs a spec first. It does when it spans several
+    parts of the system, changes an interface that other code depends on, or
+    leaves a product choice open. Then stop, tell the user why, and suggest
+-   `design`. Build it without a design only when the user asks you to.
++   `spec`. Build it without a spec only when the user asks you to.
+ 3. Otherwise, restate the change in a sentence or two, and build it. Ask the
+    user only about a choice that the repository cannot answer.
+ 
+@@ -78,7 +78,7 @@ constraint or reason the code cannot carry on its own.
+ When the work has a plan, update it in the same change whenever
+ implementation settles a decision, changes scope, reveals a new constraint,
+ or completes an acceptance criterion. Follow the writing guide in
+-`../writing.md` when you write the update, as `design` does. Append numbered
++`../writing.md` when you write the update, as `spec` does. Append numbered
+ sections rather than renumbering cited sections. Create a nested project
+ only when it has an independently useful lifecycle. Put details that belong
+ to the parent in a supplemental document.
+diff --git a/skills/design/SKILL.md b/skills/spec/SKILL.md
+similarity index 91%
+rename from skills/design/SKILL.md
+rename to skills/spec/SKILL.md
+index 9e3a7f2..8879554 100644
+--- a/skills/design/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -1,13 +1,13 @@
+ ---
+-name: design
+-description: Write a project's technical design doc as a Git-native plan under docs/projects, or refine an existing one. Use when the user wants to scope, design, prioritize, or record a project before or alongside implementation.
++name: spec
++description: Write a project's technical spec as a Git-native plan under docs/projects, or refine an existing one. Use when the user wants to scope, specify, design, prioritize, or record a project before or alongside implementation.
+ ---
+ 
+-# Design a project
++# Spec a project
+ 
+-Turn the requested outcome into a durable Projector plan, a technical design
+-doc that another person or agent can execute without reconstructing the
+-conversation. Work small enough to need no design goes straight to
++Turn the requested outcome into a durable Projector plan, a technical spec
++that another person or agent can execute without reconstructing the
++conversation. Work small enough to need no spec goes straight to
+ `implement`, which builds from a description as well as from a plan.
+ 
+ ## Establish context
+diff --git a/skills/spec/agents/openai.yaml b/skills/spec/agents/openai.yaml
+new file mode 100644
+index 0000000..ab7269b
+--- /dev/null
++++ b/skills/spec/agents/openai.yaml
+@@ -0,0 +1,4 @@
++interface:
++  display_name: "Spec"
++  short_description: "Write a project's technical spec as a Git-native plan"
++  default_prompt: "Use $spec to spec this project in docs/projects."
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 58a8527..4272532 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -8,7 +8,7 @@
+ 
+ ROOT = Path(__file__).parents[1]
+ PUBLISHED_SKILLS = {
+-    "design",
++    "spec",
+     "implement",
+     "finish",
+     "review-pr",
+diff --git a/web/components/sections/agents.tsx b/web/components/sections/agents.tsx
+index 74c2f13..a786e49 100644
+--- a/web/components/sections/agents.tsx
++++ b/web/components/sections/agents.tsx
+@@ -6,8 +6,8 @@ import { DOCS } from "@/lib/links";
+ 
+ const steps: { title: string; invoke: string; body: ReactNode }[] = [
+   {
+-    title: "Design a project",
+-    invoke: "/projector:design a session chooser opened by the detach key",
++    title: "Spec a project",
++    invoke: "/projector:spec a session chooser opened by the detach key",
+     body: (
+       <>
+         The agent reads the repository and the existing projects first, asks only what the code
+@@ -71,7 +71,7 @@ export function Agents() {
+         ))}
+       </ol>
+       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
+-        In Codex the same skills are <Code>$design</Code>, <Code>$implement</Code>, and{" "}
++        In Codex the same skills are <Code>$spec</Code>, <Code>$implement</Code>, and{" "}
+         <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
+         <Code>summarize-pr</Code>, which summarizes the changes in a large pull request as a guided page for
+         its reviewers; <Code>write</Code>, which writes or revises any prose so that it follows
