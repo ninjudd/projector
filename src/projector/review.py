@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from .core import ProjectorError
+from .core import ProjectorError, distribution_version
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
@@ -365,14 +365,14 @@ def live_effort() -> str:
     return os.environ.get("CLAUDE_EFFORT", "").strip()
 
 
-def effort_segment() -> str:
-    effort = live_effort()
-    return f"effort `{effort}` · " if effort else ""
+def producer_segments(version: str, model: str, effort: str) -> str:
+    """What produced the review, as its start comment and signature line both name it."""
+    return f"projector `{version}` · model `{model}` · " + (f"effort `{effort}` · " if effort else "")
 
 
 def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str:
-    lines = [f"{MARK} **Projector review started** · model `{model}` · {effort_segment()}"
-             f"reviewing `{sha[:7]}`", ""]
+    lines = [f"{MARK} **Projector review started** · "
+             f"{producer_segments(distribution_version(), model, live_effort())}reviewing `{sha[:7]}`", ""]
     if moved_from:
         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
                   "for the new changes.", ""]
@@ -550,11 +550,12 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
-    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · model `[^`\n]+` · (?:effort `[^`\n]+` · )?"
-    r"\*\*(CLEAN|CHANGES REQUESTED)\*\* · took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · projector `[^`\n]+` · model `[^`\n]+` · "
+    r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · "
+    r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
 MARKER = re.compile(
-    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) model=\S+ (?:effort=\S+ )?"
+    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=\S+ model=\S+ (?:effort=\S+ )?"
     r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
@@ -710,10 +711,10 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
         last = code.end()
     pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
     filled = "".join(pieces)
-    effort = live_effort()
-    signature = (f"{MARK} **Projector review** · model `{state['model']}` · {effort_segment()}"
+    version, effort = distribution_version(), live_effort()
+    signature = (f"{MARK} **Projector review** · {producer_segments(version, state['model'], effort)}"
                  f"**{VERDICT_WORDS[verdict]}** · took {took}")
-    marker = (f"<!-- projector-review v=1 verdict={verdict} model={state['model']} "
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector={version} model={state['model']} "
               + (f"effort={effort} " if effort else "")
               + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
