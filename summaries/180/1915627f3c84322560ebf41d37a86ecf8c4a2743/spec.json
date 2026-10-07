@@ -1,0 +1,153 @@
+{
+ "version": 1,
+ "name": "Projector Version in Review Headers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 180,
+  "title": "Name the Projector version in a review's header",
+  "head": "1915627f3c84322560ebf41d37a86ecf8c4a2743",
+  "headRef": "review-header-version",
+  "base": "cecf5dbb34cff747318ac0a8c66b4eed01b20e2b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review commands label every review they post, so a reader can tell a Projector review from a person's comment and weigh it by what produced it. While a review runs, <code>project review setup</code> posts a <b>start comment</b> on the pull request. When the review lands, <code>project review publish</code> opens its body with a visible <b>signature line</b> and a hidden HTML <b>marker</b> comment. All three name the model, and the reasoning effort when the host reports one.",
+   "None of them named the Projector release. The review method changes from release to release, so a reader comparing two reviews of one pull request could not tell which version of the method wrote each. This pull request adds a <code>projector</code> segment ahead of the model in the start comment and the signature line, and a matching <code>projector=</code> field in the marker:",
+   "<pre>📽️ **Projector review** · projector `0.6.9` · model `claude-opus-5-5` · effort `xhigh` · **CLEAN** · took 12m 34s\n\n&lt;!-- projector-review v=1 verdict=clean projector=0.6.9 model=claude-opus-5-5 effort=xhigh sha=… findings=0 seconds=754 covered=3/3 --&gt;</pre>",
+   "The version comes from the installed <code>projector-cli</code> package, read the same way <code>project --version</code> reads it. A command run from a source checkout that was never installed writes <code>unknown</code>. To share that lookup with the review code, <code>distribution_version</code> moves from <code>cli.py</code> to <code>core.py</code>, because <code>cli.py</code> imports <code>review.py</code> and <code>review.py</code> cannot import <code>cli.py</code> back."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Start comment:</b> the comment <code>project review setup</code> posts while a review runs, and <code>publish</code> deletes when the review lands.</li><li><b>Signature line:</b> the first line of a published review's body, naming what produced it, the verdict, and how long it took.</li><li><b>Marker:</b> the hidden <code>&lt;!-- projector-review … --&gt;</code> comment under the signature line, carrying the same facts as fields a program can read.</li><li><b>Distribution:</b> the installed Python package, <code>projector-cli</code>, whose recorded version <code>importlib.metadata</code> reads.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>The Projector review of this head is clean: no finding threads, and the repository's validation gate passed at <code>1915627</code>. It left one suggestion, shown as a note on <code>skills/review-pr/SKILL.md</code>: the label names the CLI's release, and the method text comes from the plugin, which updates separately.</p><p class=\"note\">This head is the same commit that was reviewed clean on #176, which closed when the branch was reopened as this pull request.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "header",
+   "title": "The header names the release",
+   "kicker": "How the start comment, signature line, and marker gain the projector segment",
+   "intro": [
+    "Two functions in <code>review.py</code> write a review's labels. <code>start_comment</code> writes the start comment, and <code>compose</code> writes the published review's signature line and marker. Both now build their shared middle part with one helper, <code>producer_segments</code>, which returns the <code>projector</code>, <code>model</code>, and optional <code>effort</code> segments in that order.",
+    "<code>compose</code> then checks its own output against two regular expressions, <code>SIGNATURE</code> and <code>MARKER</code>, which describe the format <code>review-pr/SKILL.md</code> documents. Both now require the new segment and field. They check only the line <code>compose</code> has just written, so a review posted before this change is never tested against them."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Reviews posted before this change still count in the collision check, the check that stops one account from posting two verdicts on one commit. The only code that reads an earlier review's marker is <code>reviewer_verdicts</code>, whose <code>projector-review .* sha=&lt;sha&gt;</code> filter matches a marker with or without <code>projector=</code>. Traced by reading every reader of the marker, and <code>test_an_older_verdict_whose_marker_carries_effort_still_collides</code>, which posts an old-format marker, passes at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>producer_segments</code>, uses it in <code>start_comment</code> and <code>compose</code>, and adds the segment and field to <code>SIGNATURE</code> and <code>MARKER</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>producer_segments</code> takes the version and effort as arguments rather than reading them itself, so <code>compose</code> reads each once and the signature line and marker cannot disagree.",
+       "line": 370
+      },
+      {
+       "kind": "verify",
+       "text": "Every start comment names the version. Both <code>setup</code> and <code>move</code> build the comment with <code>start_comment</code>, and the re-read after <code>move</code> edits the comment checks only <code>sha=</code>, so the longer text cannot fail it. Traced through both callers.",
+       "line": 375
+      },
+      {
+       "kind": "context",
+       "text": "The marker requires <code>projector=</code> right after <code>verdict=</code>, so this check refuses a marker that leaves the version out. <code>distribution_version</code> always returns a value, <code>unknown</code> at worst, so <code>compose</code> never writes such a marker.",
+       "line": 558
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Pins the installed version to <code>1.2.3</code> for every review test, updates the exact-text assertions, and adds a test for the <code>unknown</code> case.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The patch replaces <code>importlib.metadata.version</code> itself, which <code>core.distribution_version</code> looks up on each call, so the tests see one version whatever this machine has installed.",
+       "line": 146
+      },
+      {
+       "kind": "verify",
+       "text": "The full suite ran at this head: 429 tests, all passing, with one skip, the TypeScript build check that needs <code>npm ci</code>.",
+       "line": 790
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "lookup",
+   "title": "One version lookup for the CLI and reviews",
+   "kicker": "Why distribution_version moves from cli.py to core.py",
+   "intro": [
+    "<code>distribution_version</code> returns the version of the installed <code>projector-cli</code> package, which <code>project --version</code> prints and <code>install.sh status</code> compares against the release. It lived in <code>cli.py</code>. The review code now needs it too, but <code>cli.py</code> already imports <code>review.py</code>, so <code>review.py</code> importing <code>cli.py</code> would be circular. The function moves to <code>core.py</code>, which both modules already import. It behaves the same there. Only its docstring and the name it calls <code>importlib.metadata</code> by change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "Gains <code>DISTRIBUTION</code> and <code>distribution_version</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>core.py</code> imports <code>importlib.metadata</code> by its full name, not as <code>metadata</code>, because several of its functions already use <code>metadata</code> as a local variable for a plan's frontmatter.",
+       "line": 142
+      },
+      {
+       "kind": "verify",
+       "text": "With the head installed into a fresh virtual environment, <code>start_comment</code> wrote <code>projector `0.6.9`</code>. Run from the source tree with <code>PYTHONPATH=src</code> and no install, it wrote <code>projector `unknown`</code>.",
+       "line": 152
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Drops its own copy and imports <code>DISTRIBUTION</code> and <code>distribution_version</code> from <code>core</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>cli.py</code> still needs <code>importlib.metadata</code> for <code>install_record</code>, and importing both names back keeps <code>project --version</code>, the warning about a newer release, and the <code>test_projector.py</code> tests that import <code>distribution_version</code> from <code>projector.cli</code> working. The installed head printed <code>project 0.6.9</code> for <code>--version</code>, and those tests pass.",
+       "line": 42
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The documented format",
+   "kicker": "The skill and the CLI reference show the new segment",
+   "intro": [
+    "<code>skills/review-pr/SKILL.md</code> is the instruction an agent follows to review a pull request, and it shows the exact start comment, signature line, and marker that <code>project review</code> writes. <code>docs/cli.md</code> is the command reference. Both now show the <code>projector</code> segment and say where its value comes from."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds the segment to both quoted formats and a paragraph on where the version comes from.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The label names the release of the <code>project</code> command. The method text a review follows comes from the Projector plugin, which updates separately, so the two can differ when an upgraded CLI runs beside an older cached plugin, or the reverse. <code>project upgrade</code> updates both. The review left a suggestion to say so here.",
+       "line": 304
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>project review</code> section says the start comment and signature line name the version that <code>project --version</code> reports."
+    }
+   ]
+  }
+ ]
+}
