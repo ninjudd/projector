@@ -320,6 +320,26 @@ class SiteTests(unittest.TestCase):
         self.assertEqual(1, len(failures))
         self.assertIn("has no diff.patch beside it; republish it", failures[0])
 
+    def test_a_summary_stored_as_spec_json_is_reported_until_it_is_republished(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        path = self.write_summary(tmp / "summaries", "a" * 40, "Old")
+        old = path.rename(path.with_name("spec.json"))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+
+        self.assertEqual([], entries)
+        self.assertEqual(1, len(failures))
+        self.assertTrue(failures[0].startswith(f"7/{'a' * 40}/spec.json: "), failures[0])
+        self.assertIn("run `project upgrade`, then republish it with `project summary publish`", failures[0])
+        self.assertIn(f"::error title=Summary skipped::7/{'a' * 40}/spec.json: ", out.getvalue())
+
+        path.write_text(old.read_text())
+        with redirect_stdout(io.StringIO()):
+            entries, failures = site.build_site(tmp / "republished", summaries=tmp / "summaries")
+
+        self.assertEqual(([], 1), (failures, len(entries)), "a republished summary sits beside the old file")
+
     def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         data = make_summary(GOOD_GROUPS)

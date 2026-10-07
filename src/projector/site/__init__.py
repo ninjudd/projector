@@ -29,7 +29,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, title_from_text
-from ..summary import DIFF_FILE, SummaryError, prepare_page
+from ..summary import DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page
 
 
 
@@ -122,14 +122,18 @@ def summary_time(path: Path) -> int:
 def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest."""
     summaries = sorted(root.glob("*/*/summary.json"))
-    if not summaries:
-        return [], []
+    unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+              if not path.with_name("summary.json").is_file()]
     own_repo = os.environ.get("GITHUB_REPOSITORY", "").lower()
     failures: list[str] = []
 
     def skip(path: Path, reason: object) -> None:
         failures.append(f"{path.relative_to(root)}: {reason}")
         print(f"::error title=Summary skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
+
+    for path in unread:
+        skip(path, f"the site reads summary.json, not {LEGACY_SUMMARY_FILE}; run `project upgrade`, then republish it "
+                   "with `project summary publish`")
 
     by_pr: dict[str, list[tuple[int, dict]]] = {}
     for path in summaries:

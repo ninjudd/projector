@@ -31,6 +31,10 @@ PAGES_REF = "refs/projector/summaries"
 DISPATCH_EVENT = "projector-summaries"
 PAGES_ROOT = "summaries"
 DIFF_FILE = "diff.patch"
+# The name older releases stored each summary under. The site does not read it,
+# and reports each summary still stored only under it, so the repository knows
+# to republish that summary.
+LEGACY_SUMMARY_FILE = "spec.json"
 WORKFLOW_PATH = ".github/workflows/projector-site.yml"
 LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
 # The names summaries were published under when they were called walkthroughs.

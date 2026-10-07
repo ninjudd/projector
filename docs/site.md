@@ -146,6 +146,23 @@ the site somewhere other than GitHub Pages, run `project site build --out
 DIR --base PATH` and serve `DIR` from any static host that answers a missing
 path with `404.html`.
 
+## Republish summaries stored as `spec.json`
+
+Older releases stored each summary as `spec.json`, and the site reads only
+`summary.json`. The site leaves out each summary stored only as `spec.json`,
+and the deploy reports it as skipped. To show one again, upgrade Projector,
+then publish the stored summary under the new name:
+
+```sh
+project upgrade
+git fetch origin refs/projector/summaries
+git show FETCH_HEAD:summaries/<number>/<head>/spec.json > summary.json
+project summary publish --summary summary.json
+```
+
+`publish` stores `summary.json` beside the old file, and the next deploy
+shows the summary.
+
 ## Update a site set up for walkthroughs
 
 Summaries were once called walkthroughs, and a repository set up then has a

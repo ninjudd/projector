@@ -706,6 +706,10 @@ deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
 `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any summary that fails or has no stored diff.
+It reads only `summary.json`, so it also reports each summary stored only as
+`spec.json`, the name older releases wrote. To show such a summary, publish it
+again with a current release, as
+[the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 
