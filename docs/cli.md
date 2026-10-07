@@ -30,7 +30,7 @@ created CLAUDE.md
 updated ~/.claude/settings.json
 ```
 
-`init` manages three files in the repository and one of yours, and reports
+`init` manages three files in the repository and two of yours, and reports
 what it did to each:
 
 - `docs/projects/README.md` states the convention, links to the Projector
@@ -56,29 +56,58 @@ what it did to each:
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
 - `~/.claude/settings.json`, your own Claude Code settings, gains the
-  permission rule `Bash(project review publish *)` in `permissions.allow`.
-  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
-  directory instead. Claude Code's auto mode otherwise refuses a review loop's
-  clean review of your own pull request as self-approval, although the review
-  is a `COMMENT` that moves no `reviewDecision` and a person still merges. An
-  allow rule resolves the command before the classifier runs. The rule goes in
-  your settings rather than the repository's, so it holds in every repository,
-  clone, and worktree you open, whether or not the repository commits or
-  ignores `.claude/`, and no repository has to carry a permission for everyone
-  who opens it. `init` never touches the repository's own
-  `.claude/settings.json`. Because the rule exempts a command from the
-  classifier, `init` adds it only when you run `init` at a terminal, or when
-  you pass `--publish-rule`. Run without a terminal, as an agent refreshing the
-  instructions runs it, `init` reports the file as `kept` and says on stderr
-  how to add the rule, and `review.publish_rule = true` does not change that.
-  Pass `--no-publish-rule` to leave the file alone for one run. `init` adds
-  the rule to the file's existing settings, keeps every other setting, writes
-  through a symlink such as one into a dotfiles repository, and writes the file
-  back as two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
-  settings of an unexpected shape, sits under a `.claude` that is not a
-  directory, or cannot be written, as one linked into a read-only directory
-  such as the Nix store cannot, and says on stderr how to add the rule
-  yourself. `init` still exits 0.
+  permission rules `Bash(project review publish *)` and
+  `Bash(project summary publish *)` in `permissions.allow`. When
+  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
+  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
+  review of your own pull request as self-approval, although the review is a
+  `COMMENT` that moves no `reviewDecision` and a person still merges, and it
+  can refuse the publish of a summary you asked for. An allow rule resolves
+  the command before the classifier runs. The rules go in your settings rather
+  than the repository's, so they hold in every repository, clone, and worktree
+  you open, whether or not the repository commits or ignores `.claude/`, and
+  no repository has to carry a permission for everyone who opens it. `init`
+  never touches the repository's own `.claude/settings.json`. Because the
+  rules exempt commands from the classifier, `init` adds them only when you
+  run `init` at a terminal, or when you pass `--publish-rule`. Run without a
+  terminal, as an agent refreshing the instructions runs it, `init` reports
+  the file as `kept` and says on stderr how to add the rules, and
+  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+  to leave the file alone for one run. `init` adds the rules to the file's
+  existing settings, keeps every other setting, writes through a symlink such
+  as one into a dotfiles repository, and writes the file back as two-space
+  JSON. It keeps a file that is not valid UTF-8 JSON, holds settings of an
+  unexpected shape, sits under a `.claude` that is not a directory, or cannot
+  be written, as one linked into a read-only directory such as the Nix store
+  cannot, and says on stderr how to add the rules yourself. `init` still
+  exits 0.
+- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
+  commands, for Codex's approval reviewer, which otherwise can refuse
+  `project summary publish` as sending repository content to another host.
+  When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
+  directory instead. `init` writes it only where that directory exists, so it
+  never creates a Codex configuration for you. The file is Projector's own:
+  Codex loads every `.rules` file in the directory and saves the approvals you
+  grant to `default.rules`, so `init` rewrites `projector.rules` whole and
+  leaves your other rules alone. The terminal, `--publish-rule`, and
+  `review.publish_rule` decide it exactly as they decide the Claude Code
+  rules. The file holds one rule:
+
+  ```text
+  prefix_rule(
+      pattern = ["project", ["review", "summary"], "publish"],
+      decision = "allow",
+  )
+  ```
+
+  Codex runs a command that an `allow` rule matches without asking, and
+  outside its sandbox, so a publish reaches GitHub and the site. To see what
+  the rule allows, run
+  `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+  `init` keeps the file, and says on stderr how to add the rule yourself, when
+  the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+  a read-only directory cannot, or when `rules` is not a directory. `init`
+  still exits 0.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without
@@ -99,10 +128,18 @@ never writes; the file is a symlink checked out as a plain file, as above; or
 the markers in the file do not delimit exactly one section, for example a
 begin marker with no end marker. In that last case `init` still writes the
 other instruction files, then exits 65 and names the repair, and prints no
-JSON document in `--json` mode. Your Claude Code settings file is kept for
-the reasons its entry above names, and `init` still exits 0. It is reported
-with your home directory as `~`, in `--json` mode too, or by its full path
-when `CLAUDE_CONFIG_DIR` points outside your home directory.
+JSON document in `--json` mode. Your Claude Code settings and Codex rules
+files are kept for the reasons their entries above name, and `init` still
+exits 0. Each is reported with your home directory as `~`, in `--json` mode
+too, or by its full path when `CLAUDE_CONFIG_DIR` or `CODEX_HOME` points
+outside your home directory.
+
+The two rules files belong to you, not to a repository, so `init` sets them up
+outside a Git repository too. Run there, it writes only those files, reports
+them as it does in a repository, says on stderr that it adopted nothing else,
+and exits 0. Its `--json` document then lists `files` with no top-level
+`action` or `path`, because there is no projects README. `--site` and `--url`
+need a repository, so outside one they exit 2.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
@@ -111,10 +148,10 @@ To keep Projector out of your instruction files, set in `.projector.toml`:
 enabled = false
 ```
 
-With that key false, `init` manages only the projects README and your Claude
-Code settings, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`. To
-leave your Claude Code settings alone when `init` runs in this repository,
-set:
+With that key false, `init` manages only the projects README and your
+permission rules, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`.
+To leave your Claude Code settings and Codex rules alone when `init` runs in
+this repository, set:
 
 ```toml
 [review]
@@ -457,7 +494,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
