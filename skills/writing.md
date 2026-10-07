@@ -97,9 +97,12 @@ job, and give a second job its own section.
 | Reference | Look something up | A complete, exact, and neutral description, with no instructions or opinions |
 | Explanation | Understand why | One bounded topic, with its design decisions, constraints, and alternatives |
 
-In a plan, the implementation sequence is a how-to, and the decisions are
-an explanation. In a summary, the group intros explain, and the notes tell
-the reader what to check. A review reports what it found.
+In a plan, the problem and the solution describe the system as it is and
+as the change leaves it, the reasons for the design are an explanation,
+and a rollout is a how-to. The solution holds the whole design in one
+place, so the reasons explain it without repeating it. In a summary, the
+group intros explain, and the notes tell the reader what to check. A
+review reports what it found.
 
 ## 4. Give the prose structure
 

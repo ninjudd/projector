@@ -280,7 +280,10 @@ project create payments --status ready --priority next
 project create invoices --parent payments --priority later
 ```
 
-`create` defaults to `--status draft` and `--priority later`.
+`create` defaults to `--status draft` and `--priority later`. The new plan
+opens with a one-sentence summary to fill in, then numbered sections for the
+problem, the solution, the reasons for the design, and the acceptance
+criteria, in that order, so the design leads and the evidence follows.
 
 `create` opens the new plan when stdin and stdout are interactive. Pass
 `--no-edit` to leave the generated plan ready for another command. In a

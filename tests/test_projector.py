@@ -340,6 +340,27 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("status: ready", created)
         self.assertIn("priority: next", created)
 
+    def test_create_scaffolds_the_problem_before_the_solution(self) -> None:
+        code, stdout, stderr = self.invoke("create", "card-limit", "--no-edit")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("docs/projects/card-limit/readme.md\n", stdout)
+        created = (self.projects / "card-limit" / "readme.md").read_text()
+        headings = [line for line in created.splitlines() if line.startswith("#")]
+        self.assertEqual(
+            [
+                "# Card Limit",
+                "## 1. Problem",
+                "## 2. Solution",
+                "## 3. Why this design",
+                "## 4. Acceptance criteria",
+            ],
+            headings,
+        )
+        summary = created.split("# Card Limit\n\n", 1)[1].split("\n", 1)[0]
+        self.assertEqual("Say in one sentence what this project makes true.", summary)
+        self.assertNotIn("Outcome", created)
+
     def test_create_refuses_invalid_or_existing_names(self) -> None:
         self.plan("alpha")
         code, _, stderr = self.invoke("create", "alpha", "--no-edit")
