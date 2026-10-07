@@ -161,7 +161,9 @@ project summary publish --summary summary.json
 ```
 
 `publish` stores `summary.json` beside the old file, and the next deploy
-shows the summary.
+shows the summary. The site dates a republished summary by its `spec.json`,
+when its head was first published, so you can republish a pull request's
+heads in any order.
 
 ## Update a site set up for walkthroughs
 

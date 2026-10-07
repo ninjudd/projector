@@ -694,6 +694,24 @@ class ServeTests(SiteRepoCase):
         self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries")], found)
         self.assert_serves_both_heads(*found[0])
 
+    def test_a_republished_summary_keeps_the_date_its_head_was_first_published(self) -> None:
+        # Both heads were published as spec.json, then republished newest first.
+        remote = self.published_remote(name="spec.json")
+        for when, head in ((1_700_001_000, "d" * 40), (1_700_001_500, "c" * 40)):
+            (remote / summary.PAGES_ROOT / "9" / head / "summary.json").write_text(json.dumps(served_summary(9, head)))
+            run_git(remote, "add", ".")
+            run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
+        run_git(remote, "update-ref", summary.PAGES_REF, "HEAD")
+
+        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assert_serves_both_heads(*serve.summaries_refs(self.repo, "origin")[0])
+        out = Path(tempfile.mkdtemp())
+        with redirect_stdout(io.StringIO()):
+            cli.build_checkout(self.repo.resolve(), out, remote / summary.PAGES_ROOT, "/", "owner/example")
+        reviews = json.loads((out / "site.json").read_text())["reviews"]
+        self.assertEqual([("d" * 40, 2)], [(review["head"], review["heads"]) for review in reviews],
+                         "dated from Git, as the site action builds a checkout of the ref")
+
     def test_reads_the_old_walkthroughs_ref_and_reports_its_spec_json_summaries_as_skipped(self) -> None:
         # Every release that published to the old ref stored each summary as spec.json.
         self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT, "spec.json")

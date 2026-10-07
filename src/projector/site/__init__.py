@@ -108,7 +108,15 @@ def build_page(summary: dict, out: Path, diff: str | None = None, at_head: bool 
 
 
 def summary_time(path: Path) -> int:
-    """When the summary was committed, falling back to its modification time."""
+    """When the summary was committed, falling back to its modification time.
+
+    A summary republished beside the spec.json an older release stored takes
+    that file's time, when its head was first published, so the order heads
+    are republished in cannot make an older head a pull request's newest.
+    """
+    original = path.with_name(LEGACY_SUMMARY_FILE)
+    if original.is_file():
+        path = original
     try:
         out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", path.name], cwd=path.parent,
                              capture_output=True, text=True, check=True).stdout.strip()

@@ -635,12 +635,14 @@ A repository that published before the rename keeps its summaries on
 `spec.json`. When the remote has that ref but no `refs/projector/summaries`,
 `summary publish` first creates the new ref from it by replaying each of the
 old ref's commits with its `walkthroughs/` folder as `summaries/`, keeping the
-commit's author, dates, and message. It pushes that history with the new
-summary on top and leaves the old ref in place; delete it with
-`git push origin :refs/projector/walkthroughs` once every site that reads it
-runs a release that reads the new ref. Until the new ref exists, `site serve`
-and the site action read the old one. Either way, the site reports each
-summary stored as `spec.json` as skipped until you publish it again.
+commit's author, dates, and message, so a summary republished beside one of
+those files keeps the date the site orders a pull request's heads by. It
+pushes that history with the new summary on top and leaves the old ref in
+place; delete it with `git push origin :refs/projector/walkthroughs` once
+every site that reads it runs a release that reads the new ref. Until the new
+ref exists, `site serve` and the site action read the old one. Either way, the
+site reports each summary stored as `spec.json` as skipped until you publish
+it again.
 
 `site page` builds one summary into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
