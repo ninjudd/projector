@@ -9,7 +9,7 @@ Summarize a pull request's changes as one guided page a reviewer reads top
 to bottom: the diff split into logical groups in reading order, each group
 opened by what it does and why, followed by that group's files with every
 hunk, and review notes on each group, file and line. This skill writes the
-page's data, a summary spec. The Projector CLI renders it and the repository's
+page's data, a summary. The Projector CLI renders it and the repository's
 Projector site serves it, so your job is the judgment: the grouping, the
 explanations, and the notes. Every command below is the `project` CLI that ships beside
 this skill; install it as Projector's README describes when `project` is
@@ -20,16 +20,16 @@ retry.
 Reading a pull request does not authorize changing it. Do not comment on,
 push to, or approve the pull request unless the user asks.
 
-## Build the spec
+## Build the summary
 
 1. Resolve the repository (`owner/name`) and pull request number from the
    user's request or the current checkout.
-2. Write a skeleton spec. It records the pull request's head and lists every
+2. Write a skeleton summary. It records the pull request's head and lists every
    changed file with its line counts:
 
    ```sh
    project summary init \
-     --repo OWNER/NAME --pr NUMBER --spec WORKDIR/summary.json
+     --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
    ```
 
    Keep `WORKDIR` somewhere you can reach again this session. When you will
@@ -38,10 +38,10 @@ push to, or approve the pull request unless the user asks.
    its instructions. Build `WORKDIR` in that scratchpad, or else under the
    working directory. `$TMPDIR`, `/tmp`, and a background job's temporary
    directory are outside both, and the publish refuses files from them. The
-   spec is what you edit when the pull request moves.
+   summary is what you edit when the pull request moves.
 3. Read enough to explain the change: the pull request body, the full diff,
    plan or design documents the change touches, and the review threads.
-   Take the diff from the spec's `pr.base` to its `pr.head` through the
+   Take the diff from the summary's `pr.base` to its `pr.head` through the
    compare API, the one `page` and `publish` read, which works from any
    directory:
 
@@ -65,13 +65,13 @@ push to, or approve the pull request unless the user asks.
    for what its files did before the change and do after it, in plain
    words, the terms a newcomer would need defined, and the line numbers of
    anything worth a note, taken from inside the diff's hunks.
-4. Fill the spec as `spec.md` describes, and write every piece of prose in
+4. Fill the summary as `format.md` describes, and write every piece of prose in
    it for the reader that "Write for someone new to the code" below
    describes. The groups decide whether the page helps:
    - **Order groups from the contract outward.** API and schema first, then
      the shared core, then persistence and configuration, then adapters, then
      the callers that drive it all, then tooling and documentation.
-   - **Put every changed file in exactly one group.** `build` refuses a spec
+   - **Put every changed file in exactly one group.** `build` refuses a summary
      that misses a file, repeats one, or names one that is not in the diff.
    - **Explain why, not only what.** Give the reason itself. A plan
      decision or review thread can back it up, but its number alone, such
@@ -152,12 +152,12 @@ sense only to someone who already knows the code, rewrite it.
 ## Build the page
 
 ```sh
-project site page --spec WORKDIR/summary.json --out WORKDIR/site
+project site page --summary WORKDIR/summary.json --out WORKDIR/site
 ```
 
-`page` fetches the diff from GitHub's compare API for the spec's merge base
+`page` fetches the diff from GitHub's compare API for the summary's merge base
 (`pr.base`) and head, and refuses to run when the pull request's head is no
-longer the spec's `pr.head`, so the page never describes a diff it does not
+longer the summary's `pr.head`, so the page never describes a diff it does not
 show. The compare API is not the pull request diff endpoint and does not
 share its 300-file limit, so a pull request that `gh pr diff` refuses still
 builds without help. Pass `--diff` only when `page` itself reports that
@@ -174,24 +174,24 @@ browser.
 
 ## Publish the summary
 
-The summary is the spec. Publish it to the repository's hidden summaries
-ref, where the repository's Projector site reads it, whether that site is
-its GitHub Pages site or `project site serve` on the user's machine. From a
-checkout whose `origin` is the repository, run:
+Publish the summary to the repository's hidden summaries ref, where the
+repository's Projector site reads it, whether that site is its GitHub Pages
+site or `project site serve` on the user's machine. From a checkout whose
+`origin` is the repository, run:
 
 ```sh
-project summary publish --spec WORKDIR/summary.json
+project summary publish --summary WORKDIR/summary.json
 ```
 
-`publish` decides where the spec goes, and says which:
+`publish` decides where the summary goes, and says which:
 
 - **The repository hosts its site**, meaning the Projector site workflow is
-  on its default branch and it has a Pages site. `publish` pushes the spec,
+  on its default branch and it has a Pages site. `publish` pushes the summary,
   starts the deploy, and links the summary from the pull request. Setting
   that up was the reviewed decision to host summaries there, so publish
   without asking again. Get the page's URL with
   `project site status --repo OWNER/NAME --pr NUMBER` and hand it over.
-- **It does not.** `publish` commits the spec to this checkout's own
+- **It does not.** `publish` commits the summary to this checkout's own
   `refs/projector/summaries` and pushes nothing, so nothing on GitHub
   changes. Tell the user to preview it with `project site serve` from that
   checkout, at `reviews/NUMBER/`, which a server already running picks up
@@ -199,7 +199,7 @@ project summary publish --spec WORKDIR/summary.json
   summaries, pointing at the "Set up the Projector site" section of
   Projector's README.
 
-Pass `--local` to keep the spec in the checkout even where the site is
+Pass `--local` to keep the summary in the checkout even where the site is
 hosted, when the user wants to preview a summary before it goes live.
 Publish a Claude Artifact instead only when the user asks for one, or when
 no checkout of the repository is at hand to publish from, and say which.
@@ -224,18 +224,18 @@ Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
 
 ### Publish to the repository's GitHub Pages site
 
-A repository can host its own summaries. Specs live on the hidden ref
+A repository can host its own summaries. Summaries live on the hidden ref
 `refs/projector/summaries`, which is not a branch: GitHub lists no branch
 and offers no pull request for it, and clones do not fetch it. A workflow on
 the default branch builds and deploys them with Projector's shared action.
 `publish` pushes to that hidden ref only in a repository that hosts its
 site, which a repository accepts by setting hosting up; anywhere else the
-spec stays in the checkout, as the section above describes.
+summary stays in the checkout, as the section above describes.
 
 Always publish with `project summary publish`, run directly. Do not wrap it
 in a script of your own, and do not commit to the ref or send the dispatch
 yourself. The
-command already builds the spec and refuses one that does not build, and a
+command already builds the summary and refuses one that does not build, and a
 wrapper only hides what is being written from the user and from the host's
 permission checks. You do not need to build the page first; `page` is a
 local preview.
@@ -249,30 +249,34 @@ refuses `publish`, do not retry it in another form. Ask the user to run
 `init` adds the rules only for a person at a terminal, so do not run it to
 add them yourself.
 
-`publish` fetches the diff once, builds the spec against it, and refuses one
-that does not build. It then commits the spec and that diff to
-`summaries/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
+`publish` fetches the diff once, builds the summary against it, and refuses one
+that does not build. It then commits the summary and that diff to
+`summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
 starts the workflow. It fetches from the compare API, which serves pull
 requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
 `publish` reports that GitHub could not serve the diff. The file is then the
 local `git diff` from step 3, since the compare call there fails with
-`publish`'s. It must be the diff from the spec's `pr.base` to its `pr.head`,
+`publish`'s. It must be the diff from the summary's `pr.base` to its `pr.head`,
 because every later deploy serves the stored diff as it is. Because the diff is
-stored, the site deploy asks GitHub for nothing: it checks each spec against
+stored, the site deploy asks GitHub for nothing: it checks each summary against
 its stored diff and writes each page's data beside it, and the page loads
-that data when it opens. The deploy reports and skips any spec that still
-fails, or that names another repository, so one bad spec costs one
+that data when it opens. The deploy reports and skips any summary that still
+fails, or that names another repository, so one bad summary costs one
 summary rather than the deployment. The site's Reviews section lists
 every summary at `reviews/`, serves each pull request's newest head at
 `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
-older heads from each page. The spec on the ref is the durable copy: to
+older heads from each page. The summary on the ref is the durable copy: to
 update a summary later, fetch it with
 `git fetch origin refs/projector/summaries` and start from it rather than
-from a fresh `init`. A repository that has not published since summaries
-were called walkthroughs has its specs on `refs/projector/walkthroughs`,
-under `walkthroughs/`, instead; its next `publish` carries them over to the
-new ref.
+from a fresh `init`. A summary that an older release stored there as
+`spec.json` does not appear on the site, and the deploy reports it as
+skipped. To update one, start from its `spec.json` and publish it as
+`summary.json`. A repository that has not published since summaries were
+called walkthroughs has its summaries on `refs/projector/walkthroughs`, under
+`walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
+carries them over to the new ref, where they stay off the site until each is
+published again.
 
 Last, `publish` comments a link to the summary on the pull request, so a
 reader on GitHub finds the page. The pull request keeps one such comment
@@ -300,11 +304,11 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 
 ## Update the page when the pull request moves
 
-1. List what changed since the spec's head:
+1. List what changed since the summary's head:
    `git log --oneline OLD_HEAD..NEW_HEAD` and
    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
    compare against the new merge base instead.
-2. Read the new commits and any new review threads, then revise the spec:
+2. Read the new commits and any new review threads, then revise the summary:
    set `pr.head`, move new files into groups, drop files that left the diff,
    and rewrite every note, check and overview card the change made untrue.
    Move each note that has a `line` to where its code sits in the new diff,
@@ -312,10 +316,10 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
    only that a line is still in its file's diff, not that it still holds the
    code the note is about. Resolve or remove `flag` checks the new commits
    fixed.
-3. `publish` the revised spec, which becomes a new version beside the old
+3. `publish` the revised summary, which becomes a new version beside the old
    one, pushed to a hosted site or kept in the checkout as the first time.
-   A spec kept in the checkout is found there later with
-   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/spec.json`.
+   A summary kept in the checkout is found there later with
+   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/summary.json`.
    For an artifact the user asked for, rebuild and republish to the same
    one: publish the same file path again in the conversation that created
    it, or pass the artifact's URL as `url` after reading it from any other

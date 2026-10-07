@@ -1182,7 +1182,7 @@ class MutationTests(RepositoryTestCase):
             return json.loads(result.stdout).get("decision", "none")
 
         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
-        self.assertEqual("allow", decision("project", "summary", "publish", "--spec", "summary.json"))
+        self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
         self.assertEqual("none", decision("project", "site", "serve"))
         self.assertEqual("none", decision("project", "summary", "init"))
 

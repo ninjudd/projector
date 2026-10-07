@@ -583,42 +583,43 @@ A repository that sets up the Projector site serves it from GitHub Pages,
 built from content Projector keeps in the repository: its `README.md`, the
 Markdown documents under `docs/`, the project plans, and the pull request
 summaries on the hidden ref `refs/projector/summaries`. The
-`summarize-pr` skill writes a summary's data, a spec, and these
-commands do everything else:
+`summarize-pr` skill writes a summary, and these commands do everything
+else:
 
 ```sh
-project summary init --repo OWNER/NAME --pr 66 --spec summary.json
-project summary publish --spec summary.json
-project site page --spec summary.json --out site
-project site build --out _site --summaries specs/summaries
+project summary init --repo OWNER/NAME --pr 66 --summary summary.json
+project summary publish --summary summary.json
+project site page --summary summary.json --out site
+project site build --out _site --summaries summaries-ref/summaries
 project site serve --port 8000
 project site status --repo OWNER/NAME --pr 66
 project site workflow --write
 ```
 
-`summary init` writes a skeleton spec with every changed file in one
+`summary init` writes a skeleton summary with every changed file in one
 unassigned group. `summary publish` fetches the pull request's diff, checks
-that the spec builds against it, commits the spec and the diff to the hidden
-ref without touching the checkout, and starts the repository's site workflow.
+that the summary builds against it, commits the summary and the diff to the
+hidden ref without touching the checkout, and starts the repository's site
+workflow.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
-run from the spec's `pr.base` to its `pr.head`, because every later deploy
+run from the summary's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
 
 `summary publish` pushes only to a repository that hosts its site, which
 `site status` reports as hosted. Anywhere else nothing on GitHub reads the
-ref, so it commits the spec and the diff to this checkout's own
+ref, so it commits the summary and the diff to this checkout's own
 `refs/projector/summaries` and pushes nothing, starts no workflow, and
 comments nothing. `site serve` then previews the summary before the site is
 set up on GitHub Pages:
 
 ```console
-$ project summary publish --spec summary.json
-committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/spec.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
+$ project summary publish --summary summary.json
+committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/summary.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
 ```
 
-Pass `--local` to keep a spec local even where the site is hosted, to
-preview it before it goes live. A spec kept local stays in that checkout.
-Once the site is hosted, publish the spec again to push it.
+Pass `--local` to keep a summary local even where the site is hosted, to
+preview it before it goes live. A summary kept local stays in that checkout.
+Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
@@ -629,31 +630,33 @@ It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.
 
-A repository that published before the rename keeps its specs on
-`refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
-that ref but no `refs/projector/summaries`, `summary publish` first creates
-the new ref from it by replaying each of the old ref's commits with its
-`walkthroughs/` folder as `summaries/`, keeping the commit's author, dates,
-and message, so every spec keeps the date the site orders a pull request's
-heads by. It pushes that history with the new spec on top and leaves the old
-ref in place; delete it
-with `git push origin :refs/projector/walkthroughs` once every site that
-reads it runs a release that reads the new ref. Until the new ref exists,
-`site serve` and the site action read the old one.
+A repository that published before the rename keeps its summaries on
+`refs/projector/walkthroughs`, under `walkthroughs/`, each stored as
+`spec.json`. When the remote has that ref but no `refs/projector/summaries`,
+`summary publish` first creates the new ref from it by replaying each of the
+old ref's commits with its `walkthroughs/` folder as `summaries/`, keeping the
+commit's author, dates, and message, so a summary republished beside one of
+those files keeps the date the site orders a pull request's heads by. It
+pushes that history with the new summary on top and leaves the old ref in
+place; delete it with `git push origin :refs/projector/walkthroughs` once
+every site that reads it runs a release that reads the new ref. Until the new
+ref exists, `site serve` and the site action read the old one. Either way, the
+site reports each summary stored as `spec.json` as skipped until you publish
+it again.
 
 `site page` builds one summary into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
-the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
+the summary's head, unless `--at-head` asks for the recorded head; pass `--diff`
 when GitHub cannot serve a diff that large.
 
 `site build` builds the whole site from a checkout, this repository unless
-`--repo-root` names another, and the summary specs under `--summaries`
+`--repo-root` names another, and the summaries under `--summaries`
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the summaries, and marks a pull request whose base
 branch is another open pull request's head with that pull request's number,
-linked to its review when the site has one and to GitHub otherwise. A spec
+linked to its review when the site has one and to GitHub otherwise. A summary
 that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
@@ -689,7 +692,7 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects
-its diff changes, and to any its spec names in a `projects` list, and each
+its diff changes, and to any its summary names in a `projects` list, and each
 project page lists its reviews. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
@@ -703,8 +706,12 @@ entry point spelled `README.md`. The site workflow runs `site build` through Pro
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
-`<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
-for nothing, and skips and reports any spec that fails or has no stored diff.
+`<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
+for nothing, and skips and reports any summary that fails or has no stored diff.
+It reads only `summary.json`, so it also reports each summary stored only as
+`spec.json`, the name older releases wrote. To show such a summary, publish it
+again with a current release, as
+[the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 
@@ -750,9 +757,9 @@ Before building, it fetches the summaries ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/summaries`
 copy that `summary publish` keeps. When the fetch fails it says why and
 serves the summaries already fetched; `--no-fetch` skips the fetch, and
-`--summaries` serves a directory of specs instead of the ref. It serves the
+`--summaries` serves a directory of summaries instead of the ref. It serves the
 summaries in this checkout's own `refs/projector/summaries` too, the ones a
-local `summary publish` keeps, beside the fetched ones, and reads a spec in
+local `summary publish` keeps, beside the fetched ones, and reads a summary in
 both from the local ref. While it runs it checks `README.md`, `docs/`, a
 configured `projects.dir`, and the summaries every second and rebuilds
 when any of them change;
