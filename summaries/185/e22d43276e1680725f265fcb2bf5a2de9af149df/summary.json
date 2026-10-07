@@ -1,0 +1,96 @@
+{
+ "version": 1,
+ "name": "Titles That Match History",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 185,
+  "title": "Match pull request titles and commit subjects to the repository's history",
+  "head": "e22d43276e1680725f265fcb2bf5a2de9af149df",
+  "headRef": "worktree-pr-title-matches-history",
+  "base": "a92c86b1bb7de711ac200986a1de5d7bff48f0dd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <code>implement</code> skill ends a piece of work by opening a pull request, and Projector's writing guide, <code>skills/writing.md</code>, is the style every skill follows when it writes a title, a body, or a commit message. Until this change, the hand-over asked only for an imperative title, such as <i>Add a retry to the fetch</i>, and the writing guide said nothing about titles.",
+   "That rule breaks repositories with their own convention. In a repository whose every commit subject reads <code>type(scope): lowercase summary [TICKET]</code>, an agent opened a pull request titled as a plain sentence. The repository squash-merges, which makes the pull request title the one commit subject on the default branch, so that title would have been the only subject outside the pattern.",
+   "The change makes the agent read the subjects of the default branch's last twenty commits and follow whatever pattern they share, with the same casing, in both the title and each commit subject. A plain imperative sentence is the fallback only when the history shows no pattern. The rule lives in two places: the writing guide's section on pull requests and commit messages, which every skill that writes a commit message reads, and the <code>implement</code> hand-over, which adds a read-back of the title and a hand-off of the pattern to any subagent that opens the pull request.",
+   "Nothing in the Python CLI changes. This repository's own history is imperative sentences, so its own title rule still holds."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of this head, <code>e22d432</code>, found it clean, with no finding threads.</li><li>It left three optional suggestions, shown as notes on the lines they concern: when to read the history, the copy of the rule in <code>implement</code>, and merge commits in the <code>git log</code> output.</li><li>The validation gate passed at this head: the unit tests, <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code>.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Commit subject</b>: the first line of a commit message, which <code>git log --format=%s</code> prints.</li><li><b>Squash merge</b>: a merge that turns the whole pull request into one commit on the default branch, with the pull request title as its subject and the body as its message.</li><li><b>Conventional Commits</b>: a widely used subject convention of the form <code>type(scope): summary</code>, such as <code>fix(api): retry on timeout</code>.</li><li><b>Hand-over</b>: the last step of <code>implement</code>, which opens a draft pull request and gives the user its URL.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "guide",
+   "title": "The writing guide gains a subject rule",
+   "kicker": "One new bullet in the guide's section on pull requests and commit messages",
+   "intro": [
+    "The writing guide, <code>skills/writing.md</code>, is the shared style every Projector skill follows for prose. Its § 10 covers pull requests and commit messages. The change adds a first bullet there that tells the writer to read the default branch's recent commit subjects and write the pull request title and every commit subject in the pattern they share.",
+    "Putting the rule in the guide is what reaches the other skills. <code>fix-pr</code>, which commits fixes for review findings, and <code>write</code>, which applies the guide to any prose, both follow the guide for commit messages and have no copy of the rule of their own."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/writing.md",
+     "collapsed": false,
+     "note": "Adds the subject-convention bullet as the first item of § 10.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>fix-pr</code> tells the agent to follow <code>../writing.md</code> when it writes each commit message, so it inherits this rule. Traced in <code>skills/fix-pr/SKILL.md</code> at this head."
+      },
+      {
+       "kind": "context",
+       "line": 244,
+       "text": "Review suggestion: <code>git log</code> lists merge commits too. In a repository that merges with merge commits, subjects such as <code>Merge pull request #12 from owner/branch</code> show up in the twenty and are not a convention to copy. Adding <code>--no-merges</code> leaves them out."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "handover",
+   "title": "The implement hand-over applies it",
+   "kicker": "Where the agent reads the history, checks the title, and briefs a subagent",
+   "intro": [
+    "The <code>implement</code> skill builds a change and hands it over as a draft pull request. Its hand-over section used to ask for an imperative title. It now gives the exact command for reading the history, restates the pattern rule, and adds two steps the guide does not carry: read the title back against the history before handing over the URL, and pass the pattern to a subagent that opens the pull request, because a delegated subagent may not read the same instructions.",
+    "The rest of the hand-over keeps its text. The body still explains why the change exists and still ends with a <code>## Testing</code> section."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "collapsed": false,
+     "note": "Replaces the imperative-title rule in the hand-over with the history-based rule, a title read-back, and a subagent hand-off.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 141,
+       "text": "Review suggestion: the history read happens before <code>gh pr create</code>, which comes after the commits whose subjects the rule also governs. A stack ends at <code>gh stack submit --auto</code> instead, which never runs <code>gh pr create</code> and titles a branch with several commits from its branch name. Reading the subjects before the first commit covers the commits and both hand-over paths."
+      },
+      {
+       "kind": "context",
+       "line": 149,
+       "text": "Review suggestion: this paragraph restates the new writing guide bullet almost word for word. Citing § 10 for the rule and keeping only the read-back and subagent steps here would leave one copy to maintain."
+      },
+      {
+       "kind": "verify",
+       "text": "The validation gate passed at this head in a scratch worktree: 442 unit tests with one expected skip for the uncompiled site check, <code>project check</code>, both <code>claude plugin validate</code> runs, and an empty <code>git diff --check</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
