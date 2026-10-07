@@ -14,14 +14,14 @@ a checklist, then shows that group's files with every hunk syntax-highlighted.
 The reviewer marks files viewed and groups reviewed as they go.
 
 The page framework is a fixed renderer that ships with Projector. An agent
-writes only the part that needs judgment, a JSON spec holding the grouping,
-the explanations and the checks, and a script combines the spec with the pull
+writes only the part that needs judgment, a JSON summary holding the grouping,
+the explanations and the checks, and a script combines the summary with the pull
 request's diff.
 
 ## 2. Acceptance criteria
 
-- The `walkthrough-pr` skill builds a page from a spec and the diff, and
-  refuses a spec that leaves a changed file out, repeats one, names one
+- The `walkthrough-pr` skill builds a page from a summary and the diff, and
+  refuses a summary that leaves a changed file out, repeats one, names one
   outside the diff, or describes a head the pull request has moved past
   whenever GitHub can be reached to say so.
 - The page works from disk in any browser and publishes unchanged as a Claude
@@ -29,7 +29,7 @@ request's diff.
 - The build script uses only the Python standard library and the `gh` CLI,
   and the renderer loads remote scripts only from cdnjs.
 - A GitHub Pages publisher serves each repository's walkthroughs to the people
-  who can read that repository, from specs on a hidden ref (section 4).
+  who can read that repository, from summaries on a hidden ref (section 4).
 
 ## 3. Hosting
 
@@ -48,14 +48,14 @@ Three hosts were weighed.
 
 ## 4. GitHub Pages publisher
 
-A repository hosts its own walkthroughs. Specs, not built pages, live on the
+A repository hosts its own walkthroughs. Summaries, not built pages, live on the
 hidden ref `refs/projector/walkthroughs` at
 `walkthroughs/<number>/<head>/spec.json`. `walkthrough.py publish` commits a
-spec there through Git plumbing, so it never touches the checkout, and then
+summary there through Git plumbing, so it never touches the checkout, and then
 sends a `repository_dispatch` event. A workflow on the default branch, added
 once with `walkthrough.py workflow --write`, answers that event by calling
 Projector's composite action, now `ninjudd/projector/actions/site`. The
-action fetches the ref, runs `walkthrough.py site`, which rebuilds every spec
+action fetches the ref, runs `walkthrough.py site`, which rebuilds every summary
 at its recorded head (`build --at-head`, the diff from the compare API for
 `pr.base` and `pr.head`), writes an index, points `/<number>/` at each pull
 request's newest head, and deploys the result to Pages.
@@ -73,12 +73,12 @@ than something that appears on a side branch, and because the workflow runs
 from the default branch, the `github-pages` environment's default rule
 already allows it to deploy.
 
-Committing specs rather than built pages keeps the ref small, because the
-diff comes from GitHub at build time, and makes the spec, the part that needs
-judgment, the only thing an agent writes. The spec on the ref is also the
+Committing summaries rather than built pages keeps the ref small, because the
+diff comes from GitHub at build time, and makes the summary, the part that needs
+judgment, the only thing an agent writes. The summary on the ref is also the
 durable copy a later session starts from when the pull request moves.
 Section 8 changes the first half: the diff now sits on the ref beside its
-spec, so a deploy no longer asks GitHub for it.
+summary, so a deploy no longer asks GitHub for it.
 
 The shared piece is a composite action rather than a reusable workflow
 because a composite action is downloaded at the ref the caller names, with
@@ -88,8 +88,8 @@ what code runs with a token that can read the repository:
 
 - `@v0`, the moving major-version tag of Projector's one version, is the
   default. Repositories get fixes from deliberate releases, never from an
-  unreviewed commit. The spec's `version` is the compatibility contract:
-  every renderer on a major tag accepts every spec of the version it
+  unreviewed commit. The summary's `version` is the compatibility contract:
+  every renderer on a major tag accepts every summary of the version it
   shipped with.
 - A full commit SHA locks the renderer for organizations that want it, as
   GitHub's security hardening guide recommends; Dependabot keeps such pins
@@ -100,7 +100,7 @@ what code runs with a token that can read the repository:
   commit would reach every adopter without anyone releasing it.
 
 Nothing runs when Projector changes. A repository's workflow runs only when
-that repository publishes a spec, so a release reaches each site on that
+that repository publishes a summary, so a release reaches each site on that
 site's next publish, which rebuilds all of its walkthroughs with the new
 renderer, and a bad release breaks no live site until then. Releases follow
 `docs/plugins.md`: an immutable `vX.Y.Z` tag per release and a major tag that
@@ -131,10 +131,10 @@ Open: squashing the ref's history once it grows large.
 - **2026-09-25** The skill, renderer, build script and tests land with the
   Artifacts path. The renderer began as a hand-built page for a 66-file pull
   request in another repository, reviewed in eleven groups, then was split
-  into the fixed renderer and the spec format.
+  into the fixed renderer and the summary format.
 - **2026-09-26** The Pages publisher lands (section 4): `publish`, `site`,
   `build --at-head`, the composite action, and Projector's own site with a
-  walkthrough of #62. The specs first lived on a `projector-pages` branch;
+  walkthrough of #62. The summaries first lived on a `projector-pages` branch;
   GitHub's "had recent pushes" banner for it moved them to the hidden ref
   `refs/projector/walkthroughs`, with a dispatched workflow on the default
   branch. The shared piece became a composite action instead of
@@ -155,8 +155,8 @@ projects view.
 
 The Pages site is Projector's, and it outgrows walkthroughs as soon as
 browsing `docs/projects` (section 6) joins it, so it cannot live inside the
-`walkthrough-pr` skill. The skill writes the data, a spec, and nothing else.
-The CLI owns the rest in two modules: `projector.walkthrough` for the spec
+`walkthrough-pr` skill. The skill writes the data, a summary, and nothing else.
+The CLI owns the rest in two modules: `projector.walkthrough` for the summary
 itself (skeletons, the diff it is checked against, sanitizing, publishing to
 the hidden ref, and whether a repository hosts a site), and `projector.site`
 for turning content into pages (the renderer, the index, the redirects, and
@@ -174,12 +174,12 @@ plans through the CLI's own project model rather than parsing them again.
 
 ## 8. Publish the data once and let the page load it
 
-A deploy used to rebuild every walkthrough from scratch: fetch each spec's
-diff from GitHub, parse it, check the spec against it, sanitize, and embed
+A deploy used to rebuild every walkthrough from scratch: fetch each summary's
+diff from GitHub, parse it, check the summary against it, sanitize, and embed
 the result in each page. That work grows with every walkthrough a repository
-publishes, and each deploy spends one GitHub request per spec. Now
+publishes, and each deploy spends one GitHub request per summary. Now
 `project walkthrough publish` fetches the diff once and commits it beside the
-spec as `diff.patch`, so a deploy asks GitHub for nothing. The site build
+summary as `diff.patch`, so a deploy asks GitHub for nothing. The site build
 still parses, checks, and sanitizes each stored diff, because anyone who can
 push to the hidden ref can write it, and that work is local and fast. Each
 site page is a shell that loads its `data.json` when it opens; `project site
@@ -189,7 +189,7 @@ page opened from disk.
 Serving data from GitHub at view time, with no deploy at all, was rejected: a
 browser cannot read a private repository without the viewer's token, which
 would give up section 3's private-site case, and unauthenticated reads are
-rate limited per visitor. Specs published before diffs were stored still
+rate limited per visitor. Summaries published before diffs were stored still
 build, by fetching their diff as before, until they are republished.
 
 ## 9. The site project owns the rest of the site
@@ -208,12 +208,12 @@ at `prs/<number>/` on the repository's Projector site, or as a Claude
 Artifact or a page on disk. Every acceptance criterion in section 2 holds,
 with two deviations from the original design:
 
-- The build script left the skill. The skill writes the spec, and the
+- The build script left the skill. The skill writes the summary, and the
   Projector CLI does the rest: `project walkthrough init|publish` for the
-  spec and `project site page|build|status|workflow` for pages (section 7).
+  summary and `project site page|build|status|workflow` for pages (section 7).
   The refusals in section 2 are the CLI's, tested in
   `tests/test_walkthrough.py`.
-- Publishing stores the diff beside the spec, and the site deploy builds from
+- Publishing stores the diff beside the summary, and the site deploy builds from
   it without asking GitHub for anything (section 8). The walkthroughs of #62
   and #66, published before diffs were stored, were republished with them on
   2026-09-26, and #81 removes the fallback that fetched their diffs.

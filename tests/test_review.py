@@ -8,6 +8,7 @@ records each one with the token it carried, so a test can see who posted what.
 
 from __future__ import annotations
 
+import importlib.metadata as metadata
 import io
 import json
 import os
@@ -141,6 +142,10 @@ class ReviewCase(unittest.TestCase):
         patcher = mock.patch.object(review, "run_gh", self.github)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Reviews name the installed Projector, so a test sees one version whatever this machine has.
+        installed = mock.patch.object(metadata, "version", return_value="1.2.3")
+        installed.start()
+        self.addCleanup(installed.stop)
 
     def push_head(self, text: str) -> str:
         (self.work / "change.txt").write_text(text + "\n")
@@ -188,7 +193,7 @@ class SetupTests(ReviewCase):
         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
         self.assertEqual(
-            f"{review.MARK} **Projector review started** · model `claude-opus-5-5` · "
+            f"{review.MARK} **Projector review started** · projector `1.2.3` · model `claude-opus-5-5` · "
             f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
             self.github.comments[101],
         )
@@ -599,9 +604,10 @@ class PublishTests(PublishCase):
         self.assertEqual(0, code, err)
         review_body = self.posted()["body"]
         self.assertEqual(
-            f"{review.MARK} **Projector review** · model `claude-opus-5-5` · **CLEAN** · took 12m 34s",
+            f"{review.MARK} **Projector review** · projector `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
+            "took 12m 34s",
             review_body.splitlines()[0])
-        self.assertIn(f"<!-- projector-review v=1 verdict=clean model=claude-opus-5-5 "
+        self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
         self.assertEqual(("COMMENT", self.head, "token-operator"),
@@ -776,10 +782,18 @@ class PublishRefusalTests(PublishCase):
     def test_the_host_effort_names_the_review_when_it_is_set(self) -> None:
         start, signature, marker = self.written("xhigh")
 
-        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
-        self.assertIn("· model `claude-opus-5-5` · effort `xhigh` · **CLEAN** ·", signature)
-        self.assertIn("model=claude-opus-5-5 effort=xhigh sha=", marker)
+        self.assertIn("· projector `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
+        self.assertIn("· projector `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · **CLEAN** ·", signature)
+        self.assertIn("projector=1.2.3 model=claude-opus-5-5 effort=xhigh sha=", marker)
         self.assertNotIn("effort", json.dumps(self.read_state()), "read live, never stored")
+
+    def test_a_checkout_that_was_never_installed_names_its_version_unknown(self) -> None:
+        with mock.patch.object(metadata, "version", side_effect=metadata.PackageNotFoundError):
+            start, signature, marker = self.written(None)
+
+        self.assertIn("· projector `unknown` · model `claude-opus-5-5` · reviewing ", start)
+        self.assertIn("· projector `unknown` · model `claude-opus-5-5` · **CLEAN** ·", signature)
+        self.assertIn("verdict=clean projector=unknown model=claude-opus-5-5 sha=", marker)
 
     def test_the_review_names_no_effort_when_the_host_reports_none(self) -> None:
         for effort in (None, "", "  "):

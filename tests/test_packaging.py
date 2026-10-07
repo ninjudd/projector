@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 PUBLISHED_SKILLS = {
-    "design",
+    "spec",
     "implement",
     "finish",
     "review-pr",

@@ -1,13 +1,13 @@
 ---
-name: design
-description: Write a project's technical design doc as a Git-native plan under docs/projects, or refine an existing one. Use when the user wants to scope, design, prioritize, or record a project before or alongside implementation.
+name: spec
+description: Write a project's technical spec as a Git-native plan under docs/projects, or refine an existing one. Use when the user wants to scope, specify, design, prioritize, or record a project before or alongside implementation.
 ---
 
-# Design a project
+# Spec a project
 
-Turn the requested outcome into a durable Projector plan, a technical design
-doc that another person or agent can execute without reconstructing the
-conversation. Work small enough to need no design goes straight to
+Turn the requested outcome into a durable Projector plan, a technical spec
+that another person or agent can execute without reconstructing the
+conversation. Work small enough to need no spec goes straight to
 `implement`, which builds from a description as well as from a plan.
 
 ## Establish context

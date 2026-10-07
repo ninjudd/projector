@@ -1,4 +1,0 @@
-interface:
-  display_name: "Design"
-  short_description: "Write a project's technical design doc as a Git-native plan"
-  default_prompt: "Use $design to design this project in docs/projects."

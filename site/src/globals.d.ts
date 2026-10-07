@@ -46,7 +46,7 @@ interface SummaryGroup {
   files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
 }
 
-/** A summary page's data: the spec checked against its diff by the build. */
+/** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
   pr: { repo: string; number: number; title: string; head: string; baseRef?: string };

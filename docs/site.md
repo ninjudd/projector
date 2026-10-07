@@ -116,9 +116,9 @@ is the GitHub repository:
 
 3. Publish something. Once the workflow is on the default branch, the
    `summarize-pr` skill publishes to the site by default: ask your agent
-   for a summary of a pull request and it pushes the spec to the hidden
+   for a summary of a pull request and it pushes the summary to the hidden
    ref, starts the workflow, and hands you the link. Until then, it keeps
-   the spec in your checkout's own `refs/projector/summaries` and pushes
+   the summary in your checkout's own `refs/projector/summaries` and pushes
    nothing, so you can preview summaries with `project site serve` before
    the site is set up. Ask for a Claude Artifact instead when you want a
    private page. The site's Reviews section lists every summary, and each
@@ -146,15 +146,39 @@ the site somewhere other than GitHub Pages, run `project site build --out
 DIR --base PATH` and serve `DIR` from any static host that answers a missing
 path with `404.html`.
 
+## Republish summaries stored as `spec.json`
+
+Older releases stored each summary as `spec.json`, and the site reads only
+`summary.json`. The site leaves out each summary stored only as `spec.json`,
+and the deploy reports it as skipped. To show one again, upgrade Projector,
+then publish the stored summary under the new name:
+
+```sh
+project upgrade
+git fetch origin refs/projector/summaries
+git show FETCH_HEAD:summaries/<number>/<head>/spec.json > summary.json
+project summary publish --summary summary.json
+```
+
+`publish` stores `summary.json` beside the old file, and the next deploy
+shows the summary. The site dates a republished summary by its `spec.json`,
+when its head was first published, so you can republish a pull request's
+heads in any order.
+
 ## Update a site set up for walkthroughs
 
 Summaries were once called walkthroughs, and a repository set up then has a
-workflow that listens for the `projector-walkthroughs` event and specs on
-`refs/projector/walkthroughs`. It keeps working: `project summary publish`
-sends both `projector-summaries` and `projector-walkthroughs`, and the site
-action reads the old ref until the new one exists. The first
+workflow that listens for the `projector-walkthroughs` event and summaries on
+`refs/projector/walkthroughs`. Its workflow keeps deploying:
+`project summary publish` sends both `projector-summaries` and
+`projector-walkthroughs`, and the site action reads the old ref until the new
+one exists. Every summary on the old ref is stored as `spec.json`, so the site
+leaves each one out and the deploy reports it as skipped. The first
 `project summary publish` creates `refs/projector/summaries` from the old
-ref's specs and history, and leaves the old ref in place.
+ref's summaries and history, and leaves the old ref in place. Then republish
+each old summary you want to show, as
+[Republish summaries stored as `spec.json`](#republish-summaries-stored-as-specjson)
+describes.
 
 To finish moving, regenerate the workflow so it listens for the new event,
 and commit it to the default branch through a pull request:

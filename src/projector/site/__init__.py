@@ -29,7 +29,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, title_from_text
-from ..summary import DIFF_FILE, SpecError, prepare_page
+from ..summary import DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page
 
 
 
@@ -101,14 +101,22 @@ def write_page(out: Path, payload: dict) -> None:
     copy_assets(out)
 
 
-def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
-    payload = prepare_page(spec, diff=diff, at_head=at_head, extra=extra)
+def build_page(summary: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+    payload = prepare_page(summary, diff=diff, at_head=at_head, extra=extra)
     write_page(out, payload)
     return payload
 
 
-def spec_time(path: Path) -> int:
-    """When the spec was committed, falling back to its modification time."""
+def summary_time(path: Path) -> int:
+    """When the summary was committed, falling back to its modification time.
+
+    A summary republished beside the spec.json an older release stored takes
+    that file's time, when its head was first published, so the order heads
+    are republished in cannot make an older head a pull request's newest.
+    """
+    original = path.with_name(LEGACY_SUMMARY_FILE)
+    if original.is_file():
+        path = original
     try:
         out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", path.name], cwd=path.parent,
                              capture_output=True, text=True, check=True).stdout.strip()
@@ -120,10 +128,10 @@ def spec_time(path: Path) -> int:
 
 
 def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
-    """Build every summary spec that can be built; report and skip the rest."""
-    specs = sorted(root.glob("*/*/spec.json"))
-    if not specs:
-        return [], []
+    """Build every summary that can be built; report and skip the rest."""
+    summaries = sorted(root.glob("*/*/summary.json"))
+    unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+              if not path.with_name("summary.json").is_file()]
     own_repo = os.environ.get("GITHUB_REPOSITORY", "").lower()
     failures: list[str] = []
 
@@ -131,25 +139,29 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[
         failures.append(f"{path.relative_to(root)}: {reason}")
         print(f"::error title=Summary skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
 
+    for path in unread:
+        skip(path, f"the site reads summary.json, not {LEGACY_SUMMARY_FILE}; run `project upgrade`, then republish it "
+                   "with `project summary publish`")
+
     by_pr: dict[str, list[tuple[int, dict]]] = {}
-    for path in specs:
+    for path in summaries:
         try:
-            spec = json.loads(path.read_text(encoding="utf-8"))
-            pr = spec.get("pr") or {}
+            summary = json.loads(path.read_text(encoding="utf-8"))
+            pr = summary.get("pr") or {}
             number, head = path.parent.parent.name, path.parent.name
             if str(pr.get("number")) != number or pr.get("head") != head:
-                raise SpecError(f"it must sit at <pr.number>/<pr.head>/spec.json")
+                raise SummaryError(f"it must sit at <pr.number>/<pr.head>/summary.json")
             if own_repo and str(pr.get("repo", "")).lower() != own_repo:
-                raise SpecError(f"it is for {pr.get('repo')}, not this repository")
+                raise SummaryError(f"it is for {pr.get('repo')}, not this repository")
             stored = path.with_name(DIFF_FILE)
             if not stored.is_file():
-                raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
-            payload = prepare_page(spec, diff=stored.read_text(encoding="utf-8"), at_head=True)
-            payload["projects"] = link(spec, payload) if link else []
-        except (SpecError, ValueError, KeyError, TypeError) as exc:
+                raise SummaryError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
+            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True)
+            payload["projects"] = link(summary, payload) if link else []
+        except (SummaryError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
-        by_pr.setdefault(number, []).append((spec_time(path), payload))
+        by_pr.setdefault(number, []).append((summary_time(path), payload))
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         versions.sort(key=lambda v: v[0], reverse=True)
@@ -183,8 +195,8 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
     A pull request is stacked only when its base branch is another pull
     request's head branch, so a base branch no pull request uses, the default
     branch among them, marks nothing. The pull request beneath is a review's
-    whose spec records that branch as its `headRef`, else the `basePr` the
-    spec recorded, else what `lookup` finds for the branch, asked once per
+    whose summary records that branch as its `headRef`, else the `basePr` the
+    summary recorded, else what `lookup` finds for the branch, asked once per
     branch. Skipping the default branch only saves a lookup that would find
     nothing.
     """
@@ -292,12 +304,12 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
 
 
 def project_linker(described: list[dict], base: str):
-    """Link a review to every project whose files its diff changes, or that its spec names."""
+    """Link a review to every project whose files its diff changes, or that its summary names."""
     by_name = {p["name"]: p for p in described}
     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
 
-    def link(spec: dict, payload: dict) -> list[dict]:
-        names = [n for n in spec.get("projects") or [] if n in by_name]
+    def link(summary: dict, payload: dict) -> list[dict]:
+        names = [n for n in summary.get("projects") or [] if n in by_name]
         for f in payload["files"]:
             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
             if owner and owner not in names:
@@ -432,7 +444,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
 
     `branch` is the checked-out branch the site's GitHub links point at, and
     `trunk` the default branch a pull request that is not stacked is based on.
-    `lookup` finds the pull request whose head is a branch, for a spec that
+    `lookup` finds the pull request whose head is a branch, for a summary that
     did not record the one it is stacked on.
     """
     trunk = trunk or branch

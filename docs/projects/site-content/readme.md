@@ -16,7 +16,7 @@ rather than from GitHub.
 ## 2. Acceptance criteria
 
 - A walkthrough links to every project whose plan files its diff changes,
-  and to any project its spec names in an optional `projects` list; each
+  and to any project its summary names in an optional `projects` list; each
   plan page lists the walkthroughs that link to it, and the PRs view shows
   each walkthrough's plans.
 - The site header carries a search box on every page, walkthroughs included,
@@ -31,7 +31,7 @@ rather than from GitHub.
 **Links come from the diff the walkthrough already stores.** The site build
 has each walkthrough's changed files. A file under a project's directory
 links the walkthrough to the deepest project that contains it, so a change to
-a nested plan links the nested project rather than its parent. A spec may
+a nested plan links the nested project rather than its parent. A summary may
 also list projects by name for a pull request that implements a plan without
 editing it; names that match no project are dropped. Only the newest version
 of a walkthrough decides its links. The build writes the links into each

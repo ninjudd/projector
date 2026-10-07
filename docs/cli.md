@@ -30,7 +30,7 @@ created CLAUDE.md
 updated ~/.claude/settings.json
 ```
 
-`init` manages three files in the repository and one of yours, and reports
+`init` manages three files in the repository and two of yours, and reports
 what it did to each:
 
 - `docs/projects/README.md` states the convention, links to the Projector
@@ -56,29 +56,58 @@ what it did to each:
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
 - `~/.claude/settings.json`, your own Claude Code settings, gains the
-  permission rule `Bash(project review publish *)` in `permissions.allow`.
-  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
-  directory instead. Claude Code's auto mode otherwise refuses a review loop's
-  clean review of your own pull request as self-approval, although the review
-  is a `COMMENT` that moves no `reviewDecision` and a person still merges. An
-  allow rule resolves the command before the classifier runs. The rule goes in
-  your settings rather than the repository's, so it holds in every repository,
-  clone, and worktree you open, whether or not the repository commits or
-  ignores `.claude/`, and no repository has to carry a permission for everyone
-  who opens it. `init` never touches the repository's own
-  `.claude/settings.json`. Because the rule exempts a command from the
-  classifier, `init` adds it only when you run `init` at a terminal, or when
-  you pass `--publish-rule`. Run without a terminal, as an agent refreshing the
-  instructions runs it, `init` reports the file as `kept` and says on stderr
-  how to add the rule, and `review.publish_rule = true` does not change that.
-  Pass `--no-publish-rule` to leave the file alone for one run. `init` adds
-  the rule to the file's existing settings, keeps every other setting, writes
-  through a symlink such as one into a dotfiles repository, and writes the file
-  back as two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds
-  settings of an unexpected shape, sits under a `.claude` that is not a
-  directory, or cannot be written, as one linked into a read-only directory
-  such as the Nix store cannot, and says on stderr how to add the rule
-  yourself. `init` still exits 0.
+  permission rules `Bash(project review publish *)` and
+  `Bash(project summary publish *)` in `permissions.allow`. When
+  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
+  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
+  review of your own pull request as self-approval, although the review is a
+  `COMMENT` that moves no `reviewDecision` and a person still merges, and it
+  can refuse the publish of a summary you asked for. An allow rule resolves
+  the command before the classifier runs. The rules go in your settings rather
+  than the repository's, so they hold in every repository, clone, and worktree
+  you open, whether or not the repository commits or ignores `.claude/`, and
+  no repository has to carry a permission for everyone who opens it. `init`
+  never touches the repository's own `.claude/settings.json`. Because the
+  rules exempt commands from the classifier, `init` adds them only when you
+  run `init` at a terminal, or when you pass `--publish-rule`. Run without a
+  terminal, as an agent refreshing the instructions runs it, `init` reports
+  the file as `kept` and says on stderr how to add the rules, and
+  `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+  to leave the file alone for one run. `init` adds the rules to the file's
+  existing settings, keeps every other setting, writes through a symlink such
+  as one into a dotfiles repository, and writes the file back as two-space
+  JSON. It keeps a file that is not valid UTF-8 JSON, holds settings of an
+  unexpected shape, sits under a `.claude` that is not a directory, or cannot
+  be written, as one linked into a read-only directory such as the Nix store
+  cannot, and says on stderr how to add the rules yourself. `init` still
+  exits 0.
+- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
+  commands, for Codex's approval reviewer, which otherwise can refuse
+  `project summary publish` as sending repository content to another host.
+  When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
+  directory instead. `init` writes it only where that directory exists, so it
+  never creates a Codex configuration for you. The file is Projector's own:
+  Codex loads every `.rules` file in the directory and saves the approvals you
+  grant to `default.rules`, so `init` rewrites `projector.rules` whole and
+  leaves your other rules alone. The terminal, `--publish-rule`, and
+  `review.publish_rule` decide it exactly as they decide the Claude Code
+  rules. The file holds one rule:
+
+  ```text
+  prefix_rule(
+      pattern = ["project", ["review", "summary"], "publish"],
+      decision = "allow",
+  )
+  ```
+
+  Codex runs a command that an `allow` rule matches without asking, and
+  outside its sandbox, so a publish reaches GitHub and the site. To see what
+  the rule allows, run
+  `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+  `init` keeps the file, and says on stderr how to add the rule yourself, when
+  the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+  a read-only directory cannot, or when `rules` is not a directory. `init`
+  still exits 0.
 
 Git checks a committed symlink out as a small plain file holding the link text
 wherever `core.symlinks` is false, which is Git for Windows' default without
@@ -99,10 +128,18 @@ never writes; the file is a symlink checked out as a plain file, as above; or
 the markers in the file do not delimit exactly one section, for example a
 begin marker with no end marker. In that last case `init` still writes the
 other instruction files, then exits 65 and names the repair, and prints no
-JSON document in `--json` mode. Your Claude Code settings file is kept for
-the reasons its entry above names, and `init` still exits 0. It is reported
-with your home directory as `~`, in `--json` mode too, or by its full path
-when `CLAUDE_CONFIG_DIR` points outside your home directory.
+JSON document in `--json` mode. Your Claude Code settings and Codex rules
+files are kept for the reasons their entries above name, and `init` still
+exits 0. Each is reported with your home directory as `~`, in `--json` mode
+too, or by its full path when `CLAUDE_CONFIG_DIR` or `CODEX_HOME` points
+outside your home directory.
+
+The two rules files belong to you, not to a repository, so `init` sets them up
+outside a Git repository too. Run there, it writes only those files, reports
+them as it does in a repository, says on stderr that it adopted nothing else,
+and exits 0. Its `--json` document then lists `files` with no top-level
+`action` or `path`, because there is no projects README. `--site` and `--url`
+need a repository, so outside one they exit 2.
 
 To keep Projector out of your instruction files, set in `.projector.toml`:
 
@@ -111,10 +148,10 @@ To keep Projector out of your instruction files, set in `.projector.toml`:
 enabled = false
 ```
 
-With that key false, `init` manages only the projects README and your Claude
-Code settings, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`. To
-leave your Claude Code settings alone when `init` runs in this repository,
-set:
+With that key false, `init` manages only the projects README and your
+permission rules, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`.
+To leave your Claude Code settings and Codex rules alone when `init` runs in
+this repository, set:
 
 ```toml
 [review]
@@ -460,7 +497,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the Claude Code permission rule for `project review publish` to your Claude Code user settings |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
@@ -549,42 +586,43 @@ A repository that sets up the Projector site serves it from GitHub Pages,
 built from content Projector keeps in the repository: its `README.md`, the
 Markdown documents under `docs/`, the project plans, and the pull request
 summaries on the hidden ref `refs/projector/summaries`. The
-`summarize-pr` skill writes a summary's data, a spec, and these
-commands do everything else:
+`summarize-pr` skill writes a summary, and these commands do everything
+else:
 
 ```sh
-project summary init --repo OWNER/NAME --pr 66 --spec summary.json
-project summary publish --spec summary.json
-project site page --spec summary.json --out site
-project site build --out _site --summaries specs/summaries
+project summary init --repo OWNER/NAME --pr 66 --summary summary.json
+project summary publish --summary summary.json
+project site page --summary summary.json --out site
+project site build --out _site --summaries summaries-ref/summaries
 project site serve --port 8000
 project site status --repo OWNER/NAME --pr 66
 project site workflow --write
 ```
 
-`summary init` writes a skeleton spec with every changed file in one
+`summary init` writes a skeleton summary with every changed file in one
 unassigned group. `summary publish` fetches the pull request's diff, checks
-that the spec builds against it, commits the spec and the diff to the hidden
-ref without touching the checkout, and starts the repository's site workflow.
+that the summary builds against it, commits the summary and the diff to the
+hidden ref without touching the checkout, and starts the repository's site
+workflow.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
-run from the spec's `pr.base` to its `pr.head`, because every later deploy
+run from the summary's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
 
 `summary publish` pushes only to a repository that hosts its site, which
 `site status` reports as hosted. Anywhere else nothing on GitHub reads the
-ref, so it commits the spec and the diff to this checkout's own
+ref, so it commits the summary and the diff to this checkout's own
 `refs/projector/summaries` and pushes nothing, starts no workflow, and
 comments nothing. `site serve` then previews the summary before the site is
 set up on GitHub Pages:
 
 ```console
-$ project summary publish --spec summary.json
-committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/spec.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
+$ project summary publish --summary summary.json
+committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/summary.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
 ```
 
-Pass `--local` to keep a spec local even where the site is hosted, to
-preview it before it goes live. A spec kept local stays in that checkout.
-Once the site is hosted, publish the spec again to push it.
+Pass `--local` to keep a summary local even where the site is hosted, to
+preview it before it goes live. A summary kept local stays in that checkout.
+Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
@@ -595,31 +633,33 @@ It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.
 
-A repository that published before the rename keeps its specs on
-`refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
-that ref but no `refs/projector/summaries`, `summary publish` first creates
-the new ref from it by replaying each of the old ref's commits with its
-`walkthroughs/` folder as `summaries/`, keeping the commit's author, dates,
-and message, so every spec keeps the date the site orders a pull request's
-heads by. It pushes that history with the new spec on top and leaves the old
-ref in place; delete it
-with `git push origin :refs/projector/walkthroughs` once every site that
-reads it runs a release that reads the new ref. Until the new ref exists,
-`site serve` and the site action read the old one.
+A repository that published before the rename keeps its summaries on
+`refs/projector/walkthroughs`, under `walkthroughs/`, each stored as
+`spec.json`. When the remote has that ref but no `refs/projector/summaries`,
+`summary publish` first creates the new ref from it by replaying each of the
+old ref's commits with its `walkthroughs/` folder as `summaries/`, keeping the
+commit's author, dates, and message, so a summary republished beside one of
+those files keeps the date the site orders a pull request's heads by. It
+pushes that history with the new summary on top and leaves the old ref in
+place; delete it with `git push origin :refs/projector/walkthroughs` once
+every site that reads it runs a release that reads the new ref. Until the new
+ref exists, `site serve` and the site action read the old one. Either way, the
+site reports each summary stored as `spec.json` as skipped until you publish
+it again.
 
 `site page` builds one summary into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past
-the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
+the summary's head, unless `--at-head` asks for the recorded head; pass `--diff`
 when GitHub cannot serve a diff that large.
 
 `site build` builds the whole site from a checkout, this repository unless
-`--repo-root` names another, and the summary specs under `--summaries`
+`--repo-root` names another, and the summaries under `--summaries`
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the summaries, and marks a pull request whose base
 branch is another open pull request's head with that pull request's number,
-linked to its review when the site has one and to GitHub otherwise. A spec
+linked to its review when the site has one and to GitHub otherwise. A summary
 that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
@@ -655,7 +695,7 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects
-its diff changes, and to any its spec names in a `projects` list, and each
+its diff changes, and to any its summary names in a `projects` list, and each
 project page lists its reviews. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
@@ -669,8 +709,12 @@ entry point spelled `README.md`. The site workflow runs `site build` through Pro
 composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
-`<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
-for nothing, and skips and reports any spec that fails or has no stored diff.
+`<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
+for nothing, and skips and reports any summary that fails or has no stored diff.
+It reads only `summary.json`, so it also reports each summary stored only as
+`spec.json`, the name older releases wrote. To show such a summary, publish it
+again with a current release, as
+[the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 
@@ -716,9 +760,9 @@ Before building, it fetches the summaries ref from `--remote`, `origin`
 by default, into the same `refs/projector/remotes/<remote>/summaries`
 copy that `summary publish` keeps. When the fetch fails it says why and
 serves the summaries already fetched; `--no-fetch` skips the fetch, and
-`--summaries` serves a directory of specs instead of the ref. It serves the
+`--summaries` serves a directory of summaries instead of the ref. It serves the
 summaries in this checkout's own `refs/projector/summaries` too, the ones a
-local `summary publish` keeps, beside the fetched ones, and reads a spec in
+local `summary publish` keeps, beside the fetched ones, and reads a summary in
 both from the local ref. While it runs it checks `README.md`, `docs/`, a
 configured `projects.dir`, and the summaries every second and rebuilds
 when any of them change;
@@ -773,11 +817,12 @@ access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
 of a head the loop already published a verdict on.
 
-The start comment and the review's signature line name the model from `--model`
-and the reasoning effort from `CLAUDE_EFFORT` in the environment, which Claude
-Code sets for the Bash tool and keeps current through a mid-session `/effort`
-change. When `CLAUDE_EFFORT` is unset or empty, as on Codex or on a model
-without effort support, they leave the effort out rather than guess it.
+The start comment and the review's signature line name the Projector version
+that `project --version` reports, the model from `--model`, and the reasoning
+effort from `CLAUDE_EFFORT` in the environment, which Claude Code sets for the
+Bash tool and keeps current through a mid-session `/effort` change. When
+`CLAUDE_EFFORT` is unset or empty, as on Codex or on a model without effort
+support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the

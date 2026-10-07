@@ -29,6 +29,7 @@ from .summary import WORKFLOW_PATH
 from .config import ConfigError
 from .config import load as load_config
 from .core import (
+    DISTRIBUTION,
     PRIORITIES,
     STATUSES,
     EnvironmentError,
@@ -38,27 +39,11 @@ from .core import (
     ProjectStore,
     UsageError,
     discover_git_root,
+    distribution_version,
     grouped_projects,
     json_scalar,
     json_text,
 )
-
-
-DISTRIBUTION = "projector-cli"
-
-
-def distribution_version() -> str:
-    """The version of the installed distribution, not of this source tree.
-
-    `install.sh status` compares this against the plugin manifest's version,
-    which is the CLI's too, to tell a stale install from a current one. A checkout that was never installed has no
-    distribution to report, which is itself the answer.
-    """
-
-    try:
-        return metadata.version(DISTRIBUTION)
-    except metadata.PackageNotFoundError:
-        return "unknown"
 
 
 UPSTREAM = "ninjudd/projector"
@@ -325,7 +310,9 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
 
-    init = subcommands.add_parser("init", help="adopt the project convention")
+    init = subcommands.add_parser(
+        "init", help="adopt the project convention; outside a repository, set up only the permission rules"
+    )
     site_choice = init.add_mutually_exclusive_group()
     site_choice.add_argument(
         "--site",
@@ -347,12 +334,12 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help="add the Claude Code rule allowing `project review publish` to your Claude Code user settings even "
-        "without a terminal (default: add it when run at a terminal)",
+        help="add the rules allowing `project review publish` and `project summary publish` to your Claude Code "
+        "settings and Codex rules even without a terminal (default: add them when run at a terminal)",
     )
     rule_choice.add_argument(
         "--no-publish-rule", action="store_false", dest="publish_rule",
-        help="leave your Claude Code user settings alone",
+        help="leave your Claude Code settings and Codex rules alone",
     )
     add_output(init)
 
@@ -429,25 +416,25 @@ def parser() -> argparse.ArgumentParser:
         help="install.sh target: all (its default), cli, claude, codex, or status",
     )
 
-    summary_parser = subcommands.add_parser("summary", help="write and publish pull request summary specs")
+    summary_parser = subcommands.add_parser("summary", help="write and publish pull request summaries")
     summary_commands = summary_parser.add_subparsers(dest="summary_command", required=True)
-    summary_init = summary_commands.add_parser("init", help="write a skeleton spec for a pull request")
+    summary_init = summary_commands.add_parser("init", help="write a skeleton summary for a pull request")
     summary_init.add_argument("--repo", required=True, help="OWNER/NAME")
     summary_init.add_argument("--pr", required=True, type=int)
-    summary_init.add_argument("--spec", required=True)
+    summary_init.add_argument("--summary", required=True)
     summary_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
     summary_publish = summary_commands.add_parser(
-        "publish", help="commit a spec to the hidden summaries ref and start a site build"
+        "publish", help="commit a summary to the hidden summaries ref and start a site build"
     )
-    summary_publish.add_argument("--spec", required=True)
+    summary_publish.add_argument("--summary", required=True)
     summary_publish.add_argument("--remote", default="origin")
     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     summary_publish.add_argument(
-        "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
+        "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
     )
     summary_publish.add_argument(
         "--local", action="store_true",
-        help="commit the spec to this checkout's summaries ref for `site serve` to preview, and push nothing "
+        help="commit the summary to this checkout's summaries ref for `site serve` to preview, and push nothing "
         "(the default when the repository does not host its site)",
     )
 
@@ -502,7 +489,7 @@ def parser() -> argparse.ArgumentParser:
         "build", help="build the site from the projects, the published reviews, and the docs"
     )
     site_build.add_argument("--out", required=True)
-    site_build.add_argument("--summaries", help="directory holding <number>/<head>/spec.json files")
+    site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
     site_build.add_argument(
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
@@ -523,12 +510,12 @@ def parser() -> argparse.ArgumentParser:
         "--allow-prepare", action="store_true",
         help="allow this checkout's site.prepare command, and remember it until the command changes",
     )
-    site_page = site_commands.add_parser("page", help="build one summary page from a spec")
-    site_page.add_argument("--spec", required=True)
+    site_page = site_commands.add_parser("page", help="build one summary page from a summary")
+    site_page.add_argument("--summary", required=True)
     site_page.add_argument("--out", required=True)
     site_page.add_argument("--diff", help="read the diff from this file instead of GitHub")
     site_page.add_argument(
-        "--at-head", action="store_true", help="build the spec's recorded head even if the pull request moved"
+        "--at-head", action="store_true", help="build the summary's recorded head even if the pull request moved"
     )
     site_status = site_commands.add_parser(
         "status", help="say whether a repository hosts the site, and print its URL if so"
@@ -547,7 +534,7 @@ def parser() -> argparse.ArgumentParser:
         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
     )
     site_serve.add_argument(
-        "--summaries", help="directory holding <number>/<head>/spec.json files, instead of the summaries ref"
+        "--summaries", help="directory holding <number>/<head>/summary.json files, instead of the summaries ref"
     )
     site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
     site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
@@ -684,24 +671,24 @@ def run_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None) -> None:
+def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict] = None,
+               readme: bool = True) -> None:
     """Report what `init` did, one line per file, or one JSON document.
 
-    The top-level `action` and `path` still describe the projects README, as
-    they did before `init` managed more than that file, so a consumer written
-    against the earlier shape keeps working; `files` lists everything.
+    In a repository, the top-level `action` and `path` still describe the
+    projects README, as they did before `init` managed more than that file, so
+    a consumer written against the earlier shape keeps working; `files` lists
+    everything. Outside one there is no README, and `files` is the whole report.
     """
 
     for entry in files:
         if entry.note:
             print(f"project: {entry.note}", file=sys.stderr)
     if json_output:
-        readme = files[0]
         print(
             json_text(
                 {
-                    "action": readme.action,
-                    "path": readme.path,
+                    **({"action": files[0].action, "path": files[0].path} if readme else {}),
                     "files": [{"path": entry.path, "action": entry.action} for entry in files],
                     **({"site": pages} if pages is not None else {}),
                 }
@@ -795,7 +782,7 @@ def run_prepare(root: Path, command: str) -> None:
     print(f"preparing the site: {command}", file=sys.stderr, flush=True)
     result = subprocess.run(command, shell=True, cwd=root)
     if result.returncode:
-        raise summary.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
+        raise summary.SummaryError(f"the prepare command exited with status {result.returncode}: {command}")
 
 
 NOT_HOSTED = 3
@@ -873,20 +860,20 @@ def run_review(arguments: argparse.Namespace) -> int:
 
 def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
-        summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
+        summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
     else:
-        pr = summary.spec_pr(json.loads(Path(arguments.spec).read_text(encoding="utf-8")))
+        pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
         site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
         summary.publish(
-            Path(arguments.spec),
+            Path(arguments.summary),
             arguments.remote,
             send_dispatch=not arguments.no_dispatch,
             diff_path=Path(arguments.diff) if arguments.diff else None,
             push=site is not None,
             reason=reason,
         )
-        # A spec kept in this checkout has no page on GitHub to link.
+        # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
     return 0
@@ -921,14 +908,14 @@ def site_repo(root: Path) -> str:
         return repo
     try:
         return summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
-    except summary.SpecError:
+    except summary.SummaryError:
         return ""
 
 
 def site_branch(root: Path) -> str:
     try:
         branch = summary.git("-C", str(root), "rev-parse", "--abbrev-ref", "HEAD")
-    except summary.SpecError:
+    except summary.SummaryError:
         return "main"
     return branch if branch and branch != "HEAD" else "main"
 
@@ -941,7 +928,7 @@ def trunk_branch(root: Path) -> str:
     """
     try:
         head = summary.git("-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    except summary.SpecError:
+    except summary.SummaryError:
         return site_branch(root)
     return head.split("/", 1)[1] if "/" in head else head
 
@@ -954,7 +941,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
     def base_pr(base_ref: str) -> Optional[int]:
         try:
             return summary.base_pr(repo, base_ref)
-        except summary.SpecError:
+        except summary.SummaryError:
             return None
 
     entries, failures = site.build_site(
@@ -977,7 +964,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
     repo = site_repo(root)
     if arguments.check_visibility:
         if not repo:
-            raise summary.SpecError("cannot check the site's visibility without knowing the repository")
+            raise summary.SummaryError("cannot check the site's visibility without knowing the repository")
         summary.require_private_site(repo)
     command = prepare_command(root, arguments)
     if command:
@@ -1014,9 +1001,9 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         return files, published.version() if published is not None else ()
 
     def build(out: Path) -> str:
-        # The build copies what it needs from the specs, so they outlive it only as long as it runs.
-        with tempfile.TemporaryDirectory(prefix="projector-specs-") as specs:
-            summaries = published.extract(Path(specs)) if published is not None else given
+        # The build copies what it needs from the summaries, so they outlive it only as long as it runs.
+        with tempfile.TemporaryDirectory(prefix="projector-summaries-") as extracted:
+            summaries = published.extract(Path(extracted)) if published is not None else given
             # The build reports each page as a deploy log would; a server keeps only its one-line result.
             with contextlib.redirect_stdout(io.StringIO()):
                 return build_checkout(root, out, summaries, base, repo)
@@ -1074,12 +1061,12 @@ def run_site(arguments: argparse.Namespace) -> int:
     elif command == "serve":
         return run_site_serve(arguments)
     elif command == "page":
-        spec = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))
+        data = json.loads(Path(arguments.summary).read_text(encoding="utf-8"))
         diff = Path(arguments.diff).read_text(encoding="utf-8") if arguments.diff else None
-        payload = site.build_page(spec, Path(arguments.out), diff=diff, at_head=arguments.at_head)
+        payload = site.build_page(data, Path(arguments.out), diff=diff, at_head=arguments.at_head)
         counts = payload["stats"]
         print(
-            f"wrote {arguments.out}/index.html: {len(spec['groups'])} groups, "
+            f"wrote {arguments.out}/index.html: {len(data['groups'])} groups, "
             f"{counts['files']} files, +{counts['adds']} -{counts['dels']}"
         )
     elif command == "status":
@@ -1188,16 +1175,16 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
     """
     try:
         repo = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
-    except summary.SpecError:
+    except summary.SummaryError:
         repo = ""
     if not repo:
         raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
     deployers = other_pages_deployers(root)
     if deployers and not takeover:
-        raise summary.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
+        raise summary.SummaryError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
                                     "add the Projector site's workflow beside it")
     if shutil.which("gh") is None:
-        raise summary.SpecError("the gh CLI is not installed, and setting up Pages needs it")
+        raise summary.SummaryError("the gh CLI is not installed, and setting up Pages needs it")
     details = json.loads(summary.gh("api", f"repos/{repo}"))
     # Only an admin can change Pages or the website link. The workflow needs no
     # admin to propose, so a non-admin gets it either way.
@@ -1218,7 +1205,7 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
         pages["website"], note = summary.set_homepage(
             repo, pages["url"], current, admin, replace=bool(url)
         ) if pages["url"] else ("unchanged", "")
-    except summary.SpecError as error:
+    except summary.SummaryError as error:
         pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
     if note:
         print(f"project: {note}", file=sys.stderr)
@@ -1237,7 +1224,7 @@ def site_enabled(root: Path) -> bool:
 
 
 def publish_rule_enabled(root: Path) -> bool:
-    """`review.publish_rule` from configuration; unset means `init` adds the rule."""
+    """`review.publish_rule` from configuration; unset means `init` adds the rules."""
 
     value = load_config(root).get("review.publish_rule")
     if value is None:
@@ -1245,6 +1232,46 @@ def publish_rule_enabled(root: Path) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
     return value
+
+
+def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
+    """Whether `init` adds the publish rules ("add"), only reports them ("report"), or leaves them (None).
+
+    The rules exempt two commands from each host's automatic approval in the
+    person's own settings, so `init` adds them only when a person runs it at a
+    terminal or names --publish-rule; an agent refreshing the instructions gets
+    a note instead. Configuration can only turn them off.
+    """
+
+    if arguments.publish_rule is not None:
+        return "add" if arguments.publish_rule else None
+    if publish_rule_enabled(start):
+        return "add" if sys.stdin.isatty() else "report"
+    return None
+
+
+def init_permissions_only(arguments: argparse.Namespace) -> int:
+    """`init` outside a Git repository: set up the user's publish rules, which belong to no repository."""
+
+    if arguments.site or arguments.url:
+        raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
+    publish_rule = publish_rule_mode(arguments, Path.cwd())
+    files = allow_publish(apply=publish_rule == "add") if publish_rule else []
+    emit_files(files, arguments.json_output, readme=False)
+    # Said from what was written, because an agent relays this line: a rule
+    # only reported is a rule the next publish still lacks.
+    kept = sum(entry.action == "kept" for entry in files)
+    if not files:
+        done = "did nothing, because the permission rules are off"
+    elif kept == len(files):
+        done = "added no permission rules and only reported what is missing, above"
+    elif kept:
+        done = "set up some of the permission rules and reported the rest, above"
+    else:
+        done = "set up only the permission rules"
+    print(f"project: not inside a Git repository, so init {done}; run `project init` inside a repository to "
+          "adopt the project convention there", file=sys.stderr)
+    return 0
 
 
 def emit_site(pages: dict) -> None:
@@ -1269,7 +1296,12 @@ def run(arguments: argparse.Namespace) -> int:
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
-    root = arguments.root.resolve() if arguments.root else discover_git_root(Path.cwd())
+    try:
+        root = arguments.root.resolve() if arguments.root else discover_git_root(Path.cwd())
+    except EnvironmentError:
+        if arguments.command != "init":
+            raise
+        return init_permissions_only(arguments)
     projects_dir = arguments.projects_dir
     if projects_dir is None:
         projects_dir = configured_projects_dir(root)
@@ -1285,21 +1317,11 @@ def run(arguments: argparse.Namespace) -> int:
         if url and not wanted:
             raise UsageError("--url sets the site's address, but --no-site or site.enabled = false leaves the site "
                              "alone")
-        # The publish rule exempts a command from Claude Code's auto-mode
-        # classifier in the person's own settings, so it is added only when a
-        # person runs `init` at a terminal or names --publish-rule; an agent
-        # refreshing the instructions gets a note instead. Configuration can
-        # only turn it off.
-        if arguments.publish_rule is not None:
-            publish_rule = "add" if arguments.publish_rule else None
-        elif publish_rule_enabled(root):
-            publish_rule = "add" if sys.stdin.isatty() else "report"
-        else:
-            publish_rule = None
+        publish_rule = publish_rule_mode(arguments, root)
         try:
             files = store.init(instructions_enabled(root))
             if publish_rule:
-                files.append(allow_publish(apply=publish_rule == "add"))
+                files.extend(allow_publish(apply=publish_rule == "add"))
             pages = None
             if wanted:
                 try:
