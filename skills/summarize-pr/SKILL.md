@@ -269,10 +269,14 @@ every summary at `reviews/`, serves each pull request's newest head at
 older heads from each page. The summary on the ref is the durable copy: to
 update a summary later, fetch it with
 `git fetch origin refs/projector/summaries` and start from it rather than
-from a fresh `init`. A repository that has not published since summaries
-were called walkthroughs has its summaries on `refs/projector/walkthroughs`,
-under `walkthroughs/`, instead; its next `publish` carries them over to the
-new ref.
+from a fresh `init`. A summary that an older release stored there as
+`spec.json` does not appear on the site, and the deploy reports it as
+skipped. To update one, start from its `spec.json` and publish it as
+`summary.json`. A repository that has not published since summaries were
+called walkthroughs has its summaries on `refs/projector/walkthroughs`, under
+`walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
+carries them over to the new ref, where they stay off the site until each is
+published again.
 
 Last, `publish` comments a link to the summary on the pull request, so a
 reader on GitHub finds the page. The pull request keeps one such comment

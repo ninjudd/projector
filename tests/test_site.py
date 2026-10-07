@@ -662,14 +662,15 @@ class ServeTests(SiteRepoCase):
         self.assertEqual([good.name], [path.name for path in site.scratch.iterdir()], "the partial build is removed")
         self.assertIsNone(site.refresh(), "retried on the next change, not every poll")
 
-    def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT) -> Path:
-        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`."""
+    def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT,
+                         name: str = "summary.json") -> Path:
+        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`, each stored as `name`."""
         remote = Path(tempfile.mkdtemp())
         run_git(remote, "init", "--quiet")
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
             folder = remote / root / "9" / head
             folder.mkdir(parents=True)
-            (folder / "summary.json").write_text(json.dumps(served_summary(9, head)))
+            (folder / name).write_text(json.dumps(served_summary(9, head)))
             (folder / "diff.patch").write_text(PLAN_DIFF)
             run_git(remote, "add", ".")
             run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
@@ -693,13 +694,17 @@ class ServeTests(SiteRepoCase):
         self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries")], found)
         self.assert_serves_both_heads(*found[0])
 
-    def test_serves_the_old_walkthroughs_ref_while_the_summaries_ref_does_not_exist(self) -> None:
-        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT)
+    def test_reads_the_old_walkthroughs_ref_and_reports_its_spec_json_summaries_as_skipped(self) -> None:
+        # Every release that published to the old ref stored each summary as spec.json.
+        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT, "spec.json")
 
         self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
         found = serve.summaries_refs(self.repo, "origin")
         self.assertEqual([("refs/projector/remotes/origin/walkthroughs", "walkthroughs")], found)
-        self.assert_serves_both_heads(*found[0])
+        extracted = serve.extract_summaries(self.repo, found[0][0], Path(tempfile.mkdtemp()), found[0][1])
+        with redirect_stdout(io.StringIO()):
+            built = cli.build_checkout(self.repo.resolve(), Path(tempfile.mkdtemp()), extracted, "/", "owner/example")
+        self.assertTrue(built.endswith(" 0 reviews, 2 reviews skipped"), built)
 
     def test_the_summaries_ref_wins_over_the_old_walkthroughs_ref(self) -> None:
         remote = self.published_remote()
@@ -769,7 +774,7 @@ class ServeTests(SiteRepoCase):
         self.assert_fetch_leaves_fetch_head_alone()
 
     def test_fetching_the_old_walkthroughs_ref_leaves_fetch_head_alone_too(self) -> None:
-        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT)
+        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT, "spec.json")
         self.assert_fetch_leaves_fetch_head_alone()
 
     def test_a_running_server_serves_summaries_published_after_it_started(self) -> None:

@@ -631,16 +631,16 @@ It sends two `repository_dispatch` events, `projector-summaries` and
 were renamed listens only for the second; a later release stops sending it.
 
 A repository that published before the rename keeps its summaries on
-`refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
-that ref but no `refs/projector/summaries`, `summary publish` first creates
-the new ref from it by replaying each of the old ref's commits with its
-`walkthroughs/` folder as `summaries/`, keeping the commit's author, dates,
-and message, so every summary keeps the date the site orders a pull request's
-heads by. It pushes that history with the new summary on top and leaves the old
-ref in place; delete it
-with `git push origin :refs/projector/walkthroughs` once every site that
-reads it runs a release that reads the new ref. Until the new ref exists,
-`site serve` and the site action read the old one.
+`refs/projector/walkthroughs`, under `walkthroughs/`, each stored as
+`spec.json`. When the remote has that ref but no `refs/projector/summaries`,
+`summary publish` first creates the new ref from it by replaying each of the
+old ref's commits with its `walkthroughs/` folder as `summaries/`, keeping the
+commit's author, dates, and message. It pushes that history with the new
+summary on top and leaves the old ref in place; delete it with
+`git push origin :refs/projector/walkthroughs` once every site that reads it
+runs a release that reads the new ref. Until the new ref exists, `site serve`
+and the site action read the old one. Either way, the site reports each
+summary stored as `spec.json` as skipped until you publish it again.
 
 `site page` builds one summary into a directory you can open from disk or
 publish as a Claude Artifact. It refuses when the pull request has moved past

@@ -167,11 +167,16 @@ shows the summary.
 
 Summaries were once called walkthroughs, and a repository set up then has a
 workflow that listens for the `projector-walkthroughs` event and summaries on
-`refs/projector/walkthroughs`. It keeps working: `project summary publish`
-sends both `projector-summaries` and `projector-walkthroughs`, and the site
-action reads the old ref until the new one exists. The first
+`refs/projector/walkthroughs`. Its workflow keeps deploying:
+`project summary publish` sends both `projector-summaries` and
+`projector-walkthroughs`, and the site action reads the old ref until the new
+one exists. Every summary on the old ref is stored as `spec.json`, so the site
+leaves each one out and the deploy reports it as skipped. The first
 `project summary publish` creates `refs/projector/summaries` from the old
-ref's summaries and history, and leaves the old ref in place.
+ref's summaries and history, and leaves the old ref in place. Then republish
+each old summary you want to show, as
+[Republish summaries stored as `spec.json`](#republish-summaries-stored-as-specjson)
+describes.
 
 To finish moving, regenerate the workflow so it listens for the new event,
 and commit it to the default branch through a pull request:

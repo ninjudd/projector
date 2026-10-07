@@ -513,12 +513,27 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
 
     def publish_legacy(self, head: str, when: str | None = None) -> str:
-        """Publish `head` the way a release from before the rename did, to the old ref and root, dated `when`."""
-        dates = {"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when} if when else {}
-        with mock.patch.dict(os.environ, dates):
-            old = self.publish(head, ref=summary.LEGACY_PAGES_REF, root=summary.LEGACY_PAGES_ROOT)
-        self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF))
-        self.dispatches.clear()
+        """Publish `head` the way a release from before the rename did, to the old ref and root as spec.json, dated `when`."""
+        data = make_summary(GOOD_GROUPS)
+        data["pr"]["head"] = head
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
+                   GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+        if when:
+            env.update(GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+
+        def git(*args: str, text: str | None = None) -> str:
+            return subprocess.run(["git", *args], cwd=self.remote, env=env, input=text, check=True, capture_output=True,
+                                  text=True).stdout.strip()
+
+        parent = subprocess.run(["git", "rev-parse", "--verify", "--quiet", summary.LEGACY_PAGES_REF], cwd=self.remote,
+                                capture_output=True, text=True).stdout.strip()
+        if parent:
+            git("read-tree", parent)
+        for name, content in (("spec.json", json.dumps(data)), ("diff.patch", DIFF)):
+            blob = git("hash-object", "-w", "--stdin", text=content)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{summary.LEGACY_PAGES_ROOT}/7/{head}/{name}")
+        old = git("commit-tree", git("write-tree"), *(["-p", parent] if parent else []), "-m", f"Publish {head[:9]}")
+        git("update-ref", summary.LEGACY_PAGES_REF, old)
         return old
 
     def test_first_publish_seeds_the_summaries_ref_from_the_old_walkthroughs_ref(self) -> None:
@@ -526,7 +541,7 @@ class PublishTests(unittest.TestCase):
 
         new = self.publish("c" * 40)
 
-        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json",
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json",
                           f"summaries/7/{'c' * 40}/diff.patch", f"summaries/7/{'c' * 40}/summary.json"], self.ref_files())
         seed = run(self.remote, "git", "log", "--format=%P", "-1", new)
         self.assertEqual(run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", old),
@@ -541,16 +556,17 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(new, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"),
                          "later publishes build on the new ref without seeding again")
 
-    def test_seeding_pushes_the_new_ref_even_when_the_old_ref_already_has_the_summary(self) -> None:
+    def test_republishing_an_old_head_stores_summary_json_beside_its_spec_json(self) -> None:
         old = self.publish_legacy("a" * 40)
 
-        seed = self.publish("a" * 40)
+        new = self.publish("a" * 40)
 
-        self.assertEqual(seed, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        seed = run(self.remote, "git", "log", "--format=%P", "-1", new)
         self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
                          run(self.remote, "git", "rev-parse", f"{seed}:summaries"))
-        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json"], self.ref_files())
-        self.assertIsNone(self.publish("a" * 40), "once seeded, an unchanged summary publishes nothing")
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json",
+                          f"summaries/7/{'a' * 40}/summary.json"], self.ref_files())
+        self.assertIsNone(self.publish("a" * 40), "once republished, an unchanged summary publishes nothing")
 
     def test_seeding_keeps_each_summary_dated_when_it_was_published(self) -> None:
         # Two heads of one pull request, published a month apart under the old
@@ -563,7 +579,7 @@ class PublishTests(unittest.TestCase):
 
         def dated(head: str) -> str:
             return run(self.remote, "git", "log", "-1", "--format=%cI", "refs/projector/summaries", "--",
-                       f"summaries/7/{head}/summary.json")
+                       f"summaries/7/{head}/spec.json")
         self.assertEqual("2026-01-01T12:00:00+02:00", dated("a" * 40))
         self.assertEqual("2026-02-01T12:00:00+02:00", dated("b" * 40), "the newer head stays newer")
 
