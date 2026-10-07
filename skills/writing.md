@@ -239,6 +239,15 @@ that you did not look.
 All the sections above apply to them, except § 3, because a pull request
 body has one job.
 
+- **Match the repository's subject convention.** Read the subjects of the
+  default branch's last twenty commits, with
+  `git log --format=%s -20 origin/<default-branch>`. Where they follow a
+  pattern, such as Conventional Commits (`type(scope): summary`), a ticket
+  in brackets at the end, or a component prefix, write the pull request
+  title and every commit subject in that pattern, with the same casing. A
+  squash merge makes the title a subject on the default branch, so one
+  outside the pattern breaks a history every other commit keeps. Write a
+  plain imperative sentence only when the history has no pattern.
 - **Brief the reader in about one minute.** In prose, say why the change
   exists and what it does. A squash merge makes the body the commit
   message, so write the body to last.
