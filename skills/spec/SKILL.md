@@ -109,10 +109,14 @@ describing the design more than once or carrying background the reader did
 not ask for. Add supporting files only when they hold real content that
 would make the entry point unwieldy.
 
-An existing plan keeps its section numbers, because code and other
-documents cite them. Move it toward this shape by rewriting what its first
-sections say, not by renumbering them, and gather a design that is spread
-across later sections into one place near the top.
+An existing plan keeps its section numbers, and each numbered section keeps
+its subject, because code and other documents cite both. A citation that
+meant the acceptance criteria must not land on the solution after the plan
+is reshaped. Bring the problem and the solution to the top of such a plan in
+the unnumbered lead under the title: the one-sentence summary, a short
+paragraph that states the problem, and a paragraph that states the fix
+whole. Leave the design where its numbered sections already describe it, and
+add a full new section only at the end, with the next number.
 
 Follow the writing guide in `../writing.md` when you write the plan. State
 each decision and its reason rather than pointing at where it was discussed
@@ -143,7 +147,8 @@ Then read the plan as its reviewer would, and confirm each of these:
 
 - A reviewer can say what the problem is and what the fix is after the first
   screen: the summary, the problem, and the paragraph that opens the
-  solution. If they would have to read further, move the design up.
+  solution. If they would have to read further, move the design up, or
+  state it in the lead of an existing plan.
 - The plan is proportional. It describes the design once, and the
   background follows the design rather than leading to it.
 - The status makes an honest readiness claim, and the priority matches the
