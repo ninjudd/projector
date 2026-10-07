@@ -1,0 +1,2295 @@
+diff --git a/actions/site/action.yml b/actions/site/action.yml
+index 0facc65..0beb9f2 100644
+--- a/actions/site/action.yml
++++ b/actions/site/action.yml
+@@ -2,10 +2,10 @@ name: Projector site
+ description: Build the Projector site from the content Projector keeps in the repository, its README, docs and project plans and the summaries under refs/projector/summaries, and deploy it to GitHub Pages.
+ inputs:
+   ref:
+-    description: The hidden ref holding <root>/<number>/<head>/spec.json files.
++    description: The hidden ref holding <root>/<number>/<head>/summary.json files.
+     default: refs/projector/summaries
+   root:
+-    description: Directory inside the ref that holds the specs.
++    description: Directory inside the ref that holds the summaries.
+     default: summaries
+   prepare:
+     description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module, in place of the repository's site.prepare setting. Set up any toolchain it needs in earlier steps.
+@@ -18,7 +18,7 @@ runs:
+   using: composite
+   steps:
+     - uses: actions/checkout@v4
+-    - name: Fetch the summary specs
++    - name: Fetch the summaries
+       shell: bash
+       env:
+         REF: ${{ inputs.ref }}
+@@ -26,7 +26,7 @@ runs:
+       # A repository that has published no summary yet has no ref to fetch,
+       # and still gets a site of its README, docs and plans. One that has not
+       # published since walkthroughs were renamed summaries has only the old
+-      # walkthroughs ref, with its specs under walkthroughs/, so the default
++      # walkthroughs ref, with its summaries under walkthroughs/, so the default
+       # ref falls back to it until the next publish seeds the new one.
+       run: |
+         if [ "$REF" = refs/projector/summaries ] && [ "$ROOT" = summaries ] \
+@@ -37,8 +37,8 @@ runs:
+         fi
+         if git ls-remote --exit-code origin "$REF" >/dev/null; then
+           git fetch --no-tags origin "+$REF:$REF"
+-          git worktree add --detach "$RUNNER_TEMP/summary-specs" "$REF"
+-          echo "SUMMARIES=$RUNNER_TEMP/summary-specs/$ROOT" >> "$GITHUB_ENV"
++          git worktree add --detach "$RUNNER_TEMP/summaries-ref" "$REF"
++          echo "SUMMARIES=$RUNNER_TEMP/summaries-ref/$ROOT" >> "$GITHUB_ENV"
+         fi
+     - id: pages
+       uses: actions/configure-pages@v5
+diff --git a/docs/cli.md b/docs/cli.md
+index a9093d5..c7c06c4 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -546,42 +546,43 @@ A repository that sets up the Projector site serves it from GitHub Pages,
+ built from content Projector keeps in the repository: its `README.md`, the
+ Markdown documents under `docs/`, the project plans, and the pull request
+ summaries on the hidden ref `refs/projector/summaries`. The
+-`summarize-pr` skill writes a summary's data, a spec, and these
+-commands do everything else:
++`summarize-pr` skill writes a summary, and these commands do everything
++else:
+ 
+ ```sh
+-project summary init --repo OWNER/NAME --pr 66 --spec summary.json
+-project summary publish --spec summary.json
+-project site page --spec summary.json --out site
+-project site build --out _site --summaries specs/summaries
++project summary init --repo OWNER/NAME --pr 66 --summary summary.json
++project summary publish --summary summary.json
++project site page --summary summary.json --out site
++project site build --out _site --summaries summaries-ref/summaries
+ project site serve --port 8000
+ project site status --repo OWNER/NAME --pr 66
+ project site workflow --write
+ ```
+ 
+-`summary init` writes a skeleton spec with every changed file in one
++`summary init` writes a skeleton summary with every changed file in one
+ unassigned group. `summary publish` fetches the pull request's diff, checks
+-that the spec builds against it, commits the spec and the diff to the hidden
+-ref without touching the checkout, and starts the repository's site workflow.
++that the summary builds against it, commits the summary and the diff to the
++hidden ref without touching the checkout, and starts the repository's site
++workflow.
+ Pass `--diff` to publish a diff you produced instead of fetching one; it must
+-run from the spec's `pr.base` to its `pr.head`, because every later deploy
++run from the summary's `pr.base` to its `pr.head`, because every later deploy
+ serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
+ 
+ `summary publish` pushes only to a repository that hosts its site, which
+ `site status` reports as hosted. Anywhere else nothing on GitHub reads the
+-ref, so it commits the spec and the diff to this checkout's own
++ref, so it commits the summary and the diff to this checkout's own
+ `refs/projector/summaries` and pushes nothing, starts no workflow, and
+ comments nothing. `site serve` then previews the summary before the site is
+ set up on GitHub Pages:
+ 
+ ```console
+-$ project summary publish --spec summary.json
+-committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/spec.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
++$ project summary publish --summary summary.json
++committed 3f2a91c07 to refs/projector/summaries in this checkout: summaries/66/…/summary.json and diff.patch; nothing was pushed, because owner/example has no .github/workflows/projector-site.yml on its default branch; preview it with `project site serve`
+ ```
+ 
+-Pass `--local` to keep a spec local even where the site is hosted, to
+-preview it before it goes live. A spec kept local stays in that checkout.
+-Once the site is hosted, publish the spec again to push it.
++Pass `--local` to keep a summary local even where the site is hosted, to
++preview it before it goes live. A summary kept local stays in that checkout.
++Once the site is hosted, publish the summary again to push it.
+ 
+ When `summary publish` pushes to a hosted site, it then comments a link to
+ the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
+@@ -592,13 +593,13 @@ It sends two `repository_dispatch` events, `projector-summaries` and
+ `projector-walkthroughs`, because a site workflow written before summaries
+ were renamed listens only for the second; a later release stops sending it.
+ 
+-A repository that published before the rename keeps its specs on
++A repository that published before the rename keeps its summaries on
+ `refs/projector/walkthroughs`, under `walkthroughs/`. When the remote has
+ that ref but no `refs/projector/summaries`, `summary publish` first creates
+ the new ref from it by replaying each of the old ref's commits with its
+ `walkthroughs/` folder as `summaries/`, keeping the commit's author, dates,
+-and message, so every spec keeps the date the site orders a pull request's
+-heads by. It pushes that history with the new spec on top and leaves the old
++and message, so every summary keeps the date the site orders a pull request's
++heads by. It pushes that history with the new summary on top and leaves the old
+ ref in place; delete it
+ with `git push origin :refs/projector/walkthroughs` once every site that
+ reads it runs a release that reads the new ref. Until the new ref exists,
+@@ -606,17 +607,17 @@ reads it runs a release that reads the new ref. Until the new ref exists,
+ 
+ `site page` builds one summary into a directory you can open from disk or
+ publish as a Claude Artifact. It refuses when the pull request has moved past
+-the spec's head, unless `--at-head` asks for the recorded head; pass `--diff`
++the summary's head, unless `--at-head` asks for the recorded head; pass `--diff`
+ when GitHub cannot serve a diff that large.
+ 
+ `site build` builds the whole site from a checkout, this repository unless
+-`--repo-root` names another, and the summary specs under `--summaries`
++`--repo-root` names another, and the summaries under `--summaries`
+ when there are any. Its menu has three sections. **Projects**, the home page,
+ groups the projects by status, and opens each one beside a sidebar of its
+ top-level project's folder: every supplemental file, subdirectory, and nested
+ project. **Reviews** lists the summaries, and marks a pull request whose base
+ branch is another open pull request's head with that pull request's number,
+-linked to its review when the site has one and to GitHub otherwise. A spec
++linked to its review when the site has one and to GitHub otherwise. A summary
+ that did not record the number has it looked up with `gh` at build time;
+ when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+@@ -652,7 +653,7 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
+ Pass `--base` with the path the site is served under, such as `/projector/`
+ for a project site, so every page links to the others and to the shared
+ assets under `assets/`; it defaults to `/`. A review links to the projects
+-its diff changes, and to any its spec names in a `projects` list, and each
++its diff changes, and to any its summary names in a `projects` list, and each
+ project page lists its reviews. `search/` searches every document the site
+ serves, from a `search.json` index the build writes, and non-Markdown files
+ under `docs/`, such as images, are copied into the site so a relative link to
+@@ -666,8 +667,8 @@ entry point spelled `README.md`. The site workflow runs `site build` through Pro
+ composite action with `--check-visibility`, which refuses to build, and so to
+ deploy, when a private repository's Pages site is public or GitHub cannot say
+ whether it is. For summaries it builds every
+-`<number>/<head>/spec.json` against the `diff.patch` beside it, asking GitHub
+-for nothing, and skips and reports any spec that fails or has no stored diff.
++`<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
++for nothing, and skips and reports any summary that fails or has no stored diff.
+ Each site page loads its `data.json` when it opens, where a `site page` embeds
+ its data so it opens from disk.
+ 
+@@ -713,9 +714,9 @@ Before building, it fetches the summaries ref from `--remote`, `origin`
+ by default, into the same `refs/projector/remotes/<remote>/summaries`
+ copy that `summary publish` keeps. When the fetch fails it says why and
+ serves the summaries already fetched; `--no-fetch` skips the fetch, and
+-`--summaries` serves a directory of specs instead of the ref. It serves the
++`--summaries` serves a directory of summaries instead of the ref. It serves the
+ summaries in this checkout's own `refs/projector/summaries` too, the ones a
+-local `summary publish` keeps, beside the fetched ones, and reads a spec in
++local `summary publish` keeps, beside the fetched ones, and reads a summary in
+ both from the local ref. While it runs it checks `README.md`, `docs/`, a
+ configured `projects.dir`, and the summaries every second and rebuilds
+ when any of them change;
+diff --git a/docs/projects/pr-walkthrough/readme.md b/docs/projects/pr-walkthrough/readme.md
+index c52e54f..f0d6395 100644
+--- a/docs/projects/pr-walkthrough/readme.md
++++ b/docs/projects/pr-walkthrough/readme.md
+@@ -14,14 +14,14 @@ a checklist, then shows that group's files with every hunk syntax-highlighted.
+ The reviewer marks files viewed and groups reviewed as they go.
+ 
+ The page framework is a fixed renderer that ships with Projector. An agent
+-writes only the part that needs judgment, a JSON spec holding the grouping,
+-the explanations and the checks, and a script combines the spec with the pull
++writes only the part that needs judgment, a JSON summary holding the grouping,
++the explanations and the checks, and a script combines the summary with the pull
+ request's diff.
+ 
+ ## 2. Acceptance criteria
+ 
+-- The `walkthrough-pr` skill builds a page from a spec and the diff, and
+-  refuses a spec that leaves a changed file out, repeats one, names one
++- The `walkthrough-pr` skill builds a page from a summary and the diff, and
++  refuses a summary that leaves a changed file out, repeats one, names one
+   outside the diff, or describes a head the pull request has moved past
+   whenever GitHub can be reached to say so.
+ - The page works from disk in any browser and publishes unchanged as a Claude
+@@ -29,7 +29,7 @@ request's diff.
+ - The build script uses only the Python standard library and the `gh` CLI,
+   and the renderer loads remote scripts only from cdnjs.
+ - A GitHub Pages publisher serves each repository's walkthroughs to the people
+-  who can read that repository, from specs on a hidden ref (section 4).
++  who can read that repository, from summaries on a hidden ref (section 4).
+ 
+ ## 3. Hosting
+ 
+@@ -48,14 +48,14 @@ Three hosts were weighed.
+ 
+ ## 4. GitHub Pages publisher
+ 
+-A repository hosts its own walkthroughs. Specs, not built pages, live on the
++A repository hosts its own walkthroughs. Summaries, not built pages, live on the
+ hidden ref `refs/projector/walkthroughs` at
+ `walkthroughs/<number>/<head>/spec.json`. `walkthrough.py publish` commits a
+-spec there through Git plumbing, so it never touches the checkout, and then
++summary there through Git plumbing, so it never touches the checkout, and then
+ sends a `repository_dispatch` event. A workflow on the default branch, added
+ once with `walkthrough.py workflow --write`, answers that event by calling
+ Projector's composite action, now `ninjudd/projector/actions/site`. The
+-action fetches the ref, runs `walkthrough.py site`, which rebuilds every spec
++action fetches the ref, runs `walkthrough.py site`, which rebuilds every summary
+ at its recorded head (`build --at-head`, the diff from the compare API for
+ `pr.base` and `pr.head`), writes an index, points `/<number>/` at each pull
+ request's newest head, and deploys the result to Pages.
+@@ -73,12 +73,12 @@ than something that appears on a side branch, and because the workflow runs
+ from the default branch, the `github-pages` environment's default rule
+ already allows it to deploy.
+ 
+-Committing specs rather than built pages keeps the ref small, because the
+-diff comes from GitHub at build time, and makes the spec, the part that needs
+-judgment, the only thing an agent writes. The spec on the ref is also the
++Committing summaries rather than built pages keeps the ref small, because the
++diff comes from GitHub at build time, and makes the summary, the part that needs
++judgment, the only thing an agent writes. The summary on the ref is also the
+ durable copy a later session starts from when the pull request moves.
+ Section 8 changes the first half: the diff now sits on the ref beside its
+-spec, so a deploy no longer asks GitHub for it.
++summary, so a deploy no longer asks GitHub for it.
+ 
+ The shared piece is a composite action rather than a reusable workflow
+ because a composite action is downloaded at the ref the caller names, with
+@@ -88,8 +88,8 @@ what code runs with a token that can read the repository:
+ 
+ - `@v0`, the moving major-version tag of Projector's one version, is the
+   default. Repositories get fixes from deliberate releases, never from an
+-  unreviewed commit. The spec's `version` is the compatibility contract:
+-  every renderer on a major tag accepts every spec of the version it
++  unreviewed commit. The summary's `version` is the compatibility contract:
++  every renderer on a major tag accepts every summary of the version it
+   shipped with.
+ - A full commit SHA locks the renderer for organizations that want it, as
+   GitHub's security hardening guide recommends; Dependabot keeps such pins
+@@ -100,7 +100,7 @@ what code runs with a token that can read the repository:
+   commit would reach every adopter without anyone releasing it.
+ 
+ Nothing runs when Projector changes. A repository's workflow runs only when
+-that repository publishes a spec, so a release reaches each site on that
++that repository publishes a summary, so a release reaches each site on that
+ site's next publish, which rebuilds all of its walkthroughs with the new
+ renderer, and a bad release breaks no live site until then. Releases follow
+ `docs/plugins.md`: an immutable `vX.Y.Z` tag per release and a major tag that
+@@ -131,10 +131,10 @@ Open: squashing the ref's history once it grows large.
+ - **2026-09-25** The skill, renderer, build script and tests land with the
+   Artifacts path. The renderer began as a hand-built page for a 66-file pull
+   request in another repository, reviewed in eleven groups, then was split
+-  into the fixed renderer and the spec format.
++  into the fixed renderer and the summary format.
+ - **2026-09-26** The Pages publisher lands (section 4): `publish`, `site`,
+   `build --at-head`, the composite action, and Projector's own site with a
+-  walkthrough of #62. The specs first lived on a `projector-pages` branch;
++  walkthrough of #62. The summaries first lived on a `projector-pages` branch;
+   GitHub's "had recent pushes" banner for it moved them to the hidden ref
+   `refs/projector/walkthroughs`, with a dispatched workflow on the default
+   branch. The shared piece became a composite action instead of
+@@ -155,8 +155,8 @@ projects view.
+ 
+ The Pages site is Projector's, and it outgrows walkthroughs as soon as
+ browsing `docs/projects` (section 6) joins it, so it cannot live inside the
+-`walkthrough-pr` skill. The skill writes the data, a spec, and nothing else.
+-The CLI owns the rest in two modules: `projector.walkthrough` for the spec
++`walkthrough-pr` skill. The skill writes the data, a summary, and nothing else.
++The CLI owns the rest in two modules: `projector.walkthrough` for the summary
+ itself (skeletons, the diff it is checked against, sanitizing, publishing to
+ the hidden ref, and whether a repository hosts a site), and `projector.site`
+ for turning content into pages (the renderer, the index, the redirects, and
+@@ -174,12 +174,12 @@ plans through the CLI's own project model rather than parsing them again.
+ 
+ ## 8. Publish the data once and let the page load it
+ 
+-A deploy used to rebuild every walkthrough from scratch: fetch each spec's
+-diff from GitHub, parse it, check the spec against it, sanitize, and embed
++A deploy used to rebuild every walkthrough from scratch: fetch each summary's
++diff from GitHub, parse it, check the summary against it, sanitize, and embed
+ the result in each page. That work grows with every walkthrough a repository
+-publishes, and each deploy spends one GitHub request per spec. Now
++publishes, and each deploy spends one GitHub request per summary. Now
+ `project walkthrough publish` fetches the diff once and commits it beside the
+-spec as `diff.patch`, so a deploy asks GitHub for nothing. The site build
++summary as `diff.patch`, so a deploy asks GitHub for nothing. The site build
+ still parses, checks, and sanitizes each stored diff, because anyone who can
+ push to the hidden ref can write it, and that work is local and fast. Each
+ site page is a shell that loads its `data.json` when it opens; `project site
+@@ -189,7 +189,7 @@ page opened from disk.
+ Serving data from GitHub at view time, with no deploy at all, was rejected: a
+ browser cannot read a private repository without the viewer's token, which
+ would give up section 3's private-site case, and unauthenticated reads are
+-rate limited per visitor. Specs published before diffs were stored still
++rate limited per visitor. Summaries published before diffs were stored still
+ build, by fetching their diff as before, until they are republished.
+ 
+ ## 9. The site project owns the rest of the site
+@@ -208,12 +208,12 @@ at `prs/<number>/` on the repository's Projector site, or as a Claude
+ Artifact or a page on disk. Every acceptance criterion in section 2 holds,
+ with two deviations from the original design:
+ 
+-- The build script left the skill. The skill writes the spec, and the
++- The build script left the skill. The skill writes the summary, and the
+   Projector CLI does the rest: `project walkthrough init|publish` for the
+-  spec and `project site page|build|status|workflow` for pages (section 7).
++  summary and `project site page|build|status|workflow` for pages (section 7).
+   The refusals in section 2 are the CLI's, tested in
+   `tests/test_walkthrough.py`.
+-- Publishing stores the diff beside the spec, and the site deploy builds from
++- Publishing stores the diff beside the summary, and the site deploy builds from
+   it without asking GitHub for anything (section 8). The walkthroughs of #62
+   and #66, published before diffs were stored, were republished with them on
+   2026-09-26, and #81 removes the fallback that fetched their diffs.
+diff --git a/docs/projects/review-and-summarize/readme.md b/docs/projects/review-and-summarize/readme.md
+index 6ea2c03..d7e4400 100644
+--- a/docs/projects/review-and-summarize/readme.md
++++ b/docs/projects/review-and-summarize/readme.md
+@@ -48,10 +48,10 @@ read `refs/projector/summaries` and fall back to `refs/projector/walkthroughs`
+ and its `walkthroughs/` folder only when the new ref does not exist. The first
+ `project summary publish` after the rename seeds the new ref by replaying
+ each old commit with the old folder at `summaries/`, keeping its author,
+-dates, and message. The site dates a spec by the last commit that touched its
++dates, and message. The site dates a summary by the last commit that touched its
+ path, and a path-limited log does not follow a move, so a single commit
+-moving every spec would date them all at the move and let an older head of a
+-pull request outrank its newest; the replay keeps each spec's date. Publishing sends both
++moving every summary would date them all at the move and let an older head of a
++pull request outrank its newest; the replay keeps each summary's date. Publishing sends both
+ events: a workflow generated before the rename listens only for the old one,
+ and one generated since listens only for the new one, so each repository
+ builds once. A later release stops sending the old event.
+@@ -81,7 +81,7 @@ Shipped in three stacked pull requests: the rename with its migration (#106),
+ the `review-pr` split (#107), and the automatic summary. Every criterion
+ in section 2 holds.
+ 
+-- The migration tests seed the new ref from the old one, keeping each spec's
++- The migration tests seed the new ref from the old one, keeping each summary's
+   publish date so a pull request's newest head stays newest. They also
+   exercise the site action's own fallback script against temporary remotes.
+ - `review-pr` summarizes when `review.summarize` is not `false` and
+diff --git a/docs/projects/site-content/readme.md b/docs/projects/site-content/readme.md
+index b29588d..e3a7642 100644
+--- a/docs/projects/site-content/readme.md
++++ b/docs/projects/site-content/readme.md
+@@ -16,7 +16,7 @@ rather than from GitHub.
+ ## 2. Acceptance criteria
+ 
+ - A walkthrough links to every project whose plan files its diff changes,
+-  and to any project its spec names in an optional `projects` list; each
++  and to any project its summary names in an optional `projects` list; each
+   plan page lists the walkthroughs that link to it, and the PRs view shows
+   each walkthrough's plans.
+ - The site header carries a search box on every page, walkthroughs included,
+@@ -31,7 +31,7 @@ rather than from GitHub.
+ **Links come from the diff the walkthrough already stores.** The site build
+ has each walkthrough's changed files. A file under a project's directory
+ links the walkthrough to the deepest project that contains it, so a change to
+-a nested plan links the nested project rather than its parent. A spec may
++a nested plan links the nested project rather than its parent. A summary may
+ also list projects by name for a pull request that implements a plan without
+ editing it; names that match no project are dropped. Only the newest version
+ of a walkthrough decides its links. The build writes the links into each
+diff --git a/docs/projects/site/readme.md b/docs/projects/site/readme.md
+index b86da9e..3aada77 100644
+--- a/docs/projects/site/readme.md
++++ b/docs/projects/site/readme.md
+@@ -96,10 +96,10 @@ step instead of failing. The workflow `project site workflow` writes gains a
+   and `/<number>/` walkthrough addresses were not redirected: they were
+   public for a day.
+ - **Generate each walkthrough's data at deploy, not in the browser.** The
+-  page could parse the stored diff and sanitize the spec itself, making the
++  page could parse the stored diff and sanitize the summary itself, making the
+   deploy a pure copy, but only by porting the Python parser and checks to
+   JavaScript while `publish` and `site page` keep the Python ones. Two
+-  implementations of one set of rules drift, and a bad spec would fail in a
++  implementations of one set of rules drift, and a bad summary would fail in a
+   reader's browser instead of at publish or deploy.
+ - **Copy Markdown, do not pre-render it.** The deploy stays a copy plus one
+   manifest, in line with walkthroughs (`pr-walkthrough` section 8), and a
+@@ -119,7 +119,7 @@ step instead of failing. The workflow `project site workflow` writes gains a
+ ## 5. Deferred
+ 
+ - Linking a plan to the walkthroughs of the pull requests that implement it,
+-  which `pr-walkthrough` section 6 describes. Nothing in a spec names its
++  which `pr-walkthrough` section 6 describes. Nothing in a summary names its
+   project yet.
+ - Search across documents, rather than filtering the projects view by name.
+ - Non-Markdown files under `docs/`, such as images, which the site does not
+@@ -203,7 +203,7 @@ still read its site. `project site serve` builds the site a deploy builds
+ into a temporary directory and serves it over HTTP from the standard
+ library's `http.server`, so it adds no dependency. It fetches the
+ walkthroughs ref into the copy `walkthrough publish` keeps, extracts it with
+-`git archive`, and dates each spec by the commit that last changed it,
++`git archive`, and dates each summary by the commit that last changed it,
+ because the build orders a pull request's walkthroughs by that date and an
+ archive stamps every file with the ref's newest commit.
+ 
+diff --git a/docs/site.md b/docs/site.md
+index 360cff5..28e3d04 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -116,9 +116,9 @@ is the GitHub repository:
+ 
+ 3. Publish something. Once the workflow is on the default branch, the
+    `summarize-pr` skill publishes to the site by default: ask your agent
+-   for a summary of a pull request and it pushes the spec to the hidden
++   for a summary of a pull request and it pushes the summary to the hidden
+    ref, starts the workflow, and hands you the link. Until then, it keeps
+-   the spec in your checkout's own `refs/projector/summaries` and pushes
++   the summary in your checkout's own `refs/projector/summaries` and pushes
+    nothing, so you can preview summaries with `project site serve` before
+    the site is set up. Ask for a Claude Artifact instead when you want a
+    private page. The site's Reviews section lists every summary, and each
+@@ -149,12 +149,12 @@ path with `404.html`.
+ ## Update a site set up for walkthroughs
+ 
+ Summaries were once called walkthroughs, and a repository set up then has a
+-workflow that listens for the `projector-walkthroughs` event and specs on
++workflow that listens for the `projector-walkthroughs` event and summaries on
+ `refs/projector/walkthroughs`. It keeps working: `project summary publish`
+ sends both `projector-summaries` and `projector-walkthroughs`, and the site
+ action reads the old ref until the new one exists. The first
+ `project summary publish` creates `refs/projector/summaries` from the old
+-ref's specs and history, and leaves the old ref in place.
++ref's summaries and history, and leaves the old ref in place.
+ 
+ To finish moving, regenerate the workflow so it listens for the new event,
+ and commit it to the default branch through a pull request:
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index a1398d8..ae485a9 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -16,7 +16,7 @@
+         }
+         function num(n) { return n.toLocaleString('en-US'); }
+         // A paragraph of prose is wrapped in <p>; a list, table, heading or code
+-        // block the spec wrote as an item of its own is placed as it is, since a
++        // block the summary wrote as an item of its own is placed as it is, since a
+         // block inside <p> ends the paragraph early.
+         function block(html) {
+             return /^\s*<(ul|ol|table|div|pre|h3|h4|p)[\s>]/i.test(html) ? html : `<p>${html}</p>`;
+@@ -57,13 +57,13 @@
+                 return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
+             }).join('') + '</ul>';
+         }
+-        function renderFile(spec) {
+-            const f = fileAt(spec.path);
+-            const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
++        function renderFile(entry) {
++            const f = fileAt(entry.path);
++            const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+             const slash = f.path.lastIndexOf('/');
+             const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+             const base = f.path.slice(slash + 1);
+-            const checks = spec.checks ?? [];
++            const checks = entry.checks ?? [];
+             // A note with a line sits under that line of the diff; the rest sit at the top of the file.
+             const atLine = {};
+             const loose = [];
+@@ -130,7 +130,7 @@
+                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+                 '</span>' +
+                 '</header>' +
+-                (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
++                (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
+                 notesList(loose, 'fnotes', f.path) +
+                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+                 '</article>';
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index becf6e1..32be3cb 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -46,7 +46,7 @@ interface SummaryGroup {
+   files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
+ }
+ 
+-/** A summary page's data: the spec checked against its diff by the build. */
++/** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+   name?: string;
+   pr: { repo: string; number: number; title: string; head: string; baseRef?: string };
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 8b6e235..dccaa84 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -16,7 +16,7 @@ function renderSummary(data: SummaryData): void {
+   }
+   function num(n: number): string { return n.toLocaleString('en-US'); }
+   // A paragraph of prose is wrapped in <p>; a list, table, heading or code
+-  // block the spec wrote as an item of its own is placed as it is, since a
++  // block the summary wrote as an item of its own is placed as it is, since a
+   // block inside <p> ends the paragraph early.
+   function block(html: string): string {
+     return /^\s*<(ul|ol|table|div|pre|h3|h4|p)[\s>]/i.test(html) ? html : `<p>${html}</p>`;
+@@ -57,13 +57,13 @@ function renderSummary(data: SummaryData): void {
+     }).join('') + '</ul>';
+   }
+ 
+-  function renderFile(spec: SummaryGroup['files'][number]): string {
+-    const f = fileAt(spec.path);
+-    const collapsed = spec.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
++  function renderFile(entry: SummaryGroup['files'][number]): string {
++    const f = fileAt(entry.path);
++    const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+     const slash = f.path.lastIndexOf('/');
+     const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+     const base = f.path.slice(slash + 1);
+-    const checks = spec.checks ?? [];
++    const checks = entry.checks ?? [];
+     // A note with a line sits under that line of the diff; the rest sit at the top of the file.
+     const atLine: Record<string, SummaryCheck[]> = {};
+     const loose: SummaryCheck[] = [];
+@@ -121,7 +121,7 @@ function renderSummary(data: SummaryData): void {
+           `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+         '</span>' +
+       '</header>' +
+-      (spec.note !== undefined && spec.note !== '' ? `<p class="fnote">${spec.note}</p>` : '') +
++      (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
+       notesList(loose, 'fnotes', f.path) +
+       `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+     '</article>';
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 0416c5a..cdd5530 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -571,7 +571,7 @@ Then follow `summarize-pr` for this head, with two differences from a
+ summary a person asks for:
+ 
+ - **Update rather than start over.** When the summaries ref already holds a
+-  spec for an earlier head of this pull request, start from that spec and
++  summary for an earlier head of this pull request, start from that summary and
+   update it as the skill's "Update the page when the pull request moves"
+   section describes, so a fix-cycle head costs a revision, not a rewrite.
+ - **Carry the review into it.** Every finding thread still open after this
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 5e3221a..d910ef6 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -9,7 +9,7 @@ Summarize a pull request's changes as one guided page a reviewer reads top
+ to bottom: the diff split into logical groups in reading order, each group
+ opened by what it does and why, followed by that group's files with every
+ hunk, and review notes on each group, file and line. This skill writes the
+-page's data, a summary spec. The Projector CLI renders it and the repository's
++page's data, a summary. The Projector CLI renders it and the repository's
+ Projector site serves it, so your job is the judgment: the grouping, the
+ explanations, and the notes. Every command below is the `project` CLI that ships beside
+ this skill; install it as Projector's README describes when `project` is
+@@ -20,16 +20,16 @@ retry.
+ Reading a pull request does not authorize changing it. Do not comment on,
+ push to, or approve the pull request unless the user asks.
+ 
+-## Build the spec
++## Build the summary
+ 
+ 1. Resolve the repository (`owner/name`) and pull request number from the
+    user's request or the current checkout.
+-2. Write a skeleton spec. It records the pull request's head and lists every
++2. Write a skeleton summary. It records the pull request's head and lists every
+    changed file with its line counts:
+ 
+    ```sh
+    project summary init \
+-     --repo OWNER/NAME --pr NUMBER --spec WORKDIR/summary.json
++     --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
+    ```
+ 
+    Keep `WORKDIR` somewhere you can reach again this session. When you will
+@@ -38,10 +38,10 @@ push to, or approve the pull request unless the user asks.
+    its instructions. Build `WORKDIR` in that scratchpad, or else under the
+    working directory. `$TMPDIR`, `/tmp`, and a background job's temporary
+    directory are outside both, and the publish refuses files from them. The
+-   spec is what you edit when the pull request moves.
++   summary is what you edit when the pull request moves.
+ 3. Read enough to explain the change: the pull request body, the full diff,
+    plan or design documents the change touches, and the review threads.
+-   Take the diff from the spec's `pr.base` to its `pr.head` through the
++   Take the diff from the summary's `pr.base` to its `pr.head` through the
+    compare API, the one `page` and `publish` read, which works from any
+    directory:
+ 
+@@ -65,13 +65,13 @@ push to, or approve the pull request unless the user asks.
+    for what its files did before the change and do after it, in plain
+    words, the terms a newcomer would need defined, and the line numbers of
+    anything worth a note, taken from inside the diff's hunks.
+-4. Fill the spec as `spec.md` describes, and write every piece of prose in
++4. Fill the summary as `format.md` describes, and write every piece of prose in
+    it for the reader that "Write for someone new to the code" below
+    describes. The groups decide whether the page helps:
+    - **Order groups from the contract outward.** API and schema first, then
+      the shared core, then persistence and configuration, then adapters, then
+      the callers that drive it all, then tooling and documentation.
+-   - **Put every changed file in exactly one group.** `build` refuses a spec
++   - **Put every changed file in exactly one group.** `build` refuses a summary
+      that misses a file, repeats one, or names one that is not in the diff.
+    - **Explain why, not only what.** Give the reason itself. A plan
+      decision or review thread can back it up, but its number alone, such
+@@ -152,12 +152,12 @@ sense only to someone who already knows the code, rewrite it.
+ ## Build the page
+ 
+ ```sh
+-project site page --spec WORKDIR/summary.json --out WORKDIR/site
++project site page --summary WORKDIR/summary.json --out WORKDIR/site
+ ```
+ 
+-`page` fetches the diff from GitHub's compare API for the spec's merge base
++`page` fetches the diff from GitHub's compare API for the summary's merge base
+ (`pr.base`) and head, and refuses to run when the pull request's head is no
+-longer the spec's `pr.head`, so the page never describes a diff it does not
++longer the summary's `pr.head`, so the page never describes a diff it does not
+ show. The compare API is not the pull request diff endpoint and does not
+ share its 300-file limit, so a pull request that `gh pr diff` refuses still
+ builds without help. Pass `--diff` only when `page` itself reports that
+@@ -174,24 +174,24 @@ browser.
+ 
+ ## Publish the summary
+ 
+-The summary is the spec. Publish it to the repository's hidden summaries
+-ref, where the repository's Projector site reads it, whether that site is
+-its GitHub Pages site or `project site serve` on the user's machine. From a
+-checkout whose `origin` is the repository, run:
++Publish the summary to the repository's hidden summaries ref, where the
++repository's Projector site reads it, whether that site is its GitHub Pages
++site or `project site serve` on the user's machine. From a checkout whose
++`origin` is the repository, run:
+ 
+ ```sh
+-project summary publish --spec WORKDIR/summary.json
++project summary publish --summary WORKDIR/summary.json
+ ```
+ 
+-`publish` decides where the spec goes, and says which:
++`publish` decides where the summary goes, and says which:
+ 
+ - **The repository hosts its site**, meaning the Projector site workflow is
+-  on its default branch and it has a Pages site. `publish` pushes the spec,
++  on its default branch and it has a Pages site. `publish` pushes the summary,
+   starts the deploy, and links the summary from the pull request. Setting
+   that up was the reviewed decision to host summaries there, so publish
+   without asking again. Get the page's URL with
+   `project site status --repo OWNER/NAME --pr NUMBER` and hand it over.
+-- **It does not.** `publish` commits the spec to this checkout's own
++- **It does not.** `publish` commits the summary to this checkout's own
+   `refs/projector/summaries` and pushes nothing, so nothing on GitHub
+   changes. Tell the user to preview it with `project site serve` from that
+   checkout, at `reviews/NUMBER/`, which a server already running picks up
+@@ -199,7 +199,7 @@ project summary publish --spec WORKDIR/summary.json
+   summaries, pointing at the "Set up the Projector site" section of
+   Projector's README.
+ 
+-Pass `--local` to keep the spec in the checkout even where the site is
++Pass `--local` to keep the summary in the checkout even where the site is
+ hosted, when the user wants to preview a summary before it goes live.
+ Publish a Claude Artifact instead only when the user asks for one, or when
+ no checkout of the repository is at hand to publish from, and say which.
+@@ -224,44 +224,44 @@ Without Artifacts, give the user the path to `WORKDIR/site/index.html`.
+ 
+ ### Publish to the repository's GitHub Pages site
+ 
+-A repository can host its own summaries. Specs live on the hidden ref
++A repository can host its own summaries. Summaries live on the hidden ref
+ `refs/projector/summaries`, which is not a branch: GitHub lists no branch
+ and offers no pull request for it, and clones do not fetch it. A workflow on
+ the default branch builds and deploys them with Projector's shared action.
+ `publish` pushes to that hidden ref only in a repository that hosts its
+ site, which a repository accepts by setting hosting up; anywhere else the
+-spec stays in the checkout, as the section above describes.
++summary stays in the checkout, as the section above describes.
+ 
+ Always publish with `project summary publish`, run directly. Do not wrap it
+ in a script of your own, and do not commit to the ref or send the dispatch
+ yourself. The
+-command already builds the spec and refuses one that does not build, and a
++command already builds the summary and refuses one that does not build, and a
+ wrapper only hides what is being written from the user and from the host's
+ permission checks. You do not need to build the page first; `page` is a
+ local preview.
+ 
+-`publish` fetches the diff once, builds the spec against it, and refuses one
+-that does not build. It then commits the spec and that diff to
+-`summaries/<number>/<head>/` on the ref, as `spec.json` and `diff.patch`,
++`publish` fetches the diff once, builds the summary against it, and refuses one
++that does not build. It then commits the summary and that diff to
++`summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,
+ without touching the checkout, and sends a `repository_dispatch` event that
+ starts the workflow. It fetches from the compare API, which serves pull
+ requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
+ `publish` reports that GitHub could not serve the diff. The file is then the
+ local `git diff` from step 3, since the compare call there fails with
+-`publish`'s. It must be the diff from the spec's `pr.base` to its `pr.head`,
++`publish`'s. It must be the diff from the summary's `pr.base` to its `pr.head`,
+ because every later deploy serves the stored diff as it is. Because the diff is
+-stored, the site deploy asks GitHub for nothing: it checks each spec against
++stored, the site deploy asks GitHub for nothing: it checks each summary against
+ its stored diff and writes each page's data beside it, and the page loads
+-that data when it opens. The deploy reports and skips any spec that still
+-fails, or that names another repository, so one bad spec costs one
++that data when it opens. The deploy reports and skips any summary that still
++fails, or that names another repository, so one bad summary costs one
+ summary rather than the deployment. The site's Reviews section lists
+ every summary at `reviews/`, serves each pull request's newest head at
+ `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
+-older heads from each page. The spec on the ref is the durable copy: to
++older heads from each page. The summary on the ref is the durable copy: to
+ update a summary later, fetch it with
+ `git fetch origin refs/projector/summaries` and start from it rather than
+ from a fresh `init`. A repository that has not published since summaries
+-were called walkthroughs has its specs on `refs/projector/walkthroughs`,
++were called walkthroughs has its summaries on `refs/projector/walkthroughs`,
+ under `walkthroughs/`, instead; its next `publish` carries them over to the
+ new ref.
+ 
+@@ -291,11 +291,11 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+ 
+ ## Update the page when the pull request moves
+ 
+-1. List what changed since the spec's head:
++1. List what changed since the summary's head:
+    `git log --oneline OLD_HEAD..NEW_HEAD` and
+    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
+    compare against the new merge base instead.
+-2. Read the new commits and any new review threads, then revise the spec:
++2. Read the new commits and any new review threads, then revise the summary:
+    set `pr.head`, move new files into groups, drop files that left the diff,
+    and rewrite every note, check and overview card the change made untrue.
+    Move each note that has a `line` to where its code sits in the new diff,
+@@ -303,10 +303,10 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+    only that a line is still in its file's diff, not that it still holds the
+    code the note is about. Resolve or remove `flag` checks the new commits
+    fixed.
+-3. `publish` the revised spec, which becomes a new version beside the old
++3. `publish` the revised summary, which becomes a new version beside the old
+    one, pushed to a hosted site or kept in the checkout as the first time.
+-   A spec kept in the checkout is found there later with
+-   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/spec.json`.
++   A summary kept in the checkout is found there later with
++   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/summary.json`.
+    For an artifact the user asked for, rebuild and republish to the same
+    one: publish the same file path again in the conversation that created
+    it, or pass the artifact's URL as `url` after reading it from any other
+diff --git a/skills/summarize-pr/spec.md b/skills/summarize-pr/format.md
+similarity index 95%
+rename from skills/summarize-pr/spec.md
+rename to skills/summarize-pr/format.md
+index 902e2c7..7632272 100644
+--- a/skills/summarize-pr/spec.md
++++ b/skills/summarize-pr/format.md
+@@ -1,7 +1,7 @@
+-# Summary spec
++# Summary format
+ 
+ `project summary init` writes the skeleton and `project site page` reads
+-it. The spec is JSON:
++it. The summary is JSON:
+ 
+ ```json
+ {
+@@ -55,7 +55,7 @@ it. The spec is JSON:
+   page shows the diff from `pr.base` to `pr.head`.
+ - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
+   request's head, are what the site's review list uses to mark a stacked pull
+-  request. `init` records both; keep them when you edit a spec by hand.
++  request. `init` records both; keep them when you edit a summary by hand.
+ - `overview.summary` is what the pull request does, in a few paragraphs.
+   The page adds the line counts and a legend itself.
+ - Each item of `overview.summary` and of a group's `intro` renders as a
+@@ -86,7 +86,7 @@ it. The spec is JSON:
+ Every text field except `name`, `pr` and the file paths is inserted as HTML,
+ so write `<code>`, `<b>` and links directly and escape a literal `<` as
+ `&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
+-page, because a Pages site deploys whatever spec is on its ref: the tags
++page, because a Pages site deploys whatever summary is on its ref: the tags
+ `a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
+ `span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
+ classes below; and `href` only for `http`, `https` and `#` links. Anything
+diff --git a/skills/writing.md b/skills/writing.md
+index 6a0deea..4baf672 100644
+--- a/skills/writing.md
++++ b/skills/writing.md
+@@ -151,7 +151,7 @@ paragraph.
+   prose.
+ - **Make link text say where the link goes.** Never write "click here" or
+   "this link".
+-- **Use the serial comma**: "the spec, the diff, and the page".
++- **Use the serial comma**: "the summary, the diff, and the page".
+ 
+ ## 6. Make every sentence easy on the first read
+ 
+@@ -170,7 +170,7 @@ sense the first time through.
+   "schema changes can cause issues".
+ - **Give a warning before the step that it guards**, not after the step.
+ - **Give each word one meaning, and each action one verb.** If you
+-  "publish" a spec in one paragraph, do not "push" it in the next, unless
++  "publish" a summary in one paragraph, do not "push" it in the next, unless
+   you mean a different action.
+ - **Keep the small words that show a sentence's structure**, such as "the",
+   "a", and "that". When you drop them to save space, a sentence can have
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 9694435..a532235 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -429,25 +429,25 @@ def parser() -> argparse.ArgumentParser:
+         help="install.sh target: all (its default), cli, claude, codex, or status",
+     )
+ 
+-    summary_parser = subcommands.add_parser("summary", help="write and publish pull request summary specs")
++    summary_parser = subcommands.add_parser("summary", help="write and publish pull request summaries")
+     summary_commands = summary_parser.add_subparsers(dest="summary_command", required=True)
+-    summary_init = summary_commands.add_parser("init", help="write a skeleton spec for a pull request")
++    summary_init = summary_commands.add_parser("init", help="write a skeleton summary for a pull request")
+     summary_init.add_argument("--repo", required=True, help="OWNER/NAME")
+     summary_init.add_argument("--pr", required=True, type=int)
+-    summary_init.add_argument("--spec", required=True)
++    summary_init.add_argument("--summary", required=True)
+     summary_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
+     summary_publish = summary_commands.add_parser(
+-        "publish", help="commit a spec to the hidden summaries ref and start a site build"
++        "publish", help="commit a summary to the hidden summaries ref and start a site build"
+     )
+-    summary_publish.add_argument("--spec", required=True)
++    summary_publish.add_argument("--summary", required=True)
+     summary_publish.add_argument("--remote", default="origin")
+     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
+     summary_publish.add_argument(
+-        "--no-dispatch", action="store_true", help="push the spec without starting the workflow"
++        "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
+     )
+     summary_publish.add_argument(
+         "--local", action="store_true",
+-        help="commit the spec to this checkout's summaries ref for `site serve` to preview, and push nothing "
++        help="commit the summary to this checkout's summaries ref for `site serve` to preview, and push nothing "
+         "(the default when the repository does not host its site)",
+     )
+ 
+@@ -502,7 +502,7 @@ def parser() -> argparse.ArgumentParser:
+         "build", help="build the site from the projects, the published reviews, and the docs"
+     )
+     site_build.add_argument("--out", required=True)
+-    site_build.add_argument("--summaries", help="directory holding <number>/<head>/spec.json files")
++    site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
+     site_build.add_argument(
+         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
+     )
+@@ -523,12 +523,12 @@ def parser() -> argparse.ArgumentParser:
+         "--allow-prepare", action="store_true",
+         help="allow this checkout's site.prepare command, and remember it until the command changes",
+     )
+-    site_page = site_commands.add_parser("page", help="build one summary page from a spec")
+-    site_page.add_argument("--spec", required=True)
++    site_page = site_commands.add_parser("page", help="build one summary page from a summary")
++    site_page.add_argument("--summary", required=True)
+     site_page.add_argument("--out", required=True)
+     site_page.add_argument("--diff", help="read the diff from this file instead of GitHub")
+     site_page.add_argument(
+-        "--at-head", action="store_true", help="build the spec's recorded head even if the pull request moved"
++        "--at-head", action="store_true", help="build the summary's recorded head even if the pull request moved"
+     )
+     site_status = site_commands.add_parser(
+         "status", help="say whether a repository hosts the site, and print its URL if so"
+@@ -547,7 +547,7 @@ def parser() -> argparse.ArgumentParser:
+         "--repo-root", help="checkout whose README.md and docs/ the site serves (default: this repository)"
+     )
+     site_serve.add_argument(
+-        "--summaries", help="directory holding <number>/<head>/spec.json files, instead of the summaries ref"
++        "--summaries", help="directory holding <number>/<head>/summary.json files, instead of the summaries ref"
+     )
+     site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
+     site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
+@@ -795,7 +795,7 @@ def run_prepare(root: Path, command: str) -> None:
+     print(f"preparing the site: {command}", file=sys.stderr, flush=True)
+     result = subprocess.run(command, shell=True, cwd=root)
+     if result.returncode:
+-        raise summary.SpecError(f"the prepare command exited with status {result.returncode}: {command}")
++        raise summary.SummaryError(f"the prepare command exited with status {result.returncode}: {command}")
+ 
+ 
+ NOT_HOSTED = 3
+@@ -873,20 +873,20 @@ def run_review(arguments: argparse.Namespace) -> int:
+ 
+ def run_summary(arguments: argparse.Namespace) -> int:
+     if arguments.summary_command == "init":
+-        summary.init(arguments.repo, arguments.pr, arguments.spec, arguments.diff)
++        summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
+     else:
+-        pr = summary.spec_pr(json.loads(Path(arguments.spec).read_text(encoding="utf-8")))
++        pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
+         site, reason = (None, "--local asked for a local preview") if arguments.local \
+             else summary.push_decision(pr["repo"])
+         summary.publish(
+-            Path(arguments.spec),
++            Path(arguments.summary),
+             arguments.remote,
+             send_dispatch=not arguments.no_dispatch,
+             diff_path=Path(arguments.diff) if arguments.diff else None,
+             push=site is not None,
+             reason=reason,
+         )
+-        # A spec kept in this checkout has no page on GitHub to link.
++        # A summary kept in this checkout has no page on GitHub to link.
+         if site is not None:
+             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
+     return 0
+@@ -921,14 +921,14 @@ def site_repo(root: Path) -> str:
+         return repo
+     try:
+         return summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
+-    except summary.SpecError:
++    except summary.SummaryError:
+         return ""
+ 
+ 
+ def site_branch(root: Path) -> str:
+     try:
+         branch = summary.git("-C", str(root), "rev-parse", "--abbrev-ref", "HEAD")
+-    except summary.SpecError:
++    except summary.SummaryError:
+         return "main"
+     return branch if branch and branch != "HEAD" else "main"
+ 
+@@ -941,7 +941,7 @@ def trunk_branch(root: Path) -> str:
+     """
+     try:
+         head = summary.git("-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+-    except summary.SpecError:
++    except summary.SummaryError:
+         return site_branch(root)
+     return head.split("/", 1)[1] if "/" in head else head
+ 
+@@ -954,7 +954,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str,
+     def base_pr(base_ref: str) -> Optional[int]:
+         try:
+             return summary.base_pr(repo, base_ref)
+-        except summary.SpecError:
++        except summary.SummaryError:
+             return None
+ 
+     entries, failures = site.build_site(
+@@ -977,7 +977,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
+     repo = site_repo(root)
+     if arguments.check_visibility:
+         if not repo:
+-            raise summary.SpecError("cannot check the site's visibility without knowing the repository")
++            raise summary.SummaryError("cannot check the site's visibility without knowing the repository")
+         summary.require_private_site(repo)
+     command = prepare_command(root, arguments)
+     if command:
+@@ -1014,9 +1014,9 @@ def sources() -> tuple:
+         return files, published.version() if published is not None else ()
+ 
+     def build(out: Path) -> str:
+-        # The build copies what it needs from the specs, so they outlive it only as long as it runs.
+-        with tempfile.TemporaryDirectory(prefix="projector-specs-") as specs:
+-            summaries = published.extract(Path(specs)) if published is not None else given
++        # The build copies what it needs from the summaries, so they outlive it only as long as it runs.
++        with tempfile.TemporaryDirectory(prefix="projector-summaries-") as extracted:
++            summaries = published.extract(Path(extracted)) if published is not None else given
+             # The build reports each page as a deploy log would; a server keeps only its one-line result.
+             with contextlib.redirect_stdout(io.StringIO()):
+                 return build_checkout(root, out, summaries, base, repo)
+@@ -1074,12 +1074,12 @@ def run_site(arguments: argparse.Namespace) -> int:
+     elif command == "serve":
+         return run_site_serve(arguments)
+     elif command == "page":
+-        spec = json.loads(Path(arguments.spec).read_text(encoding="utf-8"))
++        data = json.loads(Path(arguments.summary).read_text(encoding="utf-8"))
+         diff = Path(arguments.diff).read_text(encoding="utf-8") if arguments.diff else None
+-        payload = site.build_page(spec, Path(arguments.out), diff=diff, at_head=arguments.at_head)
++        payload = site.build_page(data, Path(arguments.out), diff=diff, at_head=arguments.at_head)
+         counts = payload["stats"]
+         print(
+-            f"wrote {arguments.out}/index.html: {len(spec['groups'])} groups, "
++            f"wrote {arguments.out}/index.html: {len(data['groups'])} groups, "
+             f"{counts['files']} files, +{counts['adds']} -{counts['dels']}"
+         )
+     elif command == "status":
+@@ -1188,16 +1188,16 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
+     """
+     try:
+         repo = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", "origin"))
+-    except summary.SpecError:
++    except summary.SummaryError:
+         repo = ""
+     if not repo:
+         raise NotOnGitHub("origin is not a GitHub repository to set up Pages on")
+     deployers = other_pages_deployers(root)
+     if deployers and not takeover:
+-        raise summary.SpecError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
++        raise summary.SummaryError(f"{', '.join(deployers)} already deploys a GitHub Pages site; pass --site to "
+                                     "add the Projector site's workflow beside it")
+     if shutil.which("gh") is None:
+-        raise summary.SpecError("the gh CLI is not installed, and setting up Pages needs it")
++        raise summary.SummaryError("the gh CLI is not installed, and setting up Pages needs it")
+     details = json.loads(summary.gh("api", f"repos/{repo}"))
+     # Only an admin can change Pages or the website link. The workflow needs no
+     # admin to propose, so a non-admin gets it either way.
+@@ -1218,7 +1218,7 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
+         pages["website"], note = summary.set_homepage(
+             repo, pages["url"], current, admin, replace=bool(url)
+         ) if pages["url"] else ("unchanged", "")
+-    except summary.SpecError as error:
++    except summary.SummaryError as error:
+         pages["website"], note = "kept", f"could not link the repository's website to the site: {error}"
+     if note:
+         print(f"project: {note}", file=sys.stderr)
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 763af32..276cd06 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -29,7 +29,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, title_from_text
+-from ..summary import DIFF_FILE, SpecError, prepare_page
++from ..summary import DIFF_FILE, SummaryError, prepare_page
+ 
+ 
+ 
+@@ -101,14 +101,14 @@ def write_page(out: Path, payload: dict) -> None:
+     copy_assets(out)
+ 
+ 
+-def build_page(spec: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+-    payload = prepare_page(spec, diff=diff, at_head=at_head, extra=extra)
++def build_page(summary: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
++    payload = prepare_page(summary, diff=diff, at_head=at_head, extra=extra)
+     write_page(out, payload)
+     return payload
+ 
+ 
+-def spec_time(path: Path) -> int:
+-    """When the spec was committed, falling back to its modification time."""
++def summary_time(path: Path) -> int:
++    """When the summary was committed, falling back to its modification time."""
+     try:
+         out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", path.name], cwd=path.parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+@@ -120,9 +120,9 @@ def spec_time(path: Path) -> int:
+ 
+ 
+ def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
+-    """Build every summary spec that can be built; report and skip the rest."""
+-    specs = sorted(root.glob("*/*/spec.json"))
+-    if not specs:
++    """Build every summary that can be built; report and skip the rest."""
++    summaries = sorted(root.glob("*/*/summary.json"))
++    if not summaries:
+         return [], []
+     own_repo = os.environ.get("GITHUB_REPOSITORY", "").lower()
+     failures: list[str] = []
+@@ -132,24 +132,24 @@ def skip(path: Path, reason: object) -> None:
+         print(f"::error title=Summary skipped::{path.relative_to(root)}: {str(reason).replace(chr(10), ' ')}")
+ 
+     by_pr: dict[str, list[tuple[int, dict]]] = {}
+-    for path in specs:
++    for path in summaries:
+         try:
+-            spec = json.loads(path.read_text(encoding="utf-8"))
+-            pr = spec.get("pr") or {}
++            summary = json.loads(path.read_text(encoding="utf-8"))
++            pr = summary.get("pr") or {}
+             number, head = path.parent.parent.name, path.parent.name
+             if str(pr.get("number")) != number or pr.get("head") != head:
+-                raise SpecError(f"it must sit at <pr.number>/<pr.head>/spec.json")
++                raise SummaryError(f"it must sit at <pr.number>/<pr.head>/summary.json")
+             if own_repo and str(pr.get("repo", "")).lower() != own_repo:
+-                raise SpecError(f"it is for {pr.get('repo')}, not this repository")
++                raise SummaryError(f"it is for {pr.get('repo')}, not this repository")
+             stored = path.with_name(DIFF_FILE)
+             if not stored.is_file():
+-                raise SpecError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
+-            payload = prepare_page(spec, diff=stored.read_text(encoding="utf-8"), at_head=True)
+-            payload["projects"] = link(spec, payload) if link else []
+-        except (SpecError, ValueError, KeyError, TypeError) as exc:
++                raise SummaryError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
++            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True)
++            payload["projects"] = link(summary, payload) if link else []
++        except (SummaryError, ValueError, KeyError, TypeError) as exc:
+             skip(path, exc)
+             continue
+-        by_pr.setdefault(number, []).append((spec_time(path), payload))
++        by_pr.setdefault(number, []).append((summary_time(path), payload))
+     entries = []
+     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
+         versions.sort(key=lambda v: v[0], reverse=True)
+@@ -183,8 +183,8 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+     A pull request is stacked only when its base branch is another pull
+     request's head branch, so a base branch no pull request uses, the default
+     branch among them, marks nothing. The pull request beneath is a review's
+-    whose spec records that branch as its `headRef`, else the `basePr` the
+-    spec recorded, else what `lookup` finds for the branch, asked once per
++    whose summary records that branch as its `headRef`, else the `basePr` the
++    summary recorded, else what `lookup` finds for the branch, asked once per
+     branch. Skipping the default branch only saves a lookup that would find
+     nothing.
+     """
+@@ -292,12 +292,12 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
+ 
+ 
+ def project_linker(described: list[dict], base: str):
+-    """Link a review to every project whose files its diff changes, or that its spec names."""
++    """Link a review to every project whose files its diff changes, or that its summary names."""
+     by_name = {p["name"]: p for p in described}
+     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+ 
+-    def link(spec: dict, payload: dict) -> list[dict]:
+-        names = [n for n in spec.get("projects") or [] if n in by_name]
++    def link(summary: dict, payload: dict) -> list[dict]:
++        names = [n for n in summary.get("projects") or [] if n in by_name]
+         for f in payload["files"]:
+             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
+             if owner and owner not in names:
+@@ -432,7 +432,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+     `trunk` the default branch a pull request that is not stacked is based on.
+-    `lookup` finds the pull request whose head is a branch, for a spec that
++    `lookup` finds the pull request whose head is a branch, for a summary that
+     did not record the one it is stacked on.
+     """
+     trunk = trunk or branch
+diff --git a/src/projector/site/serve.py b/src/projector/site/serve.py
+index 3ffc9e2..ed723ea 100644
+--- a/src/projector/site/serve.py
++++ b/src/projector/site/serve.py
+@@ -74,12 +74,12 @@ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool
+ 
+ 
+ def summaries_refs(root: Path, remote: str, ref: str = PAGES_REF, folder: str = PAGES_ROOT) -> list[tuple[str, str]]:
+-    """The local refs holding summaries, each with the folder in it that holds the specs.
++    """The local refs holding summaries, each with the folder in it that holds the summaries.
+ 
+     The remote's copy comes first and this checkout's own ref after it, which
+-    `summary publish` writes when it keeps a spec local, so the site shows
+-    both and a spec in both is read from the local one. The old walkthroughs
+-    ref, with its specs under walkthroughs/, is read only when no summaries
++    `summary publish` writes when it keeps a summary local, so the site shows
++    both and a summary in both is read from the local one. The old walkthroughs
++    ref, with its summaries under walkthroughs/, is read only when no summaries
+     ref exists, as in a repository that has not published since the rename,
+     and then only one copy of it, the remote's when there is one.
+     """
+@@ -101,11 +101,11 @@ def ref_commit(root: Path, ref: str | None) -> str:
+ 
+ 
+ def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT) -> Path | None:
+-    """Write the specs on `ref` under `dest`, each dated by the commit that last changed it.
++    """Write the summaries on `ref` under `dest`, each dated by the commit that last changed it.
+ 
+-    The build orders a pull request's summaries by when each spec was
++    The build orders a pull request's summaries by when each summary was
+     committed. An archive stamps every file with the ref's newest commit, so
+-    each spec's time is set from its own history instead.
++    each summary's time is set from its own history instead.
+     """
+     archive = run_git(root, "archive", "--format=tar", ref, folder)
+     if archive.returncode != 0:
+@@ -154,10 +154,10 @@ def version(self) -> tuple:
+         return tuple((name, ref_commit(self.root, name)) for name, _ in summaries_refs(self.root, self.remote))
+ 
+     def extract(self, dest: Path) -> Path | None:
+-        """Write the published specs under `dest`, or return None when nothing is published.
++        """Write the published summaries under `dest`, or return None when nothing is published.
+ 
+         Each ref is written over the one before, so this checkout's own ref
+-        wins where it holds the same spec as the remote's copy.
++        wins where it holds the same summary as the remote's copy.
+         """
+         out = None
+         for name, folder in summaries_refs(self.root, self.remote):
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index ad60745..de6b5cc 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -1,10 +1,10 @@
+-"""Pull request summary specs: the data a summary page is built from.
++"""Pull request summaries: the data a summary page is built from.
+ 
+-A spec records a pull request's merge base and head and assigns every changed
++A summary records a pull request's merge base and head and assigns every changed
+ file to a group with its explanation and checks. This module writes skeleton
+-specs, checks a spec against its diff, publishes specs to the hidden ref
++summaries, checks a summary against its diff, publishes summaries to the hidden ref
+ refs/projector/summaries, and says whether a repository hosts a site that
+-serves them. Rendering specs into pages is `projector.site`'s job.
++serves them. Rendering summaries into pages is `projector.site`'s job.
+ """
+ 
+ from __future__ import annotations
+@@ -25,7 +25,7 @@
+ 
+ from .core import FileAction, ProjectorError
+ 
+-SPEC_VERSION = 1
++SUMMARY_VERSION = 1
+ CHECK_KINDS = ("context", "verify", "flag")
+ PAGES_REF = "refs/projector/summaries"
+ DISPATCH_EVENT = "projector-summaries"
+@@ -34,7 +34,7 @@
+ WORKFLOW_PATH = ".github/workflows/projector-site.yml"
+ LEGACY_WORKFLOW_PATHS = (".github/workflows/walkthroughs.yml",)
+ # The names summaries were published under when they were called walkthroughs.
+-# A repository that published under them keeps its specs on the old ref, under
++# A repository that published under them keeps its summaries on the old ref, under
+ # the old root, until its next publish seeds the new ref from them, and its
+ # site workflow may still listen for the old event.
+ LEGACY_PAGES_REF = "refs/projector/walkthroughs"
+@@ -136,11 +136,11 @@
+ )
+ 
+ 
+-class SpecError(ProjectorError):
++class SummaryError(ProjectorError):
+     pass
+ 
+ 
+-class NeedsAdmin(SpecError):
++class NeedsAdmin(SummaryError):
+     """Setting up the site needs changes on GitHub that only an admin can make.
+ 
+     `commands` are the `gh` commands that make them, in order, for the user
+@@ -295,9 +295,9 @@ def gh(*args: str) -> str:
+     try:
+         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+     except FileNotFoundError as exc:
+-        raise SpecError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
++        raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
+     except subprocess.CalledProcessError as exc:
+-        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
++        raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+ 
+ def gh_lookup(*args: str) -> str | None:
+@@ -305,11 +305,11 @@ def gh_lookup(*args: str) -> str | None:
+     try:
+         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+     except FileNotFoundError as exc:
+-        raise SpecError("the gh CLI is not installed") from exc
++        raise SummaryError("the gh CLI is not installed") from exc
+     except subprocess.CalledProcessError as exc:
+         if "HTTP 404" in exc.stderr:
+             return None
+-        raise SpecError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
++        raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+ 
+ def exposure(repo: str, pages: dict) -> str:
+@@ -328,10 +328,10 @@ def require_private_site(repo: str) -> None:
+     """Refuse to deploy when a private repository's Pages site is public."""
+     raw = gh_lookup("api", f"repos/{repo}/pages")
+     if raw is None:
+-        raise SpecError(f"{repo} has no GitHub Pages site to deploy to")
++        raise SummaryError(f"{repo} has no GitHub Pages site to deploy to")
+     exposed = exposure(repo, json.loads(raw))
+     if exposed:
+-        raise SpecError(f"{exposed}; make the site private or the repository public before deploying")
++        raise SummaryError(f"{exposed}; make the site private or the repository public before deploying")
+ 
+ 
+ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str = "") -> dict:
+@@ -352,7 +352,7 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
+     """
+     raw = gh_lookup("api", f"repos/{repo}/pages")
+     if raw is not None and not takeover and json.loads(raw).get("build_type") != "workflow":
+-        raise SpecError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
++        raise SummaryError(f"{repo} already serves its own GitHub Pages site from a branch; pass --site to replace it "
+                         "with the Projector site")
+     domain = urlparse(url).hostname or ""
+     if not admin:
+@@ -391,14 +391,14 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
+             gh("api", "-X", "PUT", f"repos/{repo}/pages", "-F", "public=false")
+             pages = json.loads(gh("api", f"repos/{repo}/pages"))
+             failure = refusal if exposure(repo, pages) else ""
+-        except SpecError as exc:
++        except SummaryError as exc:
+             failure = f"{refusal}: {exc}"
+         if failure:
+             # A site this call created would stay public on a private repository.
+             if action == "created":
+                 gh("api", "-X", "DELETE", f"repos/{repo}/pages")
+                 failure += "; the public Pages site init created was deleted"
+-            raise SpecError(failure)
++            raise SummaryError(failure)
+         visibility = "updated"
+     # The domain is set once the site is private, so a failure leaves no public site behind.
+     if domain and pages.get("cname") != domain:
+@@ -530,7 +530,7 @@ def fetch_diff(repo: str, base: str, head: str) -> str:
+     return gh("api", "-H", "Accept: application/vnd.github.diff", f"repos/{repo}/compare/{base}...{head}")
+ 
+ 
+-# Sanitizing spec HTML
++# Sanitizing summary HTML
+ 
+ ALLOWED_TAGS = {"a", "b", "br", "code", "div", "em", "h3", "h4", "i", "li", "ol", "p", "pre", "span", "strong",
+                 "table", "tbody", "td", "th", "thead", "tr", "ul"}
+@@ -540,7 +540,7 @@ def fetch_diff(repo: str, base: str, head: str) -> str:
+ 
+ 
+ class Sanitizer(HTMLParser):
+-    """Rebuild spec HTML from the tags, classes and links spec.md documents."""
++    """Rebuild summary HTML from the tags, classes and links format.md documents."""
+ 
+     def __init__(self) -> None:
+         super().__init__(convert_charrefs=False)
+@@ -613,16 +613,16 @@ def sanitize_html(text: object) -> str:
+     return parser.result()
+ 
+ 
+-def sanitized(spec: dict) -> tuple[dict, list[dict]]:
+-    """The spec's overview and groups with every HTML field sanitized."""
+-    o = spec.get("overview") or {}
++def sanitized(summary: dict) -> tuple[dict, list[dict]]:
++    """The summary's overview and groups with every HTML field sanitized."""
++    o = summary.get("overview") or {}
+     overview = {
+         "summary": [sanitize_html(p) for p in o.get("summary") or []],
+         "cards": [{"id": str(c.get("id") or ""), "title": sanitize_html(c.get("title") or ""), "html": sanitize_html(c.get("html") or "")}
+                   for c in o.get("cards") or []],
+     }
+     groups = []
+-    for g in spec["groups"]:
++    for g in summary["groups"]:
+         context = [{"kind": "context", "text": c} for c in g.get("concepts") or []]
+         groups.append({
+             "id": str(g["id"]),
+@@ -650,17 +650,17 @@ def sanitized_file(f: dict) -> dict:
+     return out
+ 
+ 
+-# Specs and pages
++# Summaries and pages
+ 
+-def validate(spec: dict, files: list[dict]) -> None:
+-    if spec.get("version") != SPEC_VERSION:
+-        raise SpecError(f"spec version must be {SPEC_VERSION}")
++def validate(summary: dict, files: list[dict]) -> None:
++    if summary.get("version") != SUMMARY_VERSION:
++        raise SummaryError(f"summary version must be {SUMMARY_VERSION}")
+     for key in ("repo", "number", "head", "title"):
+-        if not spec.get("pr", {}).get(key):
+-            raise SpecError(f"pr.{key} is required")
+-    groups = spec.get("groups") or []
++        if not summary.get("pr", {}).get(key):
++            raise SummaryError(f"pr.{key} is required")
++    groups = summary.get("groups") or []
+     if not groups:
+-        raise SpecError("the spec has no groups")
++        raise SummaryError("the summary has no groups")
+     by_path = {f["path"]: f for f in files}
+     seen: dict[str, str] = {}
+     problems: list[str] = []
+@@ -699,7 +699,7 @@ def validate(spec: dict, files: list[dict]) -> None:
+     for path in sorted(set(by_path) - set(seen)):
+         problems.append(f"{path} is in no group")
+     if problems:
+-        raise SpecError("the spec does not match the diff:\n  " + "\n  ".join(problems))
++        raise SummaryError("the summary does not match the diff:\n  " + "\n  ".join(problems))
+ 
+ 
+ def diff_lines(f: dict, side: str) -> set[int]:
+@@ -719,33 +719,33 @@ def stats(files: list[dict]) -> dict:
+     return out
+ 
+ 
+-def spec_diff(spec: dict) -> str:
+-    pr = spec["pr"]
++def summary_diff(summary: dict) -> str:
++    pr = summary["pr"]
+     base = pr.get("base") or merge_base(pr["repo"], pr.get("baseRef") or "main", pr["head"])
+     return fetch_diff(pr["repo"], base, pr["head"])
+ 
+ 
+-def prepare_page(spec: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+-    pr = dict(spec.get("pr") or {})
++def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
++    pr = dict(summary.get("pr") or {})
+     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+-        raise SpecError("pr.repo, pr.number and pr.head are required")
++        raise SummaryError("pr.repo, pr.number and pr.head are required")
+     if not at_head:
+         try:
+             live = pr_metadata(pr["repo"], int(pr["number"]), stack=False)
+-        except SpecError as exc:
++        except SummaryError as exc:
+             if diff is None:
+                 raise
+             print(f"summary: could not check whether the PR moved past {pr['head'][:9]} ({exc}); building from the given diff", file=sys.stderr)
+         else:
+             if live["head"] != pr["head"]:
+-                raise SpecError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the spec for the new head before building")
++                raise SummaryError(f"the PR head moved from {pr['head'][:9]} to {live['head'][:9]}; update the summary for the new head before building")
+     if diff is None:
+-        diff = spec_diff(spec)
++        diff = summary_diff(summary)
+     files = parse_diff(diff)
+-    validate(spec, files)
+-    overview, groups = sanitized(spec)
++    validate(summary, files)
++    overview, groups = sanitized(summary)
+     payload = {
+-        "name": spec.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
++        "name": summary.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
+         "pr": pr,
+         "overview": overview,
+         "groups": groups,
+@@ -763,7 +763,7 @@ def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
+     try:
+         return subprocess.run(["git", *args], check=True, capture_output=True, text=True, env=env, input=input).stdout.strip()
+     except subprocess.CalledProcessError as exc:
+-        raise SpecError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
++        raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+ 
+ def repo_slug(remote_url: str) -> str:
+@@ -790,16 +790,16 @@ def fetch_ref(remote: str, ref: str) -> str:
+ 
+ 
+ def seed_from_legacy(remote: str) -> str:
+-    """The head of a history for the summaries ref that carries the old walkthroughs ref's specs, or ''.
++    """The head of a history for the summaries ref that carries the old walkthroughs ref's summaries, or ''.
+ 
+-    The site dates each spec by the last commit that touched its path, and a
+-    path-limited log does not follow a move, so one commit moving every spec
++    The site dates each summary by the last commit that touched its path, and a
++    path-limited log does not follow a move, so one commit moving every summary
+     to summaries/ would date them all at the move and let an older head of a
+     pull request tie with, or outrank, its newest. Each old commit is replayed
+     instead, with its walkthroughs/ folder at summaries/ and its author,
+-    committer, dates, and message kept, so every spec keeps the date it was
++    committer, dates, and message kept, so every summary keeps the date it was
+     published. Nothing is pushed here; the publish that asked for the seed
+-    pushes it with its own spec on top. The old ref stays on the remote, and
++    pushes it with its own summary on top. The old ref stays on the remote, and
+     the repository can delete it once the new ref exists.
+     """
+     old = fetch_ref(remote, LEGACY_PAGES_REF)
+@@ -808,10 +808,10 @@ def seed_from_legacy(remote: str) -> str:
+     head = ""
+     for commit in git("rev-list", "--reverse", "--first-parent", old).split():
+         try:
+-            specs = git("rev-parse", "--verify", "--quiet", f"{commit}:{LEGACY_PAGES_ROOT}")
+-        except SpecError:
++            summaries = git("rev-parse", "--verify", "--quiet", f"{commit}:{LEGACY_PAGES_ROOT}")
++        except SummaryError:
+             continue  # A commit from before the folder held anything.
+-        tree = git("mktree", input=f"040000 tree {specs}\t{PAGES_ROOT}\n")
++        tree = git("mktree", input=f"040000 tree {summaries}\t{PAGES_ROOT}\n")
+         fields = git("show", "-s", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commit).split("\0", 6)
+         env = {**os.environ,
+                "GIT_AUTHOR_NAME": fields[0], "GIT_AUTHOR_EMAIL": fields[1], "GIT_AUTHOR_DATE": fields[2],
+@@ -835,66 +835,66 @@ def ref_exists(ref: str) -> bool:
+                           capture_output=True).returncode == 0
+ 
+ 
+-def spec_tree(parent: str, folder: str, spec: dict, diff: str) -> str:
+-    """The tree of `parent`, or an empty one, with the spec and its diff written under `folder`."""
++def summary_tree(parent: str, folder: str, summary: dict, diff: str) -> str:
++    """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`."""
+     with tempfile.TemporaryDirectory() as tmp:
+         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+         if parent:
+             git("read-tree", parent, env=env)
+-        for name, content in (("spec.json", json.dumps(spec, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
++        for name, content in (("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
+             blob = git("hash-object", "-w", "--stdin", input=content)
+             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
+         return git("write-tree", env=env)
+ 
+ 
+-def spec_pr(spec: dict) -> dict:
+-    """The spec's pull request, refusing a spec that cannot say where it is published."""
+-    pr = spec.get("pr") or {}
+-    if spec.get("version") != SPEC_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+-        raise SpecError("the spec needs version, pr.repo, pr.number and pr.head")
++def summary_pr(summary: dict) -> dict:
++    """The summary's pull request, refusing a summary that cannot say where it is published."""
++    pr = summary.get("pr") or {}
++    if summary.get("version") != SUMMARY_VERSION or not pr.get("repo") or not pr.get("number") or not pr.get("head"):
++        raise SummaryError("the summary needs version, pr.repo, pr.number and pr.head")
+     return pr
+ 
+ 
+ def push_decision(repo: str) -> tuple[str | None, str]:
+-    """The URL of the site `publish` pushes a spec to `repo` for, or None and why the spec stays local.
++    """The URL of the site `publish` pushes a summary to `repo` for, or None and why the summary stays local.
+ 
+     Only a repository that hosts its Projector site reads the pushed ref, so
+-    one without a site gets its spec in this checkout alone, for `site serve`
++    one without a site gets its summary in this checkout alone, for `site serve`
+     to preview, and nothing is written to the shared repository. The answer
+     is `hosting`'s own, so a hosted site whose Pages answer has no URL still
+     counts as hosted, as `site status` counts it.
+     """
+     try:
+         return hosting(repo)
+-    except SpecError as error:
++    except SummaryError as error:
+         return None, f"could not tell whether {repo} hosts its Projector site: {error}"
+ 
+ 
+-def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
++def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
+-    """Commit the spec and its diff to the summaries ref, and push them unless `push` is false.
++    """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
+ 
+     Without `push`, the commit goes on this checkout's own `ref` and nothing
+     leaves it, no dispatch included; `reason` says why, for the report.
+     """
+-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+-    pr = spec_pr(spec)
++    summary = json.loads(summary_path.read_text(encoding="utf-8"))
++    pr = summary_pr(summary)
+     slug = repo_slug(git("remote", "get-url", remote))
+     if slug and slug.lower() != pr["repo"].lower():
+-        raise SpecError(f"{remote} is {slug}, but the spec is for {pr['repo']}")
+-    diff = diff_path.read_text(encoding="utf-8") if diff_path else spec_diff(spec)
+-    prepare_page(spec, diff=diff, at_head=True)
++        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
++    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
++    prepare_page(summary, diff=diff, at_head=True)
+     folder = f"{root}/{pr['number']}/{pr['head']}"
+     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+     if not push:
+         parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
+-        tree = spec_tree(parent, folder, spec, diff)
++        tree = summary_tree(parent, folder, summary, diff)
+         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+-            print(f"{ref} in this checkout already has this spec; nothing to publish")
++            print(f"{ref} in this checkout already has this summary; nothing to publish")
+             return None
+         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+         git("update-ref", ref, commit, parent)
+-        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/spec.json and {DIFF_FILE}; nothing was "
++        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/summary.json and {DIFF_FILE}; nothing was "
+               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
+         return commit
+     local = tracking_ref(remote, ref)
+@@ -903,20 +903,20 @@ def publish(spec_path: Path, remote: str, send_dispatch: bool = True, ref: str =
+     if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+         parent = seed_from_legacy(remote)
+         seeded = bool(parent)
+-    tree = spec_tree(parent, folder, spec, diff)
++    tree = summary_tree(parent, folder, summary, diff)
+     if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+         if not seeded:
+-            print(f"{ref} already has this spec; nothing to publish")
++            print(f"{ref} already has this summary; nothing to publish")
+             return None
+-        # The old ref already had this spec, but the new ref still needs creating.
++        # The old ref already had this summary, but the new ref still needs creating.
+         commit = parent
+     else:
+         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+     git("push", "--quiet", remote, f"{commit}:{ref}")
+     git("update-ref", local, commit)
+-    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/spec.json and {DIFF_FILE}")
++    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}")
+     if seeded:
+-        print(f"carried the specs on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
++        print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
+               "once every site reads the new ref")
+     if send_dispatch:
+         dispatch(pr["repo"])
+@@ -1014,25 +1014,25 @@ def default_branch(remote: str = "origin", root: Path | None = None) -> str:
+     within = ["-C", str(root)] if root is not None else []
+     try:
+         head = git(*within, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+-    except SpecError:
++    except SummaryError:
+         return "main"
+     return head.split("/", 1)[1] if "/" in head else head
+ 
+ 
+-def init(repo: str, number: int, spec_path: str, diff_path: str | None = None) -> None:
++def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
+     meta = pr_metadata(repo, number)
+     diff = Path(diff_path).read_text(encoding="utf-8") if diff_path else fetch_diff(repo, meta["base"], meta["head"])
+     files = parse_diff(diff)
+-    spec = {
+-        "version": SPEC_VERSION,
++    summary = {
++        "version": SUMMARY_VERSION,
+         "name": "",
+         "pr": meta,
+         "overview": {"summary": [], "cards": []},
+         "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+                     "files": [{"path": f["path"]} for f in files]}],
+     }
+-    Path(spec_path).write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+-    print(f"wrote {spec_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
++    Path(summary_path).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
++    print(f"wrote {summary_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
+     for f in files:
+         flag = f" [{f['kind']}]" if f["kind"] else ""
+         print(f"  +{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}")
+diff --git a/tests/__init__.py b/tests/__init__.py
+index 18c5ab3..1e82462 100644
+--- a/tests/__init__.py
++++ b/tests/__init__.py
+@@ -1,7 +1,7 @@
+ import os
+ 
+ # GitHub Actions sets these for every step, and Projector reads them: the site
+-# build skips a summary spec for any repository but GITHUB_REPOSITORY. Every
++# build skips a summary for any repository but GITHUB_REPOSITORY. Every
+ # test starts from a machine outside CI, and one that needs a value sets it.
+ for name in ("GITHUB_REPOSITORY", "GITHUB_ACTIONS"):
+     os.environ.pop(name, None)
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 9e70379..48b0808 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -169,7 +169,7 @@ def build_checked(self, answers: dict[str, str | None]) -> tuple[int, str]:
+         def lookup(*gh_args: str) -> str | None:
+             endpoint = gh_args[1]
+             if endpoint not in answers:
+-                raise summary.SpecError(f"gh api {endpoint} failed: connection refused")
++                raise summary.SummaryError(f"gh api {endpoint} failed: connection refused")
+             return answers[endpoint]
+ 
+         err = io.StringIO()
+@@ -225,7 +225,7 @@ def test_a_failed_lookup_stops_the_deploy_rather_than_assuming_it_is_safe(self)
+ 
+ class SiteContentTests(SiteRepoCase):
+     def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
+-        spec = {
++        data = {
+             "version": 1,
+             "name": f"Summary {number}",
+             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+@@ -235,10 +235,10 @@ def publish(self, number: int, head: str, projects: list[str] | None = None, **p
+                         "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
+         }
+         if projects is not None:
+-            spec["projects"] = projects
+-        folder = self.specs / str(number) / head
++            data["projects"] = projects
++        folder = self.summaries / str(number) / head
+         folder.mkdir(parents=True)
+-        (folder / "spec.json").write_text(json.dumps(spec))
++        (folder / "summary.json").write_text(json.dumps(data))
+         (folder / "diff.patch").write_text(PLAN_DIFF)
+ 
+     def setUp(self) -> None:
+@@ -248,7 +248,7 @@ def setUp(self) -> None:
+         hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
+         hidden.parent.mkdir()
+         self.repo = Path(shutil.move(str(self.repo), str(hidden)))
+-        self.specs = Path(tempfile.mkdtemp()) / "summaries"
++        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
+         (self.repo / "docs/images").mkdir(parents=True)
+         (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
+         (self.repo / "docs/.hidden").write_text("not served")
+@@ -257,7 +257,7 @@ def build(self) -> dict:
+         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+-                             "--summaries", str(self.specs)])
++                             "--summaries", str(self.summaries)])
+         self.assertEqual(0, code)
+         return json.loads((self.out / "site.json").read_text())
+ 
+@@ -269,7 +269,7 @@ def lookup(*args: str) -> str | None:
+             head = next(a for a in args if a.startswith("head=")).split(":", 1)[1]
+             asked.append(head)
+             if pulls is None:
+-                raise summary.SpecError("gh api failed: offline")
++                raise summary.SummaryError("gh api failed: offline")
+             return pulls.get(head, "") + "\n"
+ 
+         with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+@@ -283,12 +283,12 @@ def test_a_review_names_the_review_its_pull_request_is_stacked_on(self) -> None:
+ 
+         self.assertEqual(({9: None, 10: 9}, []), self.stacks(), "a review's head branch answers without GitHub")
+ 
+-    def test_a_spec_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
++    def test_a_summary_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a", basePr=7)
+ 
+         self.assertEqual(({10: 7}, []), self.stacks())
+ 
+-    def test_an_older_spec_asks_github_once_per_base_branch(self) -> None:
++    def test_an_older_summary_asks_github_once_per_base_branch(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a")
+         self.publish(11, "e" * 40, baseRef="feature-a")
+         self.publish(12, "f" * 40, baseRef="release")
+@@ -340,7 +340,7 @@ def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+         self.assertEqual("/reviews/", data["indexUrl"])
+         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
+ 
+-    def test_a_spec_can_name_a_project_its_diff_does_not_touch(self) -> None:
++    def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
+         self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
+ 
+         manifest = self.build()
+@@ -558,8 +558,8 @@ def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self)
+         self.assertIn("overflow-wrap: anywhere;", title.group(1))
+ 
+ 
+-def served_spec(number: int, head: str) -> dict:
+-    """A spec for pull request `number` at `head` that builds against PLAN_DIFF."""
++def served_summary(number: int, head: str) -> dict:
++    """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""
+     return {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
+             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                    "base": "b" * 40, "baseRef": "main"},
+@@ -669,7 +669,7 @@ def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAG
+         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
+             folder = remote / root / "9" / head
+             folder.mkdir(parents=True)
+-            (folder / "spec.json").write_text(json.dumps(served_spec(9, head)))
++            (folder / "summary.json").write_text(json.dumps(served_summary(9, head)))
+             (folder / "diff.patch").write_text(PLAN_DIFF)
+             run_git(remote, "add", ".")
+             run_git(remote, "commit", "--quiet", "-m", head[:1], when=when)
+@@ -682,7 +682,7 @@ def assert_serves_both_heads(self, ref: str, root: str) -> None:
+         site = self.site(summaries=serve.extract_summaries(self.repo, ref, Path(tempfile.mkdtemp()), root))
+         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+         self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
+-                         "each spec is dated by its own commit, not the ref's newest")
++                         "each summary is dated by its own commit, not the ref's newest")
+         self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
+ 
+     def test_serves_summaries_from_the_fetched_ref_newest_head_first(self) -> None:
+@@ -718,7 +718,7 @@ def test_a_checkout_without_the_ref_serves_no_summaries(self) -> None:
+         self.assertEqual([], serve.summaries_refs(self.repo, "origin"))
+ 
+     def publish_locally(self, number: int, head: str) -> None:
+-        """Commit a spec for pull request `number` to this checkout's own summaries ref, as a local publish does."""
++        """Commit a summary for pull request `number` to this checkout's own summaries ref, as a local publish does."""
+         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
+                    GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+ 
+@@ -726,7 +726,7 @@ def git(*args: str, text: str | None = None) -> str:
+             return subprocess.run(["git", *args], cwd=self.repo, env=env, input=text, check=True, capture_output=True,
+                                   text=True).stdout.strip()
+ 
+-        for name, content in (("spec.json", json.dumps(served_spec(number, head))), ("diff.patch", PLAN_DIFF)):
++        for name, content in (("summary.json", json.dumps(served_summary(number, head))), ("diff.patch", PLAN_DIFF)):
+             blob = git("hash-object", "-w", "--stdin", text=content)
+             git("update-index", "--add", "--cacheinfo", f"100644,{blob},summaries/{number}/{head}/{name}")
+         git("update-ref", summary.PAGES_REF, git("commit-tree", git("write-tree"), "-m", "Publish locally"))
+@@ -777,8 +777,8 @@ def test_a_running_server_serves_summaries_published_after_it_started(self) -> N
+         published = serve.Summaries(self.repo, "origin")
+ 
+         def build(out: Path) -> str:
+-            with tempfile.TemporaryDirectory() as specs, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+-                return cli.build_checkout(self.repo.resolve(), out, published.extract(Path(specs)), "/", "owner/example")
++            with tempfile.TemporaryDirectory() as extracted, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++                return cli.build_checkout(self.repo.resolve(), out, published.extract(Path(extracted)), "/", "owner/example")
+ 
+         site = serve.Site(build, lambda: (serve.fingerprint([self.repo / "docs"]), published.version()))
+         self.sites.append(site)
+@@ -1123,7 +1123,7 @@ def lookup(self, *args: str) -> str | None:
+             return None if self.pages is None else json.dumps(self.pages)
+         if endpoint == "repos/owner/example":
+             return "true\n" if self.private else "false\n"
+-        raise summary.SpecError(f"unexpected lookup {args}")
++        raise summary.SummaryError(f"unexpected lookup {args}")
+ 
+     def gh(self, *args: str) -> str:
+         self.calls.append(args)
+@@ -1133,7 +1133,7 @@ def gh(self, *args: str) -> str:
+             return json.dumps({"private": self.private, "homepage": self.homepage or None,
+                                "permissions": {"admin": self.admin, "push": True, "pull": True}})
+         if not self.admin:
+-            raise summary.SpecError("gh api failed: HTTP 403 Must have admin rights to Repository.")
++            raise summary.SummaryError("gh api failed: HTTP 403 Must have admin rights to Repository.")
+         if args == ("api", "-X", "DELETE", "repos/owner/example/pages"):
+             self.pages = None
+             return ""
+@@ -1145,7 +1145,7 @@ def gh(self, *args: str) -> str:
+             self.pages["build_type"] = "workflow"
+         elif (method, endpoint, field) == ("PUT", "repos/owner/example/pages", "public=false"):
+             if not self.private_pages:
+-                raise summary.SpecError("gh api failed: HTTP 422 private Pages are not available")
++                raise summary.SummaryError("gh api failed: HTTP 422 private Pages are not available")
+             self.pages["public"] = False
+             # GitHub serves a private site at its own subdomain unless it has a custom domain.
+             if not self.pages.get("cname"):
+@@ -1157,7 +1157,7 @@ def gh(self, *args: str) -> str:
+         elif (method, endpoint) == ("PATCH", "repos/owner/example") and field.startswith("homepage="):
+             self.homepage = field.removeprefix("homepage=")
+         else:
+-            raise summary.SpecError(f"unexpected call {args}")
++            raise summary.SummaryError(f"unexpected call {args}")
+         return "{}"
+ 
+     def writes(self) -> list[tuple[str, ...]]:
+@@ -1545,9 +1545,9 @@ def test_the_action_hands_its_prepare_input_to_the_build_after_its_checkout(self
+         self.assertIn('${PREPARE:+--prepare "$PREPARE"}', action[build:action.index("upload-pages-artifact")])
+ 
+     def fetch_step(self) -> str:
+-        """The shell script of the action's step that fetches the specs."""
++        """The shell script of the action's step that fetches the summaries."""
+         lines = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text().splitlines()
+-        start = lines.index("    - name: Fetch the summary specs")
++        start = lines.index("    - name: Fetch the summaries")
+         start = lines.index("      run: |", start) + 1
+         end = next(i for i in range(start, len(lines)) if not lines[i].startswith("        "))
+         return "\n".join(line[8:] for line in lines[start:end]) + "\n"
+@@ -1574,7 +1574,7 @@ def git_in(*args: str, text: str) -> str:
+                         return subprocess.run(["git", *args], cwd=remote, check=True, capture_output=True, text=True,
+                                               input=text).stdout.strip()
+ 
+-                    blob = git_in("hash-object", "-w", "--stdin", text="spec\n")
++                    blob = git_in("hash-object", "-w", "--stdin", text="summary\n")
+                     tree = git_in("mktree", text=f"100644 blob {blob}\t{root}\n")
+                     run_git(remote, "update-ref", ref, run_git(remote, "commit-tree", tree, "-m", root))
+                 checkout = tmp / "checkout"
+@@ -1589,8 +1589,8 @@ def git_in(*args: str, text: str) -> str:
+                 if expected is None:
+                     self.assertEqual("", written, "no ref: the site builds without reviews")
+                 else:
+-                    self.assertEqual(f"SUMMARIES={tmp}/summary-specs/{expected}\n", written)
+-                    self.assertTrue((tmp / "summary-specs" / expected).is_file())
++                    self.assertEqual(f"SUMMARIES={tmp}/summaries-ref/{expected}\n", written)
++                    self.assertTrue((tmp / "summaries-ref" / expected).is_file())
+ 
+     def test_the_workflow_listens_only_for_the_summaries_event(self) -> None:
+         text = summary.workflow_text("v0", "main")
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 50e1899..cce9656 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -43,7 +43,7 @@
+ """
+ 
+ 
+-def make_spec(groups: list[dict]) -> dict:
++def make_summary(groups: list[dict]) -> dict:
+     return {
+         "version": 1,
+         "name": "Core Summary",
+@@ -126,11 +126,11 @@ class BuildTests(unittest.TestCase):
+     def build(self, groups: list[dict], live: object = None) -> tuple[int, Path, str]:
+         tmp = Path(tempfile.mkdtemp())
+         (tmp / "pr.diff").write_text(DIFF)
+-        (tmp / "spec.json").write_text(json.dumps(make_spec(groups)))
++        (tmp / "summary.json").write_text(json.dumps(make_summary(groups)))
+         err = io.StringIO()
+-        lookup = mock.patch.object(summary, "pr_metadata", side_effect=live or summary.SpecError("gh pr view failed: offline"))
++        lookup = mock.patch.object(summary, "pr_metadata", side_effect=live or summary.SummaryError("gh pr view failed: offline"))
+         with lookup, redirect_stdout(io.StringIO()), redirect_stderr(err):
+-            code = cli.main(["site", "page", "--spec", str(tmp / "spec.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
++            code = cli.main(["site", "page", "--summary", str(tmp / "summary.json"), "--out", str(tmp / "site"), "--diff", str(tmp / "pr.diff")])
+         return code, tmp / "site", err.getvalue()
+ 
+     def test_writes_the_page_and_the_renderer(self) -> None:
+@@ -151,7 +151,7 @@ def test_writes_the_page_and_the_renderer(self) -> None:
+         self.assertEqual(["core", "gen"], [g["id"] for g in data["groups"]])
+ 
+     def test_a_diff_file_build_still_refuses_a_moved_head(self) -> None:
+-        moved = lambda repo, number, stack=True: dict(make_spec([])["pr"], head="c" * 40)
++        moved = lambda repo, number, stack=True: dict(make_summary([])["pr"], head="c" * 40)
+         code, _, err = self.build(GOOD_GROUPS, live=moved)
+         self.assertEqual(65, code)
+         self.assertIn("moved from aaaaaaaaa to ccccccccc", err)
+@@ -229,7 +229,7 @@ def test_refuses_a_duplicate_group_id(self) -> None:
+ class RendererTests(unittest.TestCase):
+     def test_renderer_ships_only_allowlisted_remote_scripts(self) -> None:
+         # Claude Artifacts load scripts only from a CDN allowlist.
+-        html = site.page("T", make_spec(GOOD_GROUPS) | {"pr": make_spec([])["pr"]})
++        html = site.page("T", make_summary(GOOD_GROUPS) | {"pr": make_summary([])["pr"]})
+         for src in __import__("re").findall(r'src="(https?://[^"]+)"', html):
+             self.assertTrue(src.startswith("https://cdnjs.cloudflare.com/"), src)
+ 
+@@ -239,36 +239,36 @@ def test_at_head_fetches_the_recorded_merge_base_and_head_without_checking_the_l
+         out = Path(tempfile.mkdtemp()) / "site"
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF) as fetch, \
+              mock.patch.object(summary, "pr_metadata", side_effect=AssertionError("must not check the live PR")):
+-            site.build_page(make_spec(GOOD_GROUPS), out, at_head=True)
++            site.build_page(make_summary(GOOD_GROUPS), out, at_head=True)
+         fetch.assert_called_once_with("owner/repo", "b" * 40, "a" * 40)
+         self.assertTrue((out / "index.html").is_file())
+ 
+     def test_default_build_refuses_a_moved_head(self) -> None:
+-        live = dict(make_spec([])["pr"], head="c" * 40)
++        live = dict(make_summary([])["pr"], head="c" * 40)
+         with mock.patch.object(summary, "pr_metadata", return_value=live), \
+              mock.patch.object(summary, "fetch_diff", return_value=DIFF):
+-            with self.assertRaisesRegex(summary.SpecError, "moved from aaaaaaaaa to ccccccccc"):
+-                site.build_page(make_spec(GOOD_GROUPS), Path(tempfile.mkdtemp()))
++            with self.assertRaisesRegex(summary.SummaryError, "moved from aaaaaaaaa to ccccccccc"):
++                site.build_page(make_summary(GOOD_GROUPS), Path(tempfile.mkdtemp()))
+ 
+ 
+ class SiteTests(unittest.TestCase):
+-    def write_spec(self, root: Path, head: str, name: str) -> Path:
+-        spec = make_spec(GOOD_GROUPS)
+-        spec["pr"]["head"] = head
+-        spec["name"] = name
+-        path = root / "7" / head / "spec.json"
++    def write_summary(self, root: Path, head: str, name: str) -> Path:
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = head
++        data["name"] = name
++        path = root / "7" / head / "summary.json"
+         path.parent.mkdir(parents=True)
+-        path.write_text(json.dumps(spec))
++        path.write_text(json.dumps(data))
+         path.with_name("diff.patch").write_text(DIFF)
+         return path
+ 
+     def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        old = self.write_spec(tmp / "summaries", "a" * 40, "Old")
+-        new = self.write_spec(tmp / "summaries", "c" * 40, "New")
++        old = self.write_summary(tmp / "summaries", "a" * 40, "Old")
++        new = self.write_summary(tmp / "summaries", "c" * 40, "New")
+         times = {old: 100, new: 200}
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+-             mock.patch.object(site, "spec_time", side_effect=lambda p: times[p]), \
++             mock.patch.object(site, "summary_time", side_effect=lambda p: times[p]), \
+              redirect_stdout(io.StringIO()):
+             _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+ 
+@@ -292,11 +292,11 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
+             self.assertIn(site.icon_link(), built)
+ 
+-    def test_a_spec_published_with_its_diff_builds_without_github(self) -> None:
++    def test_a_summary_published_with_its_diff_builds_without_github(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        spec_path = self.write_spec(tmp / "summaries", "a" * 40, "Stored")
+-        spec_path.with_name("diff.patch").write_text(DIFF)
+-        offline = summary.SpecError("gh api failed: offline")
++        summary_path = self.write_summary(tmp / "summaries", "a" * 40, "Stored")
++        summary_path.with_name("diff.patch").write_text(DIFF)
++        offline = summary.SummaryError("gh api failed: offline")
+         with mock.patch.object(summary, "fetch_diff", side_effect=offline), \
+              mock.patch.object(summary, "merge_base", side_effect=offline), \
+              redirect_stdout(io.StringIO()):
+@@ -306,10 +306,10 @@ def test_a_spec_published_with_its_diff_builds_without_github(self) -> None:
+         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
+         self.assertEqual(3, data["stats"]["files"])
+ 
+-    def test_a_spec_without_a_stored_diff_is_skipped_rather_than_fetched(self) -> None:
++    def test_a_summary_without_a_stored_diff_is_skipped_rather_than_fetched(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        self.write_spec(tmp / "summaries", "a" * 40, "Stored")
+-        bare = self.write_spec(tmp / "summaries", "c" * 40, "Bare")
++        self.write_summary(tmp / "summaries", "a" * 40, "Stored")
++        bare = self.write_summary(tmp / "summaries", "c" * 40, "Bare")
+         bare.with_name("diff.patch").unlink()
+         with mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+              mock.patch.object(summary, "merge_base", side_effect=AssertionError("must not fetch")), \
+@@ -322,12 +322,12 @@ def test_a_spec_without_a_stored_diff_is_skipped_rather_than_fetched(self) -> No
+ 
+     def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        spec = make_spec(GOOD_GROUPS)
+-        spec["pr"]["head"] = "a" * 40
+-        spec["groups"][0]["intro"] = ['<script>alert(1)</script><b onclick="x()">bold</b>']
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = "a" * 40
++        data["groups"][0]["intro"] = ['<script>alert(1)</script><b onclick="x()">bold</b>']
+         folder = tmp / "summaries" / "7" / ("a" * 40)
+         folder.mkdir(parents=True)
+-        (folder / "spec.json").write_text(json.dumps(spec))
++        (folder / "summary.json").write_text(json.dumps(data))
+         (folder / "diff.patch").write_text(DIFF)
+         with redirect_stdout(io.StringIO()):
+             site.build_site(tmp / "site", summaries=tmp / "summaries")
+@@ -335,30 +335,30 @@ def test_a_stored_diff_is_checked_and_sanitized_like_a_fetched_one(self) -> None
+         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
+         self.assertEqual(["<b>bold</b>"], data["groups"][0]["intro"])
+ 
+-    def test_skips_a_misfiled_spec_and_still_deploys_the_rest(self) -> None:
++    def test_skips_a_misfiled_summary_and_still_deploys_the_rest(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        self.write_spec(tmp / "summaries", "a" * 40, "Good")
+-        wrong = tmp / "summaries" / "8" / ("d" * 40) / "spec.json"
++        self.write_summary(tmp / "summaries", "a" * 40, "Good")
++        wrong = tmp / "summaries" / "8" / ("d" * 40) / "summary.json"
+         wrong.parent.mkdir(parents=True)
+-        wrong.write_text(json.dumps(make_spec(GOOD_GROUPS)))
++        wrong.write_text(json.dumps(make_summary(GOOD_GROUPS)))
+         out = io.StringIO()
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(out):
+             entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+         self.assertEqual([7], [e["number"] for e in entries])
+         self.assertEqual(1, len(failures))
+-        self.assertIn("must sit at <pr.number>/<pr.head>/spec.json", failures[0])
++        self.assertIn("must sit at <pr.number>/<pr.head>/summary.json", failures[0])
+         self.assertIn("::error", out.getvalue())
+         self.assertTrue((tmp / "site" / "index.html").is_file())
+ 
+-    def test_one_spec_that_does_not_match_its_diff_costs_only_its_own_page(self) -> None:
++    def test_one_summary_that_does_not_match_its_diff_costs_only_its_own_page(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        good = self.write_spec(tmp / "summaries", "a" * 40, "Good")
+-        bad = self.write_spec(tmp / "summaries", "c" * 40, "Bad")
+-        spec = json.loads(bad.read_text())
+-        spec["groups"] = spec["groups"][:1]
+-        bad.write_text(json.dumps(spec))
++        good = self.write_summary(tmp / "summaries", "a" * 40, "Good")
++        bad = self.write_summary(tmp / "summaries", "c" * 40, "Bad")
++        data = json.loads(bad.read_text())
++        data["groups"] = data["groups"][:1]
++        bad.write_text(json.dumps(data))
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+-             mock.patch.object(site, "spec_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
++             mock.patch.object(site, "summary_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
+              redirect_stdout(io.StringIO()):
+             entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+         self.assertEqual(1, len(failures))
+@@ -368,9 +368,9 @@ def test_one_spec_that_does_not_match_its_diff_costs_only_its_own_page(self) ->
+                       "the newest page that built")
+         self.assertEqual(1, entries[0]["heads"])
+ 
+-    def test_skips_a_spec_for_another_repository_when_the_workflow_names_its_own(self) -> None:
++    def test_skips_a_summary_for_another_repository_when_the_workflow_names_its_own(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
+-        self.write_spec(tmp / "summaries", "a" * 40, "Theirs")
++        self.write_summary(tmp / "summaries", "a" * 40, "Theirs")
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
+             entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+@@ -393,14 +393,14 @@ def test_keeps_the_documented_markup_and_drops_everything_else(self) -> None:
+                          clean('<div class="tblwrap"><table class="tbl"><tr><td class="r">1</td></tr></table></div>'))
+         self.assertEqual('x &lt;y', clean('x <y'))
+ 
+-    def test_a_built_page_carries_no_script_from_the_spec(self) -> None:
+-        spec = make_spec(GOOD_GROUPS)
+-        spec["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
+-        spec["groups"][0]["files"][0]["checks"] = [{"kind": "flag", "text": '<a href="javascript:x">z</a><script>alert(3)</script>', "line": 12}]
+-        spec["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
++    def test_a_built_page_carries_no_script_from_the_summary(self) -> None:
++        data = make_summary(GOOD_GROUPS)
++        data["groups"][0]["intro"] = ['Hi <img src=x onerror="alert(1)"><script>alert(2)</script>']
++        data["groups"][0]["files"][0]["checks"] = [{"kind": "flag", "text": '<a href="javascript:x">z</a><script>alert(3)</script>', "line": 12}]
++        data["overview"]["cards"] = [{"title": "<b>T</b>", "html": '<a href="javascript:x">y</a>'}]
+         out = Path(tempfile.mkdtemp())
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
+-            site.build_page(spec, out, at_head=True)
++            site.build_page(data, out, at_head=True)
+         page = (out / "index.html").read_text()
+         for bad in ("onerror", "alert(2)", "alert(3)", "javascript:"):
+             self.assertNotIn(bad, page)
+@@ -425,35 +425,35 @@ def setUp(self) -> None:
+         run(self.repo, "git", "commit", "--quiet", "-m", "main")
+         # The branch is not main: a developer's pre-push hook may refuse pushes to main.
+         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+-        self.spec = tmp / "spec.json"
++        self.summary_path = tmp / "summary.json"
+         self.dispatches: list[str] = []
+ 
+     def publish(self, head: str, **kwargs: object) -> object:
+-        spec = make_spec(GOOD_GROUPS)
+-        spec["pr"]["head"] = head
+-        self.spec.write_text(json.dumps(spec))
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = head
++        self.summary_path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+         os.chdir(self.repo)
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                  mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
+-                return summary.publish(self.spec, "origin", **kwargs)
++                return summary.publish(self.summary_path, "origin", **kwargs)
+         finally:
+             os.chdir(cwd)
+ 
+     def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
+-        diff_file = self.spec.with_name("pr.diff")
++        diff_file = self.summary_path.with_name("pr.diff")
+         diff_file.write_text(DIFF)
+-        spec = make_spec(GOOD_GROUPS)
+-        spec["pr"]["head"] = "a" * 40
+-        self.spec.write_text(json.dumps(spec))
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = "a" * 40
++        self.summary_path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+         os.chdir(self.repo)
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                  mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+                  redirect_stdout(io.StringIO()):
+-                summary.publish(self.spec, "origin", diff_path=diff_file)
++                summary.publish(self.summary_path, "origin", diff_path=diff_file)
+         finally:
+             os.chdir(cwd)
+         self.assertIn(f"summaries/7/{'a' * 40}/diff.patch", self.ref_files())
+@@ -468,7 +468,7 @@ def test_first_publish_creates_the_hidden_ref_dispatches_and_leaves_the_checkout
+ 
+         self.assertIsNotNone(self.publish("a" * 40))
+ 
+-        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json"],
++        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json"],
+                          self.ref_files())
+         self.assertEqual(DIFF, run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{'a' * 40}/diff.patch")
+                          + "\n")
+@@ -483,11 +483,11 @@ def test_first_publish_creates_the_hidden_ref_dispatches_and_leaves_the_checkout
+         self.assertEqual("dirty\n", (self.repo / "README.md").read_text())
+         self.assertEqual("M README.md\n?? untracked.txt", run(self.repo, "git", "status", "--porcelain"), "worktree and index untouched")
+ 
+-    def test_later_publishes_add_heads_and_an_unchanged_spec_neither_pushes_nor_dispatches(self) -> None:
++    def test_later_publishes_add_heads_and_an_unchanged_summary_neither_pushes_nor_dispatches(self) -> None:
+         first = self.publish("a" * 40)
+         second = self.publish("c" * 40)
+         self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"))
+-        self.assertIn(f"summaries/7/{'c' * 40}/spec.json", self.ref_files())
++        self.assertIn(f"summaries/7/{'c' * 40}/summary.json", self.ref_files())
+         self.assertIsNone(self.publish("c" * 40))
+         self.assertEqual(second, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+         self.assertEqual(["owner/repo", "owner/repo"], self.dispatches)
+@@ -506,14 +506,14 @@ def test_first_publish_seeds_the_summaries_ref_from_the_old_walkthroughs_ref(sel
+ 
+         new = self.publish("c" * 40)
+ 
+-        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json",
+-                          f"summaries/7/{'c' * 40}/diff.patch", f"summaries/7/{'c' * 40}/spec.json"], self.ref_files())
++        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json",
++                          f"summaries/7/{'c' * 40}/diff.patch", f"summaries/7/{'c' * 40}/summary.json"], self.ref_files())
+         seed = run(self.remote, "git", "log", "--format=%P", "-1", new)
+         self.assertEqual(run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", old),
+                          run(self.remote, "git", "show", "-s", "--format=%an %ae %aI %cI %B", seed),
+                          "the old commit is replayed with its author, dates, and message")
+         self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
+-                         run(self.remote, "git", "rev-parse", f"{seed}:summaries"), "the old specs move unchanged")
++                         run(self.remote, "git", "rev-parse", f"{seed}:summaries"), "the old summaries move unchanged")
+         self.assertEqual(old, run(self.remote, "git", "rev-parse", summary.LEGACY_PAGES_REF), "the old ref is left in place")
+         self.assertEqual(["owner/repo"], self.dispatches)
+ 
+@@ -521,7 +521,7 @@ def test_first_publish_seeds_the_summaries_ref_from_the_old_walkthroughs_ref(sel
+         self.assertEqual(new, run(self.remote, "git", "log", "--format=%P", "-1", "refs/projector/summaries"),
+                          "later publishes build on the new ref without seeding again")
+ 
+-    def test_seeding_pushes_the_new_ref_even_when_the_old_ref_already_has_the_spec(self) -> None:
++    def test_seeding_pushes_the_new_ref_even_when_the_old_ref_already_has_the_summary(self) -> None:
+         old = self.publish_legacy("a" * 40)
+ 
+         seed = self.publish("a" * 40)
+@@ -529,12 +529,12 @@ def test_seeding_pushes_the_new_ref_even_when_the_old_ref_already_has_the_spec(s
+         self.assertEqual(seed, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+         self.assertEqual(run(self.remote, "git", "rev-parse", f"{old}:walkthroughs"),
+                          run(self.remote, "git", "rev-parse", f"{seed}:summaries"))
+-        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/spec.json"], self.ref_files())
+-        self.assertIsNone(self.publish("a" * 40), "once seeded, an unchanged spec publishes nothing")
++        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json"], self.ref_files())
++        self.assertIsNone(self.publish("a" * 40), "once seeded, an unchanged summary publishes nothing")
+ 
+-    def test_seeding_keeps_each_spec_dated_when_it_was_published(self) -> None:
++    def test_seeding_keeps_each_summary_dated_when_it_was_published(self) -> None:
+         # Two heads of one pull request, published a month apart under the old
+-        # names. The site dates a spec by the last commit that touched its
++        # names. The site dates a summary by the last commit that touched its
+         # path, so a seed that moved both in one commit would tie them.
+         self.publish_legacy("a" * 40, when="2026-01-01T12:00:00+02:00")
+         self.publish_legacy("b" * 40, when="2026-02-01T12:00:00+02:00")
+@@ -543,7 +543,7 @@ def test_seeding_keeps_each_spec_dated_when_it_was_published(self) -> None:
+ 
+         def dated(head: str) -> str:
+             return run(self.remote, "git", "log", "-1", "--format=%cI", "refs/projector/summaries", "--",
+-                       f"summaries/7/{head}/spec.json")
++                       f"summaries/7/{head}/summary.json")
+         self.assertEqual("2026-01-01T12:00:00+02:00", dated("a" * 40))
+         self.assertEqual("2026-02-01T12:00:00+02:00", dated("b" * 40), "the newer head stays newer")
+ 
+@@ -554,16 +554,16 @@ def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_ren
+         self.assertEqual([("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-summaries"),
+                           ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")], calls)
+ 
+-    def test_refuses_to_push_a_spec_that_does_not_build(self) -> None:
+-        spec = make_spec(GOOD_GROUPS[:1])
+-        self.spec.write_text(json.dumps(spec))
++    def test_refuses_to_push_a_summary_that_does_not_build(self) -> None:
++        data = make_summary(GOOD_GROUPS[:1])
++        self.summary_path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+         os.chdir(self.repo)
+         try:
+             with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+                  mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append):
+-                with self.assertRaisesRegex(summary.SpecError, "gen/api.pb.go is in no group"):
+-                    summary.publish(self.spec, "origin")
++                with self.assertRaisesRegex(summary.SummaryError, "gen/api.pb.go is in no group"):
++                    summary.publish(self.summary_path, "origin")
+         finally:
+             os.chdir(cwd)
+         self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
+@@ -576,11 +576,11 @@ def test_a_local_publish_commits_to_the_checkouts_ref_and_pushes_nothing(self) -
+         second = self.publish("c" * 40, push=False)
+ 
+         local = run(self.repo, "git", "ls-tree", "-r", "--name-only", "refs/projector/summaries").splitlines()
+-        self.assertIn(f"summaries/7/{'a' * 40}/spec.json", local)
++        self.assertIn(f"summaries/7/{'a' * 40}/summary.json", local)
+         self.assertIn(f"summaries/7/{'c' * 40}/diff.patch", local)
+         self.assertEqual(first, run(self.repo, "git", "log", "--format=%P", "-1", "refs/projector/summaries"))
+         self.assertEqual(second, run(self.repo, "git", "rev-parse", "refs/projector/summaries"))
+-        self.assertIsNone(self.publish("c" * 40, push=False), "an unchanged spec commits nothing")
++        self.assertIsNone(self.publish("c" * 40, push=False), "an unchanged summary commits nothing")
+         self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing reaches the remote")
+         self.assertEqual("", run(self.repo, "git", "for-each-ref", "refs/projector/remotes"), "nor its copy here")
+         self.assertEqual([], self.dispatches)
+@@ -591,9 +591,9 @@ def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
+         self.assertEqual([], self.dispatches)
+         self.assertTrue(self.ref_files())
+ 
+-    def test_refuses_a_spec_for_another_repository(self) -> None:
++    def test_refuses_a_summary_for_another_repository(self) -> None:
+         run(self.repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
+-        with self.assertRaisesRegex(summary.SpecError, "origin is someone/else, but the spec is for owner/repo"):
++        with self.assertRaisesRegex(summary.SummaryError, "origin is someone/else, but the summary is for owner/repo"):
+             self.publish("a" * 40)
+ 
+ 
+@@ -660,7 +660,7 @@ def status(self, answers: dict[str, str | None], *args: str) -> tuple[int, str,
+         def lookup(*gh_args: str) -> str | None:
+             endpoint = gh_args[1]
+             if endpoint not in answers:
+-                raise summary.SpecError(f"gh api {endpoint} failed: connection refused")
++                raise summary.SummaryError(f"gh api {endpoint} failed: connection refused")
+             return answers[endpoint]
+ 
+         out, err = io.StringIO(), io.StringIO()
+@@ -728,7 +728,7 @@ def failing(stderr: str):
+ 
+         with failing("gh: Not Found (HTTP 404)\n"):
+             self.assertIsNone(summary.gh_lookup("api", "repos/o/r/pages"))
+-        with failing("gh: Bad credentials (HTTP 401)\n"), self.assertRaisesRegex(summary.SpecError, "HTTP 401"):
++        with failing("gh: Bad credentials (HTTP 401)\n"), self.assertRaisesRegex(summary.SummaryError, "HTTP 401"):
+             summary.gh_lookup("api", "repos/o/r/pages")
+ 
+ 
+@@ -829,8 +829,8 @@ def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -
+ 
+         Returns the keyword arguments publish got, the comments made, and the output.
+         """
+-        spec = Path(tempfile.mkdtemp()) / "summary.json"
+-        spec.write_text(json.dumps({"version": summary.SPEC_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
++        path = Path(tempfile.mkdtemp()) / "summary.json"
++        path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+         published: list[dict] = []
+         commented: list[tuple] = []
+         out = io.StringIO()
+@@ -840,11 +840,11 @@ def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -
+              mock.patch.object(summary, "comment_summary",
+                                side_effect=lambda *a, **k: commented.append((*a, k)) or "done"), \
+              redirect_stdout(out):
+-            self.assertEqual(0, cli.main(["summary", "publish", "--spec", str(spec), *flags]))
++            self.assertEqual(0, cli.main(["summary", "publish", "--summary", str(path), *flags]))
+         self.assertLessEqual(lookup.call_count, 1, "hosting is looked up at most once")
+         return published, commented, out.getvalue()
+ 
+-    def test_summary_publish_comments_the_link_for_the_specs_head(self) -> None:
++    def test_summary_publish_comments_the_link_for_the_summary_head(self) -> None:
+         published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""))
+ 
+         self.assertTrue(published[0]["push"])
+@@ -858,18 +858,18 @@ def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(sel
+         self.assertTrue(published[0]["push"], "hosted, as `site status` calls it")
+         self.assertEqual([("owner/repo", 7, HEAD, {"site": ""})], commented)
+ 
+-    def test_summary_publish_keeps_the_spec_local_when_the_hosting_check_fails(self) -> None:
+-        published, commented, _ = self.cli_publish(summary.SpecError("gh api failed: HTTP 502"))
++    def test_summary_publish_keeps_the_summary_local_when_the_hosting_check_fails(self) -> None:
++        published, commented, _ = self.cli_publish(summary.SummaryError("gh api failed: HTTP 502"))
+ 
+         self.assertFalse(published[0]["push"])
+         self.assertIn("could not tell whether owner/repo hosts its Projector site", published[0]["reason"])
+         self.assertEqual([], commented)
+ 
+-    def test_summary_publish_keeps_the_spec_local_where_the_site_is_not_hosted(self) -> None:
++    def test_summary_publish_keeps_the_summary_local_where_the_site_is_not_hosted(self) -> None:
+         published, commented, _ = self.cli_publish((None, "owner/repo has no GitHub Pages site"))
+ 
+         self.assertEqual([(False, "owner/repo has no GitHub Pages site")], [(k["push"], k["reason"]) for k in published])
+-        self.assertEqual([], commented, "a spec kept local has no page on GitHub to link")
++        self.assertEqual([], commented, "a summary kept local has no page on GitHub to link")
+ 
+     def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> None:
+         with mock.patch.object(summary, "push_decision", side_effect=AssertionError("--local asks GitHub nothing")):

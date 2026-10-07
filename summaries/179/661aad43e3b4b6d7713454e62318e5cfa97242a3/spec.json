@@ -1,0 +1,297 @@
+{
+ "version": 1,
+ "name": "Summaries, not specs",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 179,
+  "title": "Call summary specs summaries",
+  "head": "661aad43e3b4b6d7713454e62318e5cfa97242a3",
+  "headRef": "summary-not-spec",
+  "base": "cecf5dbb34cff747318ac0a8c66b4eed01b20e2b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A pull request summary is the JSON file the <code>summarize-pr</code> skill writes to explain a pull request. It sorts the changed files into groups in reading order and attaches review notes to groups, files, and lines. The <code>project</code> CLI checks that file against the pull request's diff and stores both on a hidden Git ref, <code>refs/projector/summaries</code>. The repository's Projector site renders each stored summary as a page like this one. Until this change, the code, the CLI flags, and the docs called that file a <i>spec</i>.",
+   "Projector's planning skill is about to be renamed <code>spec</code>, which would give the word two meanings. This change gives the file the name it already had on disk. The CLI's <code>--spec</code> flags become <code>--summary</code>, <code>publish</code> stores <code>summary.json</code> instead of <code>spec.json</code>, and the site build reads only <code>summary.json</code>. Every Python name, skill passage, and document that meant a summary now says summary. The JSON keys inside the file and its <code>version</code> do not change.",
+   "The change keeps no compatibility with the old names, because Projector is at version 0. That choice has a cost, and the two open review findings flagged below are about it: a summary stored as <code>spec.json</code> stops appearing on its site, and the released CLI keeps writing <code>spec.json</code> until the next release."
+  ],
+  "cards": [
+   {
+    "id": "renames",
+    "title": "What is renamed",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Before</th><th>After</th></tr></thead><tbody><tr><td><code>--spec</code> on <code>summary init</code>, <code>summary publish</code>, and <code>site page</code></td><td class=\"r\"><code>--summary</code></td></tr><tr><td><code>&lt;number&gt;/&lt;head&gt;/spec.json</code> on the summaries ref</td><td class=\"r\"><code>&lt;number&gt;/&lt;head&gt;/summary.json</code></td></tr><tr><td><code>SpecError</code>, <code>SPEC_VERSION</code></td><td class=\"r\"><code>SummaryError</code>, <code>SUMMARY_VERSION</code></td></tr><tr><td><code>spec_tree</code>, <code>spec_pr</code>, <code>spec_diff</code>, <code>spec_time</code></td><td class=\"r\"><code>summary_tree</code>, <code>summary_pr</code>, <code>summary_diff</code>, <code>summary_time</code></td></tr><tr><td><code>skills/summarize-pr/spec.md</code></td><td class=\"r\"><code>skills/summarize-pr/format.md</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the JSON file a page is built from, holding the pull request's base and head, an overview, and groups of files with notes.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden Git ref that is not a branch. It holds one <code>summaries/&lt;number&gt;/&lt;head&gt;/</code> folder per published head, with the summary and its <code>diff.patch</code>. The site's GitHub Action builds the site from it.</li><li><b>Walkthroughs</b>: the name summaries had before an earlier rename. A repository that has not published since then keeps its summaries on <code>refs/projector/walkthroughs</code>, under <code>walkthroughs/</code>.</li><li><b>Released CLI</b>: the <code>project</code> command from the latest release, 0.6.9, which still writes <code>spec.json</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>This pull request replaces #175, which was closed with the same branch at the same head. The Projector review on #175 raised two findings, and neither had a reply there. Both are flagged below: the site build drops every summary stored as <code>spec.json</code> without reporting it, and the docs still say that a walkthroughs-era site keeps working.</li><li>The review of this head verified both again and posted them here as new threads. Against a copy of the real summaries ref, the base builds 11 reviews and this head builds none.</li><li>The validation gate passes, the TypeScript checks and build pass, and the rename is complete apart from three unrelated uses of the word that the pull request body lists.</li></ul>"
+   },
+   {
+    "id": "later",
+    "title": "What it leaves for later",
+    "html": "<ul class=\"tight\"><li>The migration from the walkthroughs ref still copies that ref's <code>spec.json</code> files onto the summaries ref, where the build now passes over them. The pull request body leaves its removal to a later change.</li><li>Three uses of the word stay because they mean something else: test-file patterns such as <code>.spec.ts</code>, an importlib module spec in <code>tests/test_release.py</code>, and the historical path in the completed <code>pr-walkthrough</code> plan.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "The CLI's flags and the stored file",
+   "kicker": "What a user types, and what lands on the summaries ref",
+   "intro": [
+    "Three <code>project</code> commands take a summary file. <code>summary init</code> writes a skeleton, <code>summary publish</code> checks the file against the diff and commits both to the summaries ref, and <code>site page</code> builds one page from the file. Each now takes <code>--summary</code> where it took <code>--spec</code>. An old command line fails with argparse's <code>the following arguments are required: --summary</code> and exit status 2, so nothing runs with the wrong file.",
+    "<code>summary.py</code> owns the file format and publishing. Its change is a rename throughout: the error type, the version constant, the helpers, the docstrings, and the messages. The one change in behavior is the file name that <code>summary_tree</code> writes on the ref."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The JSON inside the file is unchanged. It has the same keys, and <code>version</code> is still 1. Only the file's name on the ref and the names in the code change."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "The summary format, its checks, and publishing to the summaries ref. Everything here is renamed, and <code>summary_tree</code> writes the new file name.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 844,
+       "text": "<code>summary_tree</code> now writes <code>summary.json</code> beside <code>diff.patch</code>. The released CLI writes <code>spec.json</code> to the same folder, so until the next release both names reach the ref, and only this one builds. The flag in the site group covers what happens to the other."
+      },
+      {
+       "kind": "context",
+       "line": 904,
+       "text": "The walkthroughs migration still runs here. It replays the old ref's commits onto the summaries ref, and those commits hold <code>spec.json</code> files, which the site build at this head passes over."
+      },
+      {
+       "kind": "context",
+       "line": 28,
+       "text": "<code>SUMMARY_VERSION</code> stays 1, although a renderer from this change no longer reads version-1 summaries stored as <code>spec.json</code>. The completed <code>pr-walkthrough</code> plan makes this version the compatibility contract for the <code>@v0</code> action: every renderer on a major tag accepts every summary of the version it shipped with. The review suggests shipping this change in a minor release whose notes tell repositories to republish their summaries."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Renames the three <code>--spec</code> flags to <code>--summary</code>, their help text, and every caught <code>SpecError</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1077,
+       "text": "The file <code>site page</code> reads is called <code>data</code>, not <code>summary</code>. A local named <code>summary</code> anywhere in <code>run_site</code> would shadow the <code>summary</code> module this file imports, and the <code>status</code> branch of the same function, which calls <code>summary.hosting</code>, would raise <code>UnboundLocalError</code>. Checked by reading <code>run_site</code> and its imports; the unit suite passes at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "build",
+   "title": "The site build and its action",
+   "kicker": "Where the site finds summaries, and which files it builds",
+   "intro": [
+    "The site is built by <code>project site build</code>, which the repository's GitHub Action runs after every publish, and by <code>project site serve</code> for a local preview. Both extract the summaries ref into a directory and hand it to <code>build_summaries</code>. That function builds a page for every summary it finds and reports any it cannot build as an <code>::error</code> annotation in the deploy log.",
+    "<code>build_summaries</code> now looks only for <code>&lt;number&gt;/&lt;head&gt;/summary.json</code>. A folder that holds only <code>spec.json</code> is neither built nor reported. That is the first open finding, flagged on its line."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>build_summaries</code> globs the new file name. The rest is renamed variables and docstrings.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 124,
+       "text": "<b>Open review finding: every stored summary, and every new one the released CLI publishes, disappears without a report.</b> <code>build_summaries</code> looks only for <code>*/*/summary.json</code> and says nothing about a <code>spec.json</code> it passes over. Built against a copy of the real summaries ref, the base writes 11 reviews and this head writes <code>0 reviews, 0 reviews skipped</code>. The released CLI still writes <code>spec.json</code>, and this repository's site workflow runs the action from <code>main</code>. So after the merge, each summary that CLI publishes is pushed and linked from its pull request, but its page is a 404, and republishing with the same CLI does not bring it back. The finding's fix: report each <code>*/*/spec.json</code> as a skipped summary with a message to republish it with a CLI that writes <code>summary.json</code>, or read a <code>spec.json</code> that has no <code>summary.json</code> beside it. Then say in the pull request body that the released CLI keeps writing <code>spec.json</code> until the next release."
+      },
+      {
+       "kind": "verify",
+       "line": 137,
+       "text": "The local <code>summary</code> in <code>build_summaries</code> shadows nothing. This module imports <code>DIFF_FILE</code>, <code>SummaryError</code>, and <code>prepare_page</code> from <code>..summary</code> by name, not the module itself. Checked by reading the module's imports."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/site/serve.py",
+     "note": "Docstrings only. <code>site serve</code> extracts the summaries ref, or the walkthroughs ref when no summaries ref exists, and the build above decides which files count."
+    },
+    {
+     "path": "actions/site/action.yml",
+     "note": "Renames the fetch step to <code>Fetch the summaries</code>, and the worktree it checks the ref out into to <code>summaries-ref</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 21,
+       "text": "<code>tests/test_site.py</code> finds this step by its exact name, to run its script against temporary remotes, so the step name and that test change together."
+      },
+      {
+       "kind": "context",
+       "line": 29,
+       "text": "The fallback still points the build at <code>walkthroughs/</code> when a repository has no summaries ref. A real walkthroughs ref holds <code>spec.json</code> files, which the build at this head passes over. The flag on <code>docs/site.md</code> covers it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "renderer",
+   "title": "The page renderer",
+   "kicker": "One renamed parameter, in the TypeScript and its compiled JavaScript",
+   "intro": [
+    "The browser renders each summary page from its <code>data.json</code> with <code>site/src/summary.ts</code>. The repository commits the compiled <code>site/assets/summary.js</code>, because every deploy and every CLI install reads it from a Git tree. The change renames <code>renderFile</code>'s parameter, which holds one file's entry in a group, from <code>spec</code> to <code>entry</code>, and rewords two comments."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Renames <code>renderFile</code>'s parameter to <code>entry</code>."
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "One comment."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "collapsed": true,
+     "note": "Compiled from <code>site/src/summary.ts</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "This file matches its source. At this head, <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code> pass and leave it unchanged."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The skills",
+   "kicker": "What agents are told to write and run",
+   "intro": [
+    "<code>summarize-pr</code> is the skill that writes summaries. Its format reference, renamed from <code>spec.md</code> to <code>format.md</code>, documents the JSON. Both now say summary, and every command in them uses <code>--summary</code>. <code>review-pr</code> tells the review loop to start a new head's summary from the earlier head's, and <code>writing.md</code> uses the word in two examples."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "An agent reads these files from its installed plugin and runs the <code>project</code> CLI it has installed, and the two update separately. Until both come from a release that includes this change, a mismatched pair fails with a usage error that names the flag the CLI expects."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Every <code>--spec</code> becomes <code>--summary</code>, and the stored file is <code>summary.json</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 264,
+       "text": "This passage makes the same walkthroughs claim as <code>docs/site.md</code>. The flag there covers it."
+      },
+      {
+       "kind": "context",
+       "line": 309,
+       "text": "For a head published before this change, this path does not exist, because that head's file is <code>spec.json</code>."
+      }
+     ]
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "note": "Renamed from <code>spec.md</code>. Four lines change."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/writing.md"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and completed plans",
+   "kicker": "The CLI reference, the site guide, and four finished plans",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/site.md</code> describe the current behavior, so they follow the rename. The four plans are all <code>completed</code>, so none makes a readiness claim. The change rewrites the word in their design text too, and keeps one historical path in <code>pr-walkthrough</code> that names what the retired walkthroughs ref holds."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/site.md",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 153,
+       "text": "<b>Open review finding: the docs say that a walkthroughs-era site keeps working, but its summaries no longer appear.</b> A <code>refs/projector/walkthroughs</code> ref holds only <code>spec.json</code> files, and this repository's holds two. The action's fallback and <code>site serve</code> find nothing there that the build reads, and the first <code>publish</code> copies files onto the summaries ref that the build passes over. Built from that ref, the base writes 2 reviews and this head writes none. <code>docs/cli.md</code> and <code>summarize-pr</code> make the same claim. The legacy test fixtures hide the gap, because they write <code>summary.json</code> under <code>walkthroughs/</code>, a shape no release wrote. The finding's fix: write those fixtures as <code>spec.json</code>, then either make the walkthroughs path read that name or rewrite these passages to say that walkthroughs-era summaries stop appearing."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 596,
+       "text": "The same walkthroughs claim as <code>docs/site.md</code>. The flag there covers it."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/pr-walkthrough/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 53,
+       "text": "This path keeps <code>spec.json</code> on purpose. It names the files that the retired walkthroughs ref holds."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/review-and-summarize/readme.md"
+    },
+    {
+     "path": "docs/projects/site-content/readme.md"
+    },
+    {
+     "path": "docs/projects/site/readme.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Fixtures, flags, and names follow the rename",
+   "intro": [
+    "The tests write <code>summary.json</code> fixtures, pass <code>--summary</code>, and expect <code>SummaryError</code>. A variable that held a summary is now called <code>data</code> or <code>summary_path</code>, because <code>summary</code> is the module under test. The suite runs 428 tests OK at this head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 509,
+       "text": "<code>publish_legacy</code>, defined above this test, publishes with this change's code to the old ref and folder, so the walkthroughs fixture holds <code>summary.json</code>. No release wrote that shape, because a real walkthroughs ref holds <code>spec.json</code>. The flag on <code>docs/site.md</code> covers it."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 672,
+       "text": "<code>published_remote</code> also builds its walkthroughs-ref fixture with <code>summary.json</code>, so the test that serves the old ref passes although a real one holds <code>spec.json</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/__init__.py"
+    }
+   ]
+  }
+ ]
+}
