@@ -111,7 +111,7 @@ much it matters. Section 2 states the solution as one concrete unit: the flow
 after the change, each new data shape, and each file's change. The reasons
 for the design, the acceptance criteria, cost, rollout, open questions, and
 background follow, each only when it has content. `project create` writes
-this scaffold, and the `design` skill fills it.
+this scaffold, and the `spec` skill fills it.
 
 Write the smallest plan that makes those clear. Keep the reason for a status
 or priority change in the body rather than adding more field values. Split
