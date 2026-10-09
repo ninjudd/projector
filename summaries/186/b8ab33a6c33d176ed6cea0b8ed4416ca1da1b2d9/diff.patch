@@ -1,0 +1,198 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index f7fc14f..a4cfdea 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -626,9 +626,10 @@ Once the site is hosted, publish the summary again to push it.
+ 
+ When `summary publish` pushes to a hosted site, it then comments a link to
+ the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
+-It keeps one such comment per account and pull request, updating it in
+-place for a later head and leaving it alone when it already names this
+-one.
++It keeps one such comment per account and pull request, as the newest
++comment: each publish posts the link again at the end, and then deletes the
++account's older summary comments. A rerun on the same head posts nothing
++while its comment is still the newest.
+ It sends two `repository_dispatch` events, `projector-summaries` and
+ `projector-walkthroughs`, because a site workflow written before summaries
+ were renamed listens only for the second; a later release stops sending it.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 06e761e..fb16a79 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -590,9 +590,10 @@ summary a person asks for:
+ Publish it with `project summary publish`, after the review. It then
+ comments a link to the summary on the pull request, so a reader on GitHub
+ finds it: one comment per pull request, which a later head's summary
+-updates in place. Do not post the link yourself. A summary that fails to
+-build or publish never changes the review's verdict: say in your report
+-that the summary failed and why, and leave the review as it was.
++reposts at the end, deleting the old one. Do not post the link yourself.
++A summary that fails to build or publish never changes the review's
++verdict: say in your report that the summary failed and why, and leave
++the review as it was.
+ 
+ ## Gate readiness claims in plans
+ 
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index ae74053..725a14c 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -280,8 +280,9 @@ published again.
+ 
+ Last, `publish` comments a link to the summary on the pull request, so a
+ reader on GitHub finds the page. The pull request keeps one such comment
+-per account: a later head's summary updates it in place, and publishing
+-the same head again changes nothing.
++per account, always as its newest comment: each publish posts the link
++again at the end and deletes the older comment. Publishing the same head
++again posts nothing while its comment is still the newest.
+ 
+ Setting a repository up is once, with admin rights, and only when the user
+ asks for it. From a checkout whose `origin` is the repository, run:
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index c302d7a..1754562 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -937,8 +937,11 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None)
+     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
+ 
+     The pull request keeps one such comment per account, naming the head it
+-    summarizes: a later head's summary updates it in place rather than adding
+-    another, and a comment that already names this head is left alone. A
++    summarizes, and keeps it the newest comment: each publish posts the link
++    afresh at the end and then deletes the account's older summary comments,
++    so the pull request is never without one. A comment that already names
++    this head and is the newest on the pull request is left alone, and only
++    the account's older summary comments are deleted. A
+     repository whose site is not hosted gets no comment. `site` is the site's
+     URL when the caller already looked it up. Returns what it did.
+     """
+@@ -952,17 +955,30 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None)
+     page = review_page(site, number)
+     body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
+     login = gh("api", "user", "--jq", ".login").strip()
++    # Every comment, oldest first, with its body only when it is this
++    # account's summary comment: the newest decides whether one is at the end.
+     rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
+-              f'.[] | select((.user.login | ascii_downcase) == "{login.lower()}") '
+-              f'| select(.body | test("<!-- {SUMMARY_MARKER} v=1 ")) | [.id, .body] | @json')
++              f'.[] | if (.user.login | ascii_downcase) == "{login.lower()}" '
++              f'and (.body | test("<!-- {SUMMARY_MARKER} v=1 ")) then [.id, .body] else [.id, null] end | @json')
+     comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
+-    if comments:
+-        comment_id, current = comments[-1]
+-        if current.strip() == body.strip():
+-            return f"comment {comment_id} already links the summary of {head[:7]}: {page}"
+-        gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "-f", f"body={body}")
+-        return f"updated comment {comment_id} to link the summary of {head[:7]}: {page}"
++
++    def delete(older: list[list]) -> str:
++        """Delete the account's summary comments among `older`, and name them."""
++        stale = [comment_id for comment_id, current in older if current is not None]
++        for comment_id in stale:
++            gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
++        return ", ".join(f"comment {comment_id}" for comment_id in stale)
++
++    if comments and comments[-1][1] is not None and comments[-1][1].strip() == body.strip():
++        # A delete that failed on an earlier run can have left an older one behind.
++        deleted = delete(comments[:-1])
++        return (f"comment {comments[-1][0]} already links the summary of {head[:7]}"
++                f"{f', deleting {deleted}' if deleted else ''}: {page}")
+     posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
++    deleted = delete(comments)
++    if deleted:
++        return (f"moved the link to the summary of {head[:7]} to a new comment at the end, deleting "
++                f"{deleted}: {posted.get('html_url') or page}")
+     return f"commented a link to the summary of {head[:7]}: {posted.get('html_url') or page}"
+ 
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 822666b..0081e3c 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -779,20 +779,23 @@ def setUp(self) -> None:
+         self.comments = [{"id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
+         self.calls: list[str] = []
+         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
++        self.next_id = 101
+ 
+     def gh(self, *args: str) -> str:
+         if args == ("api", "user", "--jq", ".login"):
+             return "operator\n"
+         if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/comments"):
+-            return "".join(json.dumps([c["id"], c["body"]]) + "\n" for c in self.comments
+-                           if c["user"]["login"] == "operator" and "<!-- projector-summary v=1 " in c["body"])
+-        if args[:3] == ("api", "-X", "PATCH"):
++            return "".join(json.dumps([c["id"], c["body"] if c["user"]["login"] == "operator"
++                                       and "<!-- projector-summary v=1 " in c["body"] else None]) + "\n"
++                           for c in self.comments)
++        if args[:3] == ("api", "-X", "DELETE"):
+             comment_id = int(args[3].rsplit("/", 1)[1])
+-            self.calls.append(f"patch {comment_id}")
+-            next(c for c in self.comments if c["id"] == comment_id)["body"] = args[5].removeprefix("body=")
+-            return "{}"
++            self.calls.append(f"delete {comment_id}")
++            self.comments.remove(next(c for c in self.comments if c["id"] == comment_id))
++            return ""
+         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
+-            new = {"id": 100 + len(self.comments), "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
++            new = {"id": self.next_id, "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
++            self.next_id += 1
+             self.comments.append(new)
+             self.calls.append(f"post {new['id']}")
+             return json.dumps({"html_url": f"https://github.com/owner/repo/pull/7#issuecomment-{new['id']}"})
+@@ -817,15 +820,49 @@ def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
+         self.assertIn("already links the summary", self.comment())
+         self.assertEqual(["post 101"], self.calls, "a rerun on the same head adds nothing")
+ 
+-    def test_a_later_head_updates_the_comment_rather_than_adding_one(self) -> None:
++    def test_a_later_head_reposts_the_comment_at_the_end_and_deletes_the_old_one(self) -> None:
+         self.comment()
++        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "Pushed a fix."})
+ 
+         result = self.comment("b" * 40)
+ 
+-        self.assertEqual(["post 101", "patch 101"], self.calls)
+-        self.assertEqual(1, len(self.summary_comments()))
++        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls, "the new link is up before the old goes")
++        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
+         self.assertIn("sha=" + "b" * 40, self.summary_comments()[0])
+-        self.assertIn("updated comment 101", result)
++        self.assertIn("moved the link to the summary of bbbbbbb to a new comment at the end, deleting comment 101",
++                      result)
++
++    def test_a_rerun_on_the_same_head_moves_a_buried_comment_to_the_end(self) -> None:
++        self.comment()
++        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "One question."})
++
++        self.comment()
++
++        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
++        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
++
++    def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
++        for comment_id in (5, 6):
++            self.comments.append({"id": comment_id, "user": {"login": "operator"},
++                                  "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
++
++        result = self.comment()
++
++        self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
++        self.assertEqual([1, 101], [c["id"] for c in self.comments])
++        self.assertIn("deleting comment 5, comment 6", result)
++
++    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
++        self.comment()
++        self.comments.insert(1, {"id": 5, "user": {"login": "operator"},
++                                 "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
++        self.calls.clear()
++
++        result = self.comment()
++
++        self.assertEqual(["delete 5"], self.calls, "the newest comment stays, and the straggler goes")
++        self.assertEqual([1, 101], [c["id"] for c in self.comments])
++        self.assertIn("comment 101 already links the summary of aaaaaaa, deleting comment 5", result)
+ 
+     def test_another_accounts_summary_comment_is_left_alone(self) -> None:
+         self.comments.append({"id": 2, "user": {"login": "teammate"},
