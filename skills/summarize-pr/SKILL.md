@@ -308,6 +308,21 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 
 ## Update the page when the pull request moves
 
+Start from the newest version of the summary on the summaries ref, whoever
+published it. Another session or account can have summarized the pull
+request already, at an earlier head or at this one. To get that version,
+fetch the ref, find the folder most recently written for the pull request,
+and copy its summary. `HEAD_SHA` is the head that folder names:
+
+```sh
+git fetch origin refs/projector/summaries
+git log -1 --name-only --format= FETCH_HEAD -- summaries/NUMBER/
+git show FETCH_HEAD:summaries/NUMBER/HEAD_SHA/summary.json > WORKDIR/summary.json
+```
+
+When that folder is already this head, revise its summary in place of
+starting a new one, and skip step 1.
+
 1. List what changed since the summary's head:
    `git log --oneline OLD_HEAD..NEW_HEAD` and
    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;

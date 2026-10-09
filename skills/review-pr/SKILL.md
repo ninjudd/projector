@@ -574,13 +574,22 @@ to summarize is too small to send for review. Summarize when both hold.
    a Projector site there is nowhere to publish unattended, so skip the
    summary rather than publishing an Artifact nobody asked for.
 
+While both hold, the summary is not optional. Summarize every pull request
+you review, whoever opened it. A summary matters most on another author's
+pull request, because that is how its reviewers read the change. Neither
+the author, a brief, nor your own judgment is a reason to skip or hold one.
+The one off switch is `review.summarize = false` in `.projector.toml`,
+and the user sets it.
+
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
 - **Update rather than start over.** When the summaries ref already holds a
-  summary for an earlier head of this pull request, start from that summary and
-  update it as the skill's "Update the page when the pull request moves"
-  section describes, so a fix-cycle head costs a revision, not a rewrite.
+  summary of this pull request, start from its newest version and update it
+  as the skill's "Update the page when the pull request moves" section
+  describes, so a fix-cycle head costs a revision, not a rewrite. The newest
+  version can come from another session or account, and can be at this very
+  head. Build on it all the same.
 - **Carry the review into it.** Every finding thread still open after this
   review, from the query in § Verify earlier findings, becomes a `flag` check on its
   file at its `line`, saying what the finding says, so a reader sees what
@@ -591,9 +600,19 @@ Publish it with `project summary publish`, after the review. It then
 links the summary from the pull request, so a reader on GitHub finds it:
 one comment per pull request, which a later head's summary reposts at the
 end, deleting the old one, and one line at the very bottom of the
-description. Do not post the link yourself. A summary that fails to build
-or publish never changes the review's verdict: say in your report that the
-summary failed and why, and leave the review as it was.
+description. Do not post the link yourself.
+
+The description edit is intended, on every pull request. `publish` appends
+its link block after everything else in the description, below a trailer
+such as a `Ticket:` line too. It removes the block an earlier publish left
+and changes nothing else. It does not count as editing the pull request
+body, so a brief or a repository rule that forbids body edits does not
+cover it. Never hold the publish for it, and never move or delete the block
+by hand. The next publish puts it back at the end.
+
+A summary that fails to build or publish never changes the review's
+verdict: say in your report that the summary failed and why, and leave the
+review as it was.
 
 ## Gate readiness claims in plans
 

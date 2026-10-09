@@ -121,6 +121,13 @@ reads the new head against that history instead of rediscovering it.
   review id, and how many threads it opened; `publish` has already added the
   id to the loop's record. A question for the user comes back to the main
   loop to ask.
+- Each subagent summarizes every pull request it reviews, as `review-pr`
+  describes, another author's included. The loop never pauses or holds
+  summaries on its own judgment. The one off switch is `review.summarize =
+  false` in `.projector.toml`, which the user sets. A brief that
+  forbids editing the pull request body names the summary's link block as
+  an exception, because `project summary publish` writes that block at the
+  end of every description on purpose.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
   to finish: delete any start comment it still holds and remove its scratch
   worktrees. Then close the subagent and delete the pull request's line from
