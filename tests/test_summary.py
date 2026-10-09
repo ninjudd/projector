@@ -864,10 +864,10 @@ class DescribeSummaryTests(unittest.TestCase):
 
 
 class CommentSummaryTests(unittest.TestCase):
-    """The pull request's comments stand in a list; the fake answers the calls comment_summary makes."""
+    """The pull request's timeline stands in a list; the fake answers the calls comment_summary makes."""
 
     def setUp(self) -> None:
-        self.comments = [{"id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
+        self.timeline: list[dict] = [{"event": "commented", "id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
         self.calls: list[str] = []
         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
         self.next_id = 101
@@ -875,19 +875,25 @@ class CommentSummaryTests(unittest.TestCase):
     def gh(self, *args: str) -> str:
         if args == ("api", "user", "--jq", ".login"):
             return "operator\n"
-        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/comments"):
-            return "".join(json.dumps([c["id"], c["body"] if c["user"]["login"] == "operator"
-                                       and "<!-- projector-summary v=1 " in c["body"] else None]) + "\n"
-                           for c in self.comments)
+        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/timeline"):
+            return "".join(json.dumps([item.get("event"), item.get("id"), (item.get("state") or "").lower(),
+                                       item["body"] if item.get("event") == "commented"
+                                       and item["user"]["login"].lower() == "operator"
+                                       and "<!-- projector-summary v=1 " in item["body"] else None]) + "\n"
+                           for item in self.timeline)
         if args[:3] == ("api", "-X", "DELETE"):
             comment_id = int(args[3].rsplit("/", 1)[1])
             self.calls.append(f"delete {comment_id}")
-            self.comments.remove(next(c for c in self.comments if c["id"] == comment_id))
+            self.timeline.remove(next(item for item in self.timeline
+                                      if item.get("event") == "commented" and item["id"] == comment_id))
+            # GitHub records the deletion on the timeline, where only the actor's own feed shows it.
+            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id, "actor": {"login": "operator"}})
             return ""
         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
-            new = {"id": self.next_id, "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
+            new = {"event": "commented", "id": self.next_id, "user": {"login": "operator"},
+                   "body": args[3].removeprefix("body=")}
             self.next_id += 1
-            self.comments.append(new)
+            self.timeline.append(new)
             self.calls.append(f"post {new['id']}")
             return json.dumps({"html_url": f"https://github.com/owner/repo/pull/7#issuecomment-{new['id']}"})
         raise AssertionError(f"unexpected gh call {args}")
@@ -897,8 +903,17 @@ class CommentSummaryTests(unittest.TestCase):
              mock.patch.object(summary, "hosting", return_value=self.hosted):
             return summary.comment_summary("owner/repo", 7, head)
 
+    def add_comment(self, comment_id: int, body: str, login: str = "teammate", at: int | None = None) -> None:
+        """Add a comment to the timeline, at the end or at index `at`."""
+        item = {"event": "commented", "id": comment_id, "user": {"login": login}, "body": body}
+        self.timeline.insert(len(self.timeline) if at is None else at, item)
+
+    def comment_ids(self) -> list[int]:
+        return [item["id"] for item in self.timeline if item.get("event") == "commented"]
+
     def summary_comments(self) -> list[str]:
-        return [c["body"] for c in self.comments if "projector-summary" in c["body"]]
+        return [item["body"] for item in self.timeline
+                if item.get("event") == "commented" and "projector-summary" in item["body"]]
 
     def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
         result = self.comment()
@@ -913,56 +928,121 @@ class CommentSummaryTests(unittest.TestCase):
 
     def test_a_later_head_reposts_the_comment_at_the_end_and_deletes_the_old_one(self) -> None:
         self.comment()
-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "Pushed a fix."})
+        self.add_comment(2, "Pushed a fix.")
 
         result = self.comment("b" * 40)
 
         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls, "the new link is up before the old goes")
-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
+        self.assertEqual([1, 2, 102], self.comment_ids())
         self.assertIn("sha=" + "b" * 40, self.summary_comments()[0])
         self.assertIn("moved the link to the summary of bbbbbbb to a new comment at the end, deleting comment 101",
                       result)
 
     def test_a_rerun_on_the_same_head_moves_a_buried_comment_to_the_end(self) -> None:
         self.comment()
-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "One question."})
+        self.add_comment(2, "One question.")
 
         self.comment()
 
         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
+        self.assertEqual([1, 2, 102], self.comment_ids())
 
-    def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
-        for comment_id in (5, 6):
-            self.comments.append({"id": comment_id, "user": {"login": "operator"},
-                                  "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
+    def test_a_later_review_buries_the_comment_and_it_moves_to_the_end(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "review-bot"}, "state": "commented",
+                              "body": "Two findings."})
 
         result = self.comment()
 
-        self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
-        self.assertIn("deleting comment 5, comment 6", result)
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+        self.assertEqual([1, 102], self.comment_ids())
+        self.assertIn("moved the link to the summary of aaaaaaa to a new comment at the end, deleting comment 101",
+                      result)
 
-    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+    def test_marking_the_pull_request_ready_buries_the_comment(self) -> None:
         self.comment()
-        self.comments.insert(1, {"id": 5, "user": {"login": "operator"},
-                                 "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
+        self.timeline.append({"event": "ready_for_review", "id": 3, "actor": {"login": "operator"}})
+        self.timeline.append({"event": "review_requested", "id": 4, "actor": {"login": "operator"}})
+
+        self.comment()
+
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+
+    def test_a_push_after_the_comment_buries_it(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "committed", "sha": "b" * 40, "message": "Fix the typo."})
+
+        self.comment()
+
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+
+    def test_events_the_conversation_does_not_show_leave_the_comment_last(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "subscribed", "id": 3, "actor": {"login": "teammate"}})
+        self.timeline.append({"event": "mentioned", "id": 4, "actor": {"login": "teammate"}})
+        self.timeline.append({"event": "unsubscribed", "id": 5, "actor": {"login": "teammate"}})
+
+        result = self.comment()
+
+        self.assertEqual(["post 101"], self.calls)
+        self.assertIn("comment 101 already links the summary of aaaaaaa", result)
+
+    def test_a_pending_review_leaves_the_comment_last(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "teammate"}, "state": "pending"})
+
+        self.comment()
+
+        self.assertEqual(["post 101"], self.calls, "only its author sees a pending review")
+
+    def test_the_deletion_a_repost_leaves_behind_does_not_bury_the_new_comment(self) -> None:
+        self.comment()
+        self.add_comment(2, "One question.")
+        self.comment()
         self.calls.clear()
 
         result = self.comment()
 
-        self.assertEqual(["delete 5"], self.calls, "the newest comment stays, and the straggler goes")
-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
+        self.assertEqual("comment_deleted", self.timeline[-1]["event"], "the old comment's deletion comes last")
+        self.assertEqual([], self.calls)
+        self.assertIn("comment 102 already links the summary of aaaaaaa", result)
+
+    def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
+        for comment_id in (5, 6):
+            self.add_comment(comment_id, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator")
+
+        result = self.comment()
+
+        self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
+        self.assertEqual([1, 101], self.comment_ids())
+        self.assertIn("deleting comment 5, comment 6", result)
+
+    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+        self.comment()
+        self.add_comment(5, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator", at=1)
+        self.timeline.append({"event": "mentioned", "id": 3, "actor": {"login": "teammate"}})
+        self.calls.clear()
+
+        result = self.comment()
+
+        self.assertEqual(["delete 5"], self.calls, "the last comment stays, and the straggler goes")
+        self.assertEqual([1, 101], self.comment_ids())
         self.assertIn("comment 101 already links the summary of aaaaaaa, deleting comment 5", result)
 
+    def test_the_accounts_login_matches_in_any_case(self) -> None:
+        self.add_comment(5, f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n",
+                         login="Operator")
+
+        self.assertIn("comment 5 already links the summary of aaaaaaa", self.comment())
+        self.assertEqual([], self.calls)
+
     def test_another_accounts_summary_comment_is_left_alone(self) -> None:
-        self.comments.append({"id": 2, "user": {"login": "teammate"},
-                              "body": f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs."})
+        self.add_comment(2, f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.")
 
         self.comment()
 
         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
-        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.comments[1]["body"])
+        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.timeline[1]["body"])
 
     def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
         with mock.patch.object(summary, "gh", side_effect=self.gh), \

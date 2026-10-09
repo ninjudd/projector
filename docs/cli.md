@@ -626,13 +626,18 @@ Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
-It keeps one such comment per account and pull request, as the newest
-comment: each publish posts the link again at the end, and then deletes the
-account's older summary comments. A rerun on the same head posts nothing
-while its comment is still the newest. It also puts the same link at the very
-bottom of the pull request's description, after a blank line, and removes the
-link an earlier publish left there. Where the account cannot edit the
-description, it prints why and leaves the description as it was.
+It keeps one such comment per account and pull request, as the pull
+request's last message: each publish posts the link again at the end, and
+then deletes the account's older summary comments. A rerun on the same head
+posts nothing while its comment is still the last item on the pull request's
+timeline. Anything the conversation shows after the comment, such as another
+comment, a submitted review, a push, or a ready-for-review event, makes the
+rerun post the link again. A pending review, a subscription, or a mention
+does not, because readers of the conversation do not see it.
+`summary publish` also puts the same link at the very bottom of the pull
+request's description, after a blank line, and removes the link an earlier
+publish left there. Where the account cannot edit the description, it prints
+why and leaves the description as it was.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.

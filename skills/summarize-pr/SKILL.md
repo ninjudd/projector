@@ -280,12 +280,14 @@ published again.
 
 Last, `publish` comments a link to the summary on the pull request, so a
 reader on GitHub finds the page. The pull request keeps one such comment
-per account, always as its newest comment: each publish posts the link
+per account, always as its last message: each publish posts the link
 again at the end and deletes the older comment. Publishing the same head
-again posts nothing while its comment is still the newest. `publish` also
-puts the same link at the very bottom of the pull request's description,
-replacing the one an earlier publish left there. Where the account cannot
-edit the description, `publish` says so and keeps the comment.
+again posts nothing while its comment is still the pull request's last
+timeline item. A later review, comment, push, or ready-for-review event
+makes it post the link again. `publish` also puts the same link at the
+very bottom of the pull request's description, replacing the one an
+earlier publish left there. Where the account cannot edit the
+description, `publish` says so and keeps the comment.
 
 Setting a repository up is once, with admin rights, and only when the user
 asks for it. From a checkout whose `origin` is the repository, run:
