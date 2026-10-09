@@ -927,8 +927,12 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
 
 
 def review_page(site: str, number: int) -> str:
-    """The summary page of pull request `number` on the site at `site`, which ends in a slash."""
-    return f"{site}reviews/{number}/"
+    """The link to pull request `number`'s summary on the site at `site`, which ends in a slash.
+
+    The link itself ends without one. GitHub Pages and `site serve` both
+    redirect it to the directory, so the page still loads.
+    """
+    return f"{site}reviews/{number}"
 
 
 SUMMARY_MARKER = "projector-summary"

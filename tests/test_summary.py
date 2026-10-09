@@ -717,7 +717,7 @@ class StatusTests(unittest.TestCase):
     def test_a_repository_with_the_workflow_and_a_site_prints_the_review_url(self) -> None:
         answers = {self.WORKFLOW: self.PRESENT, self.PAGES: self.pages(), self.REPO: "false\n"}
         self.assertEqual((0, "https://o.example/r/\n", ""), self.status(answers))
-        self.assertEqual((0, "https://o.example/r/reviews/66/\n", ""), self.status(answers, "--pr", "66"))
+        self.assertEqual((0, "https://o.example/r/reviews/66\n", ""), self.status(answers, "--pr", "66"))
 
     def test_a_certified_custom_domain_is_handed_over_as_https(self) -> None:
         custom = self.pages(html_url="http://o.example/r/", https_enforced=False,
@@ -769,7 +769,7 @@ class StatusTests(unittest.TestCase):
 
 
 HEAD = "a" * 40
-PAGE = "https://owner.github.io/repo/reviews/7/"
+PAGE = "https://owner.github.io/repo/reviews/7"
 
 
 SITE = "https://owner.github.io/repo/"
@@ -980,7 +980,7 @@ class CommentSummaryTests(unittest.TestCase):
                 result = summary.comment_summary("owner/repo", 7, HEAD, site=site)
 
                 self.assertIn("GitHub's Pages answer for owner/repo has no URL", result)
-        self.assertEqual([], self.summary_comments(), "a relative reviews/7/ would link nowhere")
+        self.assertEqual([], self.summary_comments(), "a relative reviews/7 would link nowhere")
 
     def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
         self.hosted = (None, "Pages is not enabled")
