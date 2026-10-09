@@ -138,8 +138,16 @@ draft says the work has not been signed off yet; never mark it ready
 yourself.
 
 Follow the writing guide in `../writing.md`, § 10 in particular, when you
-write the title, the body, and each commit message. Write an imperative
-title and a body that explains why the change exists, because a squash merge
+write each commit message, the title, and the body. Its first rule starts
+before your first commit: read the default branch's recent subjects and
+write every commit subject, and later the title, in the pattern they
+follow. Before you hand over the URL, read each title back against those
+subjects. `gh stack submit` writes a layer's title itself, so retitle one
+that falls outside the pattern with `gh pr edit <number> --title`. When
+you delegate the pull request to a subagent, pass it the pattern you
+found.
+
+Write a body that explains why the change exists, because a squash merge
 makes the body the commit message. End every body with a `## Testing`
 section: the exact commands, in order, that you ran yourself from the
 directory you name; what the reader should see; the signal that would show
