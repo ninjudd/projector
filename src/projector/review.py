@@ -367,7 +367,7 @@ def live_effort() -> str:
 
 def producer_segments(version: str, model: str, effort: str) -> str:
     """What produced the review, as its start comment and signature line both name it."""
-    return f"projector `{version}` · model `{model}` · " + (f"effort `{effort}` · " if effort else "")
+    return f"`{version}` · model `{model}` · " + (f"effort `{effort}` · " if effort else "")
 
 
 def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str:
@@ -550,7 +550,7 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
-    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · projector `[^`\n]+` · model `[^`\n]+` · "
+    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · `[^`\n]+` · model `[^`\n]+` · "
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · "
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )

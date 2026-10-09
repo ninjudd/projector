@@ -153,11 +153,11 @@ takes every SHA from GitHub, never from an argument:
 3. The fetched commit and the scratch worktree's `HEAD` both equal GitHub's
    recorded SHA.
 4. Only then it posts, as the reviewer, a concise start comment naming the
-   short SHA, carrying the review signature line's `📽️` mark, its projector,
+   short SHA, carrying the review signature line's `📽️` mark, its version,
    model, and effort segments, and a start marker:
 
    ```
-   📽️ **Projector review started** · projector `<version>` · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
+   📽️ **Projector review started** · `<version>` · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
 
    <!-- projector-start v=1 sha=<full-sha> -->
    ```
@@ -291,7 +291,7 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-📽️ **Projector review** · projector `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
+📽️ **Projector review** · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
 <!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
@@ -301,7 +301,7 @@ host reports for the running session — never a default copied from this file.
 A review whose signature misstates what produced it is worse than an unlabeled
 one: a reader weighs a finding by what reviewed it.
 
-The projector segment and `projector=` name the version of the `project`
+The version segment and `projector=` name the version of the `project`
 command that wrote them, as `project --version` reports it, so a reader can
 tell which release of this method produced a review. `project review` reads
 the version itself; a command run from a checkout that was never installed
