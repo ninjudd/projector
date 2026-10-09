@@ -132,12 +132,6 @@ reads the new head against that history instead of rediscovering it.
   review id, and how many threads it opened; `publish` has already added the
   id to the loop's record. A question for the user comes back to the main
   loop to ask.
-- A subagent whose publish the host refused reports the refusal and stops
-  that publish; it never retries a refused publish in another form, as
-  `../review-pr/SKILL.md` and `../summarize-pr/SKILL.md` say. Tell the user
-  once for the loop, not once per pull request, that the host's automatic
-  approval refused a publish and that running `project init` in a terminal
-  adds the rules. Then keep reviewing.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
   to finish: delete any start comment it still holds and remove its scratch
   worktrees. Then close the subagent and delete the pull request's line from
@@ -146,6 +140,12 @@ reads the new head against that history instead of rediscovering it.
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies on
   them.
+- A subagent whose publish the host refused reports the refusal and stops
+  that publish; it never retries a refused publish in another form, as
+  `../review-pr/SKILL.md` and `../summarize-pr/SKILL.md` say. Tell the user
+  once for the loop, not once per pull request, that the host's automatic
+  approval refused a publish and that running `project init` in a terminal
+  adds the rules. Then keep reviewing.
 
 The loop's record decides the collision check `project review publish` runs
 before it submits. An id in the record is this loop's own, and a second one on

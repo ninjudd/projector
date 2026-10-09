@@ -1366,6 +1366,7 @@ class ReviewRulesTests(RepositoryTestCase):
                 self.assertIn("ask the user to run `project init` in a terminal", stderr)
                 self.assertIn("do not run `project init --publish-rule` to add them yourself", stderr)
                 self.assertIn("unless the repository's own or managed settings allow them", stderr)
+                self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
                 self.assertEqual(before, self.home_tree())
         self.assertFalse(self.settings().exists(), "a missing settings file stays missing")
 
@@ -1384,6 +1385,7 @@ class ReviewRulesTests(RepositoryTestCase):
         self.assertEqual(1, code, stderr)
         self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
         self.assertIn("Codex's approval reviewer", stderr)
+        self.assertNotIn("or pass --publish-rule", stderr)
         self.assertEqual(before, self.home_tree())
 
         rules = self.home / ".codex" / "rules" / "projector.rules"

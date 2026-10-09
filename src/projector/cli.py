@@ -801,7 +801,9 @@ def review_rules(json_output: bool) -> int:
     rather than naming a command an agent could run.
     """
 
-    files = allow_publish(apply=False)
+    # Without the hint, a missing rule's note names no command, since the
+    # agent that runs this check must not add the rules itself.
+    files = allow_publish(apply=False, hint=False)
     allowed = all(entry.action == "unchanged" for entry in files)
     if json_output:
         print(json.dumps({"allowed": allowed,
