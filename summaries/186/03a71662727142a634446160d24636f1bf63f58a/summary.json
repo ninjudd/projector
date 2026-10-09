@@ -1,0 +1,123 @@
+{
+ "version": 1,
+ "name": "Summary Link Stays Last",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 186,
+  "title": "Keep the summary comment at the end of the pull request",
+  "head": "03a71662727142a634446160d24636f1bf63f58a",
+  "headRef": "keep-summary-comment-at-end",
+  "base": "860e8f0131c1b1745d0948cb39e18f47171bba9a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When <code>project summary publish</code> pushes a pull request's summary to the repository's Projector site, it also posts a comment on the pull request that links the summary page. Each account keeps one such comment per pull request. The comment carries a hidden <code>projector-summary</code> marker that names the head commit it summarizes.",
+   "Before this change, a later head's publish edited that comment in place. On a busy pull request the comment stayed where it was first posted, so the link sat above every comment made since, and a reader had to scroll up to find it.",
+   "Now each publish posts the link as a new comment at the end of the conversation, and then deletes the account's older summary comments. A rerun on the same head does nothing only when its comment is already the newest issue comment. When someone has commented since, the rerun moves the link to the end.",
+   "The review of this head asks for two documentation fixes. The CLI reference in <code>docs/cli.md</code> still describes the in-place edit, and one edited line in the <code>review-pr</code> skill runs past the wrap width of its paragraph."
+  ],
+  "cards": [
+   {
+    "id": "decisions",
+    "title": "What publish does with the link comment",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Newest issue comment on the pull request</th><th class=\"r\">Result</th></tr></thead><tbody><tr><td>This account's summary comment for this head</td><td class=\"r\">Nothing changes</td></tr><tr><td>Anything else, or no comments at all</td><td class=\"r\">Post a new link comment, then delete every older summary comment of this account</td></tr></tbody></table></div><p class=\"note\">\"Newest\" counts issue comments only. Pull request reviews and their inline threads do not count, so a review posted after the summary leaves the link where it is.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary comment</b>: the issue comment that links the summary page and carries the <code>&lt;!-- projector-summary v=1 sha=… --&gt;</code> marker.</li><li><b>Issue comment</b>: a comment in the pull request's conversation, as opposed to a review or an inline review thread.</li><li><b>Stale comment</b>: an older summary comment of the same account, which the new post replaces.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Repost the link, then delete the old one",
+   "kicker": "How comment_summary decides whether to post and what it deletes",
+   "intro": [
+    "<code>comment_summary</code> runs at the end of <code>project summary publish</code> when the summary was pushed to a hosted site. It lists the pull request's issue comments through <code>gh api --paginate</code>, oldest first. A <code>jq</code> filter now emits every comment's id, and attaches the body only when the comment is this account's summary comment. Every other comment comes back with a null body.",
+    "The function compares the newest comment with the link it would post. When they match, it returns. Otherwise it posts the new link and then deletes each older summary comment. The order matters: the pull request has a link at every moment, even when a delete fails."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "<code>comment_summary</code>: the listing filter, the newest-comment check, and the post-then-delete sequence.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 940,
+       "text": "Open review finding: <code>docs/cli.md</code> still says <code>summary publish</code> updates the comment in place for a later head. The repository's <code>CLAUDE.md</code> asks that <code>docs/</code> change with the behavior. Rewrite that paragraph to describe the repost."
+      },
+      {
+       "kind": "verify",
+       "line": 963,
+       "text": "The new filter was run through <code>gh api --paginate --jq</code> against live comment lists on this repository. It emits every comment oldest first, with a body only for the account's own marker comment."
+      },
+      {
+       "kind": "context",
+       "line": 963,
+       "text": "When the newest comment already links this head, the function returns before the cleanup. An older summary comment that a failed delete left behind then stays until the next head. Its link still works, because every head's comment points at the same <code>reviews/&lt;number&gt;/</code> page."
+      },
+      {
+       "kind": "context",
+       "line": 965,
+       "text": "A repost notifies the pull request's subscribers, which an in-place edit did not. Each new head now sends one more notification."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for the repost",
+   "kicker": "The fake gh now serves deletes and lists every comment",
+   "intro": [
+    "The <code>CommentSummaryTests</code> fake answers <code>gh</code> calls from an in-memory comment list. It now lists every comment in the shape the new filter produces, and it handles <code>DELETE</code> instead of <code>PATCH</code>. Three tests cover a later head, a same-head rerun with a newer comment below it, and several stale comments."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 823,
+       "text": "The full suite passed at this head: 445 tests with one skip, as did <code>project check</code>, both plugin validations, and <code>git diff --check</code>."
+      },
+      {
+       "kind": "context",
+       "line": 823,
+       "text": "The expected call order <code>post 102</code> before <code>delete 101</code> pins the post-then-delete sequence."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill text for the new behavior",
+   "kicker": "summarize-pr and review-pr describe the repost",
+   "intro": [
+    "Both skills tell an agent what <code>publish</code> does with the link comment, so an agent does not post the link itself. Their wording now says that each publish reposts the link at the end and deletes the old one."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 593,
+       "text": "Open review finding: this line is 96 characters, while the rest of its paragraph wraps near 72. The repository's <code>CLAUDE.md</code> asks a Markdown edit to match the wrapping around it. Rewrap the paragraph."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
