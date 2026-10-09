@@ -628,7 +628,7 @@ When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
 It keeps one such comment per account and pull request, as the newest
 comment: each publish posts the link again at the end, and then deletes the
-account's older summary comments. A rerun on the same head changes nothing
+account's older summary comments. A rerun on the same head posts nothing
 while its comment is still the newest.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries

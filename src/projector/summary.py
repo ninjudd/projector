@@ -940,7 +940,8 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
     summarizes, and keeps it the newest comment: each publish posts the link
     afresh at the end and then deletes the account's older summary comments,
     so the pull request is never without one. A comment that already names
-    this head and is the newest on the pull request is left alone. A
+    this head and is the newest on the pull request is left alone, and only
+    the account's older summary comments are deleted. A
     repository whose site is not hosted gets no comment. `site` is the site's
     URL when the caller already looked it up. Returns what it did.
     """
@@ -960,15 +961,24 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
               f'.[] | if (.user.login | ascii_downcase) == "{login.lower()}" '
               f'and (.body | test("<!-- {SUMMARY_MARKER} v=1 ")) then [.id, .body] else [.id, null] end | @json')
     comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
+
+    def delete(older: list[list]) -> str:
+        """Delete the account's summary comments among `older`, and name them."""
+        stale = [comment_id for comment_id, current in older if current is not None]
+        for comment_id in stale:
+            gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
+        return ", ".join(f"comment {comment_id}" for comment_id in stale)
+
     if comments and comments[-1][1] is not None and comments[-1][1].strip() == body.strip():
-        return f"comment {comments[-1][0]} already links the summary of {head[:7]}: {page}"
+        # A delete that failed on an earlier run can have left an older one behind.
+        deleted = delete(comments[:-1])
+        return (f"comment {comments[-1][0]} already links the summary of {head[:7]}"
+                f"{f', deleting {deleted}' if deleted else ''}: {page}")
     posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
-    stale = [comment_id for comment_id, current in comments if current is not None]
-    for comment_id in stale:
-        gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
-    if stale:
+    deleted = delete(comments)
+    if deleted:
         return (f"moved the link to the summary of {head[:7]} to a new comment at the end, deleting "
-                f"{', '.join(f'comment {comment_id}' for comment_id in stale)}: {posted.get('html_url') or page}")
+                f"{deleted}: {posted.get('html_url') or page}")
     return f"commented a link to the summary of {head[:7]}: {posted.get('html_url') or page}"
 
 

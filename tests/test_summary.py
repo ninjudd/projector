@@ -852,6 +852,18 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([1, 101], [c["id"] for c in self.comments])
         self.assertIn("deleting comment 5, comment 6", result)
 
+    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+        self.comment()
+        self.comments.insert(1, {"id": 5, "user": {"login": "operator"},
+                                 "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
+        self.calls.clear()
+
+        result = self.comment()
+
+        self.assertEqual(["delete 5"], self.calls, "the newest comment stays, and the straggler goes")
+        self.assertEqual([1, 101], [c["id"] for c in self.comments])
+        self.assertIn("comment 101 already links the summary of aaaaaaa, deleting comment 5", result)
+
     def test_another_accounts_summary_comment_is_left_alone(self) -> None:
         self.comments.append({"id": 2, "user": {"login": "teammate"},
                               "body": f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs."})
