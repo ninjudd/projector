@@ -193,7 +193,7 @@ class SetupTests(ReviewCase):
         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
         self.assertEqual(
-            f"{review.MARK} **Projector review started** · projector `1.2.3` · model `claude-opus-5-5` · "
+            f"{review.MARK} **Projector review started** · `1.2.3` · model `claude-opus-5-5` · "
             f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
             self.github.comments[101],
         )
@@ -604,7 +604,7 @@ class PublishTests(PublishCase):
         self.assertEqual(0, code, err)
         review_body = self.posted()["body"]
         self.assertEqual(
-            f"{review.MARK} **Projector review** · projector `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
+            f"{review.MARK} **Projector review** · `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
             "took 12m 34s",
             review_body.splitlines()[0])
         self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
@@ -782,8 +782,8 @@ class PublishRefusalTests(PublishCase):
     def test_the_host_effort_names_the_review_when_it_is_set(self) -> None:
         start, signature, marker = self.written("xhigh")
 
-        self.assertIn("· projector `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
-        self.assertIn("· projector `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · **CLEAN** ·", signature)
+        self.assertIn("· `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · reviewing ", start)
+        self.assertIn("· `1.2.3` · model `claude-opus-5-5` · effort `xhigh` · **CLEAN** ·", signature)
         self.assertIn("projector=1.2.3 model=claude-opus-5-5 effort=xhigh sha=", marker)
         self.assertNotIn("effort", json.dumps(self.read_state()), "read live, never stored")
 
@@ -791,8 +791,8 @@ class PublishRefusalTests(PublishCase):
         with mock.patch.object(metadata, "version", side_effect=metadata.PackageNotFoundError):
             start, signature, marker = self.written(None)
 
-        self.assertIn("· projector `unknown` · model `claude-opus-5-5` · reviewing ", start)
-        self.assertIn("· projector `unknown` · model `claude-opus-5-5` · **CLEAN** ·", signature)
+        self.assertIn("· `unknown` · model `claude-opus-5-5` · reviewing ", start)
+        self.assertIn("· `unknown` · model `claude-opus-5-5` · **CLEAN** ·", signature)
         self.assertIn("verdict=clean projector=unknown model=claude-opus-5-5 sha=", marker)
 
     def test_the_review_names_no_effort_when_the_host_reports_none(self) -> None:
