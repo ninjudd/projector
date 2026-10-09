@@ -295,9 +295,10 @@ def parse_diff(text: str) -> list[dict]:
 
 # GitHub
 
-def gh(*args: str) -> str:
+def gh(*args: str, input: str | None = None) -> str:
+    """Run gh with `input` on standard input. A failure names the arguments, never the input."""
     try:
-        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input).stdout
     except FileNotFoundError as exc:
         raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
     except subprocess.CalledProcessError as exc:
@@ -961,7 +962,8 @@ def describe_summary(repo: str, number: int, head: str, site: str) -> str:
         updated = f"{described}\n\n{block}" if described else block
         if updated == current:
             return f"the description already links the summary of {head[:7]}"
-        gh("api", "-X", "PATCH", f"repos/{repo}/pulls/{number}", "-f", f"body={updated}")
+        # The description goes on standard input, so a refusal does not quote it back.
+        gh("api", "-X", "PATCH", f"repos/{repo}/pulls/{number}", "--input", "-", input=json.dumps({"body": updated}))
     except SummaryError as exc:
         return f"not linking the summary from the description: {exc}"
     return f"linked the summary of {head[:7]} at the end of the description"

@@ -784,14 +784,14 @@ class DescribeSummaryTests(unittest.TestCase):
         self.calls: list[str] = []
         self.refuse = ""
 
-    def gh(self, *args: str) -> str:
+    def gh(self, *args: str, input: str | None = None) -> str:
         if args == ("api", "repos/owner/repo/pulls/7", "--jq", '.body // "" | @json'):
             return json.dumps(self.body or "") + "\n"
-        if args[:4] == ("api", "-X", "PATCH", "repos/owner/repo/pulls/7"):
+        if args == ("api", "-X", "PATCH", "repos/owner/repo/pulls/7", "--input", "-"):
             self.calls.append("patch")
             if self.refuse:
                 raise summary.SummaryError(self.refuse)
-            self.body = args[5].removeprefix("body=")
+            self.body = json.loads(input or "")["body"]
             return "{}"
         raise AssertionError(f"unexpected gh call {args}")
 
@@ -845,6 +845,18 @@ class DescribeSummaryTests(unittest.TestCase):
         result = self.describe()
 
         self.assertIn("not linking the summary from the description: gh api failed", result)
+
+    def test_a_refused_edit_does_not_echo_the_description(self) -> None:
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if "PATCH" in command:
+                raise subprocess.CalledProcessError(1, command, stderr="Resource not accessible by integration (HTTP 403)")
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(self.body) + "\n", stderr="")
+
+        with mock.patch.object(summary.subprocess, "run", side_effect=run):
+            result = summary.describe_summary("owner/repo", 7, HEAD, SITE)
+
+        self.assertIn("(HTTP 403)", result)
+        self.assertNotIn("Why this exists.", result)
 
     def test_a_site_with_no_pages_url_leaves_the_description_alone(self) -> None:
         with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")):
