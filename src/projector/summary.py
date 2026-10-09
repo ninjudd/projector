@@ -295,9 +295,10 @@ def parse_diff(text: str) -> list[dict]:
 
 # GitHub
 
-def gh(*args: str) -> str:
+def gh(*args: str, input: str | None = None) -> str:
+    """Run gh with `input` on standard input. A failure names the arguments, never the input."""
     try:
-        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input).stdout
     except FileNotFoundError as exc:
         raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
     except subprocess.CalledProcessError as exc:
@@ -926,11 +927,50 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
 
 
 def review_page(site: str, number: int) -> str:
-    """The summary page of pull request `number` on the site at `site`, which ends in a slash."""
-    return f"{site}reviews/{number}/"
+    """The link to pull request `number`'s summary on the site at `site`, which ends in a slash.
+
+    The link itself ends without one. GitHub Pages and `site serve` both
+    redirect it to the directory, so the page still loads.
+    """
+    return f"{site}reviews/{number}"
 
 
 SUMMARY_MARKER = "projector-summary"
+# The link block a publish leaves in the description, as whole lines, CRLF
+# included because GitHub stores a description edited in the browser that way.
+SUMMARY_BLOCK = re.compile(r"^<!-- " + SUMMARY_MARKER + r" v=1 sha=[0-9a-f]{40} -->\r?\n"
+                           r"\S* ?\*\*Projector summary\*\* [^\r\n]*(?:\r?\n|\Z)", re.M)
+
+
+def summary_link(head: str, page: str) -> str:
+    """The marker and link line a summary comment and the description both carry."""
+    return f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
+
+
+def describe_summary(repo: str, number: int, head: str, site: str) -> str:
+    """Link the summary at the very bottom of the pull request's description.
+
+    A publish removes the link block an earlier one left, wherever it now
+    sits, and appends this head's after a blank line, so the description keeps
+    one, last. A description that already ends with it is left alone. A
+    failed edit, such as on a pull request the account cannot edit, is
+    reported rather than raised: the comment already links the summary.
+    `site` is the hosted site's URL. Returns what it did.
+    """
+    if not site:
+        return f"not linking the summary from the description: GitHub's Pages answer for {repo} has no URL"
+    block = summary_link(head, review_page(site, number))
+    try:
+        current = json.loads(gh("api", f"repos/{repo}/pulls/{number}", "--jq", '.body // "" | @json'))
+        described = SUMMARY_BLOCK.sub("", current).rstrip()
+        updated = f"{described}\n\n{block}" if described else block
+        if updated == current:
+            return f"the description already links the summary of {head[:7]}"
+        # The description goes on standard input, so a refusal does not quote it back.
+        gh("api", "-X", "PATCH", f"repos/{repo}/pulls/{number}", "--input", "-", input=json.dumps({"body": updated}))
+    except SummaryError as exc:
+        return f"not linking the summary from the description: {exc}"
+    return f"linked the summary of {head[:7]} at the end of the description"
 
 
 def comment_summary(repo: str, number: int, head: str, site: str | None = None) -> str:
@@ -953,7 +993,7 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
     if not site:
         return f"not linking the summary from a comment: GitHub's Pages answer for {repo} has no URL"
     page = review_page(site, number)
-    body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
+    body = summary_link(head, page)
     login = gh("api", "user", "--jq", ".login").strip()
     # Every comment, oldest first, with its body only when it is this
     # account's summary comment: the newest decides whether one is at the end.
