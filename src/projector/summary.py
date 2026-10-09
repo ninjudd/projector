@@ -937,8 +937,11 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
 
     The pull request keeps one such comment per account, naming the head it
-    summarizes: a later head's summary updates it in place rather than adding
-    another, and a comment that already names this head is left alone. A
+    summarizes, and keeps it the newest comment: each publish posts the link
+    afresh at the end and then deletes the account's older summary comments,
+    so the pull request is never without one. A comment that already names
+    this head and is the newest on the pull request is left alone, and only
+    the account's older summary comments are deleted. A
     repository whose site is not hosted gets no comment. `site` is the site's
     URL when the caller already looked it up. Returns what it did.
     """
@@ -952,17 +955,30 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
     page = review_page(site, number)
     body = f"<!-- {SUMMARY_MARKER} v=1 sha={head} -->\n📽️ **Projector summary** of {head[:7]}: {page}\n"
     login = gh("api", "user", "--jq", ".login").strip()
+    # Every comment, oldest first, with its body only when it is this
+    # account's summary comment: the newest decides whether one is at the end.
     rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
-              f'.[] | select((.user.login | ascii_downcase) == "{login.lower()}") '
-              f'| select(.body | test("<!-- {SUMMARY_MARKER} v=1 ")) | [.id, .body] | @json')
+              f'.[] | if (.user.login | ascii_downcase) == "{login.lower()}" '
+              f'and (.body | test("<!-- {SUMMARY_MARKER} v=1 ")) then [.id, .body] else [.id, null] end | @json')
     comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
-    if comments:
-        comment_id, current = comments[-1]
-        if current.strip() == body.strip():
-            return f"comment {comment_id} already links the summary of {head[:7]}: {page}"
-        gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "-f", f"body={body}")
-        return f"updated comment {comment_id} to link the summary of {head[:7]}: {page}"
+
+    def delete(older: list[list]) -> str:
+        """Delete the account's summary comments among `older`, and name them."""
+        stale = [comment_id for comment_id, current in older if current is not None]
+        for comment_id in stale:
+            gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
+        return ", ".join(f"comment {comment_id}" for comment_id in stale)
+
+    if comments and comments[-1][1] is not None and comments[-1][1].strip() == body.strip():
+        # A delete that failed on an earlier run can have left an older one behind.
+        deleted = delete(comments[:-1])
+        return (f"comment {comments[-1][0]} already links the summary of {head[:7]}"
+                f"{f', deleting {deleted}' if deleted else ''}: {page}")
     posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
+    deleted = delete(comments)
+    if deleted:
+        return (f"moved the link to the summary of {head[:7]} to a new comment at the end, deleting "
+                f"{deleted}: {posted.get('html_url') or page}")
     return f"commented a link to the summary of {head[:7]}: {posted.get('html_url') or page}"
 
 
