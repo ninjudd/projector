@@ -629,7 +629,10 @@ the summary on the pull request, `📽️ **Projector summary** of <head>: <url>
 It keeps one such comment per account and pull request, as the newest
 comment: each publish posts the link again at the end, and then deletes the
 account's older summary comments. A rerun on the same head posts nothing
-while its comment is still the newest.
+while its comment is still the newest. It also puts the same link at the very
+bottom of the pull request's description, after a blank line, and removes the
+link an earlier publish left there. Where the account cannot edit the
+description, it prints why and leaves the description as it was.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.

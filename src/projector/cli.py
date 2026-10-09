@@ -876,6 +876,7 @@ def run_summary(arguments: argparse.Namespace) -> int:
         # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
+            print(summary.describe_summary(pr["repo"], pr["number"], pr["head"], site))
     return 0
 
 

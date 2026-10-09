@@ -772,6 +772,85 @@ HEAD = "a" * 40
 PAGE = "https://owner.github.io/repo/reviews/7/"
 
 
+SITE = "https://owner.github.io/repo/"
+BLOCK = f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n"
+
+
+class DescribeSummaryTests(unittest.TestCase):
+    """The pull request's description stands in a string; the fake answers the calls describe_summary makes."""
+
+    def setUp(self) -> None:
+        self.body: str | None = "Why this exists.\n\n## Testing\n\nRun the suite."
+        self.calls: list[str] = []
+        self.refuse = ""
+
+    def gh(self, *args: str) -> str:
+        if args == ("api", "repos/owner/repo/pulls/7", "--jq", '.body // "" | @json'):
+            return json.dumps(self.body or "") + "\n"
+        if args[:4] == ("api", "-X", "PATCH", "repos/owner/repo/pulls/7"):
+            self.calls.append("patch")
+            if self.refuse:
+                raise summary.SummaryError(self.refuse)
+            self.body = args[5].removeprefix("body=")
+            return "{}"
+        raise AssertionError(f"unexpected gh call {args}")
+
+    def describe(self, head: str = HEAD, site: str = SITE) -> str:
+        with mock.patch.object(summary, "gh", side_effect=self.gh):
+            return summary.describe_summary("owner/repo", 7, head, site)
+
+    def test_the_link_goes_at_the_very_bottom_after_a_blank_line(self) -> None:
+        result = self.describe()
+
+        self.assertEqual(f"Why this exists.\n\n## Testing\n\nRun the suite.\n\n{BLOCK}", self.body)
+        self.assertIn("linked the summary of aaaaaaa at the end of the description", result)
+
+        self.assertIn("already links", self.describe())
+        self.assertEqual(["patch"], self.calls, "a rerun on the same head edits nothing")
+
+    def test_a_later_head_replaces_the_link_rather_than_adding_one(self) -> None:
+        self.describe()
+
+        self.describe("b" * 40)
+
+        self.assertEqual(1, self.body.count("projector-summary"))
+        self.assertTrue(self.body.endswith(f"of bbbbbbb: {PAGE}\n"))
+        self.assertTrue(self.body.startswith("Why this exists.\n\n## Testing\n\nRun the suite.\n\n<!--"))
+
+    def test_text_added_after_the_link_moves_above_it(self) -> None:
+        self.body = f"Why.\r\n\r\n{BLOCK.replace(chr(10), chr(13) + chr(10))}\r\nA note added in the browser."
+
+        self.describe("b" * 40)
+
+        self.assertTrue(self.body.startswith("Why.\r\n\r\n\r\nA note added in the browser.\n\n<!--"), self.body)
+        self.assertEqual(1, self.body.count("projector-summary"))
+
+    def test_a_quoted_marker_is_not_a_link_block(self) -> None:
+        self.body = "The comment opens with `<!-- projector-summary v=1 sha=... -->`."
+
+        self.describe()
+
+        self.assertTrue(self.body.startswith("The comment opens with `<!-- projector-summary v=1 sha=... -->`.\n\n"))
+
+    def test_an_empty_description_gets_just_the_link(self) -> None:
+        self.body = None
+
+        self.describe()
+
+        self.assertEqual(BLOCK, self.body)
+
+    def test_a_refused_edit_is_reported_rather_than_raised(self) -> None:
+        self.refuse = "gh api failed: Resource not accessible by integration (HTTP 403)"
+
+        result = self.describe()
+
+        self.assertIn("not linking the summary from the description: gh api failed", result)
+
+    def test_a_site_with_no_pages_url_leaves_the_description_alone(self) -> None:
+        with mock.patch.object(summary, "gh", side_effect=AssertionError("no GitHub call")):
+            self.assertIn("has no URL", summary.describe_summary("owner/repo", 7, HEAD, ""))
+
+
 class CommentSummaryTests(unittest.TestCase):
     """The pull request's comments stand in a list; the fake answers the calls comment_summary makes."""
 
@@ -900,18 +979,22 @@ class CommentSummaryTests(unittest.TestCase):
     def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -> tuple[list[dict], list[tuple], str]:
         """Run `summary publish` with the repository's hosting answering, or raising, `hosted`.
 
-        Returns the keyword arguments publish got, the comments made, and the output.
+        Returns the keyword arguments publish got, the comments made, and the output. The
+        descriptions linked stand in `self.described`.
         """
         path = Path(tempfile.mkdtemp()) / "summary.json"
         path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
         published: list[dict] = []
         commented: list[tuple] = []
+        self.described: list[tuple] = []
         out = io.StringIO()
         answer = {"side_effect": hosted} if isinstance(hosted, Exception) else {"return_value": hosted}
         with mock.patch.object(summary, "publish", side_effect=lambda *a, **k: published.append(k)), \
              mock.patch.object(summary, "hosting", **answer) as lookup, \
              mock.patch.object(summary, "comment_summary",
                                side_effect=lambda *a, **k: commented.append((*a, k)) or "done"), \
+             mock.patch.object(summary, "describe_summary",
+                               side_effect=lambda *a: self.described.append(a) or "described"), \
              redirect_stdout(out):
             self.assertEqual(0, cli.main(["summary", "publish", "--summary", str(path), *flags]))
         self.assertLessEqual(lookup.call_count, 1, "hosting is looked up at most once")
@@ -923,7 +1006,9 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertTrue(published[0]["push"])
         self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented,
                          "the comment reuses the site the push decision found")
+        self.assertEqual([("owner/repo", 7, HEAD, "https://owner.github.io/repo/")], self.described)
         self.assertIn("done", out)
+        self.assertIn("described", out)
 
     def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(self) -> None:
         published, commented, _ = self.cli_publish(("", ""))
@@ -943,6 +1028,7 @@ class CommentSummaryTests(unittest.TestCase):
 
         self.assertEqual([(False, "owner/repo has no GitHub Pages site")], [(k["push"], k["reason"]) for k in published])
         self.assertEqual([], commented, "a summary kept local has no page on GitHub to link")
+        self.assertEqual([], self.described)
 
     def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> None:
         with mock.patch.object(summary, "push_decision", side_effect=AssertionError("--local asks GitHub nothing")):
