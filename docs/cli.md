@@ -626,9 +626,10 @@ Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
-It keeps one such comment per account and pull request, updating it in
-place for a later head and leaving it alone when it already names this
-one.
+It keeps one such comment per account and pull request, as the newest
+comment: each publish posts the link again at the end, and then deletes the
+account's older summary comments. A rerun on the same head changes nothing
+while its comment is still the newest.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.
