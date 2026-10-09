@@ -838,8 +838,9 @@ clears the pull request's review lock.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,
-`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills only outside
-quoted code; `--threads` names a JSON list
+`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills in prose and
+in a backtick span that holds one placeholder alone, but not in longer quoted
+code; `--threads` names a JSON list
 of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
 files read over the files changed. `publish` writes the signature line and
 marker itself from the review's state and one reading of the clock, and adds
@@ -847,7 +848,7 @@ the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
 when the pull request closed or its head moved, when a finding's line is
 outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
-has no `{census}` outside code, when the verdict disagrees with the finding
+has no `{census}` outside quoted code, when the verdict disagrees with the finding
 count, or when the reviewer already has a verdict on the head that this loop's
 record does not account for; outside a loop, `--second-verdict <review-id>`
 publishes beside an earlier verdict the body names. On a self-review it
