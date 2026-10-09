@@ -1,0 +1,119 @@
+{
+ "version": 1,
+ "name": "Summary link in the description",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 189,
+  "title": "Link the summary at the bottom of the pull request description",
+  "head": "400ba5c67ed4fbe3e73c7be5c793dcfe6b40f738",
+  "headRef": "link-summary-from-pr-body",
+  "base": "ae04003ab4070b88d8e8a01007df3b6ddc4469c3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When Projector reviews a pull request, <code>project summary publish</code> puts a guided summary of the diff on the repository's Projector site and links it from the pull request. Until now, the only link was a comment that publish keeps as the newest one. A reader who opens the pull request sees its description first, so the link was easy to miss.",
+   "This change also puts the same link at the very bottom of the description, after a blank line. Each publish removes the link an earlier publish left there, wherever it now sits, and appends the current head's link. The description therefore always carries exactly one summary link, and it is always last.",
+   "The link itself now ends at the pull request number, <code>reviews/&lt;number&gt;</code>, with no trailing slash. GitHub Pages and <code>project site serve</code> both redirect it to the page's directory."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Description</b>: the pull request's body, the text GitHub shows at the top of the pull request. A squash merge makes it the commit message.</li><li><b>Link block</b>: two lines, a hidden marker <code>&lt;!-- projector-summary v=1 sha=&lt;head&gt; --&gt;</code> and a visible line <code>📽️ **Projector summary** of &lt;short-sha&gt;: &lt;url&gt;</code>.</li><li><b>Site</b>: the repository's Projector site on GitHub Pages, where each summary is served at <code>reviews/&lt;number&gt;/</code>.</li></ul>"
+   },
+   {
+    "id": "tradeoffs",
+    "title": "What the change accepts",
+    "html": "<ul class=\"tight\"><li>A squash merge carries the link block, hidden marker included, into the merged commit message. The pull request body says so.</li><li>The description no longer ends with its <code>## Testing</code> section once a summary is published. The link block follows it.</li><li>A refused edit is reported, not raised, because the comment already links the summary. The report names the command and GitHub's answer, never the description.</li><li>A comment posted by an earlier release links with a trailing slash, so the first publish after this change reposts the comment once.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Editing the description",
+   "kicker": "How publish finds, replaces, and appends the link block",
+   "intro": [
+    "<code>describe_summary</code> reads the description, removes any earlier link block, and appends the current one after a blank line. It then writes the description back with one <code>PATCH</code> call, sending the new description as JSON on standard input. When the result equals what GitHub already holds, it writes nothing, so a rerun on the same head leaves the description and its edit history alone.",
+    "The block is found with <code>SUMMARY_BLOCK</code>, a pattern that matches only whole lines: the marker line with a full 40-character SHA, then the visible link line. Line endings may be CRLF, because GitHub stores a description edited in the browser that way. A marker quoted inside a sentence, or one with a placeholder SHA, is not a block and stays put.",
+    "<code>summary_link</code> builds the two lines once, so the comment and the description cannot drift apart.",
+    "<code>review_page</code>, which builds the link, now returns <code>&lt;site&gt;reviews/&lt;number&gt;</code> without a trailing slash. The comment, the description, and <code>site status --pr</code> all use it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>SUMMARY_BLOCK</code>, <code>summary_link</code>, and <code>describe_summary</code>. Lets <code>gh</code> take standard input, and drops the trailing slash from <code>review_page</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>gh</code> now accepts <code>input</code> for standard input. Its error message names only the arguments, so anything sent this way stays out of a failure report.",
+       "line": 298
+      },
+      {
+       "kind": "verify",
+       "text": "GitHub Pages answers <code>reviews/189</code> with a 301 to <code>reviews/189/</code>, checked against this repository's live site. <code>site serve</code> passes a directory request to the standard library handler, which redirects the same way.",
+       "line": 935
+      },
+      {
+       "kind": "context",
+       "text": "The removal runs before the append and the result is right-stripped, so text a person added after an old block ends up above the new one.",
+       "line": 965
+      },
+      {
+       "kind": "verify",
+       "text": "GitHub keeps a description's trailing newline. Recent pull requests in this repository all end in <code>\\n</code>, so this equality holds on a same-head rerun and no edit is made.",
+       "line": 967
+      },
+      {
+       "kind": "verify",
+       "text": "Running <code>describe_summary</code> against a stand-in <code>gh</code> that fails this call returns <code>gh api -X PATCH repos/o/r/pulls/7 --input - failed: …(HTTP 403)</code> with no description in it, and does not raise.",
+       "line": 970
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>summary publish</code> edits the description right after the comment, and only when the summary has a hosted site.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A comment that fails raises before this line, so the description is edited only after the comment succeeded.",
+       "line": 879
+      }
+     ]
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "New <code>DescribeSummaryTests</code> fake the description as a string, and one patches <code>subprocess.run</code> to show a refusal leaves the description out. The link tests and the <code>site status --pr</code> test expect no trailing slash."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and both skills describe the new link",
+   "intro": [
+    "The CLI reference and the review and summary skills now say that publish links the summary from the bottom of the description too, and what happens where the account cannot edit it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each statement matches <code>describe_summary</code> at this head: the blank line, the removal of an earlier link, and the printed reason on a refused edit."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
