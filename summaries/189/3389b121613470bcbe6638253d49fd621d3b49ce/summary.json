@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Summary link in the description",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 189,
+  "title": "Link the summary at the bottom of the pull request description",
+  "head": "3389b121613470bcbe6638253d49fd621d3b49ce",
+  "headRef": "link-summary-from-pr-body",
+  "base": "ae04003ab4070b88d8e8a01007df3b6ddc4469c3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When Projector reviews a pull request, <code>project summary publish</code> puts a guided summary of the diff on the repository's Projector site and links it from the pull request. Until now, the only link was a comment that publish keeps as the newest one. A reader who opens the pull request sees its description first, so the link was easy to miss.",
+   "This change also puts the same link at the very bottom of the description, after a blank line. Each publish removes the link an earlier publish left there, wherever it now sits, and appends the current head's link. The description therefore always carries exactly one summary link, and it is always last."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Description</b>: the pull request's body, the text GitHub shows at the top of the pull request. A squash merge makes it the commit message.</li><li><b>Link block</b>: two lines, a hidden marker <code>&lt;!-- projector-summary v=1 sha=&lt;head&gt; --&gt;</code> and a visible line <code>📽️ **Projector summary** of &lt;short-sha&gt;: &lt;url&gt;</code>.</li><li><b>Site</b>: the repository's Projector site on GitHub Pages, where each summary is served at <code>reviews/&lt;number&gt;/</code>.</li></ul>"
+   },
+   {
+    "id": "tradeoffs",
+    "title": "What the change accepts",
+    "html": "<ul class=\"tight\"><li>A squash merge carries the link block, hidden marker included, into the merged commit message. The pull request body says so.</li><li>The description no longer ends with its <code>## Testing</code> section once a summary is published. The link block follows it.</li><li>A refused edit is reported, not raised, because the comment already links the summary.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Editing the description",
+   "kicker": "How publish finds, replaces, and appends the link block",
+   "intro": [
+    "<code>describe_summary</code> reads the description, removes any earlier link block, and appends the current one after a blank line. It then writes the description back with one <code>PATCH</code> call. When the result equals what GitHub already holds, it writes nothing, so a rerun on the same head leaves the description and its edit history alone.",
+    "The block is found with <code>SUMMARY_BLOCK</code>, a pattern that matches only whole lines: the marker line with a full 40-character SHA, then the visible link line. Line endings may be CRLF, because GitHub stores a description edited in the browser that way. A marker quoted inside a sentence, or one with a placeholder SHA, is not a block and stays put.",
+    "<code>summary_link</code> builds the two lines once, so the comment and the description cannot drift apart."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>SUMMARY_BLOCK</code>, <code>summary_link</code>, and <code>describe_summary</code>, and has <code>comment_summary</code> build its body with <code>summary_link</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The removal runs before the append and the result is right-stripped, so text a person added after an old block ends up above the new one.",
+       "line": 960
+      },
+      {
+       "kind": "verify",
+       "text": "GitHub keeps a description's trailing newline. Recent pull requests in this repository all end in <code>\\n</code>, so this equality holds on a same-head rerun and no edit is made.",
+       "line": 962
+      },
+      {
+       "kind": "verify",
+       "text": "Running <code>describe_summary</code> against a stand-in <code>gh</code> that fails this call returns the message and does not raise. The message embeds the whole new description, because <code>gh</code> puts every argument into its error text. The review lists this as a suggestion.",
+       "line": 964
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>summary publish</code> edits the description right after the comment, and only when the summary has a hosted site.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A comment that fails raises before this line, so the description is edited only after the comment succeeded.",
+       "line": 879
+      }
+     ]
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "New <code>DescribeSummaryTests</code> fake the description as a string, and the CLI test checks that publish calls <code>describe_summary</code> with the site it already looked up."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and both skills describe the new link",
+   "intro": [
+    "The CLI reference and the review and summary skills now say that publish links the summary from the bottom of the description too, and what happens where the account cannot edit it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each statement matches <code>describe_summary</code> at this head: the blank line, the removal of an earlier link, and the printed reason on a refused edit."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
