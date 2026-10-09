@@ -424,8 +424,16 @@ class ProjectStore:
         title = name.rsplit("/", 1)[-1].replace("-", " ").title()
         body = (
             f"---\nstatus: {status}\npriority: {priority}\n---\n\n# {title}\n\n"
-            "## 1. Outcome\n\nDescribe the result this project produces.\n\n"
-            "## 2. Acceptance criteria\n\n"
+            "Say in one sentence what this project makes true.\n\n"
+            "## 1. Problem\n\n"
+            "Describe what the system does today, what goes wrong and how, and how much"
+            " it matters.\n\n"
+            "## 2. Solution\n\n"
+            "Describe the change whole: the flow after the change, each new data shape,"
+            " and each file's change.\n\n"
+            "## 3. Why this design\n\n"
+            "Give the reasons for this shape and the alternatives it rejects.\n\n"
+            "## 4. Acceptance criteria\n\n"
             "- Define the evidence that proves the project is complete.\n"
         )
         self._create_exclusive(path, body)

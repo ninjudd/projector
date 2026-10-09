@@ -104,10 +104,18 @@ Use numbered sections so code and later documents can cite a stable decision,
 for example `docs/projects/cool-new-feature/readme.md § 4`. Do not renumber
 existing sections. Add new sections at the end.
 
-Write the smallest plan that makes the intended outcome, constraints,
-decisions, verification, and unresolved questions clear. Keep the reason for a
-status or priority change in the body rather than adding more field values.
-Split material into a supplemental file when it obscures the main plan.
+Lead with the problem, then the solution. Open with one sentence that says
+what the project makes true. Section 1 states the problem briefly, for a reader
+new to the area: what the system does today, what goes wrong and how, and how
+much it matters. Section 2 states the solution as one concrete unit: the flow
+after the change, each new data shape, and each file's change. The reasons
+for the design, the acceptance criteria, cost, rollout, open questions, and
+background follow, each only when it has content. `project create` writes
+this scaffold, and the `spec` skill fills it.
+
+Write the smallest plan that makes those clear. Keep the reason for a status
+or priority change in the body rather than adding more field values. Split
+material into a supplemental file when it obscures the main plan.
 
 ## Find projects before the CLI exists
 
