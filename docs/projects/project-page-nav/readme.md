@@ -154,9 +154,10 @@ file. It stops building the tree column and the review line, and calls a new
 folder holds `path`, as `ownerOf` finds it today. `projectNav` builds the
 sidebar from four parts:
 
-1. **The header.** `{"project": name, "title": title, "url": "<base>projects/<name>/"}`,
-   the shape of a `stack-header` header. When `path` is the project's readme,
-   the header is current: not a link, and marked `aria-current="page"`.
+1. **The header.** The shape of a `stack-header` header:
+   `{"project": name, "title": title, "url": "<base>projects/<name>/"}`.
+   When `path` is the project's readme, the header is current: not a link,
+   and marked `aria-current="page"`.
 2. **The stacks.** One list per entry of the project's `stacks` in
    `site.json` (§ 2.4), in that order. Each number becomes a row from the
    review with that number in `site.json`'s `reviews`: its title, linked to
@@ -195,11 +196,12 @@ The page head in the main column keeps its breadcrumbs, badges, owner, and
 
 `stack-header` already works out, in `build_summaries` in
 `src/projector/site/__init__.py`, each stack's members, through `find_stacks`,
-and its header, through `stack_header`, before it writes a page. Each summary page's `stack` holds its stack's members, from
-the bottom layer up, members without a summary included. Each entry carries
-the stack's `header`, and `stack`, the number of the first review in its stack
-on the index, or None when it is alone there. The entries come in the Reviews
-index's order: newest stack first, each stack's layers together.
+and its header, through `stack_header`, before it writes a page. Each summary
+page's `stack` holds its stack's members, from the bottom layer up, members
+without a summary included. Each entry carries the stack's `header`, and
+`stack`, the number of the first review in its stack on the index, or None
+when it is alone there. The entries come in the Reviews index's order: newest
+stack first, each stack's layers together.
 
 This plan adds one field to each entry and replaces one field of each
 project:
