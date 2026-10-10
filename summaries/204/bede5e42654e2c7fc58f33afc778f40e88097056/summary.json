@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "name": "Summary diff context plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 204,
+  "title": "Plan expanding the hidden lines around a summary's diff hunks",
+  "head": "bede5e42654e2c7fc58f33afc778f40e88097056",
+  "headRef": "summary-diff-context-spec",
+  "base": "0d5a2132bf0e80394cbf9c85616fe101eb5b1148",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A <b>summary page</b> is the guided review page that Projector's site serves for a pull request: the diff split into groups, with notes. Today it shows each changed file only as its diff hunks, the changed lines plus three unchanged lines around them. A reader who needs the rest of a function, or the lines between two nearby hunks, has to leave the page for GitHub.",
+   "This pull request adds one file, a plan at <code>status: ready</code> and <code>priority: next</code>. It proposes that a reader can reveal the hidden unchanged lines above, between, and below each hunk, twenty lines a click, as GitHub's diff view does. No code changes yet.",
+   "<ol><li><b>Publish stores the head's files.</b> <code>project summary publish</code> writes, beside each summary on the hidden <code>refs/projector/summaries</code> ref, a tree entry for each eligible changed file that points at the head commit's existing blob. The ref gains entries but no new file content.</li><li><b>The site build checks and serves them.</b> The build compares each stored file with the diff's lines, writes each distinct file once under <code>reviews/blobs/</code> by its Git blob id, and records the hidden gaps in the page data.</li><li><b>The page fetches on demand.</b> The first expand of a file fetches it, highlights it, and inserts the revealed lines as context rows.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review status at this head",
+    "html": "<p>The Projector review of <span class=\"mono\">bede5e426</span> is clean. The two findings from the first head are fixed:</p><ul class=\"tight\"><li>§ 2.2 now replaces each <code>\\r\\n</code> with <code>\\n</code> before the line check, so a CRLF file keeps its context.</li><li>The blob URL now starts with the site's base path, and the tests build and serve under <code>/projector/</code>.</li></ul><p>The plan also stops storing <code>.gitattributes</code> files and says what closing each kind of gap removes.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Gap</b>: a run of unchanged head lines the diff does not show, above the first hunk, between two hunks, or below the last.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden ref that holds each summary, its diff, and its attributes under <code>summaries/&lt;number&gt;/&lt;head&gt;/</code>.</li><li><b>Base path</b>: the path GitHub Pages serves a site under, <code>/projector/</code> for this repository.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The plan",
+   "kicker": "One new project plan under docs/projects, ready to implement in two pull requests",
+   "intro": [
+    "The plan follows the repository's project model: numbered sections, problem before solution, and a <code>ready</code> status that claims every blocking question is answered or deferred. Section 7 defers the standalone <code>project site page</code>, whole-file highlighting of hunks, and pruning of the summaries ref.",
+    "Read § 2 against the code it names. Publish already fetches a missing head for its attributes, the build already prefixes its URLs with the site's base path, and the page already has the highlighting helpers the plan reuses."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/summary-diff-context/readme.md",
+     "collapsed": false,
+     "note": "The whole change: the problem, the publish, build, and page design, the acceptance criteria, cost, rollout, and what is deferred.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>project check</code> prints <code>Project plans are valid.</code> at this head, and <code>project show summary-diff-context</code> reports <code>status: ready</code> and <code>priority: next</code>."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>publish_attributes</code> in <code>src/projector/summary.py</code> fetches the head into the checkout when it is missing, and <code>summary_tree</code> keeps entries from the parent tree that it does not overwrite. Read at this head. So a republish with an unreadable head keeps earlier <code>head/</code> entries, as this paragraph says.",
+       "line": 54
+      },
+      {
+       "kind": "verify",
+       "text": "Replacing <code>\\r\\n</code> matches the diff text: <code>gh</code> reads the compare API with <code>text=True</code> and <code>build_summaries</code> reads <code>diff.patch</code> with <code>read_text</code>, and both turn <code>\\r\\n</code> into <code>\\n</code>. A reproduction against <code>parse_diff</code> on the first head showed the only difference on a CRLF file was the trailing <code>\\r</code>.",
+       "line": 64
+      },
+      {
+       "kind": "verify",
+       "text": "<code>build_summaries</code> prefixes every address it writes with <code>base</code>, and the site action passes the Pages base path, <code>/projector/</code> here, as <code>--base</code>. Read at this head.",
+       "line": 95
+      },
+      {
+       "kind": "context",
+       "text": "<code>parse_diff</code> today keeps each hunk's <code>header</code> text and its <code>lines</code>, and reads the start numbers only to number lines. This paragraph adds the four header numbers to each hunk so the build can compute gaps.",
+       "line": 107
+      },
+      {
+       "kind": "context",
+       "text": "<code>hl</code>, <code>splitLines</code>, and <code>markTokens</code> live in the page's wiring code, while <code>numbers</code> and <code>esc</code> are local to rendering. The expander needs both, so expect the page pull request to move some of them.",
+       "line": 126
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
