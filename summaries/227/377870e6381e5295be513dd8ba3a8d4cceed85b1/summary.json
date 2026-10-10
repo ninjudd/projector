@@ -1,0 +1,169 @@
+{
+ "version": 1,
+ "name": "Summary head files for context",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 227,
+  "title": "Store each summary's changed files at the head for the site to serve",
+  "head": "377870e6381e5295be513dd8ba3a8d4cceed85b1",
+  "headRef": "summary-context-data",
+  "base": "814b9031d571c31619ceadb03d3e37172313cd3a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page, the guided review page that the Projector site serves at <code>reviews/&lt;number&gt;/</code>, shows each changed file only as its diff hunks: the changed lines plus Git's three lines of context around them. A reader who needs the function a hunk sits in, or the lines between two hunks, has to leave the page for GitHub. The page cannot fetch the file itself, because a private repository's site has no token and the branch may have moved past the summarized head. So the file has to travel with the summary.",
+   "This pull request is the data half of the <code>summary-diff-context</code> plan. It changes two steps:",
+   "<ol><li><b>Publish stores the head's files.</b> <code>project summary publish</code> already commits <code>summary.json</code>, <code>diff.patch</code>, and <code>attributes.json</code> to <code>summaries/&lt;number&gt;/&lt;head&gt;/</code> on the hidden ref <code>refs/projector/summaries</code>. It now also adds a <code>head/&lt;path&gt;</code> entry for each changed file whose diff hides lines. Each entry names the blob the head commit already has, so the ref gains tree entries and no new file content.</li><li><b>The site build serves them and computes the gaps.</b> <code>build_summaries</code> checks each stored file against its diff, writes each distinct file once to <code>reviews/blobs/&lt;id&gt;.txt</code> under the site's base, and adds a <code>context</code> entry to the file in the page's <code>data.json</code> that lists the hidden runs of lines, the <em>gaps</em>.</li></ol>",
+   "Nothing on the page draws <code>context</code> yet, so pages look the same after this lands. The expander controls are rollout step 2 of the plan, in a later pull request. Landing the data first means every summary published from now on can expand once the page learns how."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden ref (not a branch) where <code>publish</code> commits each summary, and which the site deploy checks out.</li><li><b>Head file</b>: the head commit's version of a changed file, stored as a tree entry under <code>head/</code> beside the summary.</li><li><b>Gap</b>: a run of head lines that no hunk shows, above the first hunk, between two hunks, or below the last. <code>start</code> and <code>end</code> are new-side line numbers, and <code>oldStart</code> is the old-side number of <code>start</code>.</li><li><b>Blob id</b>: the hash Git gives a file's bytes, used to name each served file so two heads with the same content share one file.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>377870e63</code>: clean, no finding threads.</li><li>One suggestion: rewrap two edited Markdown lines to the width around them.</li><li>The test suite passed (555 tests, 1 skip), along with <code>project check</code> and both plugin validations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "publish",
+   "title": "Publish stores the head's files",
+   "kicker": "Which changed files publish stores under head/, and how it writes them without new content",
+   "intro": [
+    "When <code>project summary publish</code> commits a summary, it now also lists the head commit's tree and picks the changed files a page could expand. It writes one index entry per file under <code>head/</code>, pointing at the head's existing blob, so publishing adds no file content to the summaries ref.",
+    "A file is stored only when all of these hold:",
+    "<ul><li>Its diff has a hunk, so it is text.</li><li>It is neither new nor deleted, because those diffs already show every line.</li><li>Its head entry is a regular file (mode <code>100644</code> or <code>100755</code>), not a symlink or a submodule.</li><li>Its blob is at most <code>CONTEXT_MAX_BYTES</code>, 1 MiB.</li><li>It is not a <code>.gitattributes</code> file. A stored one would change or drop its neighbors when the deploy checks the ref out or <code>site serve</code> archives it.</li></ul>",
+    "Before this change, the code that fetched the head when the checkout lacked it lived inside <code>publish_attributes</code>. It now lives in <code>readable_head</code>, which the attributes and the new <code>head_blobs</code> share, so a publish fetches the head at most once."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "When the head cannot be read, publish prints one message on stderr and stores neither attributes nor head files. A republish that cannot read the head keeps what an earlier publish stored, because <code>summary_tree</code> starts from the ref's existing tree."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds the head-file listing (<code>head_blobs</code>), the shared head fetch (<code>readable_head</code>), hunk numbers in <code>parse_diff</code>, and the index entries in <code>summary_tree</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 301,
+       "text": "Each hunk now carries <code>oldStart</code>, <code>oldLines</code>, <code>newStart</code>, and <code>newLines</code> from its <code>@@</code> header. A side written without a count, such as <code>+12</code>, has one line. The site build uses these numbers to find the gaps without parsing headers again."
+      },
+      {
+       "kind": "context",
+       "line": 966,
+       "text": "<code>git()</code> now reads and writes UTF-8 explicitly and replaces bytes that are not UTF-8. Without that, a path in another encoding in the head's tree would crash the <code>ls-tree</code> listing. Such a path matches no diff path, so it is simply not stored."
+      },
+      {
+       "kind": "verify",
+       "line": 1062,
+       "text": "The entries are written with <code>update-index -z --index-info</code> as mode <code>100644</code> naming the head's blob. The publish test lists the remote's objects before and after and finds only <code>summary.json</code>, <code>diff.patch</code>, and <code>attributes.json</code> new, so the head files add no objects. I ran the suite at this head."
+      },
+      {
+       "kind": "context",
+       "line": 1118,
+       "text": "The eligibility rules start here: a hunk, not new, not deleted, and a base name other than <code>.gitattributes</code>. The mode check follows in the <code>ls-tree</code> loop, and the size check uses one <code>cat-file --batch-check</code> call for all candidate blobs."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Publishes a change to a file of every kind and checks that only the two expandable files get <code>head/</code> entries, then republishes from a clone that cannot read the head.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 838,
+       "text": "<code>commit_context_change</code> builds one commit that changes a plain file, an executable, a deleted file, a new file, a file over 1 MiB, a nested <code>.gitattributes</code>, a binary file, a symlink, and a submodule. Only <code>keep.txt</code> and <code>tool.sh</code> should be stored."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "build",
+   "title": "The site build serves each file once and finds the gaps",
+   "kicker": "How the deploy checks, writes, and describes each stored head file",
+   "intro": [
+    "For each file on a summary page, <code>build_summaries</code> now looks for that file under the summary's <code>head/</code> folder. When it finds one, <code>add_context</code>:",
+    "<ol><li>Decodes it as UTF-8 with replacement and turns each CRLF into LF, because the build reads <code>diff.patch</code> in Python's text mode, which does the same to the diff.</li><li>Checks every context and added line of the diff against the stored line with the same number. On a mismatch it drops the file with a <code>::warning title=Context dropped::</code> line, so a wrong file never shows wrong lines.</li><li>Computes the gaps. A file whose hunks leave no gap gets no <code>context</code>.</li><li>Writes the decoded text once to <code>reviews/blobs/&lt;id&gt;.txt</code>, named by the Git blob id of the stored bytes (SHA-256 when the head id has 64 digits), and records <code>{url, lines, gaps}</code> as the file's <code>context</code>.</li></ol>",
+    "The build prints how many files it wrote this way and their total size. The pull request body reports that this repository's summaries would produce 289 files, about 10.8 MiB."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Anyone who can push the summaries ref also writes the diff that names each path, so the build must never let a path read outside <code>head/</code>. <code>stored_head_file</code> enforces that."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>stored_head_file</code>, <code>shows_diff</code>, <code>hunk_gaps</code>, <code>blob_id</code>, and <code>add_context</code>, and calls <code>add_context</code> for every built summary.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 179,
+       "text": "The joined path is resolved and must stay under the summary's <code>head/</code> folder, so <code>..</code>, an absolute path from the diff, and a symlink that leads out all read nothing. A symlinked <code>&lt;number&gt;/&lt;head&gt;</code> folder also reads nothing, since its resolved target never lies under the unresolved folder. <code>test_a_path_that_leads_out_of_the_head_folder_reads_nothing</code> covers <code>..</code> and a symlink."
+      },
+      {
+       "kind": "verify",
+       "line": 213,
+       "text": "A hunk with no lines on a side sits after its start line, hence the <code>+ 1</code> when the count is 0. I ran <code>add_context</code> on this pull request's own diff of this file and of <code>summary.py</code>, against their head copies, and every gap matched the hunk headers."
+      },
+      {
+       "kind": "context",
+       "line": 240,
+       "text": "The served text is the CRLF-normalized decode, but the file is named by the id of the raw stored bytes, so the name still traces back to the Git object."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "<code>HunkGapTests</code> pins the gap arithmetic at the edges, and <code>ContextBuildTests</code> builds a site with base <code>/projector/</code> and checks the served files, the URL, the mismatch warning, and the path guard."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "What publish and the build now do, and where the plan stands",
+   "intro": [
+    "<code>docs/cli.md</code> and the <code>summarize-pr</code> skill now say what <code>publish</code> stores under <code>head/</code> and what the build serves. The plan moves from <code>ready</code> to <code>in-progress</code>, with priority <code>now</code>, and gains section 8, which records that rollout step 1, the data, is built and step 2, the page, remains."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 916,
+       "text": "This edited line runs to 97 characters among lines of about 78. The review suggested rewrapping it, as CLAUDE.md asks an edit to match the wrapping around it."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/summary-diff-context/readme.md",
+     "note": "Status <code>in-progress</code>, priority <code>now</code>. The edits name <code>readable_head</code> and <code>head_blobs</code>, add the SHA-256 blob id and the path guard, and append section 8, the implementation state."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 263,
+       "text": "Like the line in <code>docs/cli.md</code>, this edited line is wider than the lines around it. The review suggested rewrapping it."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

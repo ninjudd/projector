@@ -1,0 +1,855 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a08bf1b..54e16fb 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -607,7 +607,12 @@ unassigned group. `summary publish` fetches the pull request's diff, checks
+ that the summary builds against it, commits the summary and the diff to the
+ hidden ref without touching the checkout, and starts the repository's site
+ workflow. It commits the head's `linguist-generated` attributes beside them
+-as `attributes.json`, as [Generated files](#generated-files) describes.
++as `attributes.json`, as [Generated files](#generated-files) describes. It
++also commits, under `head/` beside them, the head's version of each changed
++file whose diff hides some of its lines: a file that is neither new nor
++deleted, whose diff has a hunk, and whose entry in the head is a regular file
++of at most 1 MiB that is not a `.gitattributes` file. Each is a tree entry
++naming the blob the head already has, so the ref gains no file content.
+ Publishes that run at the same time, as a review loop's subagents run them,
+ each land. A publish whose push loses the race for the ref fetches the ref
+ again, rebuilds its commit on the new tip, keeping every other publisher's
+@@ -771,6 +776,14 @@ whether it is. For summaries it builds every
+ for no diff, and skips and reports any summary that fails or has no stored diff.
+ It marks generated files by the `attributes.json` beside a summary, or by the
+ checkout's `.gitattributes` for a summary stored without one.
++It checks each file stored under `head/` against every context and added
++line of the file's diff, and drops one that disagrees with a
++`::warning title=Context dropped::` line. It serves each file that passes
++once, at `reviews/blobs/<id>.txt` under the site's base, where `<id>` is the
++file's Git blob id, with each CRLF line ending turned into LF. The file's
++entry in the page's `data.json` gets a `context` naming that address, the
++file's line count, and each run of lines its hunks leave hidden. The build
++prints how many files it served this way and their total size.
+ It reads only `summary.json`, so it also reports each summary stored only as
+ `spec.json`, the name older releases wrote. To show such a summary, publish it
+ again with a current release, as
+@@ -900,7 +913,7 @@ place of its checkout's. When the checkout lacks the head, `publish` first
+ fetches it from the remote it publishes to. The fetch adds the commit's
+ objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
+ remote cannot serve the head either, `publish` says so and stores no
+-attributes. A summary stored without them, as every summary an earlier
++attributes and no files under `head/`. A summary stored without them, as every summary an earlier
+ release published was, takes its attributes from the default branch when the
+ site builds.
+ 
+diff --git a/docs/projects/summary-diff-context/readme.md b/docs/projects/summary-diff-context/readme.md
+index ec4884c..e40fa4c 100644
+--- a/docs/projects/summary-diff-context/readme.md
++++ b/docs/projects/summary-diff-context/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Expand the hidden lines around a summary's diff hunks
+@@ -32,10 +32,10 @@ reader expands one of its gaps.
+ `summary publish` already writes `summary.json`, `diff.patch`, and
+ `attributes.json` under `summaries/<number>/<head>/` on
+ `refs/projector/summaries`, and already fetches the head when the checkout
+-lacks it (`publish_attributes` in `src/projector/summary.py`). It now also
++lacks it (`readable_head` in `src/projector/summary.py`). It now also
+ writes `summaries/<number>/<head>/head/<path>` for each eligible file: an index
+-entry that points at the head tree's existing blob, so the summaries ref gains
+-tree entries and no new file content.
++entry, mode `100644`, that points at the head tree's existing blob, so the
++summaries ref gains tree entries and no new file content.
+ 
+ A file is eligible when all of these hold:
+ 
+@@ -73,10 +73,19 @@ it finds, it:
+    a `::warning::` naming the file, so a wrong blob never shows wrong lines.
+ 3. Writes the decoded text, with each `\r\n` replaced, once as UTF-8 to
+    `reviews/blobs/<id>.txt` in the site, where `<id>` is the Git blob id of the
+-   stored bytes. The page splits that text on `\n`, so it shows exactly the
+-   lines the build checked. Two heads or two pull requests with the same file
+-   content share one file.
++   stored bytes: SHA-256 when the head's id has 64 digits, as in a SHA-256
++   repository, and SHA-1 otherwise. The page splits that text on `\n`, so it
++   shows exactly the lines the build checked. Two heads or two pull requests
++   with the same file content share one file.
+ 4. Computes the file's gaps and adds `context` to the file in the page data.
++   A file whose hunks leave no gap gets no `context`, and the build writes no
++   blob for it.
++
++The build reads a stored file only when it is a regular file of at most
++`CONTEXT_MAX_BYTES` whose real path stays inside the summary's `head/`
++folder. Anyone who can push the summaries ref writes the diff that names the
++path, so a path that leads out of `head/` through `..` or a symlink reads
++nothing, and the deploy cannot serve a file from outside the ref.
+ 
+ The page data gains, on each file that has stored content:
+ 
+@@ -149,7 +158,7 @@ controls stay usable for a retry. A file without `context` draws no expander.
+ 
+ | File | Change |
+ | --- | --- |
+-| `src/projector/summary.py` | `parse_diff` keeps the hunk numbers. A shared helper makes the head readable, fetching it once, for both `publish_attributes` and the new head-file listing. `summary_tree` takes index entries by blob id. `CONTEXT_MAX_BYTES`. |
++| `src/projector/summary.py` | `parse_diff` keeps the hunk numbers. A shared helper, `readable_head`, makes the head readable, fetching it once, for both the attributes and the new head-file listing, `head_blobs`. `summary_tree` takes index entries by blob id. `CONTEXT_MAX_BYTES`. |
+ | `src/projector/site/__init__.py` | `build_summaries` reads `head/`, checks and writes the blobs, and adds `context`. |
+ | `site/src/summary.ts`, `site/src/globals.d.ts`, `site/assets/summary.css` | Expander rows, the lazy fetch, row insertion, and the `context` and hunk-number types. |
+ | `site/assets/summary.js` | Rebuilt with `npm --prefix site run build`. |
+@@ -189,8 +198,8 @@ controls stay usable for a retry. A file without `context` draws no expander.
+ - **Reuse what the page and publish already have.** The page's `hl`,
+   `splitLines`, `numbers`, `markTokens`, and `esc` render the new rows;
+   publish's head fetch and `summary_tree` write the entries. The head fetch
+-  moves out of `publish_attributes` into a helper both callers use, so a
+-  publish fetches the head at most once.
++  lives in `readable_head`, which the attributes and the head-file listing
++  both use, so a publish fetches the head at most once.
+ - **Twenty lines a click, as GitHub does.** Readers already know the control.
+ 
+ ## 4. Acceptance criteria
+@@ -259,3 +268,10 @@ them.
+   it wrongly. The stored file would let a later change fix that.
+ - **Pruning the summaries ref.** Every published head keeps its entries, as its
+   summary and diff do today.
++
++## 8. Implementation state
++
++Rollout step 1, the data, is built. Criterion 1 holds in `PublishTests` in
++`tests/test_summary.py`, and criteria 2 and 3 in `HunkGapTests` and
++`ContextBuildTests` in `tests/test_site.py`. Step 2, the page, remains, with
++criteria 4 to 6 and the browser checks of criterion 5.
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 52da5aa..c90623b 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -259,7 +259,8 @@ without touching the checkout, and sends a `repository_dispatch` event that
+ starts the workflow. The deploy checks out the default branch, which lacks
+ the head, so `publish` also stores the `linguist-generated` attributes the
+ head's `.gitattributes` gives the changed files, as `attributes.json`, and
+-fetches the head first when the checkout lacks it. Publishes that run at the
++the head's version of each changed file whose diff hides some of its lines,
++under `head/`. It fetches the head first when the checkout lacks it. Publishes that run at the
+ same time, as a review loop's subagents run them, each land. A publish whose
+ push loses the race for the ref fetches the ref again, rebuilds its commit on
+ the new tip, and pushes again, up to five pushes in all. `publish` fetches the
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 5c9b046..4188ad4 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -19,6 +19,7 @@
+ from __future__ import annotations
+ 
+ import datetime
++import hashlib
+ import html
+ import json
+ import os
+@@ -30,7 +31,8 @@
+ 
+ from ..core import Project, title_from_text
+ from ..review import MARKER
+-from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
++from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
++                       prepare_page, stored_attributes)
+ 
+ 
+ 
+@@ -52,6 +54,8 @@ def assets_dir():
+ MAX_FILE_BYTES = 20 * 1024 * 1024
+ PAGES = (".md", ".html")
+ FIXED_ROUTES = ("", "projects/", "reviews/", "docs/", "search/")
++# Where the site serves the head's copy of each file a summary page can expand.
++BLOBS = "reviews/blobs"
+ 
+ 
+ def escape(s: object) -> str:
+@@ -164,6 +168,94 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+     return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
+ 
+ 
++def stored_head_file(folder: Path, path: str) -> bytes | None:
++    """The head's copy of `path` that `publish` stored in `folder`, or None when it stored none.
++
++    Whoever can push the summaries ref writes the diff that names `path`, so
++    a path that leads out of `folder`, through `..` or a symlink, reads
++    nothing, and neither does anything but a regular file of at most
++    CONTEXT_MAX_BYTES. `folder` must be absolute and free of symlinks.
++    """
++    target = (folder / path).resolve()
++    try:
++        if not target.is_relative_to(folder) or not target.is_file() or target.stat().st_size > CONTEXT_MAX_BYTES:
++            return None
++        return target.read_bytes()
++    except OSError:
++        return None
++
++
++def head_lines(text: str) -> list[str]:
++    """The lines of `text`, with no empty line after a final newline."""
++    lines = text.split("\n")
++    if lines[-1] == "":
++        lines.pop()
++    return lines
++
++
++def shows_diff(f: dict, lines: list[str]) -> bool:
++    """Whether `lines`, a file at the head, hold each context and added line of the file's diff at its number."""
++    return all(0 < line[2] <= len(lines) and lines[line[2] - 1] == line[3]
++               for hunk in f["hunks"] for line in hunk["lines"] if line[0] in ("a", "c"))
++
++
++def hunk_gaps(hunks: list[dict], total: int) -> list[dict]:
++    """The runs of a file's `total` head lines that its hunks leave hidden, above, between, and below them.
++
++    Each gap is new-side lines `start` to `end`. `before` is the index of the
++    hunk it sits above, or the number of hunks for the gap below the last,
++    and `oldStart` is the old-side number of `start`. A hunk with no lines on
++    a side sits after its start line on that side. An empty gap is left out.
++    """
++    gaps = []
++    new_next = old_next = 1
++    for before, hunk in enumerate(hunks):
++        new_start = hunk["newStart"] + (hunk["newLines"] == 0)
++        old_start = hunk["oldStart"] + (hunk["oldLines"] == 0)
++        gaps.append({"before": before, "start": new_next, "end": new_start - 1, "oldStart": old_next})
++        new_next, old_next = new_start + hunk["newLines"], old_start + hunk["oldLines"]
++    gaps.append({"before": len(hunks), "start": new_next, "end": total, "oldStart": old_next})
++    return [gap for gap in gaps if gap["start"] <= gap["end"]]
++
++
++def blob_id(data: bytes, head: str) -> str:
++    """The id Git gives `data` as a blob: SHA-256 where commit `head` has 64 digits, as in a SHA-256 repository, else SHA-1."""
++    digest = hashlib.sha256 if len(head) == 64 else hashlib.sha1
++    return digest(b"blob %d\0" % len(data) + data).hexdigest()
++
++
++def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict[str, int]) -> None:
++    """Give each file of `payload` whose head copy `publish` stored in `stored` the `context` its page expands.
++
++    A copy that disagrees with the file's diff is dropped with a warning, so
++    a page never shows a wrong line. The copy's text, decoded as UTF-8 with
++    each CRLF a LF, as the diff reads, is written once per blob under BLOBS,
++    and `written` maps each blob written to its size.
++    """
++    pr = payload["pr"]
++    for f in payload["files"]:
++        data = stored_head_file(stored, f["path"])
++        if data is None:
++            continue
++        text = data.decode("utf-8", "replace").replace("\r\n", "\n")
++        lines = head_lines(text)
++        if not shows_diff(f, lines):
++            print(f"::warning title=Context dropped::{pr['number']}/{pr['head']}: {f['path']} at the head does not "
++                  "match its diff, so its page cannot expand the lines around its hunks")
++            continue
++        gaps = hunk_gaps(f["hunks"], len(lines))
++        if not gaps:
++            continue
++        blob = blob_id(data, str(pr["head"]))
++        if blob not in written:
++            encoded = text.encode("utf-8")
++            target = out / BLOBS / f"{blob}.txt"
++            target.parent.mkdir(parents=True, exist_ok=True)
++            target.write_bytes(encoded)
++            written[blob] = len(encoded)
++        f["context"] = {"url": f"{base}{BLOBS}/{blob}.txt", "lines": len(lines), "gaps": gaps}
++
++
+ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+                     lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build every summary that can be built; report and skip the rest.
+@@ -175,7 +267,9 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
+     requests in its stack. A file is
+     generated as the `attributes.json` that `publish` stored beside a summary
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+-    its .gitattributes. `status_lookup` returns a pull request's state and
++    its .gitattributes. A file whose head copy `publish` stored beside its
++    summary carries the `context` its page expands, as `add_context`
++    describes. `status_lookup` returns a pull request's state and
+     reviews, as `summary.pr_status` does, or None when it cannot ask. From
+     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
+     GitHub reports, or None once that branch is deleted, and `review`, the
+@@ -201,6 +295,8 @@ def skip(path: Path, reason: object) -> None:
+                    "with `project summary publish`")
+ 
+     by_pr: dict[str, list[tuple[int, dict]]] = {}
++    absolute = root.resolve()
++    written: dict[str, int] = {}
+     for path in summaries:
+         try:
+             summary = json.loads(path.read_text(encoding="utf-8"))
+@@ -221,7 +317,10 @@ def skip(path: Path, reason: object) -> None:
+         except (SummaryError, ValueError, KeyError, TypeError) as exc:
+             skip(path, exc)
+             continue
++        add_context(payload, absolute / number / head / HEAD_DIR, out, base, written)
+         by_pr.setdefault(number, []).append((summary_time(path), payload))
++    print(f"wrote {len(written)} head {'file' if len(written) == 1 else 'files'} for summary pages to expand, "
++          f"{sum(written.values()):,} bytes, under {BLOBS}/")
+     for versions in by_pr.values():
+         versions.sort(key=lambda v: v[0], reverse=True)
+     prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 5985b16..79e46d1 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -35,6 +35,10 @@
+ DIFF_FILE = "diff.patch"
+ # What `publish` read from the head's .gitattributes, stored beside the diff.
+ ATTRIBUTES_FILE = "attributes.json"
++# The folder beside the diff where `publish` stores the head's copy of each
++# changed file a summary page can expand, and the largest file it stores.
++HEAD_DIR = "head"
++CONTEXT_MAX_BYTES = 1024 * 1024
+ # Publishes running at once, as a review loop's subagents run them, race to
+ # move the summaries ref, so a push that loses is rebuilt on the new tip and
+ # tried again, up to this many pushes in all.
+@@ -259,6 +263,12 @@ def header_path(rest: str) -> str:
+     return unquote_path(b_side[-1]) if len(b_side) == 2 else rest
+ 
+ 
++def hunk_range(side: str) -> tuple[int, int]:
++    """The start and line count of one side of a hunk header, `-12,3` or `+12`, whose count defaults to 1."""
++    start, _, count = side[1:].partition(",")
++    return int(start), int(count) if count else 1
++
++
+ def parse_diff(text: str) -> list[dict]:
+     files: list[dict] = []
+     cur = hunk = None
+@@ -286,10 +296,10 @@ def parse_diff(text: str) -> list[dict]:
+             if source.startswith("a/"):
+                 cur["path"] = source[2:]
+         elif raw.startswith("@@"):
+-            head = raw.split("@@")[1].split()
+-            old_no = int(head[0].lstrip("-").split(",")[0])
+-            new_no = int(head[1].lstrip("+").split(",")[0])
+-            hunk = {"header": raw, "lines": []}
++            old_side, new_side = raw.split("@@")[1].split()[:2]
++            (old_no, old_lines), (new_no, new_lines) = hunk_range(old_side), hunk_range(new_side)
++            hunk = {"header": raw, "oldStart": old_no, "oldLines": old_lines, "newStart": new_no, "newLines": new_lines,
++                    "lines": []}
+             cur["hunks"].append(hunk)
+         elif hunk is None:
+             continue
+@@ -379,6 +389,12 @@ def generated_values(paths: list[str], values: list[str]) -> dict[str, bool]:
+     return {path: value not in ("unset", "false") for path, value in zip(paths, values) if value != "unspecified"}
+ 
+ 
++def has_commit(root: Path, head: str) -> bool:
++    """Whether the checkout at `root` has commit `head`, which must be a full SHA."""
++    return bool(FULL_SHA.fullmatch(head or "")) and subprocess.run(
++        ["git", "-C", str(root), "cat-file", "-e", f"{head}^{{commit}}"], capture_output=True).returncode == 0
++
++
+ def head_attributes(root: Path, head: str, paths: list[str]) -> dict[str, bool] | None:
+     """`linguist-generated` for each of `paths` as the .gitattributes files of commit `head` set it.
+ 
+@@ -386,10 +402,7 @@ def head_attributes(root: Path, head: str, paths: list[str]) -> dict[str, bool]
+     read it. Git 2.40 added `check-attr --source`; an older Git reads the
+     commit's tree into a scratch index and checks the attributes there.
+     """
+-    if not FULL_SHA.fullmatch(head or ""):
+-        return None
+-    if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{head}^{{commit}}"],
+-                      capture_output=True).returncode != 0:
++    if not has_commit(root, head):
+         return None
+     values = check_attr(root, paths, f"--source={head}")
+     if values is None:
+@@ -948,8 +961,10 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False,
+ # Publishing to the summaries ref
+ 
+ def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
++    """Run git on UTF-8 text; output that is not UTF-8, such as a path in another encoding, reads with replacements."""
+     try:
+-        return subprocess.run(["git", *args], check=True, capture_output=True, text=True, env=env, input=input).stdout.strip()
++        return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace",
++                              env=env, input=input).stdout.strip()
+     except subprocess.CalledProcessError as exc:
+         raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+@@ -1023,11 +1038,14 @@ def ref_exists(ref: str) -> bool:
+                           capture_output=True).returncode == 0
+ 
+ 
+-def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None) -> str:
++def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None,
++                 blobs: dict[str, str] | None = None) -> str:
+     """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`.
+ 
+     With `generated`, the head's `linguist-generated` values go beside them.
+-    Without, an attributes file an earlier publish of this head left stays.
++    Each of `blobs`, the head's blob of a changed file by path, goes under
++    HEAD_DIR at its path, as an entry naming the blob the head already has.
++    What an earlier publish of this head stored and this one does not stays.
+     """
+     files = [("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)]
+     if generated is not None:
+@@ -1040,6 +1058,9 @@ def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated:
+         for name, content in files:
+             blob = git("hash-object", "-w", "--stdin", input=content)
+             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
++        if blobs:
++            git("update-index", "-z", "--index-info", env=env,
++                input="".join(f"100644 {blob}\t{folder}/{HEAD_DIR}/{path}\0" for path, blob in sorted(blobs.items())))
+         return git("write-tree", env=env)
+ 
+ 
+@@ -1066,37 +1087,63 @@ def push_decision(repo: str) -> tuple[str | None, str]:
+         return None, f"could not tell whether {repo} hosts its Projector site: {error}"
+ 
+ 
+-def publish_attributes(remote: str, head: str, paths: list[str]) -> dict[str, bool] | None:
+-    """The head's `linguist-generated` values for `paths`, for `publish` to store, or None when it cannot read them.
++def readable_head(remote: str, head: str) -> Path | None:
++    """The top of this checkout once it has commit `head`, or None when it cannot have it.
+ 
+     A deploy builds from a checkout of the default branch, which lacks the
+-    head, so they are read here. A head this checkout lacks is fetched from
+-    `remote` first, into its objects and FETCH_HEAD alone, as `git fetch
+-    REMOTE HEAD` would; no branch or tag changes.
++    head, so `publish` reads what a page needs from the head here. A head
++    this checkout lacks is fetched from `remote` first, into its objects and
++    FETCH_HEAD alone, as `git fetch REMOTE HEAD` would; no branch or tag
++    changes.
+     """
+     top = checkout_root()
+-    if top is None or not paths:
++    if top is None or not FULL_SHA.fullmatch(head):
+         return None
+-    found = head_attributes(top, head, paths)
+-    if found is None and FULL_SHA.fullmatch(head):
+-        fetched = subprocess.run(["git", "-C", str(top), "fetch", "--quiet", "--no-tags", remote, head],
+-                                 capture_output=True, stdin=subprocess.DEVNULL)
+-        if fetched.returncode == 0:
+-            found = head_attributes(top, head, paths)
+-    if found is None:
+-        print(f"could not read the .gitattributes of {head[:9]}, which {remote} did not serve; the site will mark "
+-              "generated files by the .gitattributes of the checkout it builds from", file=sys.stderr)
+-    return found
++    if not has_commit(top, head):
++        subprocess.run(["git", "-C", str(top), "fetch", "--quiet", "--no-tags", remote, head],
++                       capture_output=True, stdin=subprocess.DEVNULL)
++    return top if has_commit(top, head) else None
++
++
++def head_blobs(root: Path, head: str, files: list[dict]) -> dict[str, str]:
++    """The blob of each of the diff's `files` that a summary page can expand, by path, in commit `head` at `root`.
++
++    A page can expand a file whose hunks show it is text and leave lines
++    hidden, which a new or deleted file's do not. Its entry in the head must
++    be a regular file, not a symlink or a submodule, of at most
++    CONTEXT_MAX_BYTES. A .gitattributes file is left out, because the
++    deploy's checkout of the summaries ref and `site serve`'s archive of it
++    would apply it to the files stored beside it.
++    """
++    wanted = {f["path"] for f in files if f["hunks"] and not f["new"] and not f["deleted"]
++              and f["path"].rsplit("/", 1)[-1] != ".gitattributes"}
++    if not wanted:
++        return {}
++    found = {}
++    for record in git("-C", str(root), "ls-tree", "-r", "-z", head).split("\0"):
++        meta, _, path = record.partition("\t")
++        mode, _, blob = meta.split(" ") if meta.count(" ") == 2 else ("", "", "")
++        if path in wanted and mode in ("100644", "100755"):
++            found[path] = blob
++    if not found:
++        return {}
++    sizes = git("-C", str(root), "cat-file", "--batch-check=%(objectname) %(objectsize)",
++                input="".join(f"{blob}\n" for blob in found.values()))
++    small = {blob for blob, size in (line.split(" ") for line in sizes.splitlines())
++             if size.isdigit() and int(size) <= CONTEXT_MAX_BYTES}
++    return {path: blob for path, blob in found.items() if blob in small}
+ 
+ 
+ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
+     """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
+ 
+-    The head's `linguist-generated` values go beside them when this checkout
+-    has the head or can fetch it, so a deploy classifies files as the head does.
+-    Without `push`, the commit goes on this checkout's own `ref` and nothing
+-    leaves it, no dispatch included; `reason` says why, for the report.
++    When this checkout has the head or can fetch it, the head's
++    `linguist-generated` values go beside them, so a deploy classifies files
++    as the head does, and so does the head's copy of each changed file a page
++    can expand, as `head_blobs` chooses them. Without `push`, the commit goes
++    on this checkout's own `ref` and nothing leaves it, no dispatch included;
++    `reason` says why, for the report.
+     """
+     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+     pr = summary_pr(summary)
+@@ -1104,15 +1151,25 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+     if slug and slug.lower() != pr["repo"].lower():
+         raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+     diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
+-    paths = [f["path"] for f in prepare_page(summary, diff=diff, at_head=True, generated={})["files"]]
+-    generated = publish_attributes(remote, str(pr["head"]), paths)
++    files = prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
++    head = str(pr["head"])
++    top = readable_head(remote, head) if files else None
++    generated, blobs = None, {}
++    if top is not None:
++        generated = head_attributes(top, head, [f["path"] for f in files])
++        blobs = head_blobs(top, head, files)
++    elif files:
++        print(f"could not read {head[:9]}, which {remote} did not serve; the site will mark generated files by the "
++              ".gitattributes of the checkout it builds from, and the summary's page cannot expand the lines around "
++              "its hunks", file=sys.stderr)
+     folder = f"{root}/{pr['number']}/{pr['head']}"
+-    written = (f"{folder}/summary.json, {DIFF_FILE} and {ATTRIBUTES_FILE}" if generated is not None
+-               else f"{folder}/summary.json and {DIFF_FILE}")
++    stored = ["summary.json", DIFF_FILE, *([ATTRIBUTES_FILE] if generated is not None else []),
++              *([f"{len(blobs)} head {'file' if len(blobs) == 1 else 'files'} under {HEAD_DIR}/"] if blobs else [])]
++    written = f"{folder}/{', '.join(stored[:-1])} and {stored[-1]}"
+     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+     if not push:
+         parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
+-        tree = summary_tree(parent, folder, summary, diff, generated)
++        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
+         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+             print(f"{ref} in this checkout already has this summary; nothing to publish")
+             return None
+@@ -1130,7 +1187,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+             if seed is None:
+                 seed = seed_from_legacy(remote)
+             parent = seed
+-        tree = summary_tree(parent, folder, summary, diff, generated)
++        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
+         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+             print(f"{ref} already has this summary; nothing to publish")
+             return None
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 7e83630..895faa7 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -19,6 +19,7 @@
+ from unittest import mock
+ 
+ from projector import cli, summary
++from projector import site as site_build
+ from projector.site import serve
+ 
+ 
+@@ -587,6 +588,177 @@ def js_function(name: str) -> str:
+     return "\n".join(lines[start:end + 1])
+ 
+ 
++def head_file(lines: list[str], ending: str = "\n", last: str = "\n") -> bytes:
++    """A file at the head holding `lines`, each ended by `ending` except the last, ended by `last`."""
++    return (ending.join(lines) + last).encode()
++
++
++class HunkGapTests(unittest.TestCase):
++    """The hidden lines the build finds around a file's hunks, which its page can expand."""
++
++    def context(self, hunks: str, data: bytes) -> dict | None:
++        """The `context` the build gives f.txt, whose diff is `hunks` and whose head copy is `data`."""
++        tmp = Path(tempfile.mkdtemp()).resolve()
++        (tmp / "head").mkdir()
++        (tmp / "head" / "f.txt").write_bytes(data)
++        payload = {"pr": {"number": 7, "head": "c" * 40},
++                   "files": summary.parse_diff(f"diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n{hunks}")}
++        with redirect_stdout(io.StringIO()):
++            site_build.add_context(payload, tmp / "head", tmp / "site", "/", {})
++        return payload["files"][0].get("context")
++
++    def gaps(self, hunks: str, lines: list[str]) -> list[dict]:
++        return self.context(hunks, head_file(lines))["gaps"]
++
++    def test_a_first_hunk_at_line_1_leaves_no_gap_above(self) -> None:
++        lines = ["1", "two", *map(str, range(3, 11))]
++        self.assertEqual([{"before": 1, "start": 5, "end": 10, "oldStart": 5}],
++                         self.gaps("@@ -1,4 +1,4 @@\n 1\n-2\n+two\n 3\n 4\n", lines))
++
++    def test_adjacent_hunks_leave_no_gap_between(self) -> None:
++        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
++                          {"before": 2, "start": 4, "end": 5, "oldStart": 4}],
++                         self.gaps("@@ -2 +2 @@\n-2\n+two\n@@ -3 +3 @@\n-3\n+three\n", ["1", "two", "three", "4", "5"]))
++
++    def test_a_pure_addition_sits_after_its_old_start(self) -> None:
++        lines = ["1", "2", "3", "4", "x", "y", *map(str, range(5, 11))]
++        self.assertEqual([{"before": 0, "start": 1, "end": 4, "oldStart": 1},
++                          {"before": 1, "start": 7, "end": 12, "oldStart": 5}],
++                         self.gaps("@@ -4,0 +5,2 @@\n+x\n+y\n", lines))
++
++    def test_a_pure_deletion_sits_after_its_new_start(self) -> None:
++        lines = ["1", "2", "3", "4", "7", "8", "9", "10"]
++        self.assertEqual([{"before": 0, "start": 1, "end": 4, "oldStart": 1},
++                          {"before": 1, "start": 5, "end": 8, "oldStart": 7}],
++                         self.gaps("@@ -5,2 +4,0 @@\n-5\n-6\n", lines))
++
++    def test_a_last_hunk_at_the_end_of_the_file_leaves_no_gap_below(self) -> None:
++        lines = [*map(str, range(1, 10)), "ten"]
++        self.assertEqual([{"before": 0, "start": 1, "end": 6, "oldStart": 1}],
++                         self.gaps("@@ -7,4 +7,4 @@\n 7\n 8\n 9\n-10\n+ten\n", lines))
++
++    def test_a_last_line_without_a_newline_is_a_line(self) -> None:
++        context = self.context("@@ -2,3 +2,3 @@\n 2\n-3\n+three\n 4\n", head_file(["1", "2", "three", "4", "5", "6"], last=""))
++        self.assertEqual(6, context["lines"])
++        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
++                          {"before": 1, "start": 5, "end": 6, "oldStart": 5}], context["gaps"])
++        self.assertEqual([{"before": 0, "start": 1, "end": 2, "oldStart": 1}],
++                         self.gaps("@@ -3,3 +3,3 @@\n 3\n 4\n-5\n\\ No newline at end of file\n+five\n"
++                                   "\\ No newline at end of file\n", ["1", "2", "3", "4", "five"]))
++
++    def test_crlf_lines_match_the_diff_that_reads_them_as_lf(self) -> None:
++        context = self.context("@@ -2,3 +2,3 @@\n 2\n-3\n+three\n 4\n",
++                               head_file(["1", "2", "three", "4", "5", "6", "7"], ending="\r\n", last="\r\n"))
++        self.assertEqual(7, context["lines"])
++        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
++                          {"before": 1, "start": 5, "end": 7, "oldStart": 5}], context["gaps"])
++
++    def test_a_file_its_hunks_show_whole_gets_no_context(self) -> None:
++        self.assertIsNone(self.context("@@ -1,3 +1,3 @@\n 1\n-2\n+two\n 3\n", head_file(["1", "two", "3"])))
++
++
++CONTEXT_DIFF = """diff --git a/crlf.txt b/crlf.txt
++index 1111111..2222222 100644
++--- a/crlf.txt
+++++ b/crlf.txt
++@@ -2,3 +2,3 @@
++ 2
++-3
+++three
++ 4
++diff --git a/wrong.txt b/wrong.txt
++index 1111111..2222222 100644
++--- a/wrong.txt
+++++ b/wrong.txt
++@@ -2,3 +2,3 @@
++ 2
++-3
+++three
++ 4
++"""
++CRLF_FILE = b"1\r\n2\r\nthree\r\n4\r\n5\r\n6\r\n7\r\n"
++
++
++class ContextBuildTests(unittest.TestCase):
++    """The build checks each head file `publish` stored, serves it once, and tells the page where its gaps are."""
++
++    def setUp(self) -> None:
++        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
++        self.out = Path(tempfile.mkdtemp()) / "site"
++
++    def store(self, head: str, diff: str, files: dict[str, bytes]) -> Path:
++        """Store a summary of `diff` at `head`, as `publish` does, with `files` under head/; return its folder."""
++        folder = self.summaries / "7" / head
++        (folder / "head").mkdir(parents=True)
++        (folder / "summary.json").write_text(json.dumps({
++            "version": 1, "pr": {"repo": "owner/example", "number": 7, "title": "Seven", "head": head, "base": "b" * 40,
++                                 "baseRef": "main"},
++            "groups": [{"id": "all", "title": "All",
++                        "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]}))
++        (folder / "diff.patch").write_text(diff)
++        for path, data in files.items():
++            (folder / "head" / path).parent.mkdir(parents=True, exist_ok=True)
++            (folder / "head" / path).write_bytes(data)
++        return folder
++
++    def build(self) -> str:
++        printed = io.StringIO()
++        with redirect_stdout(printed):
++            _, failures = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
++        self.assertEqual([], failures)
++        return printed.getvalue()
++
++    def files(self, head: str) -> dict[str, dict]:
++        data = json.loads((self.out / "reviews" / "7" / head / "data.json").read_text())
++        return {f["path"]: f for f in data["files"]}
++
++    def test_each_head_file_is_checked_and_served_once_under_the_base(self) -> None:
++        for head in ("c" * 40, "d" * 40):
++            self.store(head, CONTEXT_DIFF, {"crlf.txt": CRLF_FILE, "wrong.txt": b"1\n2\nTHREE\n4\n5\n"})
++
++        printed = self.build()
++
++        blob = subprocess.run(["git", "hash-object", "--stdin"], input=CRLF_FILE, capture_output=True,
++                              check=True).stdout.decode().strip()
++        for head in ("c" * 40, "d" * 40):
++            files = self.files(head)
++            self.assertEqual({"url": f"/projector/reviews/blobs/{blob}.txt", "lines": 7,
++                              "gaps": [{"before": 0, "start": 1, "end": 1, "oldStart": 1},
++                                       {"before": 1, "start": 5, "end": 7, "oldStart": 5}]},
++                             files["crlf.txt"]["context"], "the url names Git's id for the stored bytes")
++            self.assertNotIn("context", files["wrong.txt"], "a file that disagrees with its diff shows no lines")
++            self.assertIn(f"::warning title=Context dropped::7/{head}: wrong.txt at the head does not match its diff",
++                          printed)
++        self.assertEqual([f"{blob}.txt"], [p.name for p in (self.out / "reviews" / "blobs").iterdir()],
++                         "two heads with the same file share it")
++        self.assertEqual(b"1\n2\nthree\n4\n5\n6\n7\n", (self.out / "reviews" / "blobs" / f"{blob}.txt").read_bytes())
++        self.assertIn("wrote 1 head file for summary pages to expand, 18 bytes, under reviews/blobs/", printed)
++
++    def test_a_summary_published_without_head_files_has_no_context(self) -> None:
++        self.store("c" * 40, CONTEXT_DIFF, {})
++
++        printed = self.build()
++
++        self.assertEqual([None, None], [f.get("context") for f in self.files("c" * 40).values()])
++        self.assertFalse((self.out / "reviews" / "blobs").exists())
++        self.assertIn("wrote 0 head files for summary pages to expand, 0 bytes, under reviews/blobs/", printed)
++
++    def test_a_path_that_leads_out_of_the_head_folder_reads_nothing(self) -> None:
++        # Whoever can push the summaries ref writes the diff and the files beside it.
++        diff = CONTEXT_DIFF.replace("wrong.txt", "../outside.txt").replace("crlf.txt", "link.txt")
++        folder = self.store("c" * 40, diff, {})
++        matching = b"1\n2\nthree\n4\n5\n"
++        (folder / "outside.txt").write_bytes(matching)
++        (folder.parent / "secret.txt").write_bytes(matching)
++        os.symlink("../../secret.txt", folder / "head" / "link.txt")
++
++        self.build()
++
++        self.assertEqual({"../outside.txt": None, "link.txt": None},
++                         {path: f.get("context") for path, f in self.files("c" * 40).items()})
++        self.assertFalse((self.out / "reviews" / "blobs").exists())
++
++
+ TS_PROJECT = Path(__file__).parents[1] / "site"
+ TSC = TS_PROJECT / "node_modules" / ".bin" / "tsc"
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index b7a5686..2e5e8f7 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -78,6 +78,11 @@ def test_parses_files_counts_line_numbers_and_kinds(self) -> None:
+         self.assertEqual(["d", 11, "", "    b := 2"], lines[1])
+         self.assertEqual(["a", "", 11, "    b := 3"], lines[2])
+         self.assertEqual(["c", 12, 13, "    return"], lines[4])
++        self.assertEqual({"oldStart": 10, "oldLines": 3, "newStart": 10, "newLines": 4},
++                         {k: v for k, v in core["hunks"][0].items() if k not in ("header", "lines")})
++        self.assertEqual((1, 1, 1, 1), tuple(files["gen/api.pb.go"]["hunks"][0][k]
++                                             for k in ("oldStart", "oldLines", "newStart", "newLines")),
++                         "a side without a count has one line")
+ 
+         self.assertTrue(files["src/core_test.go"]["new"])
+         self.assertEqual("test", files["src/core_test.go"]["kind"])
+@@ -457,10 +462,15 @@ def setUp(self) -> None:
+         self.output = ""
+         self.err = ""
+ 
+-    def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
++    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, **kwargs: object) -> object:
+         """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
+-        and its warnings in `self.err`."""
+-        data = make_summary(GOOD_GROUPS)
++        and its warnings in `self.err`.
++
++        GitHub serves `diff` as the pull request's, and a diff other than DIFF gets a summary of one group.
++        """
++        groups = GOOD_GROUPS if diff == DIFF else [
++            {"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]
++        data = make_summary(groups)
+         data["pr"]["head"] = head
+         path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
+         path.write_text(json.dumps(data))
+@@ -469,7 +479,7 @@ def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> obje
+         out, err = io.StringIO(), io.StringIO()
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
++                 mock.patch.object(summary, "fetch_diff", return_value=diff), \
+                  mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out), \
+                  redirect_stderr(err):
+                 return summary.publish(path, "origin", **kwargs)
+@@ -780,8 +790,93 @@ def test_fetches_a_head_the_checkout_lacks_to_read_its_attributes(self) -> None:
+     def test_says_so_and_stores_no_attributes_when_the_remote_cannot_serve_the_head(self) -> None:
+         self.publish("a" * 40)
+ 
+-        self.assertNotIn(f"summaries/7/{'a' * 40}/attributes.json", self.ref_files())
+-        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err)
++        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json"],
++                         self.ref_files(), "no attributes and no head files")
++        self.assertIn("could not read aaaaaaaaa, which origin did not serve; the site will mark generated files by "
++                      "the .gitattributes of the checkout it builds from, and the summary's page cannot expand the "
++                      "lines around its hunks", self.err)
++
++    def commit_context_change(self, repo: Path) -> tuple[str, str]:
++        """Commit, in `repo`, a change to a file of every kind `publish` stores or skips for a page to expand.
++
++        Returns the head and the diff from the commit before it. Only keep.txt and tool.sh can be expanded.
++        """
++        (repo / "keep.txt").write_text("".join(f"line {n}\n" for n in range(1, 31)))
++        (repo / "tool.sh").write_text("#!/bin/sh\necho 1\n")
++        (repo / "tool.sh").chmod(0o755)
++        (repo / "gone.txt").write_text("gone\n")
++        (repo / "big.txt").write_text(("x" * 99 + "\n") * 11000)
++        (repo / "sub").mkdir()
++        (repo / "sub" / ".gitattributes").write_text("*.md linguist-generated\n")
++        (repo / "bin.dat").write_bytes(b"\0\1\2")
++        os.symlink("keep.txt", repo / "link")
++        run(repo, "git", "add", "--all")
++        run(repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},mod")
++        run(repo, "git", "commit", "--quiet", "-m", "Base")
++        base = run(repo, "git", "rev-parse", "HEAD")
++        (repo / "keep.txt").write_text("".join(f"line {n}\n" if n != 15 else "changed\n" for n in range(1, 31)))
++        (repo / "tool.sh").write_text("#!/bin/sh\necho 2\n")
++        (repo / "gone.txt").unlink()
++        (repo / "fresh.txt").write_text("fresh\n")
++        (repo / "big.txt").write_text("y" * 99 + "\n" + ("x" * 99 + "\n") * 10999)
++        (repo / "sub" / ".gitattributes").write_text("*.md -linguist-generated\n")
++        (repo / "bin.dat").write_bytes(b"\0\1\3")
++        (repo / "link").unlink()
++        os.symlink("tool.sh", repo / "link")
++        run(repo, "git", "add", "--all")
++        run(repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{'2' * 40},mod")
++        run(repo, "git", "commit", "--quiet", "-m", "Head")
++        return run(repo, "git", "rev-parse", "HEAD"), run(repo, "git", "diff", base, "HEAD") + "\n"
++
++    def head_entries(self, head: str) -> dict[str, tuple[str, str]]:
++        """Each file the remote's summaries ref stores under head/ for `head`, with its mode and blob."""
++        listed = run(self.remote, "git", "ls-tree", "-r", "refs/projector/summaries", f"summaries/7/{head}/head/")
++        prefix = f"summaries/7/{head}/head/"
++        return {path[len(prefix):]: (meta.split()[0], meta.split()[2])
++                for meta, path in (line.split("\t", 1) for line in listed.splitlines())}
++
++    def test_stores_each_changed_file_a_page_can_expand_as_the_heads_own_blob(self) -> None:
++        head, diff = self.commit_context_change(self.repo)
++        self.assertEqual({"keep.txt", "tool.sh", "gone.txt", "fresh.txt", "big.txt", "sub/.gitattributes", "bin.dat",
++                          "link", "mod"}, {f["path"] for f in summary.parse_diff(diff)})
++        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
++
++        def objects() -> set[str]:
++            return {line.split()[0] for line in run(self.remote, "git", "rev-list", "--objects", "--all").splitlines()}
++        before = objects()
++
++        self.publish(head, diff=diff)
++
++        self.assertEqual({path: ("100644", run(self.repo, "git", "rev-parse", f"{head}:{path}"))
++                          for path in ("keep.txt", "tool.sh")}, self.head_entries(head),
++                         "a new, deleted, oversized, binary, symlinked, or submodule file, or a .gitattributes, gets none")
++        new_blobs = {oid for oid in objects() - before if run(self.remote, "git", "cat-file", "-t", oid) == "blob"}
++        folder = f"refs/projector/summaries:summaries/7/{head}"
++        self.assertEqual({run(self.remote, "git", "rev-parse", f"{folder}/{name}")
++                          for name in ("summary.json", "diff.patch", "attributes.json")}, new_blobs,
++                         "the head's files add no object")
++        self.assertIn(f"summaries/7/{head}/summary.json, diff.patch, attributes.json and 2 head files under head/",
++                      self.output)
++        self.assertEqual("", self.err)
++        self.assertIsNone(self.publish(head, diff=diff), "an unchanged summary publishes nothing")
++
++    def test_stores_the_files_of_a_head_fetched_from_the_remote_and_keeps_them_when_it_cannot_read_the_head(self) -> None:
++        other = self.other_publisher()
++        head, diff = self.commit_context_change(other)
++        run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
++
++        self.publish(head, diff=diff)
++
++        self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)))
++        run(self.remote, "git", "update-ref", "-d", "refs/heads/feature")
++        run(self.remote, "git", "gc", "--quiet", "--prune=now")
++        third = self.remote.with_name("third")
++        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(third))
++        self.assertIsNone(self.publish(head, repo=third, diff=diff))
++        self.assertNotEqual(0, subprocess.run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=third,
++                                              capture_output=True).returncode, "the republish could not read the head")
++        self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)),
++                         "a republish that cannot read the head keeps what an earlier publish stored")
+ 
+     def test_a_retry_after_losing_the_race_keeps_the_heads_attributes(self) -> None:
+         (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
