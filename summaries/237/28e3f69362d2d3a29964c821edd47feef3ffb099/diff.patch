@@ -1,0 +1,1275 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 2d216a5..71cf21a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1007,10 +1007,10 @@ site builds.
+ a review loop does not rebuild them as helpers of its own:
+ 
+ ```sh
+-project review setup 66 --model claude-opus-5-5 --loop main-loop
++project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
+ project review move 66
+ project review census 66 --json
+-project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
++project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
+ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+ project review release 66
+@@ -1030,6 +1030,20 @@ access, and no commit names another author; a fork's head, or an untrusted
+ one, is recorded so and reviewed by reading. `--rereview` records a re-review
+ of a head the loop already published a verdict on.
+ 
++`--model` is the model ID of the session reviewing, and each model is a
++reviewer of its own. Two IDs name the same reviewer when they match
++lowercased and without a trailing bracketed variant, so `claude-opus-5-5`
++and `claude-opus-5-5[1m]` are one reviewer and `gpt-5.5` is another; the
++effort and the Projector version are not part of it. Each model keeps its own
++state, lock, and scratch worktree, so two models review one head side by side
++on one machine. The start comment's marker names the model with `model=`, and
++`setup` refuses while another session's live start comment names the same
++model, naming that comment. A start comment is live until its model posts a
++verdict on its head, or until a day passes since it was last edited, the age
++at which a lock is stale. `setup` refuses a model ID that is empty, holds
++whitespace, or makes a folder name that starts with `.`, and deletes a start
++comment this machine's state recorded for the model and never published.
++
+ The start comment and the review's signature line name the Projector version
+ that `project --version` reports, the model from `--model`, and the reasoning
+ effort from `CLAUDE_EFFORT` in the environment, which Claude Code sets for the
+@@ -1058,8 +1072,10 @@ when the pull request closed or its head moved, when a finding's line is
+ outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
+ line, when the body is empty, carries its own signature or marker comment, or
+ has no `{census}` outside quoted code, when the verdict disagrees with the finding
+-count, or when the reviewer already has a verdict on the head that this loop's
+-record does not account for; outside a loop, `--second-verdict <review-id>`
++count, or when the reviewer already has a verdict by this model on the head
++that this loop's record does not account for. A verdict by another model is a
++second opinion and never collides, and one whose marker names no model
++collides with every model. Outside a loop, `--second-verdict <review-id>`
+ publishes beside an earlier verdict the body names. On a self-review it
+ submits a `COMMENT` and then marks the pull request ready or returns it to
+ draft; on another author's pull request it posts `REQUEST_CHANGES` or a
+@@ -1157,20 +1173,31 @@ from the checkout containing the working directory, or `--checkout`, and
+ refuses outside one; the repository is that checkout's `origin`, and `--repo`
+ must name the same one. Every later command reads the checkout, worktree, and
+ repository from the state file, finding it by `--repo` or by the pull request's
+-number, so it runs from any directory. A command that posts runs `gh` as the
++number, and by `--model` or the one model with a review of the pull request
++set up on this machine, so it runs from any directory. With several models
++set up, it refuses, naming them, until `--model` picks one. State an earlier
++release wrote is not read, so a review set up before an upgrade runs `setup`
++again. A command that posts runs `gh` as the
+ reviewer, `--reviewer` or `review.username` or else the authenticated user,
+ with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
+ so the account the rest of the session uses is left alone.
+ 
+-A review holds a lock for its pull request and head from `setup` until it is
+-published, recording the host, the loop, and when it was taken, so a second
+-instance for the same head exits. A refused `setup` releases it, a lock older
+-than a day is stale, and `release` clears one left by a session that stopped.
+-`--loop <id>` names the review loop; each loop keeps its record of published
+-reviews under that id. State, locks, loop records, and scratch worktrees live
+-under `$XDG_STATE_HOME/projector/reviews`, or
+-`~/.local/state/projector/reviews`, and `--state-dir` moves them. Every refusal
+-exits 1 and says what to do.
++A review holds a lock for its pull request, head, and model from `setup` until
++it is published, recording the host, the loop, and when it was taken, so a
++second instance of the same model for the same head exits. A refused `setup`
++releases it, a lock older than a day is stale, and `release` clears the locks
++of one model's review left by a session that stopped. `--loop <id>` names the
++review loop; each loop keeps its record of published reviews under that id,
++and each entry names its model. State, locks, loop records, and scratch
++worktrees live under `$XDG_STATE_HOME/projector/reviews`, or
++`~/.local/state/projector/reviews`, and `--state-dir` moves them. A model's
++state and locks are under `prs/<owner>/<repo>/<pr>/<model-key>/` and its
++worktrees under `worktrees/<owner>/<repo>/<pr>/<model-key>/`. The model key
++is the ID lowercased and without its bracketed variant, with every character
++but a letter, a digit, `.`, `_`, and `-` made `-`. Two IDs that make one key,
++such as `a/b` and `a-b`, cannot both be set up for one pull request on one
++machine: the second `setup` refuses. Every refusal exits 1 and says what to
++do.
+ 
+ ## Consume JSON
+ 
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index d5daf82..1171f59 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -143,7 +143,9 @@ One model's review of one head runs like this:
+    this machine's state file for that model records. The refusal names the
+    comment and says to delete it if that session has stopped. Setup then
+    posts the start comment, whose marker now names the model, and records
+-   when the review began on this head.
++   when the review began on this head. When this machine's state for the
++   model records a start comment that was never published, setup deletes it,
++   because the new review replaces that one.
+ 3. The subagent reviews the head as `review-pr` describes. It re-checks every
+    finding thread that census marks as its own: the ones its model opened,
+    the ones it adopted, and the ones that name no model, which earlier
+@@ -742,8 +744,9 @@ after the change. It pins that the fix loop still reports every finding.
+ 
+ ## 5. Cost
+ 
+-- **Each setup** adds one paginated listing of the pull request's issue
+-  comments, to find live start comments.
++- **Each setup** adds two paginated listings: the pull request's issue
++  comments, to find live start comments, and the account's reviews, to tell
++  a live start comment from one its model's verdict has ended.
+ - **Each publish** adds the same listing. The listing of the account's
+   reviews serves both the collision check and the rule, and the census
+   already runs. The wait runs only when a draft is about to be marked ready,
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 7284880..7df37a5 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -131,6 +131,26 @@ So **open your own pull requests as drafts by default**, every layer of a
+ stack included. The draft says the head has not been signed off; the ready
+ transition is the sign-off a reader sees in the pull-request list.
+ 
++### Review as one model among several
++
++Review loops can run on several models at once, such as one in Claude Code and
++one in Codex, each posting as the same reviewer account, to give a pull
++request separate opinions. Projector tells them apart by the model, not the
++account. A reviewer is the model ID you pass as `--model`, compared
++lowercased and without a trailing bracketed variant such as `[1m]`, within
++the reviewer's account. The effort and the Projector version are not part of
++it.
++
++- **The same model twice**, on one machine or two, is one reviewer running
++  twice, which is usually an accident such as a session left running.
++  `setup` refuses on the lock, or on the other session's live start comment,
++  and `publish` refuses on a verdict that model already posted on the head.
++- **Another model** is a second opinion. Its review keeps its own state, lock,
++  and scratch worktree, its start comment never stops your `setup`, and its
++  verdict never trips your collision check.
++- **A model upgraded in the middle of a pull request**, such as a loop
++  restarted on a newer version, is a new reviewer.
++
+ ## Review an exact head
+ 
+ For the head under review, steps 1 to 4 are one command, run from a checkout
+@@ -159,7 +179,7 @@ takes every SHA from GitHub, never from an argument:
+    ```
+    📽️ **Projector review started** · `<version>` · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
+ 
+-   <!-- projector-start v=1 sha=<full-sha> -->
++   <!-- projector-start v=1 sha=<full-sha> model=<model-id> -->
+    ```
+ 
+ It prints the SHA, the merge base, the worktree, whether the head is trusted by
+@@ -172,11 +192,25 @@ user input. `start-review-loop` passes its loop id as `--loop` to every
+ command, and `--rereview` marks a re-review of a head the loop already
+ published a verdict on, the case `RESPONDED` asks for.
+ 
+-The review holds a lock for the pull request and head from `setup` until it is
+-published, so a second instance for the same head exits without posting. A
+-refused `setup` releases it. A lock older than a day is stale and cleared;
+-`project review release <number>` clears one left by a session that stopped,
+-and only when no review of that pull request is running.
++`--model` is the model ID the host reports for this session, never a default
++copied from this file. It names the start comment and keys the review's
++state, so each model reviewing the pull request keeps its own state, lock,
++and scratch worktree, as
++[Review as one model among several](#review-as-one-model-among-several)
++describes. Every later command finds the review by the pull request and the
++model; pass `--model` to each one when more than one model has a review of
++the pull request set up on this machine, and it refuses, naming them, until
++you do.
++
++The review holds a lock for the pull request, head, and model from `setup`
++until it is published, so a second instance of the same model for the same
++head exits without posting. A refused `setup` releases it. A lock older than
++a day is stale and cleared; `project review release <number>` clears one left
++by a session that stopped, and only when no review of that pull request by
++that model is running. `setup` also refuses while a live start comment shows
++the same model reviewing the pull request in another session, on this
++machine or another, and names the comment; delete it only once you know that
++session has stopped.
+ 
+ Under `start-review-loop`, run `project review interdiff <number>` next. A head
+ that changed little since the loop's last full review can get an incremental
+@@ -278,11 +312,17 @@ A start comment on a pull request therefore means a review in progress. A
+ session resuming mid-review looks for one on GitHub rather than in memory and
+ edits it instead of posting a second one. The exception is a leftover from a
+ session that stopped between publishing and deleting: a comment whose
+-`created_at` is earlier than the `submitted_at` of a Projector review on its
+-`sha=`. Delete that one. Compare the timestamps rather than testing for the
+-review's presence, because a re-review of an unmoved head, such as the one
+-`start-review-loop` runs on `RESPONDED`, has a live start comment that shares
+-its `sha=` with the verdict that preceded it.
++`created_at` is earlier than the `submitted_at` of a Projector review by the
++same model on its `sha=`. Delete that one. Compare the timestamps rather than
++testing for the review's presence, because a re-review of an unmoved head,
++such as the one `start-review-loop` runs on `RESPONDED`, has a live start
++comment that shares its `sha=` with the verdict that preceded it. Compare the
++model too: another model's start comment belongs to that model's review,
++which is still running. The marker's `model=` names the model, and a start
++comment from an earlier release, whose marker names none, is read by the
++model its first line names. `setup` deletes a start comment this machine's
++state recorded for the model and never published, because the new review
++replaces it.
+ 
+ Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
+ user explicitly requests that service. This skill performs the local review.
+@@ -508,9 +548,12 @@ describes. `publish --incremental` writes all of it except that body.
+ **Every inline finding opens with a marker:**
+ 
+ ```
+-<!-- projector-finding v=1 priority=<P1|P2> sha=<full-sha> -->
++<!-- projector-finding v=1 priority=<P1|P2> sha=<full-sha> model=<model-id> -->
+ ```
+ 
++`model=` names the model that opened the finding. `publish` writes the whole
++marker, so the threads file leaves it out.
++
+ Priority says what happens if nobody acts, and only the first two are
+ threads:
+ 
+@@ -561,8 +604,9 @@ addressed, so verify it like any other.
+ 
+ Read each thread's replies with the finding, verify by `method.md` § 5 against
+ this head, and settle it in one of these ways. Every reply you post opens with
+-`<!-- projector-verify v=1 result=<result> sha=<full-sha> -->`, so neither loop
+-reads it back as a new finding or as the author answering:
++`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
++naming the model running this review, so neither loop reads it back as a new
++finding or as the author answering:
+ 
+ - **Fixed:** the head addresses the finding. Resolve an open thread with
+   `resolveReviewThread`, replying `result=fixed` with what at this head
+@@ -608,7 +652,7 @@ Publish with `project review publish`, from any directory:
+ 
+ ```sh
+ project review publish <number> --verdict <clean|changes-requested> \
+-  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>]
++  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>] [--model <model-id>]
+ ```
+ 
+ The body file is the review below its signature line: the intent paragraph,
+@@ -635,12 +679,15 @@ and run it again, when:
+ - the collision check below trips.
+ 
+ The collision check lists every verdict the reviewer has already posted on
+-this exact SHA, reading every page, since each fix-loop thread reply adds a
+-review object of its own. A verdict this run did not publish means the same
+-account already reviewed this commit, whether an earlier run or another agent
+-reviewing it now. Hold the review and ask the user whether to submit, rather
+-than either submitting or standing down. Two verdicts from one account on one
+-commit read as a single thorough review, so the overlap goes unnoticed unless
++this exact SHA by this model, reading every page, since each fix-loop thread
++reply adds a review object of its own. A verdict by another model is a second
++opinion and never collides; one whose marker names no model, from an earlier
++release, collides with every model. A verdict this run did not publish means
++the same model under the same account already reviewed this commit, whether
++an earlier run or another agent reviewing it now. Hold the review and ask the
++user whether to submit, rather than either submitting or standing down. Two
++verdicts from one model on one commit read as a single thorough review, so
++the overlap goes unnoticed unless
+ this check catches it. Standing down silently is no better: a second review is
+ sometimes requested deliberately, and a head both reviews walk away from gets
+ no verdict at all. If the user says to submit, run `publish` again with
+@@ -649,9 +696,9 @@ reader sees the second verdict was deliberate.
+ 
+ When `start-review-loop` runs this skill, it passes `--loop <id>`, and the
+ loop's record of the reviews it published decides instead, as that skill
+-describes: a verdict another loop posted trips the check, and a second verdict
+-on a head this loop already published needs `setup --rereview`, the re-review
+-`RESPONDED` asks for.
++describes: a verdict by this model that another loop posted trips the check,
++and a second verdict on a head this loop already published needs
++`setup --rereview`, the re-review `RESPONDED` asks for.
+ 
+ A head is *clean* only when, after you have settled every earlier finding as
+ above, no Projector finding thread is open **and this review posts no P1 or P2
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index bf37ef2..d2f88f8 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -58,19 +58,26 @@ nothing open.
+    thread-aware review threads. Say how many operator pull requests are tracked
+    out of the repository total.
+ 5. Determine the last reviewed SHA from durable GitHub state or the current
+-   conversation. Review any current head without a completed exact-head review
+-   immediately; do not baseline it away.
++   conversation: the newest head that a Projector verdict by this loop's
++   model names. Another model's verdict on a head is that model's review,
++   not this loop's. Review any current head without a completed exact-head
++   review by this model immediately; do not baseline it away.
+ 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
+    per line, kept beside the state file and outside any checkout. That file
+    is the watcher's whole scope and the record of the set. The watcher
+    appends the operator's pull requests itself; append one the user assigns,
+    and delete a line when its pull request closes. Start or reuse a
+    persistent recurring goal that records the repository, operator, the
+-   tracked file's path, and this loop's id: a name chosen once, such as
+-   `<repo>-review-loop`, that the loop passes as `--loop <id>` to every
++   tracked file's path, the model ID the host reports for this session, and
++   this loop's id: a name chosen once for this model, such as
++   `<repo>-review-<model-key>`, where the model key is the model ID
++   lowercased, without a trailing bracketed variant such as `[1m]`, and with
++   every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
++   loop passes `--loop <id>` and `--model <model-id>` to every
+    `project review` command. The record of which reviews this loop published
+    lives under that id in the review state directory, where `project review
+-   publish` keeps it.
++   publish` keeps it. Give each model's loop an id of its own, because two
++   loops that write one record can lose an entry.
+ 7. Seed the state file with only the SHAs already reviewed, then run one
+    pass:
+ 
+@@ -119,7 +126,8 @@ reads the new head against that history instead of rediscovering it.
+ - On a pull request's first `NEW PR`, start its subagent with a name that
+   carries the number, such as `review-<number>`. Give it the repository, the
+   pull request, the head SHA, the reviewer and operator logins, the review
+-  mode, the loop's id to pass as `--loop`, and the path of
++  mode, the loop's id to pass as `--loop`, the model ID to pass as
++  `--model`, and the path of
+   `../review-pr/SKILL.md`, and have it run that skill for the head.
+ - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
+   same subagent as a message; never start a second one for it. Each message
+@@ -159,13 +167,17 @@ reads the new head against that history instead of rediscovering it.
+   adds the rules. Then keep reviewing.
+ 
+ The loop's record decides the collision check `project review publish` runs
+-before it submits. An id in the record is this loop's own, and a second one on
+-the same head passes only for a `RESPONDED` re-review, which `setup
+---rereview` marks, so it never trips the check. An id absent from it means
+-another loop under the same account is reviewing this pull request: `publish`
+-refuses, and the loop holds the review and asks the user which loop
+-continues. The tracked file does not prevent this: every loop that
+-adopts the same author's pull requests tracks the same ones.
++before it submits, over the verdicts this loop's model posted. An id in the
++record is this loop's own, and a second one on the same head passes only for
++a `RESPONDED` re-review, which `setup --rereview` marks, so it never trips the
++check. An id absent from it means another loop of the same model under the
++same account is reviewing this pull request: `publish` refuses, and the loop
++holds the review and asks the user which loop continues. `setup` catches the
++same case earlier, when that loop's start comment shows it reviewing. The
++tracked file does not prevent this: every loop that adopts the same author's
++pull requests tracks the same ones. A loop of another model is a second
++opinion, never a collision, as `../review-pr/SKILL.md` describes under
++"Review as one model among several".
+ 
+ The main loop routes events and records outcomes; it does not inspect code, so
+ its own context stays small however many pull requests it tracks. Where the
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index d9a1526..4c81851 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -481,7 +481,12 @@ def parser() -> argparse.ArgumentParser:
+                               help="the source checkout to fetch into (default: the repository containing "
+                                    "this directory)")
+     review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
+-    review_setup.add_argument("--model", required=True, help="the model id the start comment names")
++    review_setup.add_argument("--model", required=True,
++                              help="the model ID of this session, which names the start comment and keys the "
++                                   "review's state")
++    for command in (review_move, review_release, review_publish, review_gate, review_interdiff):
++        command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
++                                             "of this pull request set up here)")
+     review_setup.add_argument("--rereview", action="store_true",
+                               help="a re-review of a head this loop already published a verdict on")
+     review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
+@@ -875,8 +880,18 @@ def run_review(arguments: argparse.Namespace) -> int:
+             else:
+                 print("\n".join(review.census_lines(result)))
+             return 0
++        if command == "release":
++            model = review.find_model(root, repo, arguments.pr, arguments.model)
++            released = review.release(review.Paths(root, repo, arguments.pr, model)) if model else []
++            if arguments.json_output:
++                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
++            else:
++                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}"
++                      + (f" by model {model}" if model else ""))
++            return 0
++        paths = review.review_paths(root, repo, arguments.pr, arguments.model)
+         if command == "interdiff":
+-            state = review.read_state(review.Paths(root, repo, arguments.pr))
++            state = review.read_state(paths)
+             enabled = incremental_enabled(Path(state["checkout"]))
+             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
+             if arguments.json_output:
+@@ -885,13 +900,13 @@ def run_review(arguments: argparse.Namespace) -> int:
+                 print("\n".join(review.interdiff_lines(result, state["base_ref"])))
+             return 0 if result["incremental"] else 1
+         if command == "publish":
+-            state = review.read_state(review.Paths(root, repo, arguments.pr))
++            state = review.read_state(paths)
+             try:
+                 allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
+             except ProjectorError:
+                 allow = False
+             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
+-            result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
++            result = review.publish(paths, loop, arguments.verdict, arguments.body,
+                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
+                                     arguments.incremental, enabled)
+             if arguments.json_output:
+@@ -904,26 +919,19 @@ def run_review(arguments: argparse.Namespace) -> int:
+                     print("marked draft" if result["draft"] else "marked ready")
+             return 0
+         if command == "gate":
+-            state = review.read_state(review.Paths(root, repo, arguments.pr))
++            state = review.read_state(paths)
+             try:
+                 configured = load_config(Path(state["checkout"])).get("review.gate")
+             except ProjectorError:
+                 configured = None
+-            result = review.gate(root, arguments.pr, repo, configured if isinstance(configured, str) else None,
++            result = review.gate(paths, configured if isinstance(configured, str) else None,
+                                  output_to_stderr=arguments.json_output)
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+                 print(f"review.gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
+             return result["exit_code"]
+-        if command == "release":
+-            released = review.release(review.Paths(root, repo, arguments.pr))
+-            if arguments.json_output:
+-                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
+-            else:
+-                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}")
+-            return 0
+-        state = review.move(root, arguments.pr, repo, loop)
++        state = review.move(paths, loop)
+     if arguments.json_output:
+         print(json.dumps(state, indent=2))
+     else:
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 087fc45..cf8d6c2 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -9,12 +9,14 @@
+ the account the rest of the session uses; and every refusal raises
+ `ReviewError`, which exits non-zero with what to do about it.
+ 
+-Layout of the state directory:
+-
+-    prs/<owner>/<repo>/<pr>.json         the review's state
+-    prs/<owner>/<repo>/<pr>-<sha>.lock   the lock a review holds from setup until publish
+-    worktrees/<owner>/<repo>/<pr>/<sha>  scratch worktrees, never inside the checkout
+-    loops/<id>/published.json            a loop's record of the review ids it published
++Each model reviewing a pull request is a reviewer of its own, so its state lives
++under its model key. Layout of the state directory:
++
++    prs/<owner>/<repo>/<pr>/<model-key>/state.json         the review's state
++    prs/<owner>/<repo>/<pr>/<model-key>/<sha>.lock         the lock a review holds from setup until publish
++    prs/<owner>/<repo>/<pr>/<model-key>/review.json        the review publish is submitting
++    worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>  scratch worktrees, never inside the checkout
++    loops/<id>/published.json                              a loop's record of the review ids it published
+ """
+ 
+ from __future__ import annotations
+@@ -110,6 +112,16 @@ def identity(model: str) -> str:
+     return VARIANT.sub("", model.lower())
+ 
+ 
++def model_key(model: str) -> str:
++    """The folder a model's review state lives in: its identity, with every character but a letter, a
++    digit, `.`, `_`, and `-` made `-`. Refuses an ID no folder can safely be made from."""
++    key = re.sub(r"[^a-z0-9._-]", "-", identity(model))
++    if not model or any(c.isspace() for c in model) or not key or key.startswith("."):
++        raise ReviewError(f"--model {model!r} is not a usable model ID; pass the ID the host reports for this "
++                          "session, such as claude-opus-5-5")
++    return key
++
++
+ def authenticated_login() -> str:
+     login = run_gh(["api", "user", "--jq", ".login"]).strip()
+     if not login:
+@@ -189,26 +201,37 @@ def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -
+ 
+ @dataclass
+ class Paths:
++    """Where one model's review of one pull request keeps its state, locks, and worktrees."""
++
+     root: Path
+     repo: str
+     number: int
++    model: str
++
++    @property
++    def key(self) -> str:
++        return model_key(self.model)
+ 
+     @property
+     def folder(self) -> Path:
+-        return self.root / "prs" / self.repo
++        return self.root / "prs" / self.repo / str(self.number) / self.key
+ 
+     @property
+     def state(self) -> Path:
+-        return self.folder / f"{self.number}.json"
++        return self.folder / "state.json"
++
++    @property
++    def request(self) -> Path:
++        return self.folder / "review.json"
+ 
+     def lock(self, sha: str) -> Path:
+-        return self.folder / f"{self.number}-{sha}.lock"
++        return self.folder / f"{sha}.lock"
+ 
+     def locks(self) -> list[Path]:
+-        return sorted(self.folder.glob(f"{self.number}-*.lock")) if self.folder.is_dir() else []
++        return sorted(self.folder.glob("*.lock")) if self.folder.is_dir() else []
+ 
+     def worktree(self, sha: str) -> Path:
+-        return self.root / "worktrees" / self.repo / str(self.number) / sha[:SHORT]
++        return self.root / "worktrees" / self.repo / str(self.number) / self.key / sha[:SHORT]
+ 
+ 
+ def loop_record(root: Path, loop: str) -> Path:
+@@ -224,11 +247,23 @@ def ensure_loop(root: Path, loop: Optional[str]) -> None:
+         record.write_text("[]\n", encoding="utf-8")
+ 
+ 
+-def read_state(paths: Paths) -> dict:
++def stored_state(paths: Paths) -> Optional[dict]:
++    """The state in the model's folder, refused when it is another model's that shares the folder."""
+     if not paths.state.is_file():
+-        raise ReviewError(f"no review of {paths.repo}#{paths.number} is set up here; "
+-                          f"run `project review setup {paths.number}`")
+-    return json.loads(paths.state.read_text(encoding="utf-8"))
++        return None
++    state = json.loads(paths.state.read_text(encoding="utf-8"))
++    if state.get("identity") != identity(paths.model):
++        raise ReviewError(f"the review state in {paths.folder} is model {state.get('model')}'s, and model "
++                          f"{paths.model} shares its folder; finish that review and remove the folder first")
++    return state
++
++
++def read_state(paths: Paths) -> dict:
++    state = stored_state(paths)
++    if state is None:
++        raise ReviewError(f"no review of {paths.repo}#{paths.number} by model {paths.model} is set up here; "
++                          f"run `project review setup {paths.number} --model {paths.model}`")
++    return state
+ 
+ 
+ def write_state(paths: Paths, state: dict) -> None:
+@@ -242,6 +277,12 @@ def now() -> datetime:
+     return datetime.now(timezone.utc)
+ 
+ 
++def parse_time(text: str) -> datetime:
++    """A time as GitHub gives it, such as `2026-09-27T01:02:03Z`, in UTC."""
++    at = datetime.fromisoformat(text.replace("Z", "+00:00"))
++    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
++
++
+ def lock_age(lock: Path) -> timedelta:
+     try:
+         taken = datetime.fromisoformat(json.loads(lock.read_text(encoding="utf-8"))["taken_at"])
+@@ -268,8 +309,9 @@ def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
+         except (OSError, ValueError):
+             pass
+         raise ReviewError(
+-            f"another review of {paths.repo}#{paths.number} at {sha[:7]} holds its lock{holder}; let it finish, "
+-            f"or run `project review release {paths.number}` if no review is running"
++            f"another review of {paths.repo}#{paths.number} at {sha[:7]} by model {paths.model} holds its "
++            f"lock{holder}; let it finish, or run `project review release {paths.number} --model {paths.model}` "
++            "if no review is running"
+         ) from exc
+     with os.fdopen(fd, "w") as handle:
+         json.dump({"sha": sha, "host": socket.gethostname(), "loop": loop, "pid": os.getpid(),
+@@ -279,14 +321,14 @@ def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
+ 
+ 
+ def release(paths: Paths) -> list[Path]:
+-    """Clear every lock this pull request's reviews hold; returns what was cleared."""
++    """Clear every lock this model's reviews of the pull request hold; returns what was cleared."""
+     released = paths.locks()
+     for lock in released:
+         lock.unlink(missing_ok=True)
+     return released
+ 
+ 
+-def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_stderr: bool = False) -> dict:
++def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -> dict:
+     """Run the repository's `review.gate` command in the review's scratch worktree.
+ 
+     The command runs the head's code, so it runs only on a head the state file
+@@ -299,10 +341,9 @@ def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_s
+     JSON keeps standard output for that alone. Its exit status, with the
+     command and when it ran, is recorded in the state file and returned.
+     """
+-    paths = Paths(root, repo, number)
+     state = read_state(paths)
+     if not state.get("trusted"):
+-        raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{number} is untrusted "
++        raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
+                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
+                           "run; review it by reading")
+     if not command:
+@@ -384,10 +425,51 @@ def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str
+     if moved_from:
+         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
+                   "for the new changes.", ""]
+-    lines.append(f"<!-- projector-start v=1 sha={sha} -->")
++    lines.append(f"<!-- projector-start v=1 sha={sha} model={model} -->")
+     return "\n".join(lines) + "\n"
+ 
+ 
++START_MARKER = re.compile(r"^<!-- projector-start v=1 sha=([0-9a-f]{40})(?: model=(\S+))? -->$", re.M)
++# The model a start comment's first line names, for a comment whose marker names none.
++START_MODEL = re.compile(r"· model `([^`\n]+)` ·")
++
++
++def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
++    """The reviewer's start comments on the pull request, from every page, each with its `id`, `url`, the
++    `sha` and `model` it names, and when it was created and last edited."""
++    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
++                   "--jq", '.[] | select(.body // "" | contains("projector-start")) '
++                           '| {id, url: .html_url, login: .user.login, body, created_at, updated_at} '
++                           '| @json']).splitlines()
++    comments = []
++    for row in filter(str.strip, rows):
++        comment = json.loads(row)
++        marker = START_MARKER.search(comment.get("body") or "")
++        named = START_MODEL.search(comment.get("body") or "")
++        model = (marker and marker.group(2)) or (named and named.group(1))
++        if (comment.get("login") or "").lower() != reviewer.lower() or not marker or not model:
++            continue
++        comments.append({"id": comment["id"], "url": comment.get("url"), "sha": marker.group(1), "model": model,
++                         "created_at": comment["created_at"],
++                         "updated_at": comment.get("updated_at") or comment["created_at"]})
++    return comments
++
++
++def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
++    """Whether a start comment still means a review in progress at `at`: not once its model has a verdict
++    among `reviews` on the comment's head submitted since the comment was created, nor once a day has
++    passed since it was last edited, the age at which a lock is stale."""
++    if at - parse_time(comment["updated_at"]) > STALE_AFTER:
++        return False
++    created, model = parse_time(comment["created_at"]), identity(comment["model"])
++    for review in reviews:
++        marker = verdict_marker(review.get("body") or "")
++        if (marker is not None and marker.sha == comment["sha"] and identity(marker.model) == model
++                and review.get("at") and parse_time(review["at"]) >= created):
++            return False
++    return True
++
++
+ # Resolving which review a command means
+ 
+ def valid_loop(loop: Optional[str]) -> Optional[str]:
+@@ -397,22 +479,46 @@ def valid_loop(loop: Optional[str]) -> Optional[str]:
+ 
+ 
+ def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
+-    """The repository a command after setup means: --repo, else the review set up here for
+-    this pull request, else the origin of the checkout the command runs in."""
++    """The repository a command after setup means: --repo, else the one with a review of this pull
++    request set up here, else the origin of the checkout the command runs in."""
+     if repo:
+         return repo
+-    found = sorted((root / "prs").glob(f"*/*/{number}.json")) if (root / "prs").is_dir() else []
++    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
++    found = sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
+     if len(found) == 1:
+-        return f"{found[0].parent.parent.name}/{found[0].parent.name}"
++        return found[0]
+     if len(found) > 1:
+-        names = ", ".join(f"{p.parent.parent.name}/{p.parent.name}" for p in found)
+-        raise ReviewError(f"reviews of #{number} are set up in {names}; pass --repo to pick one")
++        raise ReviewError(f"reviews of #{number} are set up in {', '.join(found)}; pass --repo to pick one")
+     try:
+         return origin_repo(checkout_root(cwd))
+     except ReviewError as exc:
+         raise ReviewError(f"no review of #{number} is set up here; pass --repo owner/name") from exc
+ 
+ 
++def find_model(root: Path, repo: str, number: int, model: Optional[str]) -> Optional[str]:
++    """The model a command after setup means: --model, else the one model with a review of this pull
++    request set up here, or None when none is."""
++    if model is not None:
++        model_key(model)
++        return model
++    folder = root / "prs" / repo / str(number)
++    states = sorted(folder.glob("*/state.json")) if folder.is_dir() else []
++    models = [json.loads(p.read_text(encoding="utf-8")).get("model") or p.parent.name for p in states]
++    if len(models) > 1:
++        raise ReviewError(f"reviews of {repo}#{number} by {', '.join(models)} are set up here; pass --model to "
++                          "pick one")
++    return models[0] if models else None
++
++
++def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Paths:
++    """The paths of the review a command after setup means, refused when no review is set up here."""
++    found = find_model(root, repo, number, model)
++    if found is None:
++        raise ReviewError(f"no review of {repo}#{number} is set up here; run "
++                          f"`project review setup {number} --model <model-id>`")
++    return Paths(root, repo, number, found)
++
++
+ # Commands
+ 
+ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
+@@ -423,13 +529,16 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+     if repo and repo.lower() != origin.lower():
+         raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
+     repo = origin
+-    paths = Paths(root, repo, number)
++    paths = Paths(root, repo, number, model)
++    recorded = ((stored_state(paths) or {}).get("start_comment") or {}).get("id")
+     pr = pull_request(repo, number)
+     sha = pr["head"]["sha"]
+     lock = take_lock(paths, sha, loop)
+     try:
+         operator = authenticated_login()
+         reviewer = reviewer_login(reviewer, configured_reviewer, operator)
++        starts = start_comments(repo, number, reviewer)
++        check_duplicate(starts, reviewer_reviews(repo, number, reviewer), model, recorded)
+         merge_base = fetch_head(checkout, repo, pr)
+         worktree = paths.worktree(sha)
+         add_worktree(checkout, worktree, sha)
+@@ -440,6 +549,9 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+     except BaseException:
+         lock.unlink(missing_ok=True)
+         raise
++    if any(comment["id"] == recorded for comment in starts):
++        # The review this machine set up before and never published is replaced by this one.
++        delete_comment(repo, recorded, token)
+     ensure_loop(root, loop)
+     state = {
+         "repo": repo,
+@@ -456,17 +568,39 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         "operator": operator,
+         "reviewer": reviewer,
+         "model": model,
++        "identity": identity(model),
+         "loop": loop,
+         "rereview": rereview,
+         "start_comment": {"id": posted["id"], "created_at": posted["created_at"]},
++        "head_started_at": posted["created_at"],
+         "heads": 1,
+     }
+     write_state(paths, state)
+     return state
+ 
+ 
+-def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
+-    paths = Paths(root, repo, number)
++def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int]) -> None:
++    """Refuse a review while a live start comment shows the same model reviewing the pull request in
++    another session: one this machine's state for the model does not record."""
++    at = now()
++    for comment in starts:
++        if identity(comment["model"]) == identity(model) and comment["id"] != recorded \
++                and is_live(comment, reviews, at):
++            raise ReviewError(
++                f"model {comment['model']} is already reviewing this pull request in another session: start comment "
++                f"{comment['id']} ({comment.get('url') or 'no URL'}) names {comment['sha'][:7]}, posted "
++                f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
++
++
++def delete_comment(repo: str, comment: int, token: str) -> None:
++    try:
++        run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
++    except NotFound:
++        pass
++
++
++def move(paths: Paths, loop: Optional[str]) -> dict:
++    number = paths.number
+     state = read_state(paths)
+     checkout = Path(state["checkout"])
+     pr = pull_request(state["repo"], number)
+@@ -495,7 +629,8 @@ def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
+     state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
+                  trusted=trusted, untrusted_because=why or None,
+                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
+-                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
++                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)],
++                 head_started_at=now().isoformat())
+     write_state(paths, state)
+     return state
+ 
+@@ -942,19 +1077,27 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
+                     reviews: list[dict]) -> None:
+     """The collision check review-pr § Publish one review describes, read from the loop's record.
+ 
+-    `reviews` is the reviewer's listing from `reviewer_reviews`; a verdict on the head is any whose
+-    marker names it, in this loose form so a marker in an older shape still collides."""
+-    on_head = re.compile(f"projector-review .* sha={state['sha']}")
+-    earlier = [r["id"] for r in reviews if on_head.search(r.get("body") or "")]
++    `reviews` is the reviewer's listing from `reviewer_reviews`. A verdict on the head is any whose
++    marker names it, in this loose form so a marker in an older shape still collides. Only a verdict by
++    this model collides, or one whose marker names no model, since another model is a second opinion."""
++    on_head = re.compile(f"projector-review .* sha={state['sha']}.*")
++    model = identity(state["model"])
++
++    def same_model(body: str) -> bool:
++        marker = on_head.search(body)
++        named = marker and re.search(r"\bmodel=(\S+)", marker.group(0))
++        return bool(marker) and (not named or identity(named.group(1)) == model)
++
++    earlier = [r["id"] for r in reviews if same_model(r.get("body") or "")]
+     if loop is not None:
+         mine = {r["review_id"] for r in read_record(root, loop)
+                 if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
+         others = [i for i in earlier if i not in mine]
+         if others:
+             raise ReviewError(
+-                f"the reviewer already has a verdict on {state['sha'][:7]} that loop {loop} did not publish "
+-                f"(review {', '.join(map(str, others))}); another loop is reviewing this pull request, so ask "
+-                "the user which one continues")
++                f"the reviewer already has a verdict by model {state['model']} on {state['sha'][:7]} that loop "
++                f"{loop} did not publish (review {', '.join(map(str, others))}); another loop of the same model is "
++                "reviewing this pull request, so ask the user which one continues")
+         if any(i in mine for i in earlier) and not state.get("rereview"):
+             raise ReviewError(
+                 f"loop {loop} already published a verdict on {state['sha'][:7]}; a re-review of this head "
+@@ -963,8 +1106,9 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
+     if earlier:
+         if second not in earlier:
+             raise ReviewError(
+-                f"the reviewer already has a verdict on {state['sha'][:7]} (review {', '.join(map(str, earlier))}); "
+-                "ask the user, and if they want a second one pass --second-verdict with that review's id")
++                f"the reviewer already has a verdict by model {state['model']} on {state['sha'][:7]} "
++                f"(review {', '.join(map(str, earlier))}); ask the user, and if they want a second one pass "
++                "--second-verdict with that review's id")
+         if str(second) not in body:
+             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
+ 
+@@ -1076,7 +1220,7 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
+             f"{filled}{closing}\n")
+ 
+ 
+-def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Optional[str], body_path: Path,
++def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
+             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
+             incremental: bool = False, enabled: bool = True) -> dict:
+     """Submit the review, then set draft state, re-read, record, delete the start comment, and
+@@ -1085,7 +1229,7 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
+     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
+     review, published only while `incremental_rules` passes, with `enabled` from
+     `review.incremental`."""
+-    paths = Paths(root, repo, number)
++    root, number = paths.root, paths.number
+     state = read_state(paths)
+     loop = loop if loop is not None else state.get("loop")
+     repo, sha = state["repo"], state["sha"]
+@@ -1153,15 +1297,14 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
+         draft_wanted = (verdict == "changes-requested") if mine else None
+         payload = {"commit_id": sha, "event": event, "body": text,
+                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
+-                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} -->\n"
+-                                         f"{t['body'].strip()}\n"} for t in threads]}
++                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
++                                         f"model={state['model']} -->\n{t['body'].strip()}\n"} for t in threads]}
+         token = reviewer_token(state["reviewer"])
+         paths.folder.mkdir(parents=True, exist_ok=True)
+-        request = paths.folder / f"{number}-review.json"
+-        request.write_text(json.dumps(payload), encoding="utf-8")
+-        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", str(request)],
+-                         token)
+-        request.unlink(missing_ok=True)
++        paths.request.write_text(json.dumps(payload), encoding="utf-8")
++        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input",
++                          str(paths.request)], token)
++        paths.request.unlink(missing_ok=True)
+         review_id = posted["id"]
+         # Recorded before anything else can fail, so a retry finishes this review rather than
+         # posting a second one.
+@@ -1186,15 +1329,12 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
+             # incremental review, which a later one never builds on.
+             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+                            "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
+-                           "base": state["base"], "from": state["published"].get("from")})
++                           "base": state["base"], "from": state["published"].get("from"), "model": state["model"]})
+             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
+             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+     comment = (state.get("start_comment") or {}).get("id")
+     if comment:
+-        try:
+-            run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
+-        except NotFound:
+-            pass
++        delete_comment(repo, comment, token)
+         state["start_comment"] = None
+     write_state(paths, state)
+     paths.lock(sha).unlink(missing_ok=True)
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 85caffc..51324b3 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -56,7 +56,11 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.commit_authors = ["operator"]
+         self.permissions: dict[str, str] = {}
+         self.calls: list[tuple[list[str], str | None]] = []
++        # Each issue comment's body by id, and who posted it and when.
+         self.comments: dict[int, str] = {}
++        self.comment_info: dict[int, dict] = {}
++        self.next_comment = 101
++        self.created_at = "2026-09-27T01:02:03Z"
+         self.pages: list[dict] = [{"data": {"repository": {"pullRequest": {"reviewThreads": {
+             "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}}}}}]
+         self.missing = False
+@@ -83,7 +87,8 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             review_id = 900 + len(self.reviews) + 1
+             self.reviews.append({"id": review_id, "user": {"login": token.removeprefix("token-")},
+                                  "body": payload["body"], "event": payload["event"],
+-                                 "commit_id": payload["commit_id"], "comments": payload["comments"]})
++                                 "commit_id": payload["commit_id"], "comments": payload["comments"],
++                                 "at": review.now().strftime("%Y-%m-%dT%H:%M:%SZ")})
+             return json.dumps({"id": review_id})
+         if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/1/reviews/"):
+             review_id = int(args[1].rsplit("/", 1)[1])
+@@ -94,6 +99,10 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+         if args[:3] == ["api", "-X", "DELETE"]:
+             del self.comments[int(args[3].rsplit("/", 1)[1])]
+             return ""
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
++            return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
++                                       "body": body, **self.comment_info[i]}) + "\n"
++                           for i, body in self.comments.items() if "projector-start" in body)
+         if args[:2] == ["auth", "token"]:
+             return f"token-{args[-1]}\n"
+         if args == ["api", "user", "--jq", ".login"]:
+@@ -113,9 +122,8 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+                 raise NotFound("gh: Not Found (HTTP 404)")
+             return self.permissions[login] + "\n"
+         if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]:
+-            comment_id = 100 + len(self.comments) + 1
+-            self.comments[comment_id] = args[3].removeprefix("body=")
+-            return json.dumps({"id": comment_id, "created_at": "2026-09-27T01:02:03Z"})
++            comment_id = self.comment(args[3].removeprefix("body="), token.removeprefix("token-"))
++            return json.dumps({"id": comment_id, "created_at": self.created_at})
+         if args[:3] == ["api", "-X", "PATCH"]:
+             comment_id = int(args[3].rsplit("/", 1)[1])
+             self.comments[comment_id] = args[5].removeprefix("body=")
+@@ -124,6 +132,15 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return json.dumps({"body": self.comments[int(args[1].rsplit("/", 1)[1])]})
+         raise AssertionError(f"unexpected gh call: {args}")
+ 
++    def comment(self, body: str, login: str = "operator", created_at: str | None = None,
++                updated_at: str | None = None) -> int:
++        """Post an issue comment as `login`, created at `created_at` or the fake's time, and return its id."""
++        comment_id, self.next_comment = self.next_comment, self.next_comment + 1
++        self.comments[comment_id] = body
++        created = created_at or self.created_at
++        self.comment_info[comment_id] = {"login": login, "created_at": created, "updated_at": updated_at or created}
++        return comment_id
++
+     def posts(self) -> list[tuple[list[str], str | None]]:
+         return [(args, token) for args, token in self.calls if any(a.startswith("body=") for a in args)]
+ 
+@@ -150,6 +167,7 @@ def setUp(self) -> None:
+         git(self.checkout, "remote", "set-url", "origin", f"https://github.com/{REPO}.git")
+         git(self.checkout, "config", f"url.{self.origin}.insteadOf", f"https://github.com/{REPO}.git")
+         self.state = tmp / "state"
++        self.model = "claude-opus-5-5"
+         self.github = FakeGitHub(self.head, self.base)
+         patcher = mock.patch.object(review, "run_gh", self.github)
+         patcher.start()
+@@ -174,17 +192,19 @@ def project(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
+         return code, out.getvalue(), err.getvalue()
+ 
+     def setup_review(self, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
+-        return self.project("setup", "1", "--state-dir", str(self.state), "--model", "claude-opus-5-5",
+-                            *extra, cwd=cwd)
++        return self.project("setup", "1", "--state-dir", str(self.state), "--model", self.model, *extra, cwd=cwd)
+ 
+     def later(self, command: str, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
+         return self.project(command, "1", "--state-dir", str(self.state), *extra, cwd=cwd)
+ 
+-    def read_state(self) -> dict:
+-        return json.loads((self.state / "prs" / REPO / "1.json").read_text())
++    def folder(self, model: str | None = None) -> Path:
++        return self.state / "prs" / REPO / "1" / review.model_key(model or self.model)
++
++    def read_state(self, model: str | None = None) -> dict:
++        return json.loads((self.folder(model) / "state.json").read_text())
+ 
+-    def lock(self, sha: str) -> Path:
+-        return self.state / "prs" / REPO / f"1-{sha}.lock"
++    def lock(self, sha: str, model: str | None = None) -> Path:
++        return self.folder(model) / f"{sha}.lock"
+ 
+ 
+ class SetupTests(ReviewCase):
+@@ -197,16 +217,18 @@ def test_sets_up_the_exact_head_and_posts_the_start_comment_as_the_reviewer(self
+         self.assertEqual(REPO, state["repo"])
+         self.assertEqual(str(self.checkout.resolve()), state["checkout"])
+         worktree = Path(state["worktree"])
+-        self.assertEqual(self.state / "worktrees" / REPO / "1" / self.head[:12], worktree)
++        self.assertEqual(self.state / "worktrees" / REPO / "1" / "claude-opus-5-5" / self.head[:12], worktree)
+         self.assertEqual(self.head, git(worktree, "rev-parse", "HEAD"))
+         self.assertFalse(worktree.is_relative_to(self.checkout), "never inside the checkout")
+         self.assertTrue(state["trusted"])
+         self.assertEqual({"id": 101, "created_at": "2026-09-27T01:02:03Z"}, state["start_comment"])
++        self.assertEqual(("claude-opus-5-5", "claude-opus-5-5", "2026-09-27T01:02:03Z"),
++                         (state["model"], state["identity"], state["head_started_at"]))
+         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
+         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
+         self.assertEqual(
+             f"{review.MARK} **Projector review started** · `1.2.3` · model `claude-opus-5-5` · "
+-            f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} -->\n",
++            f"reviewing `{self.head[:7]}`\n\n<!-- projector-start v=1 sha={self.head} model=claude-opus-5-5 -->\n",
+             self.github.comments[101],
+         )
+         self.assertIn(f"reviewing {REPO}#1 at {self.head}", out)
+@@ -628,8 +650,8 @@ def test_publishes_a_clean_self_review_marks_it_ready_and_cleans_up_in_order(sel
+         self.assertEqual({}, self.github.comments, "the start comment is gone")
+         self.assertFalse(self.lock(self.head).exists(), "the lock is released")
+         record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
+-        self.assertEqual([(REPO, 1, self.head, 901, "clean")],
+-                         [(r["repo"], r["number"], r["sha"], r["review_id"], r["verdict"]) for r in record])
++        self.assertEqual([(REPO, 1, self.head, 901, "clean", "claude-opus-5-5")],
++                         [(r["repo"], r["number"], r["sha"], r["review_id"], r["verdict"], r["model"]) for r in record])
+         steps = [" ".join(args) for args, _ in self.github.calls]
+         ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
+         reread = next(i for i, c in enumerate(steps) if c == f"api repos/{REPO}/pulls/1/reviews/901")
+@@ -647,8 +669,8 @@ def test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_r
+         self.assertEqual(0, code, err)
+         comment = self.posted()["comments"][0]
+         self.assertEqual(("src/x.py", 3, "RIGHT"), (comment["path"], comment["line"], comment["side"]))
+-        self.assertTrue(comment["body"].startswith(f"<!-- projector-finding v=1 priority=P2 sha={self.head} -->\n"
+-                                                   "**P2 · The cache returns nil"))
++        self.assertTrue(comment["body"].startswith(f"<!-- projector-finding v=1 priority=P2 sha={self.head} "
++                                                   "model=claude-opus-5-5 -->\n**P2 · The cache returns nil"))
+         self.assertIn("findings=1 ", self.posted()["body"])
+         self.assertIn("1 finding thread: 0 resolved, 1 open", self.posted()["body"])
+         self.assertTrue(self.github.pr["draft"])
+@@ -822,9 +844,10 @@ def test_effort_is_never_an_argument(self) -> None:
+     def test_an_older_verdict_whose_marker_carries_effort_still_collides(self) -> None:
+         self.github.reviews.append({
+             "id": 850, "user": {"login": "operator"}, "event": "COMMENT", "commit_id": self.head, "comments": [],
+-            "body": (f"{review.MARK} **Projector review** · model `m` · effort `low` · **APPROVED** · took 1m 00s\n\n"
+-                     f"<!-- projector-review v=1 verdict=approved model=m effort=low sha={self.head} "
+-                     "findings=0 seconds=60 covered=1/1 -->\n"),
++            "body": (f"{review.MARK} **Projector review** · model `claude-opus-5-5` · effort `low` · "
++                     "**APPROVED** · took 1m 00s\n\n"
++                     "<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low "
++                     f"sha={self.head} findings=0 seconds=60 covered=1/1 -->\n"),
+         })
+         self.assertEqual(0, self.setup_review("--loop", "b")[0])
+ 
+@@ -932,11 +955,8 @@ def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
+             "{census}\n\n<!-- projector-review v=1 verdict=clean -->\n")), "signature line")
+ 
+     def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
++        self.model = "has`backtick"
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+-        path = self.state / "prs" / REPO / "1.json"
+-        state = json.loads(path.read_text())
+-        state["model"] = "has space"
+-        path.write_text(json.dumps(state))
+ 
+         self.refused(self.publish("clean"), "does not match review-pr/SKILL.md")
+ 
+@@ -950,6 +970,173 @@ def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
+         self.assertIn("project review setup 1", err)
+ 
+ 
++def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
++    """A Projector review's signature line and marker for `sha` by `model`, or in an older shape naming no model."""
++    if model is None:
++        return f"**Projector review**\n\n<!-- projector-review v=1 verdict={verdict} sha={sha} findings=0 -->\n"
++    return (f"{review.MARK} **Projector review** · `1.2.3` · model `{model}` · **CLEAN** · took 1m 00s\n\n"
++            f"<!-- projector-review v=1 verdict={verdict} projector=1.2.3 model={model} sha={sha} findings=0 "
++            "seconds=60 covered=1/1 -->\n")
++
++
++class ModelTests(PublishCase):
++    """Each model is a reviewer of its own: its own state, lock, worktree, and collision check."""
++
++    def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
++                    verdict: str = "clean", login: str = "operator") -> int:
++        review_id = 800 + len(self.github.reviews)
++        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
++                                    "commit_id": sha or self.head, "at": at,
++                                    "body": verdict_body(sha or self.head, model, verdict)})
++        return review_id
++
++    def as_model(self, model: str, *extra: str) -> tuple[int, str, str]:
++        self.model = model
++        return self.setup_review(*extra)
++
++    def test_two_models_set_up_one_head_side_by_side_and_publishing_one_leaves_the_other(self) -> None:
++        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
++        code, _, err = self.as_model("gpt-5.5", "--loop", "gpt")
++
++        self.assertEqual(0, code, err)
++        opus, gpt = self.read_state("claude-opus-5-5"), self.read_state("gpt-5.5")
++        self.assertNotEqual(opus["worktree"], gpt["worktree"])
++        self.assertEqual(self.state / "worktrees" / REPO / "1" / "gpt-5.5" / self.head[:12], Path(gpt["worktree"]))
++        self.assertEqual(self.head, git(Path(opus["worktree"]), "rev-parse", "HEAD"))
++        self.assertIn("model=gpt-5.5 -->", self.github.comments[gpt["start_comment"]["id"]])
++
++        published = self.publish("clean", "--model", "claude-opus-5-5", loop="claude")
++
++        self.assertEqual(0, published[0], published[2])
++        self.assertFalse(self.lock(self.head, "claude-opus-5-5").exists())
++        self.assertTrue(self.lock(self.head, "gpt-5.5").exists())
++        self.assertEqual(gpt, self.read_state("gpt-5.5"))
++        self.assertTrue(Path(gpt["worktree"]).is_dir())
++        self.assertIn(gpt["start_comment"]["id"], self.github.comments)
++
++    def test_a_command_after_setup_needs_model_when_two_models_are_set_up(self) -> None:
++        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
++        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++
++        code, _, err = self.publish("clean", loop="gpt")
++
++        self.assertEqual(1, code)
++        self.assertIn("by claude-opus-5-5, gpt-5.5 are set up here; pass --model", err)
++        self.assertEqual([], self.github.reviews)
++        self.assertEqual(0, self.publish("clean", "--model", "gpt-5.5", loop="gpt")[0])
++
++    def test_one_model_with_state_needs_no_model_flag(self) -> None:
++        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++
++        code, _, err = self.publish("clean", loop="gpt")
++
++        self.assertEqual(0, code, err)
++        self.assertIn("model=gpt-5.5 ", self.posted()["body"])
++
++    def test_another_sessions_live_start_comment_by_the_same_model_refuses_setup(self) -> None:
++        foreign = self.github.comment(review.start_comment("claude-opus-5-5", self.head))
++
++        code, _, err = self.setup_review("--loop", "l1")
++
++        self.assertEqual(1, code)
++        self.assertIn(f"start comment {foreign}", err)
++        self.assertIn("delete the comment", err)
++        self.assertFalse(self.lock(self.head).exists(), "a refused setup releases its lock")
++        self.assertEqual([foreign], list(self.github.comments), "nothing was posted")
++        self.assertEqual(0, self.as_model("gpt-5.5")[0], "another model is a second opinion")
++
++    def test_the_same_model_at_another_context_window_is_the_same_reviewer_at_setup(self) -> None:
++        self.github.comment(review.start_comment("claude-opus-5-5[1m]", self.head))
++
++        self.assertEqual(1, self.setup_review()[0])
++
++    def test_a_start_comment_naming_no_model_is_read_by_its_first_line(self) -> None:
++        body = review.start_comment("claude-opus-5-5", self.head).replace(" model=claude-opus-5-5 -->", " -->")
++        self.github.comment(body)
++
++        self.assertEqual(1, self.setup_review()[0])
++        self.assertEqual(0, self.as_model("gpt-5.5")[0])
++
++    def test_a_start_comment_a_day_old_or_followed_by_its_models_verdict_is_not_live(self) -> None:
++        stale = self.github.comment(review.start_comment("claude-opus-5-5", self.head),
++                                    created_at="2026-09-25T01:00:00Z")
++        self.assertEqual(0, self.setup_review()[0], "a start comment a day old is stale")
++        self.assertEqual(0, self.later("release")[0])
++        finished = self.github.comment(review.start_comment("claude-opus-5-5", self.head))
++        self.add_verdict("claude-opus-5-5", at="2026-09-27T01:10:00Z")
++
++        code, _, err = self.setup_review("--rereview")
++
++        self.assertEqual(0, code, err)
++        self.assertIn(stale, self.github.comments, "another session's comment is left for its own session")
++        self.assertIn(finished, self.github.comments)
++
++    def test_a_verdict_before_the_start_comment_leaves_it_live(self) -> None:
++        self.add_verdict("claude-opus-5-5", at="2026-09-27T01:00:00Z")
++        self.github.comment(review.start_comment("claude-opus-5-5", self.head))
++
++        self.assertEqual(1, self.setup_review("--rereview")[0], "a re-review in progress")
++
++    def test_setup_replaces_the_start_comment_this_machine_recorded(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        self.assertEqual(0, self.later("release")[0])
++
++        code, _, err = self.setup_review("--rereview")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([102], list(self.github.comments), "the earlier comment is deleted, not left live")
++        self.assertEqual(102, self.read_state()["start_comment"]["id"])
++
++    def test_another_models_verdict_on_the_head_is_not_a_collision(self) -> None:
++        self.add_verdict("gpt-5.5")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("clean")
++
++        self.assertEqual(0, code, err)
++
++    def test_a_verdict_by_the_same_model_or_naming_no_model_is_another_loop(self) -> None:
++        for model in ("claude-opus-5-5[1m]", "Claude-Opus-5-5", None):
++            with self.subTest(model=model):
++                self.setUp()
++                self.add_verdict(model)
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                code, _, err = self.publish("clean")
++
++                self.assertEqual(1, code)
++                self.assertIn("another loop of the same model", err)
++                self.assertEqual(1, len(self.github.reviews))
++
++    def test_setup_refuses_a_model_id_no_folder_can_be_made_from(self) -> None:
++        for model in ("", "has space", ".hidden", "[1m]", "..", "a\tb"):
++            with self.subTest(model=model):
++                code, _, err = self.as_model(model)
++
++                self.assertEqual(1, code)
++                self.assertIn("is not a usable model ID", err)
++        self.assertEqual([], self.github.posts())
++
++    def test_two_models_that_share_a_folder_refuse_rather_than_share_state(self) -> None:
++        self.assertEqual(0, self.as_model("a/b")[0])
++        self.assertEqual("a-b", self.folder().name)
++
++        code, _, err = self.as_model("a-b")
++
++        self.assertEqual(1, code)
++        self.assertIn("is model a/b's", err)
++        self.assertEqual("a/b", self.read_state("a/b")["model"])
++
++    def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        self.assertEqual(0, self.later("move")[0])
++
++        self.assertEqual(self.clock.isoformat(), self.read_state()["head_started_at"])
++        self.assertIn(" model=claude-opus-5-5 -->", self.github.comments[101])
++
++
+ def css(**padding: int) -> str:
+     """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
+     return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
+@@ -1026,8 +1213,8 @@ def pushed(self, *extra: str) -> str:
+         """A one-line push on the reviewed head, set up for review."""
+         return self.review_head(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}), *extra)
+ 
+-    def interdiff(self) -> dict:
+-        code, out, err = self.later("interdiff", "--json")
++    def interdiff(self, *extra: str) -> dict:
++        code, out, err = self.later("interdiff", "--json", *extra)
+         result = json.loads(out)
+         self.assertEqual(0 if result["incremental"] else 1, code, err)
+         return result
+@@ -1236,7 +1423,7 @@ def test_prints_the_earlier_review_the_kind_the_counts_the_refusal_and_the_patch
+ 
+ class InterdiffRuleTests(IncrementalCase):
+     def refused(self, words: str) -> dict:
+-        result = self.interdiff()
++        result = self.interdiff("--model", self.model)
+         self.assertFalse(result["incremental"])
+         self.assertIn(words, result["reason"])
+         self.assertFalse(result["needs_gate"])
+@@ -1300,10 +1487,11 @@ def test_a_full_review_by_another_version_model_or_effort_is_not_built_on(self)
+         with mock.patch.object(metadata, "version", return_value="1.2.4"):
+             self.review_head(head)
+             self.refused(earlier + "Projector 1.2.4, model claude-opus-5-5, no effort")
+-        self.assertEqual(0, self.later("release")[0])
+-        self.review_head(head, "--model", "claude-sonnet-5")
++        self.model = "claude-sonnet-5"
++        self.review_head(head)
+         self.refused(earlier + "Projector 1.2.3, model claude-sonnet-5, no effort")
+-        self.assertEqual(0, self.later("release")[0])
++        self.model = "claude-opus-5-5"
++        self.assertEqual(0, self.later("release", "--model", self.model)[0])
+         self.review_head(head)
+         with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
+             self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")

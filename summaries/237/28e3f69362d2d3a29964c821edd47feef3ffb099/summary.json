@@ -1,0 +1,188 @@
+{
+ "version": 1,
+ "name": "Per-model review state and collision check",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 237,
+  "title": "Give each reviewing model its own state, lock, and collision check",
+  "head": "28e3f69362d2d3a29964c821edd47feef3ffb099",
+  "headRef": "multi-model-identity",
+  "base": "692ede662d6b75bc83075c99aa11ad5e01d20b56",
+  "baseRef": "multi-model-site",
+  "basePr": 233
+ },
+ "overview": {
+  "summary": [
+   "<code>project review</code> is the CLI that a review loop uses to set up, publish, and clean up each review of a pull request. Until now it took the GitHub account as the reviewer. So when two review loops ran different models on one pull request under one account, such as one in Claude Code and one in Codex, they got in each other's way. The second model's <code>setup</code> refused on the first model's lock. Once that lock was released, the second <code>setup</code> overwrote the first model's state file and could remove a scratch worktree the first model was still reading. Its <code>publish</code> then refused on the first model's verdict as if another loop had posted it.",
+   "This pull request is one layer of the multi-model review plan (<code>docs/projects/multi-model-review/readme.md</code>). It makes the <b>model</b> the reviewer's identity within an account, and it changes three things:",
+   "<ol><li><b>Local state per model.</b> Each model's state, lock, request file, and worktree live under a folder named after the model. Every command after <code>setup</code> finds its review by the pull request and <code>--model</code>, or by the only model set up on the machine.</li><li><b>A duplicate caught at setup.</b> <code>setup</code> lists the reviewer's start comments and refuses while another session's live start comment names the same model.</li><li><b>A per-model collision check.</b> <code>publish</code> counts only verdicts by this model, or by no model, as earlier releases wrote them.</li></ol>",
+   "The layers above this one add the sign-off rule, <code>census --wait</code>, <code>status</code>, and adoption of a stopped model's findings. Until they land, the last publish still sets the draft state, and each model still settles every finding. This pull request is stacked on #233, which shows each model's verdict in a summary's header."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Identity</b>: the model ID lowercased, with any trailing bracketed variant removed, so <code>claude-opus-5-5[1m]</code> and <code>Claude-Opus-5-5</code> are both <code>claude-opus-5-5</code>.</li><li><b>Model key</b>: the identity with every character other than a letter, a digit, <code>.</code>, <code>_</code>, or <code>-</code> replaced by <code>-</code>. It names the folder that holds a model's state.</li><li><b>Start comment</b>: the comment <code>setup</code> posts to announce a review in progress. <code>publish</code> deletes it.</li><li><b>Live</b>: a start comment is live until its model posts a verdict on its head after it, or a day passes since its last edit.</li><li><b>Loop record</b>: <code>loops/&lt;id&gt;/published.json</code>, the list of reviews a loop published.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, at <code>28e3f69</code>, requested changes on one finding. <code>skills/start-review-loop/SKILL.md</code> tells the loop to pass <code>--model</code> to every <code>project review</code> command, but <code>review census</code> does not accept it. The full test suite passed with 652 tests.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Per-model identity, state, and collision in review.py",
+   "kicker": "Where each model's review lives, how setup spots a duplicate, and what publish counts as a collision",
+   "intro": [
+    "All of the behavior is in <code>src/projector/review.py</code>. <code>identity()</code>, which an earlier layer added, decides when two model IDs name the same reviewer. <code>model_key()</code> turns that identity into a safe folder name. <code>Paths</code> now takes the model and puts the state, lock, request, and worktree paths under that key.",
+    "The state file records its identity, so two IDs that make the same key, such as <code>a/b</code> and <code>a-b</code>, refuse rather than share a folder. <code>setup</code> reads the account's start comments and reviews before it posts, and refuses when a live start comment by the same model is not the one this machine recorded. When this machine recorded one that was never published, <code>setup</code> deletes it after posting the new one. <code>check_collision</code> now ignores verdicts by other models."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "No state from the old layout is read. A review that was set up before an upgrade runs <code>setup</code> again, as the plan's § 3 decides."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Model key, per-model <code>Paths</code>, model lookup for later commands, the start-comment duplicate check, and the per-model collision check.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 115,
+       "text": "<code>model_key</code> refuses an empty ID, whitespace, a bare variant such as <code>[1m]</code>, <code>..</code>, and a key that starts with <code>.</code>. It turns <code>/</code> into <code>-</code>, so no ID can name a path outside the state directory. I traced it and checked the test cases in <code>test_setup_refuses_a_model_id_no_folder_can_be_made_from</code>."
+      },
+      {
+       "kind": "context",
+       "line": 250,
+       "text": "<code>stored_state</code> refuses when the folder's state has another identity. <code>setup</code> calls it before it takes the lock, so a key that two identities share refuses before anything is posted."
+      },
+      {
+       "kind": "verify",
+       "line": 458,
+       "text": "<code>is_live</code> ends a start comment's life only on a verdict by the same identity on the comment's SHA, submitted at or after the comment's creation. A re-review's start comment stays live after the verdict that came before it. <code>move</code> edits the comment, which refreshes the day-long window. I traced both paths."
+      },
+      {
+       "kind": "context",
+       "line": 498,
+       "text": "Without <code>--model</code>, <code>find_model</code> returns the only model with a <code>state.json</code> for this pull request, and refuses when there are several. A lock left with no state file, from a <code>setup</code> killed partway, needs <code>release --model</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 554,
+       "text": "<code>setup</code> deletes the start comment it recorded earlier only after the new comment posts, and only when that comment is still on the pull request. A refused <code>setup</code> deletes nothing and releases its lock."
+      },
+      {
+       "kind": "context",
+       "line": 1086,
+       "text": "<code>same_model</code> reads <code>model=</code> from the loose marker line instead of <code>verdict_marker</code>, so a marker in an older shape still collides. A marker with no <code>model=</code> collides with every model."
+      },
+      {
+       "kind": "context",
+       "line": 1332,
+       "text": "Each loop-record entry now names its model. The incremental rules from #228 do not filter by it. They can only refuse when two models share one loop id, because the full review's marker must name this run's model."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The --model flag on later commands",
+   "kicker": "Which review subcommands take --model",
+   "intro": [
+    "<code>src/projector/cli.py</code> adds an optional <code>--model</code> to <code>move</code>, <code>release</code>, <code>publish</code>, <code>gate</code>, and <code>interdiff</code>, and resolves the review's paths once for them. <code>release</code> moves ahead of that resolution, so with no review set up it reports zero locks instead of refusing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>--model</code> to five review subcommands and routes them through <code>review_paths</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 487,
+       "text": "<code>review census</code> is not in this list, so it rejects <code>--model</code>. <code>start-review-loop</code> tells the loop to pass <code>--model</code> to every <code>project review</code> command, so a loop that follows it fails its census with <code>unrecognized arguments</code>. The review's open finding is anchored on the skill."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The review skills",
+   "kicker": "How review-pr and start-review-loop describe one model among several",
+   "intro": [
+    "<code>review-pr</code> gains a section on reviewing as one model among several. It also documents the <code>model=</code> field on the start, finding, and verify markers, the per-model lock, and the per-model collision check. <code>start-review-loop</code> gives each model's loop its own id, such as <code>&lt;repo&gt;-review-&lt;model-key&gt;</code>, finds the last reviewed head from this model's verdicts, and passes <code>--model</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "New section on reviewing as one model among several, plus <code>model=</code> in each marker and the per-model collision check.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 199,
+       "text": "This paragraph says every later command finds the review by the pull request and the model. <code>census</code> reads GitHub, not local state, and takes no <code>--model</code>."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Gives each model's loop its own id, and passes <code>--model</code> to its commands.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 76,
+       "text": "Open finding: this step tells the loop to pass <code>--model</code> to every <code>project review</code> command, and <code>project review census</code> rejects it. Either add <code>--model</code> to <code>census</code> or name the commands that take it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference and two plan corrections",
+   "intro": [
+    "<code>docs/cli.md</code> describes <code>--model</code>, the per-model layout, the duplicate check, and the per-model collision check. The plan gets two corrections that match what was built: <code>setup</code> deletes the start comment it recorded and never published, and each <code>setup</code> adds two listings, not one. The plan stays <code>in-progress</code>, because the layers above still have to land."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Review section: <code>--model</code>, the model key, the per-model state layout, and the collision rule."
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "§ 2.2 and § 5 now match what <code>setup</code> does."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "ModelTests and the existing suites moved to the per-model layout",
+   "intro": [
+    "<code>ModelTests</code> runs against the fake GitHub in temporary repositories. It covers two models on one head, a missing <code>--model</code>, start comments that are live, stale, or from an earlier release, the collision rule across ID variants, unusable IDs, and a key that two identities share. The existing setup, publish, and incremental tests now read state from the model's folder."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "I ran <code>PYTHONPATH=src python3.12 -m unittest discover</code> on this head: 652 tests, OK, 1 skipped."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "note": "New <code>ModelTests</code>, plus helpers that read the per-model folder."
+    }
+   ]
+  }
+ ]
+}
