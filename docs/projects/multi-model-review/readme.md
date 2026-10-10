@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: in-progress
+priority: now
 ---
 
 # Let several models review the same pull request
@@ -355,7 +355,7 @@ models:
 | --- | --- |
 | `status` | `changes-requested` when any model's newest verdict on the head requests changes, `clean` when every one is clean, and `unreviewed` when none names the head. |
 | `url` | The review that decides `status`: the newest changes-requested verdict, or else the newest clean one. |
-| `models` | One entry for each model with a verdict on the head: `model`, `status`, and `url`. Changes requested come first, then models in ID order. |
+| `models` | One entry for each model with a verdict on the head: `model`, its identity by § 2.1, and its newest verdict's `status` and `url`. Changes requested come first, then models in ID order. |
 
 The site reads no start comments or threads, so it never shows `waiting`.
 

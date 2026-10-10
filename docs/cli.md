@@ -722,16 +722,23 @@ one row each with its title, and highlights the current one; a pull request
 with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
-then the verdict of the newest Projector review of its head, **Clean** or
-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
-no Projector review names the head. When that review is incremental, the
-header reads **Clean · incremental from a8cf3d5**, where the second part names
-the head of the full review it builds on and links that review, while the row
-on Reviews shows **Clean** alone. A review counts only when its author owns
-the repository, belongs to its organization, or collaborates on it, because
-anyone can review a public repository's pull request. The build reads the
-pull request's state and reviews through `gh` and shows no status when `gh`
-cannot answer. **Docs** renders `README.md`
+then the verdict on its head, linked to the review on GitHub that decides it.
+Each model that reviewed the head counts by its newest Projector review of it,
+and the verdict is **Changes requested** when any of those requests changes
+and **Clean** otherwise. A head no Projector review names is **Unreviewed**.
+Models are told apart by their model ID, lowercased and without a trailing
+bracketed variant such as `[1m]`. When one model reviewed the head and its
+review is incremental, the header reads **Clean · incremental from a8cf3d5**,
+where the second part names the head of the full review it builds on and
+links that review. When several models reviewed the head, the header groups
+them by verdict, changes requested first, and links each model's name to its
+review, as in **Changes requested (gpt-5.5) · Clean (claude-opus-5-5)**; an
+incremental review reads **claude-opus-5-5 incremental from a8cf3d5** inside
+its group. The row on Reviews shows the first word alone. A review counts
+only when its author owns the repository, belongs to its organization, or
+collaborates on it, because anyone can review a public repository's pull
+request. The build reads the pull request's state and reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and

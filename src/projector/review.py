@@ -39,6 +39,8 @@ MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
+VARIANT = re.compile(r"\[[^\[\]]*\]$")
 
 
 class ReviewError(ProjectorError):
@@ -101,6 +103,12 @@ def origin_repo(checkout: Path) -> str:
 
 
 # Identity
+
+def identity(model: str) -> str:
+    """The reviewer a model ID names: the ID lowercased, without a trailing bracketed variant, so one
+    model at another context window is the same reviewer."""
+    return VARIANT.sub("", model.lower())
+
 
 def authenticated_login() -> str:
     login = run_gh(["api", "user", "--jq", ".login"]).strip()

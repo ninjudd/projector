@@ -51,14 +51,23 @@ interface SummaryGroup {
 /** A pull request's state when the site was built. */
 type PullState = 'open' | 'merged' | 'closed';
 
+/** The head of the full review a clean incremental review builds on, and that review's page, or null when the build found none. */
+interface IncrementalFrom { head: string; url: string | null }
+
+/** One model's newest Projector review of a head, with its page on GitHub. */
+type ModelStatus =
+  | { model: string; status: 'clean'; url: string; incrementalFrom?: IncrementalFrom }
+  | { model: string; status: 'changes-requested'; url: string };
+
 /**
- * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
- * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
- * head of the full review it builds on, and that review's page, or null when the build found none.
+ * A head's status from the newest Projector review each model gave it, or `unreviewed` when no
+ * Projector review names the head. It is `changes-requested` when any model's is, with `url` the
+ * newest such review, and `clean` otherwise. `models` lists each model, changes requested first.
+ * A clean status carries `incrementalFrom` when its one model's review is incremental.
  */
 type ReviewStatus =
-  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
-  | { status: 'changes-requested'; url: string }
+  | { status: 'clean'; url: string; models: ModelStatus[]; incrementalFrom?: IncrementalFrom }
+  | { status: 'changes-requested'; url: string; models: ModelStatus[] }
   | { status: 'unreviewed' };
 
 /** A summary page's data: the summary checked against its diff by the build. */

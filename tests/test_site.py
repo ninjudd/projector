@@ -363,8 +363,7 @@ class SiteContentTests(SiteRepoCase):
         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
                                   projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
 
-        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
-                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+        self.assertEqual({"c": one("clean", 1), "d": one("changes-requested", 2)}, statuses)
 
     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
@@ -388,8 +387,7 @@ class SiteContentTests(SiteRepoCase):
             projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
         ])
 
-        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
-                         statuses)
+        self.assertEqual({"c": one("changes-requested", 1), "d": {"status": "unreviewed"}}, statuses)
 
     def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
         statuses = self.statuses([
@@ -397,8 +395,7 @@ class SiteContentTests(SiteRepoCase):
             projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 2, association="COLLABORATOR"),
         ])
 
-        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
-                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+        self.assertEqual({"c": one("clean", 1), "d": one("changes-requested", 2)}, statuses)
 
     def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
@@ -406,8 +403,7 @@ class SiteContentTests(SiteRepoCase):
                                   projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 3),
                                   projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4)])
 
-        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
-                          "d": {"status": "clean", "url": review_url(4)}}, statuses)
+        self.assertEqual({"c": one("clean", 2), "d": one("clean", 4)}, statuses)
 
     def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
         self.assertEqual({"c": None, "d": None}, self.statuses(None))
@@ -417,9 +413,48 @@ class SiteContentTests(SiteRepoCase):
                                   projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
                                   incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)])
 
-        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
-                          "d": {"status": "clean", "url": review_url(3),
-                                "incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}}, statuses)
+        incremental = {"incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}
+        self.assertEqual({"c": one("clean", 2),
+                          "d": dict(one("clean", 3), models=[dict(one("clean", 3)["models"][0], **incremental)],
+                                    **incremental)}, statuses)
+
+    def test_each_model_of_a_head_is_listed_and_any_change_request_decides_its_status(self) -> None:
+        statuses = self.statuses([
+            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, model="gpt-5.5"),
+            projector_review("changes-requested", "c" * 40, "2026-10-01T11:00:00Z", 2, model="claude-opus"),
+            projector_review("clean", "c" * 40, "2026-10-01T12:00:00Z", 3, model="Claude-Opus[1m]"),
+            projector_review("changes-requested", "c" * 40, "2026-10-01T13:00:00Z", 4, model="gpt-5.5"),
+            projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 5, model="gpt-5.5"),
+            projector_review("clean", "d" * 40, "2026-10-02T11:00:00Z", 6, model="claude-opus"),
+            projector_review("changes-requested", "d" * 40, "2026-10-02T12:00:00Z", 7, model="codex-mini"),
+            projector_review("changes-requested", "d" * 40, "2026-10-02T09:00:00Z", 8, model="anthropic/claude"),
+        ])
+
+        def model(name: str, status: str, review_id: int) -> dict:
+            return {"model": name, "status": status, "url": review_url(review_id)}
+
+        self.assertEqual({"status": "changes-requested", "url": review_url(4),
+                          "models": [model("gpt-5.5", "changes-requested", 4), model("claude-opus", "clean", 3)]},
+                         statuses["c"], "one model at another context window is one reviewer, by its newest review")
+        self.assertEqual({"status": "changes-requested", "url": review_url(7),
+                          "models": [model("anthropic/claude", "changes-requested", 8),
+                                     model("codex-mini", "changes-requested", 7),
+                                     model("claude-opus", "clean", 6), model("gpt-5.5", "clean", 5)]},
+                         statuses["d"], "the newest change request links the status, and models sort within a verdict")
+
+    def test_an_incremental_review_builds_on_its_own_models_full_review(self) -> None:
+        statuses = self.statuses([
+            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, model="claude-opus"),
+            projector_review("clean", "c" * 40, "2026-10-01T11:00:00Z", 2, model="gpt-5.5"),
+            incremental_review("d" * 40, "c" * 40, "2026-10-02T10:00:00Z", 3),
+            projector_review("clean", "d" * 40, "2026-10-02T11:00:00Z", 4, model="gpt-5.5"),
+        ])
+
+        self.assertEqual({"status": "clean", "url": review_url(4), "models": [
+            {"model": "claude-opus", "status": "clean", "url": review_url(3),
+             "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}},
+            {"model": "gpt-5.5", "status": "clean", "url": review_url(4)}]}, statuses["d"],
+            "with two models the status carries no incrementalFrom of its own")
 
     def test_an_incremental_line_without_a_review_marker_sets_no_status(self) -> None:
         line = incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)["body"].splitlines()[3]
@@ -506,7 +541,7 @@ class SiteContentTests(SiteRepoCase):
         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             reviews = self.build()["reviews"]
 
-        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
+        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", one("clean", 1))],
                          [(r["number"], r["state"], r["review"]) for r in reviews],
                          "each row carries what its newest head's page does")
 
@@ -1363,6 +1398,45 @@ class FileHeaderTests(SiteRepoCase):
         self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
                       "a merged pull request shows Merged alone")
 
+    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
+    def test_the_header_groups_models_by_verdict_and_the_index_row_shows_its_first_word(self) -> None:
+        full, head = "a8cf3d5" + "0" * 33, "c" * 40
+
+        def link(review_id: int, text: str, cls: str = "") -> str:
+            attribute = f' class="{cls}"' if cls else ""
+            return f'<a{attribute} href="{review_url(review_id)}" target="_blank" rel="noopener">{text}</a>'
+
+        clean, changes = link(2, "Clean", "rstatus clean"), link(2, "Changes requested", "rstatus changes-requested")
+        cases = {
+            "one model": ([projector_review("clean", head, "2026-10-02T10:00:00Z", 2)], f" · {clean}"),
+            "two clean": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
+                           projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
+                          f" · {clean} ({link(1, 'claude-opus')}, {link(2, 'gpt-5.5')})"),
+            "split": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
+                       projector_review("changes-requested", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
+                      f" · {changes} ({link(2, 'gpt-5.5')}) · <span class=\"rstatus clean\">Clean</span> "
+                      f"({link(1, 'claude-opus')})"),
+            "incremental": ([projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
+                             incremental_review(head, full, "2026-10-02T09:00:00Z", 3),
+                             projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
+                            f" · {clean} ({link(3, 'claude-opus')} "
+                            f"{link(1, 'incremental from <code>a8cf3d5</code>', 'rstatus incremental')}, "
+                            f"{link(2, 'gpt-5.5')})"),
+            "unreviewed": ([], ' · <span class="rstatus unreviewed">Unreviewed</span>'),
+        }
+        for name, (reviews, header) in cases.items():
+            with self.subTest(name):
+                data = self.build(state="open", reviews=reviews)
+                row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
+
+                self.assertIn(f"{header}</div><h1>", rendered_summary(data))
+                self.assertTrue(header.startswith(f" · {row}"), "the index row shows the header's first word")
+                shutil.rmtree(self.out)
+        data = self.build(state="merged", reviews=cases["split"][0])
+        row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('merged', {json.dumps(data['review'])}));")
+        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', rendered_summary(data))
+        self.assertEqual('<span class="rstatus merged">Merged</span>', row)
+
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
         # A backport, or a stack layer merged into its parent's branch, may
@@ -1532,16 +1606,23 @@ def review_url(review_id: int) -> str:
     return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
 
 
-def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
+def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER",
+                     model: str = "claude-opus") -> dict:
     """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
 
     `association` is the author's relation to the repository, as GitHub's
     `author_association` gives it.
     """
-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model={model} effort=high "
               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
             "url": review_url(review_id), "at": at, "association": association}
+
+
+def one(status: str, review_id: int, model: str = "claude-opus") -> dict:
+    """A head's review status when one model reviewed it, as `review_statuses` gives it."""
+    return {"status": status, "url": review_url(review_id),
+            "models": [{"model": model, "status": status, "url": review_url(review_id)}]}
 
 
 def incremental_review(head: str, full: str, at: str, review_id: int) -> dict:

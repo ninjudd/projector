@@ -16,11 +16,13 @@ function creditHtml() {
 function localTime(when) {
     return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
-// A pull request's status: Merged or Closed once it is, and until then the
-// verdict of the newest Projector review of its head, linked to that review,
-// or Unreviewed when no Projector review names the head. Nothing when the
-// build could not ask GitHub, so a status it does not know never reads as
-// unreviewed.
+const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requested' };
+// A pull request's status: Merged or Closed once it is, and until then its
+// head's verdict, Changes requested when any model's newest Projector review
+// of it requests changes and Clean otherwise, linked to the review that
+// decides it, or Unreviewed when no Projector review names the head. Nothing
+// when the build could not ask GitHub, so a status it does not know never
+// reads as unreviewed.
 function statusHtml(state, review) {
     if (state === 'merged')
         return '<span class="rstatus merged">Merged</span>';
@@ -30,8 +32,7 @@ function statusHtml(state, review) {
         return '';
     if (review.status === 'unreviewed')
         return '<span class="rstatus unreviewed">Unreviewed</span>';
-    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
-    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
+    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}</a>`;
 }
 (function () {
     function renderSummary(data) {
@@ -342,19 +343,36 @@ function statusHtml(state, review) {
                 return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
             }).join('') + '</ul>';
         }
+        function incrementalLink(from) {
+            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+            return from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+        }
         // The header, as the page's statement of how well the head was checked,
-        // also links the full review a clean incremental review builds on.
+        // also links the full review a clean incremental review builds on. With
+        // several models it groups them by verdict, changes requested first, each
+        // model's name linking to its own review; the first word is still the one
+        // the Reviews index shows.
         function reviewStatus() {
             const status = statusHtml(pr.state, data.review);
             if (status === '')
                 return '';
             const review = data.review;
-            const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
-            if (from === undefined)
+            if (pr.state === 'merged' || pr.state === 'closed' || review === undefined || review.status === 'unreviewed')
                 return ` · ${status}`;
-            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
-            const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
-            return ` · ${status} · ${link}`;
+            if (review.models.length > 1) {
+                const models = review.models;
+                return ['changes-requested', 'clean'].map(function (verdict) {
+                    const names = models.filter(function (m) { return m.status === verdict; }).map(function (m) {
+                        return ext(m.url, esc(m.model)) + (m.status === 'clean' && m.incrementalFrom !== undefined ? ` ${incrementalLink(m.incrementalFrom)}` : '');
+                    });
+                    if (names.length === 0)
+                        return '';
+                    const word = verdict === review.status ? status : `<span class="rstatus ${verdict}">${VERDICT_WORDS[verdict]}</span>`;
+                    return ` · ${word} (${names.join(', ')})`;
+                }).join('');
+            }
+            const from = review.status === 'clean' ? review.incrementalFrom : undefined;
+            return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
         }
         function renderPage() {
             const nav = data.groups.map(function (g, i) {

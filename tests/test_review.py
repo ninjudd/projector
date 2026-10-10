@@ -1594,6 +1594,18 @@ class VerdictMarkerTests(unittest.TestCase):
         self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
 
 
+class IdentityTests(unittest.TestCase):
+    def test_a_model_is_one_reviewer_in_any_case_and_at_any_context_window(self) -> None:
+        for model, expected in (("claude-opus-5-5", "claude-opus-5-5"), ("Claude-Opus-5-5[1m]", "claude-opus-5-5"),
+                                ("gpt-5.5", "gpt-5.5"), ("anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5"),
+                                ("model[a]b", "model[a]b"), ("model[a][b]", "model[a]")):
+            with self.subTest(model):
+                self.assertEqual(expected, review.identity(model))
+
+    def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
+        self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
+
+
 class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
