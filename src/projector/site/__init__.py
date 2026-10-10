@@ -103,7 +103,7 @@ def copy_assets(out: Path) -> None:
 
 def pr_title(payload: dict) -> str:
     """The pull request's own title, which heads its summary page."""
-    return payload["pr"].get("title") or payload.get("name") or f"#{payload['pr']['number']}"
+    return payload["pr"]["title"]
 
 
 def write_page(out: Path, payload: dict) -> None:
@@ -114,7 +114,11 @@ def write_page(out: Path, payload: dict) -> None:
 
 
 def build_page(summary: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
+    """A page for `summary` alone, with no site around it: a stack of one, headed as a site with no projects heads it."""
     payload = prepare_page(summary, diff=diff, at_head=at_head, extra=extra)
+    number = payload["pr"]["number"]
+    segments = stack_segments([number], {number: payload}, {}, {})
+    payload.update(segments=segments, header=segments[0]["header"])
     write_page(out, payload)
     return payload
 
@@ -256,15 +260,21 @@ def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict
         f["context"] = {"url": f"{base}{BLOBS}/{blob}.txt", "lines": len(lines), "gaps": gaps}
 
 
-def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
-                    lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
+def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None,
+                    trunk: str = "main", lookup=None, repo_root: Path | None = None, status_lookup=None,
+                    stacks_lookup=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest.
 
     The entries come in the order the Reviews index lists them, as
-    `stack_groups` puts them, from `stack_bases` with `trunk` and `lookup`.
-    Each carries `stack`, the number of the first review in its stack, or
-    None when no other review is in it, and each page lists the pull
-    requests in its stack. A file is
+    `stack_groups` puts them, with each stack's members from `find_stacks`,
+    given `trunk`, `lookup`, and `stacks_lookup`. Each carries `stack`, the
+    number of the first review in its stack, or None when no other review is
+    in it, and each page lists the pull requests in its stack. `described`
+    holds the projects the site has pages for. Each summary is linked to the
+    one it carries out, as `project_linker` decides, and each stack is split
+    into segments by `stack_segments`. Every page of a stack carries its
+    `segments`, and every page and entry the `header` of the segment its pull
+    request is in. A file is
     generated as the `attributes.json` that `publish` stored beside a summary
     says, or, for a summary without one, as the checkout at `repo_root` reads
     its .gitattributes. A file whose head copy `publish` stored beside its
@@ -280,6 +290,9 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     merged pull request's files now are when the branch it merged into is
     gone.
     """
+    described = described or []
+    link = project_linker(described, base)
+    headers = {p["name"]: project_header(p, base) for p in described}
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
               if not path.with_name("summary.json").is_file()]
@@ -294,7 +307,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
         skip(path, f"the site reads summary.json, not {LEGACY_SUMMARY_FILE}; run `project upgrade`, then republish it "
                    "with `project summary publish`")
 
-    by_pr: dict[str, list[tuple[int, dict]]] = {}
+    by_pr: dict[str, list[tuple[int, dict, str | None]]] = {}
     absolute = root.resolve()
     written: dict[str, int] = {}
     for path in summaries:
@@ -313,31 +326,41 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
             generated = stored_attributes(attributes) if attributes.is_file() else None
             payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True, root=repo_root,
                                    generated=generated)
-            payload["projects"] = link(summary, payload) if link else []
+            project = link(summary, payload)
         except (SummaryError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
         add_context(payload, absolute / number / head / HEAD_DIR, out, base, written)
-        by_pr.setdefault(number, []).append((summary_time(path), payload))
+        by_pr.setdefault(number, []).append((summary_time(path), payload, project))
     print(f"wrote {len(written)} head {'file' if len(written) == 1 else 'files'} for summary pages to expand, "
           f"{sum(written.values()):,} bytes, under {BLOBS}/")
     for versions in by_pr.values():
         versions.sort(key=lambda v: v[0], reverse=True)
-    prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
-    bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
+    newest = {int(number): versions[0][1] for number, versions in by_pr.items()}
+    owned = {int(number): versions[0][2] for number, versions in by_pr.items()}
+    prs = {number: payload["pr"] for number, payload in newest.items()}
+    members = find_stacks(prs, trunk, lookup, stacks_lookup)
+    segmented: dict[tuple[int, ...], list[dict]] = {}
+    for stack in members.values():
+        if tuple(stack) not in segmented:
+            segmented[tuple(stack)] = stack_segments(stack, newest, owned, headers)
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
+        pull = int(number)
         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
-                 for when, p in versions]
-        stack = stack_rows(int(number), bases, prs, base)
+                 for when, p, _ in versions]
+        stack = stack_rows(pull, members[pull], prs, base)
+        segments = segmented[tuple(members[pull])]
+        header = next(s["header"] for s in segments if pull in s["members"])
         # The review skill publishes its review before the summary, and publishing
         # the summary starts this build, so the reviews include the verdict on the
         # head the summary describes.
-        status = status_lookup(int(number)) if status_lookup is not None else None
+        status = status_lookup(pull) if status_lookup is not None else None
         statuses = review_statuses(status["reviews"]) if status is not None else None
-        for _, payload in versions:
+        for _, payload, _ in versions:
             head = payload["pr"]["head"]
-            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
+            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
+                           header=header, defaultBranch=trunk)
             if status is not None:
                 payload["pr"]["state"] = status["state"]
                 if "base" in status:
@@ -352,74 +375,167 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
                      src=f"{base}reviews/{number}/{head}/data.json"), encoding="utf-8")
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
-        newest = latest["pr"]["head"]
+        newest_head = latest["pr"]["head"]
         (out / "reviews" / number / "index.html").write_text(
             page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
-                 src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
-        entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
-                        "review": latest.get("review"), "heads": len(versions), "updated": versions[0][0],
-                        "projects": [p["name"] for p in latest["projects"]]})
+                 src=f"{base}reviews/{number}/{newest_head}/data.json"), encoding="utf-8")
+        entries.append({"number": pull, "header": header, "pr": latest["pr"], "review": latest.get("review"),
+                        "heads": len(versions), "updated": versions[0][0]})
     by_number = {e["number"]: e for e in entries}
     ordered = []
-    for group in stack_groups(bases, prs):
+    for group in stack_groups(members, prs):
         for number in group:
             ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
     return ordered, failures
 
 
-def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
+def stack_groups(members: dict[int, list[int]], prs: dict[int, dict]) -> list[list[int]]:
     """The pull requests in `prs`, which have reviews, in the order the Reviews index lists them, one list per stack.
 
     The index lists the newest pull request first, and a stack sits where its
-    newest pull request would, its pull requests together in `stack_rows`
-    order, from the one on the default branch up. A pull request in a stack
-    without a review here, known only as a base, is left out, and one alone
-    is a stack of its own.
+    newest pull request would, its pull requests together in the order
+    `find_stacks` gives them in `members`, from the bottom up. A pull request
+    in a stack without a review here is left out, and one alone is a stack of
+    its own.
     """
     placed: set[int] = set()
     groups = []
     for number in sorted(prs, reverse=True):
         if number in placed:
             continue
-        rows = [row["number"] for row in stack_rows(number, bases, prs)] or [number]
-        group = [n for n in rows if n in prs and n not in placed]
+        group = [n for n in members[number] if n in prs and n not in placed]
         placed.update(group)
         groups.append(group)
     return groups
 
 
-def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
-    """Every pull request in `number`'s stack, from the one on the default branch up, or [] when it stands alone.
+def stack_rows(number: int, stack: list[int], prs: dict[int, dict], base: str = "/") -> list[dict]:
+    """A row for each pull request in `stack`, `number`'s, as `find_stacks` gives it, or [] when `number` stands alone.
 
-    The stack holds the pull requests beneath `number` and every pull request
-    stacked above any of them, so a branch in the stack shows its siblings
-    too; each pull request's own branches follow it, lowest number first.
-    A pull request with a summary links to its review, and one without, known
-    only as a base, has no title or link here. `bases` maps a pull request to
-    the one beneath it, as `stack_bases` returns it.
+    A pull request with a summary links to its review, and one without, such
+    as a merged layer summarized nowhere, links to itself on GitHub and has no
+    title here.
     """
-    bottom, seen = number, {number}
-    while bases.get(bottom) is not None and bases[bottom] not in seen:
-        bottom = bases[bottom]
-        seen.add(bottom)
-    above: dict[int, list[int]] = {}
-    for top, beneath in bases.items():
-        above.setdefault(beneath, []).append(top)
-    order: list[int] = []
-    pending = [bottom]
-    while pending:
-        current = pending.pop()
-        if current in order:
-            continue
-        order.append(current)
-        pending.extend(sorted(above.get(current, []), reverse=True))
-    if len(order) < 2:
+    if len(stack) < 2:
         return []
+    repo = prs[number]["repo"]
     return [{"number": n, "title": (prs.get(n) or {}).get("title") or "",
-             "url": f"{base}reviews/{n}/" if n in prs else "", "current": n == number} for n in order]
+             "url": f"{base}reviews/{n}/" if n in prs else f"https://github.com/{repo}/pull/{n}",
+             "current": n == number} for n in stack]
 
 
-def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+def find_stacks(prs: dict[int, dict], trunk: str, lookup=None, stacks_lookup=None) -> dict[int, list[int]]:
+    """Every member of each pull request's stack, bottom first, for each pull request in `prs`: [number] alone for one in none.
+
+    `stacks_lookup` returns GitHub's stacks and how many requests read them,
+    as `summary.repo_stacks` does, or None when GitHub cannot answer, as when
+    it is missing. Within a GitHub stack, each member sits on the member
+    before it in GitHub's order, merged and closed members included, and its
+    base branch does not count. Every other pull request in `prs` sits on the
+    one `stack_bases` finds with `trunk` and `lookup`, so one chained by hand
+    onto a GitHub stack's member joins that stack. A stack holds the pull
+    requests beneath a pull request and every one above any of them. From
+    each pull request the walk takes its successor in its own GitHub stack
+    first, then its other branches, lowest number first, so a GitHub stack's
+    members stay together in GitHub's order. A member without a summary stays
+    in the stack.
+
+    It prints one line saying how the stacks were found.
+    """
+    answer = stacks_lookup() if stacks_lookup is not None else None
+    beneath: dict[int, int] = {}
+    successor: dict[int, int] = {}
+    settled: set[int] = set()
+    if answer is None:
+        print("stacks: GitHub's stacks could not be read, so every pull request sits on its base branch")
+    else:
+        listed, requests = answer
+        stacks, note = github_stacks(listed, requests)
+        print(f"stacks: {note}")
+        for stack in stacks:
+            settled.update(stack)
+            for lower, upper in zip(stack, stack[1:]):
+                beneath[upper] = lower
+                successor[lower] = upper
+    beneath.update(stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup, settled))
+    above: dict[int, list[int]] = {}
+    for upper, lower in beneath.items():
+        if successor.get(lower) != upper:
+            above.setdefault(lower, []).append(upper)
+    walks: dict[int, list[int]] = {}
+    members = {}
+    for number in prs:
+        bottom, seen = number, {number}
+        while beneath.get(bottom) is not None and beneath[bottom] not in seen:
+            bottom = beneath[bottom]
+            seen.add(bottom)
+        if bottom not in walks:
+            order: list[int] = []
+            pending = [bottom]
+            while pending:
+                current = pending.pop()
+                if current in order:
+                    continue
+                order.append(current)
+                pending.extend(sorted(above.get(current, []), reverse=True))
+                if current in successor:
+                    pending.append(successor[current])
+            walks[bottom] = order
+        members[number] = walks[bottom]
+    return members
+
+
+def github_stacks(listed: list, requests: int) -> tuple[list[list[int]], str]:
+    """The pull request numbers of each stack GitHub `listed`, bottom first, and a note on what was read.
+
+    The build reads only a stack's `number` and its `pull_requests`' numbers,
+    in their order. A stack without an integer number or a list of pull
+    requests is left out, and so is a member without an integer number. A
+    pull request in two stacks belongs to the one with the higher number, and
+    the other closes the gap it leaves.
+    """
+    def number_of(item: object) -> int | None:
+        value = item.get("number") if isinstance(item, dict) else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    readable: list[tuple[int, list[int]]] = []
+    unnumbered = unlisted = members_left = 0
+    for stack in listed:
+        pulls = stack.get("pull_requests") if isinstance(stack, dict) else None
+        if number_of(stack) is None:
+            unnumbered += 1
+        elif not isinstance(pulls, list):
+            unlisted += 1
+        else:
+            numbers = [number_of(pull) for pull in pulls]
+            members_left += numbers.count(None)
+            readable.append((number_of(stack), [n for n in numbers if n is not None]))
+    claimed: set[int] = set()
+    stacks = []
+    for _, numbers in sorted(readable, key=lambda s: -s[0]):
+        kept = []
+        for n in numbers:
+            if n not in claimed:
+                claimed.add(n)
+                kept.append(n)
+        stacks.append(kept)
+    parts = [f"read {counted(len(listed), 'GitHub stack')} in {counted(requests, 'request')}"]
+    if unnumbered:
+        parts.append(f"left out {counted(unnumbered, 'stack')} with no number, whose pull requests sit on their "
+                     "base branches")
+    if unlisted:
+        parts.append(f"left out {counted(unlisted, 'stack')} with no list of pull requests")
+    if members_left:
+        parts.append(f"left out {counted(members_left, 'stack member')} with no number")
+    return stacks, "; ".join(parts)
+
+
+def counted(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def stack_bases(entries: list[dict], trunk: str, lookup=None,
+                settled: set[int] | frozenset[int] = frozenset()) -> dict[int, int]:
     """For each stacked pull request, the number of the pull request beneath it.
 
     A pull request is stacked only when its base branch is another pull
@@ -428,14 +544,15 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
     whose summary records that branch as its `headRef`, else the `basePr` the
     summary recorded, else what `lookup` finds for the branch, asked once per
     branch. Skipping the default branch only saves a lookup that would find
-    nothing.
+    nothing. A pull request in `settled`, which GitHub's stacks already
+    place, gets no base and costs no lookup.
     """
     by_branch = {e["pr"]["headRef"]: e["number"] for e in entries if e["pr"].get("headRef")}
     looked_up: dict[str, int | None] = {}
     bases = {}
     for entry in entries:
         base_ref = entry["pr"].get("baseRef") or ""
-        if not base_ref or base_ref == trunk:
+        if not base_ref or base_ref == trunk or entry["number"] in settled:
             continue
         beneath = by_branch.get(base_ref) or entry["pr"].get("basePr")
         if beneath is None and lookup is not None:
@@ -445,6 +562,37 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
         if beneath is not None and beneath != entry["number"]:
             bases[entry["number"]] = int(beneath)
     return bases
+
+
+def stack_segments(members: list[int], newest: dict[int, dict], owned: dict[int, str | None],
+                   headers: dict[str, dict]) -> list[dict]:
+    """A stack's segments, bottom first: each a run of `members` that carry one project, with that project's header.
+
+    `members` is the whole stack, bottom first, as `find_stacks` gives it,
+    members without a summary included. `newest` holds each summarized
+    member's newest page, `owned` each one's own project from
+    `project_linker`, and `headers` each project's header, as
+    `project_header` makes it. The first segment starts at the bottom, under
+    the first project any member names. A member that names another project
+    starts a segment, and one that names the same project, or none, joins the
+    segment of the member before it. A stack where no member names a project
+    is one segment, headed by the first `name` a member's summary gives, or
+    else the title of its first member with a summary.
+    """
+    first = next((owned[n] for n in members if owned.get(n)), None)
+    if first is None:
+        named = [newest[n]["name"] for n in members if n in newest and newest[n]["name"]]
+        title = named[0] if named else next(newest[n]["pr"]["title"] for n in members if n in newest)
+        return [{"header": {"title": title}, "members": list(members)}]
+    segments = [{"header": headers[first], "members": []}]
+    current = first
+    for number in members:
+        project = owned.get(number)
+        if project and project != current:
+            current = project
+            segments.append({"header": headers[project], "members": []})
+        segments[-1]["members"].append(number)
+    return segments
 
 
 def copy_content(repo_root: Path, path: Path, out: Path) -> str:
@@ -533,13 +681,23 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
     return copied
 
 
-def project_linker(described: list[dict], base: str):
-    """Link a review to every project whose files its diff changes, or that its summary names.
+def project_header(project: dict, base: str) -> dict:
+    """The header of a stack segment that carries out `project`, linked to its page on the site."""
+    return {"project": project["name"], "title": project["title"], "url": f"{base}projects/{project['name']}/"}
 
+
+def project_linker(described: list[dict], base: str):
+    """Find the one project a summary carries out, among the projects in `described`, which have pages on the site.
+
+    A summary's `project` names it when the site has that project, and a
+    `project` of "" or one the site lacks names none. A summary published
+    before the field existed, with no `project` or a null one, takes the
+    first project its `projects` list names that the site has, or else the
+    one project that owns files its diff changes, when exactly one does.
     Each changed file in a project's folder also gets that project as its
-    `project`: the deepest one, so a nested project owns its own files. Only
-    a project in `described` has a page on the site, so a file in any other
-    project's folder, such as one the pull request adds, gets none.
+    `project`: the deepest one, so a nested project owns its own files. A
+    file in any other project's folder, such as one the pull request adds,
+    gets none.
     """
     by_name = {p["name"]: p for p in described}
     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
@@ -547,15 +705,21 @@ def project_linker(described: list[dict], base: str):
     def page_of(name: str) -> dict:
         return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
 
-    def link(summary: dict, payload: dict) -> list[dict]:
-        names = [n for n in summary.get("projects") or [] if n in by_name]
+    def link(summary: dict, payload: dict) -> str | None:
+        owners = set()
         for f in payload["files"]:
             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
             if owner:
                 f["project"] = page_of(owner)
-                if owner not in names:
-                    names.append(owner)
-        return [page_of(n) for n in names]
+                owners.add(owner)
+        chosen = summary.get("project")
+        if isinstance(chosen, str):
+            return chosen if chosen in by_name else None
+        named = summary.get("projects")
+        known = [n for n in named if isinstance(n, str) and n in by_name] if isinstance(named, list) else []
+        if known:
+            return known[0]
+        return owners.pop() if len(owners) == 1 else None
 
     return link
 
@@ -681,12 +845,13 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
 def review_row(entry: dict) -> dict:
     """A review's row on the Reviews index, in site.json.
 
-    `title` is the one its page has, `pr_title`'s. `updated` is when its
-    newest head was published, in UTC. `state` and `review` are its pull
-    request's and its newest head's, as its page carries them, and are left
-    out when the build could not ask GitHub.
+    `title` is the one its page has, `pr_title`'s, and `header` the header
+    of its stack segment. `updated` is when its newest head was published, in
+    UTC. `state` and `review` are its pull request's and its newest head's,
+    as its page carries them, and are left out when the build could not ask
+    GitHub.
     """
-    row = {"number": entry["number"], "name": entry["name"], "title": pr_title(entry),
+    row = {"number": entry["number"], "title": pr_title(entry), "header": entry["header"],
            "heads": entry["heads"], "stack": entry["stack"],
            "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
            .strftime("%Y-%m-%dT%H:%M:%SZ")}
@@ -700,15 +865,18 @@ def review_row(entry: dict) -> dict:
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
-               trunk: str | None = None, lookup=None, status_lookup=None) -> tuple[list[dict], list[str]]:
+               trunk: str | None = None, lookup=None, status_lookup=None,
+               stacks_lookup=None) -> tuple[list[dict], list[str]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
     `trunk` the default branch a pull request that is not stacked is based on.
-    `lookup` finds the pull request whose head is a branch, for a summary that
-    did not record the one it is stacked on. `status_lookup` returns a pull
-    request's state and reviews, or None when it cannot ask, for each
-    summary's file links and review status.
+    `stacks_lookup` returns GitHub's stacks, or None when it cannot ask, and
+    `lookup` finds the pull request whose head is a branch, for a summary in
+    no GitHub stack that did not record the one it is stacked on.
+    `status_lookup` returns a pull request's state and reviews, or None when
+    it cannot ask, for each summary's file links and review status. Each
+    project lists the reviews whose stack segment it heads.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -721,12 +889,13 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
     files = collect_files(repo_root, projects_dir, out) if repo_root else []
     assign_routes(docs, described)
-    link = project_linker(described, base)
-    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
-                            status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
+    built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
+                            status_lookup=status_lookup, stacks_lookup=stacks_lookup) \
+        if summaries and summaries.is_dir() else ([], [])
     entries, failures = built
     for project in described:
-        project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
+        project["reviews"] = sorted((e["number"] for e in entries if e["header"].get("project") == project["name"]),
+                                    reverse=True)
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")

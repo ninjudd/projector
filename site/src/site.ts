@@ -387,7 +387,7 @@
         `<a class="note" href="${esc(repoUrl('blob', project.path))}">View on GitHub</a></div>` +
         (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
           const r = reviewFor(n);
-          return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
+          return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.title)}` : ''}</a>`;
         }).join(' · ') + '</div>' : '')
         : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path))}">View on GitHub</a></div>`);
     showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side);
@@ -418,21 +418,40 @@
       `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
   }
 
-  // The reviews in site.json's order, each stack's rows together in one table
-  // body, with a divider only below it. Every column but the pull request's has
-  // a set width, so checking a box never moves one.
+  function sameHeader(a: StackHeader, b: StackHeader): boolean {
+    return a.project === b.project && a.title === b.title && a.url === b.url;
+  }
+
+  // The reviews in site.json's order, each stack's rows together, with a
+  // divider only below the stack. Each segment of a stack is a table body
+  // that opens with its header, and a new segment starts wherever a row's
+  // header differs from the row drawn above it. Every body of a stack but the
+  // last is `continued`, and draws no divider. Every column but the pull
+  // request's has a set width, so checking a box never moves one.
   function reviewsTable(reviews: SiteReview[]): string {
-    const bodies: SiteReview[][] = [];
+    const stacks: SiteReview[][] = [];
     reviews.forEach(function (r) {
-      const last = bodies[bodies.length - 1];
+      const last = stacks[stacks.length - 1];
       if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack) last.push(r);
-      else bodies.push([r]);
+      else stacks.push([r]);
+    });
+    const bodies = stacks.map(function (rows) {
+      const segments: { header: StackHeader; rows: SiteReview[] }[] = [];
+      rows.forEach(function (r) {
+        const last = segments[segments.length - 1];
+        if (last !== undefined && sameHeader(last.header, r.header)) last.rows.push(r);
+        else segments.push({ header: r.header, rows: [r] });
+      });
+      return segments.map(function (segment, i) {
+        return `<tbody${i < segments.length - 1 ? ' class="continued"' : ''}>` +
+          `<tr class="stackhead"><th colspan="3" scope="rowgroup">${stackHeaderHtml(segment.header)}</th></tr>` +
+          `${segment.rows.map(reviewRow).join('')}</tbody>`;
+      }).join('');
     });
     return '<div class="tblwrap"><table class="tbl reviews">' +
       '<colgroup><col><col class="status"><col class="date"></colgroup>' +
       '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
-      bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
-      '</table></div>';
+      bodies.join('') + '</table></div>';
   }
 
   // The reviews of open pull requests, closed ones, or both, as the boxes at

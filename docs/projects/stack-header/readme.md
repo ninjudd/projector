@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: in-progress
+priority: now
 ---
 
 # Head each stack with one project or a title
@@ -190,8 +190,12 @@ in no GitHub stack is the normal case and adds nothing to the line:
 ```text
 stacks: read 16 GitHub stacks in 1 request
 stacks: read 16 GitHub stacks in 1 request; left out 1 stack with no number, whose pull requests sit on their base branches
-stacks: GitHub's stacks could not be read (HTTP 404), so every pull request sits on its base branch
+stacks: GitHub's stacks could not be read, so every pull request sits on its base branch
 ```
+
+The lookup returns None when GitHub cannot answer, as step 1 says, so the
+last line does not say why. `gh api repos/OWNER/NAME/stacks` shows the
+reason.
 
 A GitHub stack's number is its key while the build groups it. The index,
 every sidebar, and the header take their members from the same stack, so a
@@ -738,6 +742,10 @@ The site's scripts read the shape through these names:
 | `StackSegment` | `site/src/globals.d.ts` | `{ header: StackHeader; members: number[] }`. `SummaryData.segments` is a `StackSegment[]`. |
 | `stackHeaderHtml(header)` | The shared helpers at the top of `site/src/summary.ts` | One segment's header: an `<a href>` around the escaped title for a project, a `<span>` for a title |
 | `stackSegmentsHtml(segments, rows)` | The same shared helpers | The sidebar's stack: for each segment, its header from `stackHeaderHtml`, then a `<ul class="stack">` of its members' rows in order. `rows` is the page data's `stack`, or the page's own row for a pull request alone. |
+
+A row of the page data's `stack` for a member without a summary on the site
+carries the pull request's page on GitHub as its `url`, so
+`stackSegmentsHtml` links every row without knowing the repository.
 
 The Reviews index reads the flat rows of `site.json`, which arrive in stack
 order. `reviewsTable` starts a new segment wherever a row's `header` differs

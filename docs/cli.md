@@ -619,7 +619,15 @@ project site workflow --write
 ```
 
 `summary init` writes a skeleton summary with every changed file in one
-unassigned group. `summary publish` fetches the pull request's diff, checks
+unassigned group, an empty `name`, and a `project` of `null`, which means
+not decided yet. `summary publish` refuses a summary whose `project` is
+`null`, missing, or not a string, or whose `name` is empty or longer than 60
+characters, and says which field to set. Set `project` to the name of the
+one project the pull request carries out, as `project list` names it, or to
+`""` for none, and `name` to a short title for the stack. A project the
+checkout does not have yet publishes, because a pull request can add the
+plan it carries out. `site page` does not check either field.
+`summary publish` then fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
 workflow. It commits the head's `linguist-generated` attributes beside them
@@ -702,21 +710,48 @@ top-level project's folder: every supplemental file, subdirectory, and nested
 project. **Reviews** lists the summaries, newest pull request first, each as
 its pull request's number and title, the way a summary's sidebar lists its
 stack, with its status and when its newest version was published, in your
-time zone. A pull request is stacked when its base branch is another pull
-request's head, and the pull requests of a stack are listed together where
-the newest of them would be, from the one on the default branch up, close
-together with a divider only below the stack. A summary that
-did not record the pull request beneath it has it looked up with `gh` at
-build time; when `gh` cannot answer, the review shows no stack. Two boxes
+time zone. The pull requests of a stack are listed together where the newest
+of them would be, from the bottom up, close together with a divider only
+below the stack. The build takes each stack from GitHub, which lists the
+repository's stacks in one paginated request, so a stack keeps its pull
+requests and their order after they merge, and keeps a layer whose base has
+moved to the default branch. A pull request in no GitHub stack, and every
+pull request when GitHub cannot list the stacks, is stacked when its base
+branch is another pull request's head. A summary that did not record the
+pull request beneath it has it looked up with `gh` at build time, and when
+`gh` cannot answer, that pull request shows no stack. A pull request chained
+by its base branch onto a member of a GitHub stack joins that stack, after
+its members. The build prints one line saying how it found the stacks, and
+never fails over them:
+
+```text
+stacks: read 19 GitHub stacks in 1 request
+stacks: GitHub's stacks could not be read, so every pull request sits on its base branch
+```
+
+Each stack opens with a header, and so does a pull request alone. A summary
+records the one project its pull request carries out as `project`, or `""`
+for none, and a short title for the stack as `name`. The build splits each
+stack into segments, one for each run of pull requests that carry out the
+same project, and heads each segment with the project's title, linked to its
+page. A pull request that names no project, a project the site has no page
+for, or no summary at all sits in the segment of the pull request before it,
+and a stack where none names a project has one header: the lowest `name` in
+the stack, in plain text, or else the title of its lowest pull request with
+a summary. A summary published before `project` existed takes the first
+project its `projects` list names that the site has, or else the one project
+whose files its diff changes, when exactly one does. Two boxes
 above the list, **Open** and **Closed**, each with its count, choose which
 pull requests it shows. A merged pull request counts as closed, and one whose
 state `gh` could not tell counts as open. Only **Open** starts checked, and
 the address records any other choice, as `?state=closed`,
 `?state=open,closed`, or `?state=` for neither, so a copied link opens the
-same list. A summary's sidebar lists
+same list. When the boxes hide every pull request of a segment, its header
+goes too. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
-one row each with its title, and highlights the current one; a pull request
-with no stack is a stack of one, with its own row highlighted. Its older
+under its segments' headers, one row each with its title, and highlights the
+current one. A pull request with no summary on the site links to GitHub, and
+a pull request with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
@@ -758,9 +793,10 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
 `index/`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
-assets under `assets/`; it defaults to `/`. A review links to the projects
-its diff changes, and to any its summary names in a `projects` list, and each
-project page lists its reviews. A review page's header has a **…** menu with
+assets under `assets/`; it defaults to `/`. Each project page lists, newest
+first and by pull request title, the reviews in every stack segment it heads,
+including a pull request in that segment that names no project of its own.
+A review page's header has a **…** menu with
 the pull request's conversation, files, and compare views on GitHub. Each file
 card's header has one too: **View diff on GitHub**, **View file on GitHub**,
 and, for a file in a project's folder, **View project**, which opens that

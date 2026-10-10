@@ -57,6 +57,19 @@ type PullState = 'open' | 'merged' | 'closed';
  */
 type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
 
+/** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
+interface StackHeader {
+  title: string;
+  project?: string;
+  url?: string;
+}
+
+/** A run of a stack's pull requests, bottom first, that carry out one project, or a whole stack that carries none. */
+interface StackSegment {
+  header: StackHeader;
+  members: number[];
+}
+
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
@@ -77,9 +90,15 @@ interface SummaryData {
   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
   /** Every published head of the pull request, newest first; `at` is when it was published, in Unix seconds. */
   heads?: { head: string; url: string; current: boolean; at?: number }[];
-  /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
+  /**
+   * Every pull request in this one's stack, bottom first; absent or empty when it stands alone. One without a
+   * summary on the site has no title, and its `url` is its page on GitHub.
+   */
   stack?: { number: number; title: string; url: string; current: boolean }[];
-  projects?: { name: string; title: string; url: string }[];
+  /** The stack's segments, bottom first, every member of the stack in one. A pull request alone has one. */
+  segments: StackSegment[];
+  /** The header of the segment this pull request is in. */
+  header: StackHeader;
   /** The newest Projector review of this head; absent when the build could not ask GitHub. */
   review?: ReviewStatus;
   generatedAt?: string;
@@ -106,8 +125,9 @@ interface SiteProject {
 /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
 interface SiteReview {
   number: number;
-  name: string;
   title: string;
+  /** The header of the stack segment this review is in. */
+  header: StackHeader;
   heads: number;
   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
   stack: number | null;

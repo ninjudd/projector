@@ -143,14 +143,21 @@ table.tbl.projects td.owner { color: var(--muted); }
    with a divider only below the stack. Every cell sits on its row's first
    baseline, so the status and the time line up with the title. No link in the
    table is underlined. On a phone the time is left out and the status may
-   wrap, so the title keeps room. */
+   wrap, so the title keeps room. Each segment of a stack opens with its
+   header across all three columns, in the text's own case, with no divider
+   beneath it, so it reads as the title of the rows below; its text starts
+   where a row's number does. A segment the stack continues below draws no
+   divider either. */
 table.tbl.reviews { table-layout: fixed; }
 table.tbl.reviews col.status { width: 11.5em; }
 table.tbl.reviews col.date { width: 13em; }
 table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }
 table.tbl.reviews td.pr { padding: 1px 1px 0; }
-table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }
+table.tbl.reviews tr.stackhead th { padding: 6px 1px 0; border-bottom: 0; font-size: 15px; font-weight: 600; line-height: 1.35; text-transform: none; letter-spacing: normal; color: var(--text); }
+table.tbl.reviews tr.stackhead th > * { display: block; padding: 8px 9px 4px; border-radius: 6px; overflow-wrap: anywhere; color: inherit; }
+table.tbl.reviews tr.stackhead th > a:hover { background: var(--surface-2); }
 table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }
 table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
 table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
 @media (max-width: 640px) {

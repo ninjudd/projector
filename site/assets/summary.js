@@ -33,6 +33,28 @@ function statusHtml(state, review) {
     const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
     return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
 }
+// One stack segment's header: the project its pull requests carry out, linked
+// to the project's page, or the stack's title as plain text.
+function stackHeaderHtml(header) {
+    return header.url !== undefined ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
+}
+// A stack as a summary's sidebar lists it: each segment's header above a row
+// for each of its pull requests, the current one marked. `rows` has a row for
+// every member of the stack. A screen reader names a lone segment's list for
+// the stack, and each of several by its header.
+function stackSegmentsHtml(segments, rows) {
+    return segments.map(function (segment) {
+        const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
+        const items = segment.members.map(function (number) {
+            const s = rows.find(function (r) { return r.number === number; });
+            if (s === undefined)
+                return '';
+            const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+            return s.current ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
+        }).join('');
+        return `<div class="stackhead">${stackHeaderHtml(segment.header)}</div><ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
+    }).join('');
+}
 (function () {
     function renderSummary(data) {
         const pr = data.pr;
@@ -318,29 +340,11 @@ function statusHtml(state, review) {
             const label = `Versions (${String(heads.length)})`;
             return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
         }
-        // The pull requests stacked with this one, one row each, this one marked; a
-        // pull request alone is a stack of one. A pull request in the stack with no
-        // summary on the site links to GitHub.
+        // The pull requests stacked with this one under their segments' headers; a
+        // pull request alone is a stack of one.
         function stackList() {
             const listed = data.stack ?? [];
-            const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
-            return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
-                const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
-                if (s.current)
-                    return `<li class="srow current" aria-current="page">${row}</li>`;
-                const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
-                return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
-            }).join('') + '</ul>';
-        }
-        // The projects the pull request touches, as rows like the stack's, each
-        // title across the whole row.
-        function projectsList() {
-            const projects = data.projects ?? [];
-            if (projects.length === 0)
-                return '';
-            return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
-                return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
-            }).join('') + '</ul>';
+            return stackSegmentsHtml(data.segments, listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }]);
         }
         function reviewStatus() {
             const status = statusHtml(pr.state, data.review);
@@ -351,7 +355,7 @@ function statusHtml(state, review) {
                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
             }).join('');
             const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
-            const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
+            const title = esc(pr.title);
             return '<div class="wrap">' +
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
@@ -361,7 +365,7 @@ function statusHtml(state, review) {
                     { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
                 ])}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
-                `<div class="prblock">${projectsList()}${stackList()}</div>` +
+                `<div class="prblock">${stackList()}</div>` +
                 `<div class="extra">${extra}</div>` +
                 `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
                 `${headsList()}</div></nav></aside>` +
