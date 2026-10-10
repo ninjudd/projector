@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Stacks through gh stack",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 217,
+  "title": "Build and find stacks with gh stack, and fall back to base branches without it",
+  "head": "035f860c1d74a9f98665b28030bf3bda99c92a1d",
+  "headRef": "skills-gh-stack",
+  "base": "bdd92cd947747892c979b202feaa6db4acad375d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills tell an agent how to build a change (<code>implement</code>), how to answer review findings on it (<code>fix-pr</code>), and how to keep doing that across many pull requests (<code>start-fix-loop</code>). When a change is too big for one review, the agent splits it into a <b>stack</b>: a chain of pull requests, each based on the branch of the one below it, that GitHub records as one stack. GitHub only records the chain when it is made with <code>gh stack</code>, a GitHub CLI extension that Projector documents in its vendored <code>skills/gh-stack/SKILL.md</code>.",
+   "Before this change, only <code>implement</code> pointed at that extension. <code>fix-pr</code> said to use \"the installed stack workflow\" without naming it, <code>start-fix-loop</code> grouped a stack's pull requests without saying how to find them, and no skill said what to do when the extension is missing. In practice, agents chained pull requests with <code>gh pr create --base</code>, which GitHub does not record as a stack.",
+   "This change gives <code>implement</code> one section, \"Stack dependent work\", that names the <code>gh stack</code> commands for each task and one fallback for when <code>gh stack</code> cannot help. The other skills and the repository's own docs point at that section instead of describing stacks themselves. The change is prose only: no code, test, or generated file moves."
+  ],
+  "cards": [
+   {
+    "id": "when-to-fall-back",
+    "title": "When a skill falls back to base branches",
+    "html": "<ul class=\"tight\"><li><code>gh extension list</code> shows no <code>github/gh-stack</code>.</li><li>A <code>gh stack</code> command exits 9, which means the repository does not have stacks enabled.</li><li>The stacks API, <code>repos/&lt;owner&gt;/&lt;repo&gt;/stacks?pull_request=&lt;n&gt;</code>, returns an error or <code>[]</code>.</li></ul><p class=\"note\">The fallback reads the chain from each pull request's base branch, opens layers with <code>gh pr create --draft --base</code>, and rebases layers by hand. The agent tells the user at most once, and never installs the extension.</p>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<ul class=\"tight\"><li>One open finding: <code>fix-pr</code>'s conflict path now pushes a rebased stack layer before the full gate runs on it. See the flag under <code>skills/fix-pr/SKILL.md</code>.</li><li>The command names, flags, exit code 9, and cited section names match <code>skills/gh-stack/SKILL.md</code> and <code>gh stack</code> v0.1.0's <code>--help</code>.</li><li>The test suite, <code>project check</code>, and both <code>claude plugin validate</code> runs pass at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "implement",
+   "title": "One place that says how to stack",
+   "kicker": "The new \"Stack dependent work\" section in implement, which every other skill now cites",
+   "intro": [
+    "<code>implement</code> is the skill an agent follows to build a change and open its pull request. Its new \"Stack dependent work\" section is the reference the rest of this pull request points at. It covers four tasks, each first with <code>gh stack</code> and then without it.",
+    "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Task</th><th>With <code>gh stack</code></th><th>Without it</th></tr></thead><tbody><tr><td>Create a stack</td><td><code>init</code>, <code>add</code>, then <code>submit --auto</code>, which opens drafts</td><td><code>git push -u</code>, then <code>gh pr create --draft --base</code> per layer</td></tr><tr><td>Adopt an existing chain</td><td><code>gh stack link</code> with the pull request numbers, bottom first</td><td>Not needed</td></tr><tr><td>Carry a fix up</td><td><code>rebase --upstack</code>, then <code>push</code>; <code>sync</code> after a layer merges</td><td>Rebase each layer above in order, push with <code>--force-with-lease</code></td></tr><tr><td>Find the layers</td><td>The stacks API, or <code>gh stack view --json</code> in a checkout that tracks the stack</td><td>Follow base branches with <code>gh pr list --head</code> and <code>--base</code></td></tr></tbody></table></div>",
+    "The section keeps the mechanics of each command in <code>skills/gh-stack/SKILL.md</code>, which this pull request does not change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Adds the \"Stack dependent work\" section, links to it from the sizing rule, and says to replace the body <code>gh stack submit</code> writes.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 187,
+       "text": "The stacks API behaves as described. <code>stacks?pull_request=196</code> returned stack 199 with pull requests 196 and 197 from the bottom up, including merged ones. <code>stacks?pull_request=215</code> returned <code>[]</code>, and so did the same query against <code>cli/cli</code>, a repository without stacks, rather than an error."
+      },
+      {
+       "kind": "context",
+       "line": 177,
+       "text": "This step pushes every rebased layer before anything reruns the gate on it. That order matches <code>fix-pr</code> on <code>main</code>, so the review listed it as a suggestion rather than a finding."
+      },
+      {
+       "kind": "context",
+       "line": 203,
+       "text": "The layers above a pull request come one level at a time: <code>gh pr list --base &lt;headRefName&gt;</code> finds the direct child, and the agent repeats the lookup from that child's head branch to reach the top."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "Fixing and grouping stacked pull requests",
+   "kicker": "fix-pr and start-fix-loop now name gh stack and cite the implement section",
+   "intro": [
+    "<code>fix-pr</code> answers review findings and resolves merge conflicts on one pull request. <code>start-fix-loop</code> watches many pull requests and gives each one, or each stack, a subagent that runs <code>fix-pr</code>. Both used to describe stacks vaguely. Now both cite the \"Stack dependent work\" section for how to find a stack's layers and how to carry a fix up through them.",
+    "The main behavior change is in <code>fix-pr</code>'s conflict handling. For an ordinary pull request it still merges the base, because a merge needs no force-push. For a layer of a stack, while <code>gh stack</code> works, it rebases instead, because <code>gh stack</code> keeps a stack current by rebasing. Its force-push rule now allows pushing a stack's rebased layers, with <code>--force-with-lease</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Rebases a conflicted stack layer with <code>gh stack</code>, carries fixes up through the implement section, syncs after a parent merges, and allows force-pushing rebased layers.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 102,
+       "text": "Open review finding. Step 1 says to run <code>gh stack rebase</code> and then <code>gh stack push</code>, so an agent following the steps in order pushes every rebased layer before the step 3 gate runs. Step 4 then says to commit a merge that this path never made. The fix is to keep only the rebase in step 1 and push with <code>gh stack push</code> in step 4, after the gate passes."
+      },
+      {
+       "kind": "verify",
+       "line": 210,
+       "text": "<code>skills/gh-stack/SKILL.md</code> has both cited sections, \"Squash-merge recovery\" and \"Handle rebase conflicts\". Its <code>sync</code> description says it rebases the layers above onto the new base and skips a squash-merged parent's commits."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "Finds a stack's layers, and groups pull requests into one subagent per stack, with the implement section's lookup."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Repository instructions and plugin docs",
+   "kicker": "AGENTS.md and docs/plugins.md say the same thing as the skills",
+   "intro": [
+    "<code>AGENTS.md</code> holds this repository's contributor instructions, and <code>CLAUDE.md</code> is a symlink to it. Its hand-over rules now say to build a stack with <code>gh stack</code> and to chain pull requests by base branch only where <code>gh stack</code> is unavailable. <code>docs/plugins.md</code> tells a plugin user that the extension is optional and how to install it. Neither edit touches the block between <code>projector:begin</code> markers that <code>project init</code> generates."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
