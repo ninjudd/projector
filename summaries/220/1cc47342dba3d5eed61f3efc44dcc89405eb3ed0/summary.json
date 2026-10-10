@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "name": "Depend on upstream gh-stack",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 220,
+  "title": "Depend on GitHub's gh-stack skill instead of vendoring it",
+  "head": "1cc47342dba3d5eed61f3efc44dcc89405eb3ed0",
+  "headRef": "unvendor-gh-stack",
+  "base": "430b849f0c9123a2a2b97a1c24265ad36ac84675",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <code>implement</code>, <code>fix-pr</code>, and <code>start-fix-loop</code> skills open and maintain <b>stacks</b>: chains of pull requests, each based on the branch below it, that GitHub records as one unit. They drive stacks with <code>gh stack</code>, a GitHub CLI extension, and GitHub publishes a <code>gh-stack</code> skill that teaches an agent its commands.",
+   "Until now Projector shipped its own edited copy of that skill under <code>skills/gh-stack/</code>. Every upstream release meant diffing the copy and reapplying the edits by hand, and upstream's v0.2.1 rewrite left the copy a release behind. This pull request deletes the copy and depends on upstream instead.",
+   "<ol><li><b>Packaging.</b> The Projector marketplace serves upstream's skill, unmodified and pinned to tag <code>v0.2.1</code> and its commit, as a second plugin named <code>gh-stack</code>. The <code>projector</code> plugin declares it as a dependency, so a fresh Claude Code install of <code>projector</code> installs <code>gh-stack</code> too.</li><li><b>Projector's rules.</b> The edits the copy carried become rules in <code>implement</code>'s \"Stack dependent work\" section that win over upstream's skill: split only at the reviewability ceiling, open every layer as a draft, replace the body <code>gh stack submit</code> writes, and never merge.</li><li><b>Documentation.</b> <code>docs/plugins.md</code> and the website say where the skill now comes from, and how Codex, which has no plugin dependencies, can add it by hand.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open finding: <code>install.sh</code> upgrades an installed plugin with <code>claude plugin update</code>, which does not install the new dependency, so an existing user loses the skill on upgrade. See the flag on <code>.claude-plugin/plugin.json</code>.</li><li>The first head carried four commits that merged separately as #217; this head is rebased onto <code>main</code> and holds only the unvendoring commit.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Vendored</b>: a copy of another project's files kept in this repository.</li><li><b>Marketplace</b>: the <code>.claude-plugin/marketplace.json</code> catalog Claude Code installs Projector's plugins from.</li><li><b><code>git-subdir</code> source</b>: a marketplace entry that installs one directory of another Git repository at a given ref.</li><li><b>Layer</b>: one pull request in a stack.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "packaging",
+   "title": "Install upstream's skill as a dependency",
+   "kicker": "The marketplace serves upstream's skill and the projector plugin depends on it",
+   "intro": [
+    "Claude Code installs plugins from a marketplace. Projector's marketplace used to list one plugin, <code>projector</code>, whose <code>skills/</code> tree included the copied <code>gh-stack</code> skill. It now lists a second plugin, <code>gh-stack</code>, whose source is the <code>skills/gh-stack</code> directory of <code>github/gh-stack</code> at tag <code>v0.2.1</code>, with the commit pinned as well. The <code>projector</code> plugin names it in <code>dependencies</code>.",
+    "A newer upstream reaches users only when a Projector change moves that <code>ref</code> and <code>sha</code>. Codex has no plugin dependencies, so its manifest is unchanged and the packaging test checks that it declares none."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In an empty Claude Code config, <code>claude plugin install projector@projector</code> from this head also installs <code>gh-stack@projector</code>, and <code>claude plugin details gh-stack@projector</code> lists one skill, <code>gh-stack</code>. Tag <code>v0.2.1</code> of <code>github/gh-stack</code> resolves to the pinned commit."
+    }
+   ],
+   "files": [
+    {
+     "path": ".claude-plugin/marketplace.json",
+     "note": "Adds the <code>gh-stack</code> plugin entry, sourced from upstream's repository at a pinned tag and commit.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The ref and the sha must name the same commit. The packaging test checks only their shapes, so a release that moves one must move the other.",
+       "line": 21
+      }
+     ]
+    },
+    {
+     "path": ".claude-plugin/plugin.json",
+     "note": "Declares <code>gh-stack</code> as a dependency of the <code>projector</code> plugin.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open finding: an existing install never receives this dependency. <code>install.sh</code> moves an installed plugin forward with <code>claude plugin update projector@projector</code>, which does not install a newly declared dependency, so an upgrade removes the copied skill and installs nothing in its place. Running <code>claude plugin install projector@projector</code> after the update does install it.",
+       "line": 14
+      }
+     ]
+    },
+    {
+     "path": "skills/gh-stack/SKILL.md",
+     "note": "The copied skill, deleted. Its Projector-specific edits reappear as rules in <code>implement</code>.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Drops <code>gh-stack</code> from the published skill set and checks the new dependency, the pinned source, and that Codex declares no dependencies."
+    }
+   ]
+  },
+  {
+   "id": "rules",
+   "title": "Keep Projector's stack rules in implement",
+   "kicker": "The edits the copy carried become rules that win over upstream's skill",
+   "intro": [
+    "The copied skill differed from upstream in four ways that matter to Projector's review loop. Since upstream's skill now ships unmodified, <code>implement</code>'s \"Stack dependent work\" section states those differences as rules that win wherever the two disagree.",
+    "<ul><li><b>Split only at the reviewability ceiling.</b> Upstream suggests a new layer when a diff grows large or moves to tests; Projector splits only when one review would hold unrelated arguments, and keeps tests and documentation with their code.</li><li><b>Draft every layer.</b> <code>--open</code> readies new and existing layers alike, and only a clean review should mark a layer ready.</li><li><b>Replace the generated body.</b> <code>gh stack submit</code> writes a body with a stack footer and no <code>## Testing</code> section.</li><li><b>Never merge.</b> Upstream documents <code>gh stack merge</code>; merging stays the user's checkpoint.</li></ul>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Points at upstream's skill instead of the deleted file, adds the four rules, and cites upstream's \"Exit 3 recovery\" for rebase conflicts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Upstream's v0.2.1 <code>SKILL.md</code> has the \"Exit 3 recovery\" list this line cites, describing <code>gh stack rebase --continue</code> and <code>--abort</code>.",
+       "line": 207
+      },
+      {
+       "kind": "context",
+       "text": "For a branch with more than one commit, <code>submit --auto</code> also titles the pull request with the branch name. This rule covers only the body; the review suggests extending it to the title.",
+       "line": 183
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Say where the skill comes from",
+   "kicker": "Plugin documentation and the website describe the dependency",
+   "intro": [
+    "<code>docs/plugins.md</code> explains that Claude Code installs upstream's skill with <code>projector</code>, that the marketplace pins its version, and how a Codex user can add the skill by hand. The website's agents section stops listing <code>gh-stack</code> among the skills the plugin carries."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This holds for a fresh install. An existing install upgraded through <code>install.sh</code> does not get the dependency; see the flag on <code>.claude-plugin/plugin.json</code>.",
+       "line": 58
+      }
+     ]
+    },
+    {
+     "path": "web/components/sections/agents.tsx",
+     "note": "Says Claude Code installs GitHub's <code>gh-stack</code> skill, instead of listing it as one of the plugin's own skills."
+    }
+   ]
+  }
+ ]
+}
