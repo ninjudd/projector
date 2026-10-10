@@ -126,11 +126,14 @@ One model's review of one head runs like this:
 
 1. The loop's watcher reports `NEW PR`, `NEW HEAD`, or `RESPONDED`, as today.
    A `RESPONDED` reaches every model's loop, whichever model's finding the
-   author answered. Before it re-reviews, the subagent runs
-   `project review census <number> --wait --json`, and it re-reviews only
-   when its model's newest verdict on the head requests changes, or when an
-   answered thread is its own or one it may now adopt (§ 2.8). Otherwise it
-   reports that the answer belongs to another model and stops.
+   author answered. It also reaches every loop when the last open thread is
+   resolved, even when another model resolved its own finding. Before it
+   re-reviews, the subagent runs `project review census <number> --wait --json`
+   and `project review status <number>`. It re-reviews only when its model's
+   newest verdict on the head requests changes, when its model has no verdict
+   on the head, or when an answered thread is its own or one it may now adopt
+   (§ 2.8). Otherwise it reports that the event belongs to another model and
+   stops, posting no start comment.
 2. The subagent runs `project review setup <number> --model <model-id>`.
    Setup takes this model's lock, writes this model's state file, and creates
    this model's scratch worktree, at the paths in § 2.4. Before it posts, it
@@ -669,7 +672,7 @@ The tests run in temporary Git repositories against the fake GitHub in
 | 10 | Publish `clean` as two models on H, once with the second model submitting before the first applies the rule, and once after. | Ready either way. With one of them requesting changes, a draft either way. |
 | 11 | Publish on another author's pull request with `review.allow_approve = true`. | A clean verdict while another model requests changes or is reviewing posts a `COMMENT`. The last model to go clean posts an `APPROVE`. The draft state does not change. |
 | 12 | Run `project review status`. | The text in § 2.4, and with `--json` each field in its table. A model with only earlier-head activity shows `pending` and leaves `signoff` alone. |
-| 13 | Answer a `gpt-5.5` finding while `gpt-5.5` is still reviewing, then run `project review census --wait --json` as `claude-opus-5-5`. | `watch-prs.sh` reports `RESPONDED` to both loops, as today. Census returns once `gpt-5.5` posts, with the thread `adopt: no`, so `claude-opus-5-5` does not re-review. An answer on a `claude-opus-5-5[1m]` finding, or on one that names no model, is `mine` and `answered`, so it re-reviews. |
+| 13 | Answer a `gpt-5.5` finding while `gpt-5.5` is still reviewing, then run `project review census --wait --json` as `claude-opus-5-5`. | `watch-prs.sh` reports `RESPONDED` to both loops, as today. Census returns once `gpt-5.5` posts, with the thread `adopt: no`, so `claude-opus-5-5` does not re-review. An answer on a `claude-opus-5-5[1m]` finding, or on one that names no model, is `mine` and `answered`, so it re-reviews. When `claude-opus-5-5` has a clean verdict on H and `gpt-5.5` resolves the last open thread, its own, `watch-prs.sh` reports `RESPONDED` to both loops, and `claude-opus-5-5` posts no start comment and does not re-review. |
 | 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header line in § 2.5. |
 | 15 | By hand, run a Claude Code review loop and a Codex review loop on a scratch pull request in a scratch repository. | Both review each head without a collision. A finding from one model keeps the pull request in draft after the other model's clean verdict. After the fix, both go clean and the pull request is ready. Then stop the Codex loop, push a fix that does not hold for one of its findings, and the Claude loop reopens that finding as an adoption. The implementing pull request's Testing section records these steps. |
 | 16 | Review H as `claude-opus-5-5` while `gpt-5.5` has a verdict on an earlier head, a declined open finding, and nothing on H. Run `adopt --result accepted` on that finding. | Census marks the thread `adopt: wait` until the window closes, then `now`. `adopt` waits out the window, posts a reply whose marker carries `model=claude-opus-5-5 adopted-from=gpt-5.5` and whose first line names both models, and resolves the thread. Census then marks it `mine`, and `status` shows `gpt-5.5` as `stopped`. On a resolved finding whose fix does not hold, `adopt --result reopened` unresolves it. |
