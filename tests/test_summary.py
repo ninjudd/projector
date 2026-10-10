@@ -836,6 +836,15 @@ def embedded(page: Path) -> dict:
     return json.loads(html[start:html.index("</script>", start)])
 
 
+class KindTests(unittest.TestCase):
+    def test_a_skill_file_is_hand_written_not_documentation(self) -> None:
+        self.assertEqual("", summary.kind_of("skills/summarize-pr/SKILL.md"))
+        self.assertEqual("", summary.kind_of("SKILL.md"))
+        self.assertEqual("docs", summary.kind_of("skills/summarize-pr/format.md"), "only the skill's entry point is code")
+        self.assertEqual("docs", summary.kind_of("docs/skill.md"), "the name is matched by its exact case")
+        self.assertEqual("generated", summary.kind_of("skills/made/SKILL.md", True))
+
+
 class GeneratedAttributeTests(unittest.TestCase):
     def test_the_attribute_overrules_the_path(self) -> None:
         self.assertEqual("", summary.kind_of("site/assets/summary.js"))
