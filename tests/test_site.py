@@ -843,6 +843,7 @@ class SiteContentTests(SiteRepoCase):
     def test_a_stack_splits_into_a_segment_for_each_run_of_layers_that_carry_one_project(self) -> None:
         alpha, beta = self.ALPHA, self.BETA
         for projects, expected in (
+                (("", "alpha"), [(alpha, [9, 10])]),
                 (("alpha", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
                 (("alpha", "", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
                 (("", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
@@ -877,6 +878,30 @@ class SiteContentTests(SiteRepoCase):
 
         self.assert_segments(manifest, [(self.ALPHA, [9, 11]), (self.BETA, [10])])
         self.assertEqual([9, 11, 10], [row["number"] for row in self.data(9)["stack"]])
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_a_member_without_a_summary_is_drawn_under_the_header_beneath_it(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
+        self.build([github_stack(30, 9, 11, 10)])
+
+        html = rendered_summary(self.data(9))
+
+        self.assertRegex(html, r'<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+                               r'<ul class="stack" aria-label="Pull requests for Build alpha">'
+                               r'<li class="srow current"[^>]*>.*?#9</span>.*?</li>'
+                               r'<li><a class="srow" href="https://github.com/owner/example/pull/11">.*?#11</span>.*?</ul>'
+                               r'<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>')
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_each_merged_page_of_a_two_project_stack_draws_both_headers(self) -> None:
+        self.layered("alpha", "alpha/beta", merged=True)
+
+        for number in (9, 10):
+            html = rendered_summary(self.data(number))
+            self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', '<a href="/projects/alpha/beta/">Finish beta</a>'],
+                             re.findall(r'<div class="stackhead">(.*?)</div>', html), number)
+            self.assertIn('<span class="rstatus merged">Merged</span>', html)
 
     def test_a_pull_request_chained_by_hand_joins_the_segment_drawn_above_it(self) -> None:
         self.publish(9, "a" * 40, "alpha", headRef="feature-9")

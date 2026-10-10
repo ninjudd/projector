@@ -304,9 +304,15 @@ class StackChoiceTests(unittest.TestCase):
         self.assertEqual(("", None), (skeleton["name"], skeleton["project"]), "publish refuses the skeleton as it is")
 
     def page(self, **fields: object) -> dict:
-        data = make_summary(GOOD_GROUPS) | fields
-        with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
-            return site.build_page(data, Path(tempfile.mkdtemp()), at_head=True)
+        """The data `project site page` embeds for a summary with `fields`."""
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "summary.json").write_text(json.dumps(make_summary(GOOD_GROUPS) | fields))
+        (tmp / "pr.diff").write_text(DIFF)
+        with redirect_stdout(io.StringIO()):
+            code = cli.main(["site", "page", "--summary", str(tmp / "summary.json"), "--out", str(tmp / "site"),
+                             "--diff", str(tmp / "pr.diff"), "--at-head"])
+        self.assertEqual(0, code, "site page builds whatever the summary's project")
+        return embedded(tmp / "site")
 
     def test_a_page_built_alone_is_headed_by_its_name_whatever_its_project(self) -> None:
         for project in (None, "", "alpha"):

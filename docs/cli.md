@@ -739,7 +739,8 @@ stack into segments, one for each run of pull requests that carry out the
 same project, and heads each segment with the project's title, linked to its
 page. A pull request that names no project, a project the site has no page
 for, or no summary at all sits in the segment of the pull request before it,
-and a stack where none names a project has one header: the lowest `name` in
+or in the first segment when it is the lowest. A stack where none names a
+project has one header: the lowest `name` in
 the stack, in plain text, or else the title of its lowest pull request with
 a summary. A summary published before `project` existed takes the first
 project its `projects` list names that the site has, or else the one project

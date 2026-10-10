@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -908,3 +908,29 @@ The rows of § 4 for a stack of one segment still hold, with the row for
 above. In the browser check of § 4, a stack with two segments shows two
 left-aligned headers on Reviews and in each member's sidebar, each linked to
 its project.
+
+## 9. Outcome
+
+The project shipped in #236. Every row of § 4 and § 8.5 has a test in
+`tests/test_site.py` or `tests/test_summary.py` that passes, and the browser
+check of § 4 and § 8.5 is recorded in #236's Testing section.
+
+- **Stacks.** A build of this repository's summaries reads 19 GitHub stacks
+  in 1 request, as § 5 asks the implementing pull request to report. The
+  merged #196 and #197 are one group under their title. With the stacks API
+  answering 404, the same build prints the fallback line and finishes, and
+  #227 and #231 fall apart because #231's base moved to `main`.
+- **Proposed projects.** `proposed-projects` merged first, so a header
+  resolves over the checkout's projects and the proposed ones together, and
+  a segment that carries out a proposed project links its proposed page.
+
+The implementation settles three details the design left open:
+
+- **The fallback line gives no reason.** The lookup returns None when GitHub
+  cannot answer, as § 2.2, step 1 says, so the build cannot say why.
+- **A member without a summary links by its row.** Its row in the page
+  data's `stack` carries its pull request's page on GitHub as `url`, so
+  `stackSegmentsHtml` needs no repository (§ 8.2).
+- **On a phone, the time column stays at no width.** Each header spans all
+  three columns, so a column left out of the table would come back without
+  a width and take the titles' room.
