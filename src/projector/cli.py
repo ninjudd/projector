@@ -934,7 +934,7 @@ def run_review(arguments: argparse.Namespace) -> int:
                 # a review not yet begun owes nothing to the head.
                 me, began = ((reviewer_here(None), model) if model else None), None
                 wait = review.peer_wait(config_here().get("review.peer_wait"))
-            result = review.census(repo, arguments.pr, me, began, wait, settle=arguments.wait)
+            result = review.census(repo, arguments.pr, me, began, wait, settle="answered" if arguments.wait else "")
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:

@@ -1159,9 +1159,11 @@ once its window closes:
 project review adopt 66 PRRT_kwDOA… --result kept --body reply.md
 ```
 
-It refuses a thread this model re-checks already, one that names no model,
-and one whose verifier still reviews, and waits out an open window, refusing
-if the verifier posts meanwhile. It then posts a verify reply as the
+It runs within a review, between `setup` and `publish`, and refuses when no
+review of the model holds the lock or the head has moved since. It refuses a
+thread this model re-checks already, one that names no model, and one whose
+verifier still reviews, and waits out an open window, refusing if the
+verifier posts meanwhile. It then posts a verify reply as the
 reviewer, opening with
 `<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> adopted-from=<model-id> -->`
 and a line naming both models, followed by the body file, and reads the
@@ -1187,12 +1189,14 @@ outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
 has no `{census}` outside quoted code, when the verdict disagrees with the
 count of this model's findings, as `census` marks them `mine`, when a thread
-`census` marks `adopt: now` is open, which `adopt` settles first, or when the
-reviewer already has a verdict by this model on the head
-that this loop's record does not account for. A verdict by another model is a
-second opinion and never collides, and one whose marker names no model
-collides with every model. Outside a loop, `--second-verdict <review-id>`
-publishes beside an earlier verdict the body names.
+`census` marks `adopt: now`, open or resolved, is not adopted yet, or when the
+reviewer already has a verdict by this model on the head that this loop's
+record does not account for. Before it counts, it waits, reading every 15
+seconds, until no thread is at `adopt: wait`, so a window that closes after
+the review cannot leave a finding no model re-checks. A verdict by another
+model is a second opinion and never collides, and one whose marker names no
+model collides with every model. Outside a loop, `--second-verdict
+<review-id>` publishes beside an earlier verdict the body names.
 
 On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
 rule to the head it published on. The rule reads the reviewer's verdicts and
@@ -1270,8 +1274,8 @@ no judgment, in this order, and refuses at the first that fails:
 is trusted; the loop's record holds a clean full review of the pull request,
 and its newest verdict is clean and on another head; that full review is on
 GitHub and its marker names this run's Projector version, model, and effort;
-no finding thread this model re-checks or may adopt is open; the change can
-be measured, which takes the full review's recorded merge base, both heads
+no finding thread this model re-checks is open, and no thread is one it may
+adopt; the change can be measured, which takes the full review's recorded merge base, both heads
 in the checkout, and on a moved base
 a Git that knows `merge-tree --merge-base` (2.40 or newer); the change touches
 no binary file, symlink, or submodule; and when the merge base moved, a `gate`

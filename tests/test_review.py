@@ -1841,6 +1841,63 @@ class AdoptTests(OwnershipCase):
                       self.thread_node()["comments"]["nodes"][-1]["body"])
         self.assertEqual(("codex-mini", True), tuple(self.one(self.census())[k] for k in ("verifier", "mine")))
 
+    def test_a_review_that_publishes_inside_a_models_window_waits_it_out_and_must_adopt_the_finding(self) -> None:
+        # gpt-5.5 reviewed an earlier head and left an open finding nobody has answered. This review
+        # began just now and publishes at once, while gpt-5.5's window on the head is still open.
+        self.begin_now()
+        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5"))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual("wait", self.one(self.census())["adopt"])
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code, "published before the window closed, the finding would have no verifier")
+        self.assertEqual(180, sum(self.slept))
+        self.assertIn("yours to re-check: src/x.py:3 (gpt-5.5, thread T1)", err)
+        self.assertEqual("now", self.one(self.census())["adopt"])
+        self.assertEqual(0, self.adopt("withdrawn")[0])
+        result = self.json_publish("clean")
+        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
+        self.assertEqual("claude-opus-5-5", self.one(self.census())["verifier"])
+
+    def test_an_upgraded_models_change_request_on_a_head_resolved_by_hand_is_adopted_before_sign_off(self) -> None:
+        # The loop was restarted on claude-opus-5-5. Its old ID requested changes on this head, and the
+        # author resolved that finding by hand without pushing.
+        self.begin_now()
+        self.add_verdict("claude-opus-5-0", verdict="changes-requested", at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "claude-opus-5-0", resolved=True))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        held = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual("changes-requested", held["signoff"])
+        self.assertEqual(1, code)
+        self.assertEqual(180, sum(self.slept))
+        self.assertIn("(claude-opus-5-0, thread T1, resolved)", err)
+        self.assertIn("--result fixed", err)
+        self.assertEqual(0, self.adopt("fixed")[0])
+        self.assertTrue(self.thread_node()["isResolved"], "a fix that holds stays resolved")
+        result = self.json_publish("clean")
+        self.assertEqual(("clean", False), (result["signoff"], result["draft"]),
+                         "the old ID is recorded as stopped, so its change request no longer holds the head")
+
+    def test_adopt_refuses_outside_a_review_or_on_a_head_that_moved(self) -> None:
+        self.stopped_gpt()
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.pr["head"]["sha"] = "f" * 40
+        moved = self.adopt("kept")
+        self.github.pr["head"]["sha"] = self.head
+        self.assertEqual(0, self.later("release")[0])
+        released = self.adopt("kept")
+
+        self.assertEqual(1, moved[0])
+        self.assertIn("project review move 1", moved[2])
+        self.assertEqual(1, released[0])
+        self.assertIn("holds the lock", released[2])
+        self.assertFalse(any("adopted-from" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
+
     def test_adopt_refuses_this_models_own_thread_and_one_naming_no_model(self) -> None:
         for model, words in (("claude-opus-5-5", "is yours to re-check"), (None, "names no model")):
             with self.subTest(model=model):

@@ -685,7 +685,7 @@ def finding_threads(repo: str, number: int) -> list[dict]:
 
 
 def census(repo: str, number: int, me: Optional[tuple[str, str]] = None, began: Optional[datetime] = None,
-           wait: int = PEER_WAIT, settle: bool = False) -> dict:
+           wait: int = PEER_WAIT, settle: str = "") -> dict:
     """Every Projector finding thread on the pull request, with its replies and who re-checks it, so
     the review can verify and settle each one from this one list.
 
@@ -695,12 +695,15 @@ def census(repo: str, number: int, me: Optional[tuple[str, str]] = None, began: 
     `adopt`, `adopt_at`, and `answered`. `total`, `resolved`, and `open`
     count the threads marked `mine`, every thread when there is no `me`,
     and `others` counts the rest. With `settle`, it reads again every
-    PEER_POLL seconds until no answered thread waits on its verifier's
-    window."""
+    PEER_POLL seconds until no thread waits on its verifier's window: no
+    answered thread with `answered`, as `census --wait` asks, and none at all
+    with `all`, as `publish` asks, so a window that closes after the review
+    cannot leave a finding no model re-checks."""
     while True:
         act = activity(repo, number, me)
         threads = [dict(t, **act.ownership(t, began or act.at, wait)) for t in act.threads]
-        held = [parse_time(t["adopt_at"]) for t in threads if t["answered"] and t["adopt"] == "wait"]
+        held = [parse_time(t["adopt_at"]) for t in threads
+                if t["adopt"] == "wait" and (settle == "all" or t["answered"])]
         if not settle or not held:
             break
         sleep(max(1.0, min(PEER_POLL, (min(held) - now()).total_seconds())))
@@ -1072,12 +1075,16 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
             raise Refused(f"the full review of {full['sha'][:7]} was made by "
                           f"{producer(marker.projector, marker.model, marker.effort)}, and this run is "
                           f"{producer(*mine)}")
-        # A thread this model may adopt counts as its own: a full review settles it.
+        # A thread this model may adopt, resolved or not, counts as its own: a full review settles it.
         tally = census(repo, number, (state["reviewer"], state["model"]), parse_time(state["head_started_at"]), wait)
-        open_findings = sum(1 for t in tally["threads"] if not t["resolved"] and (t["mine"] or t["adopt"] != "no"))
+        open_findings = sum(1 for t in tally["threads"] if not t["resolved"] and t["mine"])
+        adoptable = sum(1 for t in tally["threads"] if t["adopt"] != "no")
         if open_findings:
             raise Refused(f"{open_findings} finding thread{'' if open_findings == 1 else 's'} "
                           f"{'is' if open_findings == 1 else 'are'} open")
+        if adoptable:
+            raise Refused(f"{adoptable} finding thread{'' if adoptable == 1 else 's'} of a model that stopped "
+                          "reviewing, or may stop, needs a full review to adopt it")
         if not full.get("base"):
             raise Refused(f"the change cannot be measured: loop {loop}'s record holds no merge base for the "
                           f"full review of {full['sha'][:7]}, as a record an earlier release wrote does not")
@@ -1347,6 +1354,9 @@ def adopt(paths: Paths, thread_id: str, result: str, body_path: Path, wait: int 
     state = read_state(paths)
     repo, number, reviewer, model = state["repo"], paths.number, state["reviewer"], state["model"]
     me, began = (reviewer.lower(), identity(model)), parse_time(state["head_started_at"])
+    if not paths.lock(state["sha"]).exists():
+        raise ReviewError(f"no review of {repo}#{number} at {state['sha'][:7]} by model {model} holds the lock; "
+                          f"adopt within a review, after `project review setup {number}`")
     if not body_path.is_file():
         raise ReviewError(f"the body file {body_path} does not exist; write the reply there first")
     body = body_path.read_text(encoding="utf-8").strip()
@@ -1356,6 +1366,9 @@ def adopt(paths: Paths, thread_id: str, result: str, body_path: Path, wait: int 
         raise ReviewError("leave the marker out of the body; adopt writes it")
 
     def thread_now(act: Activity) -> dict:
+        if act.head != state["sha"]:
+            raise ReviewError(f"the head moved to {act.head[:7]} since {state['sha'][:7]} was set up; run "
+                              f"`project review move {number}` and re-check the thread against the new head")
         found = next((t for t in act.threads if t["id"] == thread_id), None)
         if found is None:
             raise ReviewError(f"{repo}#{number} has no Projector finding thread {thread_id}")
@@ -1734,14 +1747,17 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             event = "COMMENT"
         else:
             check_threads(threads, diff_lines(repo, number) if threads else {})
-            tally = census(repo, number, (reviewer, state["model"]), began, wait)
-            adoptable = [t for t in tally["threads"] if t["adopt"] == "now" and not t["resolved"]]
+            # A thread whose verifier's window is open waits until it closes: published before then, the
+            # review would leave a finding that no model re-checks once the window closed.
+            tally = census(repo, number, (reviewer, state["model"]), began, wait, settle="all")
+            adoptable = [t for t in tally["threads"] if t["adopt"] == "now"]
             if adoptable:
-                listed_threads = ", ".join(f"{t['path']}:{t['line']} ({t['model']}, thread {t['id']})"
-                                           for t in adoptable)
-                raise ReviewError(f"{len(adoptable)} open finding thread{'' if len(adoptable) == 1 else 's'} of a "
+                listed_threads = ", ".join(f"{t['path']}:{t['line']} ({t['model']}, thread {t['id']}"
+                                           + (", resolved)" if t["resolved"] else ")") for t in adoptable)
+                raise ReviewError(f"{len(adoptable)} finding thread{'' if len(adoptable) == 1 else 's'} of a "
                                   f"model that stopped reviewing {'is' if len(adoptable) == 1 else 'are'} yours to "
-                                  f"re-check: {listed_threads}; settle each with `project review adopt`")
+                                  f"re-check: {listed_threads}; settle each with `project review adopt`, a resolved "
+                                  "one whose fix holds with --result fixed")
             open_after = tally["open"] + len(threads)
             if verdict == "clean" and open_after:
                 raise ReviewError(f"a clean verdict needs no open finding of this model's, and {tally['open']} are "

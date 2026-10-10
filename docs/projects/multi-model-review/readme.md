@@ -541,6 +541,13 @@ place. That includes a resolved thread whose fix still holds, with
 model's verdict on the head would still count, and every later publish would
 wait for it as a peer. The cost is one reply on each such thread, once.
 
+`publish` holds that rule. It waits until no thread is at `adopt: wait`, so
+a review that finishes inside a model's window cannot publish and leave a
+finding that no model re-checks once the window closes, and then refuses
+either verdict while any thread, open or resolved, is at `adopt: now`. A
+quick review pays at most what is left of `review.peer_wait` for this, once
+for each model that stopped.
+
 ```sh
 project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file>
 ```

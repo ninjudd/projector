@@ -405,7 +405,8 @@ and the patch. It exits 0 only when the rules that need no judgment all hold:
   newest verdict in it is clean and names another head.
 - That full review is on GitHub, and its marker names the Projector version,
   model, and effort this run would write.
-- No finding thread is open that this model re-checks, or may adopt.
+- No finding thread this model re-checks is open, and no thread, open or
+  resolved, is one it may adopt.
 - The change can be measured, and it touches no binary file, symlink, or
   submodule.
 - When the merge base moved since the full review, a `project review gate`
@@ -729,9 +730,11 @@ check that the claim won in one place:
 project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file> [--model <model-id>]
 ```
 
-The body file is the rest of the reply, as for any verify reply. `adopt`
-refuses a thread your model re-checks already, one that names no model, and
-one whose verifier still reviews. While the verifier's window is open, it
+The body file is the rest of the reply, as for any verify reply. Run `adopt`
+within the review, after `setup` and before `publish`; it refuses once the
+review is published or the head has moved. It also refuses a thread your
+model re-checks already, one that names no model, and one whose verifier
+still reviews. While the verifier's window is open, it
 waits, reading again every 15 seconds, and refuses if the verifier posts in
 the meantime. It then posts the reply, opening with
 `<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> adopted-from=<model-id> -->`
@@ -742,10 +745,13 @@ the thread for `fixed`, `accepted`, or `withdrawn`, unresolves it for
 `reopened`, and leaves it as it is for `kept`. Every thread your model adopts
 counts as `mine` from then on.
 
-`publish` counts the threads marked `mine` for the verdict, and refuses
-either verdict while a thread marked `adopt: "now"` is open, naming it, so
-settle those first. Re-run census just before you choose the verdict, because
-a window that was open when the review began has usually closed by then. Run
+`publish` counts the threads marked `mine` for the verdict. It first waits
+until no thread is at `adopt: "wait"`, reading again every 15 seconds, so a
+window that closes after your review cannot leave a finding no model
+re-checks. It then refuses either verdict while any thread is at
+`adopt: "now"`, open or resolved, naming each, so adopt those and publish
+again. Re-run census just before you choose the verdict, because a window
+that was open when the review began has usually closed by then. Run
 `publish`, `adopt`, and `census --wait` with a timeout of at least
 `review.peer_wait` plus two minutes.
 
@@ -822,17 +828,18 @@ and a second verdict on a head this loop already published needs
 
 A head is *clean* only when, after you have settled every earlier finding as
 above, no Projector finding thread your model re-checks is open **and this
-review posts no P1 or P2 thread**. A `Suggestions` list in the body does not count against it: a review
-whose only output is that list is clean. Settle the earlier findings now,
-before choosing a branch, and re-run the query to confirm none is open. Both
-tests are one-way: a finding you kept or reopened makes the head not clean
-whatever else inspection found, and a new thread makes it not clean whatever
-the earlier findings came to. Because you resolve what you verify, a clean
-head needs no second pass to notice that someone clicked resolve, and an
-author who fixes a finding without resolving it is not held up. Under
-`start-review-loop` the watcher asks for a re-review on an unmoved head when
-the author answers: `RESPONDED` fires when every thread is resolved, or when
-the newest comment on an open finding thread is the author's.
+review posts no P1 or P2 thread**. A `Suggestions` list in the body does not
+count against it: a review whose only output is that list is clean. Settle
+the earlier findings now, before choosing a branch, and re-run the query to
+confirm none is open. Both tests are one-way: a finding you kept or reopened
+makes the head not clean whatever else inspection found, and a new thread
+makes it not clean whatever the earlier findings came to. Because you resolve
+what you verify, a clean head needs no second pass to notice that someone
+clicked resolve, and an author who fixes a finding without resolving it is
+not held up. Under `start-review-loop` the watcher asks for a re-review on an
+unmoved head when the author answers: `RESPONDED` fires when every thread is
+resolved, or when the newest comment on an open finding thread is the
+author's.
 
 `publish` chooses the review state from the mode, and the draft transition
 from the sign-off rule in
