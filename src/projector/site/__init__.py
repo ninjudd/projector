@@ -683,11 +683,15 @@ def plain_text(markdown: str) -> str:
 def search_index(content: Path, readme: str | None, docs: list[dict], projects: list[dict],
                  projects_readme: str | None) -> list[dict]:
     """One entry per served document: its site path, title, kind, and plain text, read from its copy under
-    `content`, and the number of the pull request that proposes it as `proposed`, for a proposed project's."""
+    `content`, and the number of the pull request that proposes it as `proposed`, for a proposed project's.
+    A document with no copy, such as a plan under a hidden folder, gets none, since the page cannot load it."""
     entries = []
 
     def add(path: str, route: str, title: str, kind: str, proposed: dict | None = None) -> None:
-        text = (content / path).read_text(encoding="utf-8", errors="replace")
+        copy = content / path
+        if not copy.is_file():
+            return
+        text = copy.read_text(encoding="utf-8", errors="replace")
         text = html_text(text) if path.lower().endswith(".html") else plain_text(text)
         entry = {"route": route, "title": title, "kind": kind, "text": text}
         if proposed is not None:

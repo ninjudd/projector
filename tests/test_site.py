@@ -171,6 +171,20 @@ class SiteBuildTests(SiteRepoCase):
         self.assertEqual(("README.md", [], [], None), (manifest["readme"], manifest["docs"], manifest["projects"],
                                                        manifest["projectsDir"]))
 
+    def test_a_projects_directory_in_a_hidden_folder_still_builds_the_site(self) -> None:
+        # The site copies nothing under a hidden folder, so search has no copy of such a plan to read.
+        (self.repo / ".projector.toml").write_text('[projects]\ndir = ".plans"\n')
+        (self.repo / ".plans/alpha").mkdir(parents=True)
+        (self.repo / ".plans/alpha/readme.md").write_text(plan("Plan alpha", "draft", "later"))
+
+        code, manifest, err = self.build()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["alpha"], [p["name"] for p in manifest["projects"]])
+        routes = [e["route"] for e in json.loads((self.out / "search.json").read_text())]
+        self.assertIn("docs/guide/", routes)
+        self.assertNotIn("projects/alpha/", routes, "search lists no page the site cannot load")
+
 
 class VisibilityTests(SiteRepoCase):
     def build_checked(self, answers: dict[str, str | None]) -> tuple[int, str]:
