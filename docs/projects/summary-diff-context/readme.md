@@ -77,7 +77,7 @@ The page data gains, on each file that has stored content:
 
 ```json
 "context": {
-  "url": "/reviews/blobs/<id>.txt",
+  "url": "<base>reviews/blobs/<id>.txt",
   "lines": 412,
   "gaps": [
     {"before": 0, "start": 1, "end": 40, "oldStart": 1},
@@ -86,6 +86,12 @@ The page data gains, on each file that has stored content:
   ]
 }
 ```
+
+`url` starts with the site's base path, the `base` that `build_summaries`
+already puts in front of every address it writes, such as
+`{base}reviews/{number}/{head}/data.json`. GitHub Pages serves a project site
+under `/<repo>/`, where `/reviews/blobs/<id>.txt` without the base is a 404.
+The page fetches `url` as given.
 
 Each gap is a run of hidden head lines, `start` to `end` inclusive on the new
 side. `before` is the index of the hunk the gap sits above, and equals the
@@ -179,18 +185,21 @@ controls stay usable for a retry. A file without `context` draws no expander.
    (no gap above), two adjacent hunks (no gap between), a pure-addition hunk, a
    pure-deletion hunk (`newLines` 0), a last hunk that reaches the end of the
    file (no gap below), a file whose last line has no newline, and CRLF lines.
-3. A build test proves that a blob whose lines disagree with the diff gives the
-   file no `context` and prints the warning; that a CRLF file keeps its
-   `context`, and its served text has no `\r` before a newline; and that two
-   heads with the same file content write one `reviews/blobs/<id>.txt`.
+3. A build test, which builds with the base `/projector/`, proves that a blob
+   whose lines disagree with the diff gives the file no `context` and prints
+   the warning; that a CRLF file keeps its `context`, and its served text has
+   no `\r` before a newline; that `context.url` is
+   `/projector/reviews/blobs/<id>.txt`; and that two heads with the same file
+   content write one `reviews/blobs/<id>.txt`.
 4. A page test, run under node against the compiled renderer as the site tests
    already do, proves that a file with `context` draws one expander per gap with
    the controls § 2.3 lists, and a file without `context` draws none.
-5. In a browser, on a summary served by `project site serve`, a reviewer
-   checks: each control reveals the right lines with the right numbers on both
-   sides; a closed gap leaves no header row or seam; revealed lines are
-   highlighted; a failed fetch shows the message; a summary published before
-   this change shows no expanders. The pull request's Testing section records
+5. In a browser, on a summary served by
+   `project site serve --base /projector/`, a reviewer checks: each control
+   reveals the right lines with the right numbers on both sides; a closed gap
+   leaves no header row or seam; revealed lines are highlighted; a failed
+   fetch shows the message; a summary published before this change shows no
+   expanders. The pull request's Testing section records
    these steps.
 6. No revealed line is inserted as raw HTML: the page passes each line through
    `hl` or `esc`. A test gives a file a line holding `<script>` and checks the
