@@ -707,10 +707,11 @@ def rendered_summary(data: dict, popovers: bool = True) -> str:
 class FileHeaderTests(SiteRepoCase):
     """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
 
-    def build(self, state: str | None = None, **pr: str) -> dict:
+    def build(self, state: str | None = None, reported_base: object = ..., **pr: str) -> dict:
         """The data the site build writes for pull request 9, which changes HEADER_FILES.
 
-        GitHub reports the pull request as `state`, or cannot be asked when it is None.
+        GitHub reports the pull request as `state`, or cannot be asked when it is None, and
+        reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
         """
         summaries = Path(tempfile.mkdtemp()) / "summaries"
         folder = summaries / "9" / ("c" * 40)
@@ -729,7 +730,8 @@ class FileHeaderTests(SiteRepoCase):
                 for p in HEADER_FILES]}],
         }))
         (folder / "diff.patch").write_text(HEADER_DIFF)
-        status = mock.patch.object(summary, "pr_status", return_value={"state": state, "reviews": []}) \
+        reported = {"state": state, "reviews": [], **({} if reported_base is ... else {"base": reported_base})}
+        status = mock.patch.object(summary, "pr_status", return_value=reported) \
             if state is not None else nullcontext()
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -848,15 +850,24 @@ class FileHeaderTests(SiteRepoCase):
                 shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
-    def test_a_pull_request_merged_into_another_branch_links_the_file_there(self) -> None:
+    def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
         # A backport, or a stack layer merged into its parent's branch, may
-        # never reach the default branch.
-        with mock.patch.object(cli, "trunk_branch", return_value="develop"):
-            data = self.build(state="merged", headRef="feature/header-links", baseRef="release/1.2")
+        # never reach the default branch. Once the parent's branch is deleted,
+        # as merging the parent usually does, the change is on the default branch.
+        def link(branch: str) -> str:
+            return f'href="https://github.com/owner/example/blob/{branch}/src/app%231.py"'
 
-        html = rendered_summary(data)
-        self.assertIn('href="https://github.com/owner/example/blob/release/1.2/src/app%231.py"', html)
-        self.assertNotIn("/blob/develop/", html)
+        for case, recorded, reported, expected in (
+                ("the base branch GitHub reports", "release/1.2", "release/1.2", "release/1.2"),
+                ("GitHub's base over the summary's, after a retarget", "stack/parent", "develop", "develop"),
+                ("the default branch once the base branch is deleted", "stack/parent", None, "develop"),
+                ("the summary's base when the lookup reports none", "release/1.2", ..., "release/1.2")):
+            with self.subTest(case), mock.patch.object(cli, "trunk_branch", return_value="develop"):
+                data = self.build(state="merged", reported_base=reported, headRef="feature/header-links", baseRef=recorded)
+                if reported is not ...:
+                    self.assertEqual(reported, data["pr"]["currentBaseRef"], "the page records the base GitHub reported")
+                self.assertIn(link(expected), rendered_summary(data))
+                shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_without_its_base_branch_links_the_default_branch(self) -> None:

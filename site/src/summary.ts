@@ -29,18 +29,23 @@ function renderSummary(data: SummaryData): void {
   // A file as it is now. While the pull request is open, that is on its head
   // branch, and once it merges, on the branch it merged into, since the merge
   // usually deletes its own: the default branch, or for a stacked pull request
-  // its parent's branch, or the default branch when the summary did not record
-  // its base. A closed pull request never reached its base, so its files link
-  // its head commit, as do those of a summary that did not record its branch and
-  // of a merged one with neither its base nor the default branch recorded. A file
-  // the pull request deleted is in none of those, so it links the merge base,
-  // the last commit that has it.
+  // its parent's branch. Once that branch is gone too, as a parent's is after
+  // it merges, the change is on the default branch. The build reports the base
+  // branch GitHub has, or null once it is deleted; a page built without asking
+  // falls back to the base the summary recorded. A closed pull request never
+  // reached its base, so its files link its head commit, as do those of a
+  // summary that did not record its branch and of a merged one with no base or
+  // default branch recorded. A file the pull request deleted is in none of
+  // those, so it links the merge base, the last commit that has it.
   function blobUrl(f: SummaryFile): string {
     const headRef = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : null;
     const trunk = data.defaultBranch !== undefined && data.defaultBranch !== '' ? data.defaultBranch : null;
     let ref = pr.head;
     if (f.deleted === true && pr.base !== undefined && pr.base !== '') ref = pr.base;
-    else if (pr.state === 'merged') ref = baseRef ?? trunk ?? pr.head;
+    else if (pr.state === 'merged') {
+      const into = pr.currentBaseRef !== undefined ? pr.currentBaseRef : baseRef;
+      ref = (into !== null && into !== '' ? into : null) ?? trunk ?? pr.head;
+    }
     else if (pr.state !== 'closed' && headRef !== null) ref = headRef;
     return `${repoUrl}/blob/${[...ref.split('/'), ...f.path.split('/')].map(encodeURIComponent).join('/')}`;
   }

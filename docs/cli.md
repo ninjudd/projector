@@ -733,11 +733,13 @@ project on the site. That is the deepest project the site has a page for, so a
 nested project owns its own files, not the project around it. **View file on
 GitHub** shows the file as it is now: on the pull request's head branch while
 it is open, and once the build finds it merged, on the branch it merged into,
-its `baseRef`, since the merge usually deletes its own. That is the default
-branch, or a stacked pull request's parent branch, and the default branch when
-the summary records no `baseRef`. A pull request closed without merging, or an
-unmerged one whose summary records no `headRef`, links its head commit. A file
-the pull request deleted links the merge base, the last commit that has it.
+since the merge usually deletes its own. That is the default branch, or a
+stacked pull request's parent branch while that branch exists. Once GitHub
+reports the parent's branch deleted, as merging the parent usually does, or
+when the summary records no `baseRef`, it is the default branch. A pull request
+closed without merging, or an unmerged one whose summary records no `headRef`,
+links its head commit. A file the pull request deleted links the merge base,
+the last commit that has it.
 `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to

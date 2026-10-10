@@ -60,12 +60,14 @@ it. The summary is JSON:
   request. `init` records both; keep them when you edit a summary by hand.
   Each file's **View file on GitHub** link opens the file on `pr.headRef`, so
   it shows the current version. Once the site's last build found the pull
-  request merged, it opens the file on `pr.baseRef`, the branch it merged
-  into, since the merge usually deletes the head branch, or on the
-  repository's default branch when the summary has no `baseRef`. It opens
-  the file at `pr.head` when the pull request was closed without merging, or
-  has not merged and the summary has no `headRef`. It opens a file the pull
-  request deleted at `pr.base`, the last commit that has it.
+  request merged, it opens the file on the branch it merged into, since the
+  merge usually deletes the head branch: the base branch GitHub reports, or
+  `pr.baseRef` when the build could not ask. It opens the file on the
+  repository's default branch instead once that branch is deleted, or when
+  the summary has no `baseRef`. It opens the file at `pr.head` when the pull
+  request was closed without merging, or has not merged and the summary has
+  no `headRef`. It opens a file the pull request deleted at `pr.base`, the
+  last commit that has it.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and the list of files itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a

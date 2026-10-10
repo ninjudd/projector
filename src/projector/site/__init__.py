@@ -174,11 +174,12 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     says, or, for a summary without one, as the checkout at `repo_root` reads
     its .gitattributes. `status_lookup` returns a pull request's state and
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
-    them each page carries `pr.state`, and `review`, the newest Projector
-    review of its head: `unreviewed` when none names the head. A page has
-    neither when the lookup is missing or cannot ask. Each page also carries
-    `defaultBranch`, `trunk`, where a merged pull request whose summary records
-    no `baseRef` now has its files.
+    them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
+    GitHub reports, or None once that branch is deleted, and `review`, the
+    newest Projector review of its head: `unreviewed` when none names the
+    head. A page has none of them when the lookup is missing or cannot ask.
+    Each page also carries `defaultBranch`, `trunk`, where a merged pull
+    request's files now are when the branch it merged into is gone.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
@@ -235,6 +236,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
             if status is not None:
                 payload["pr"]["state"] = status["state"]
+                if "base" in status:
+                    payload["pr"]["currentBaseRef"] = status["base"]
                 payload["review"] = statuses.get(head, {"status": "unreviewed"})
             folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
