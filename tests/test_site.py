@@ -596,12 +596,17 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertTrue(stack, "summary.css has no .stack rule")
         self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
 
-    def test_a_stack_row_shows_its_whole_title(self) -> None:
+    def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()
         title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
-        self.assertNotIn("line-clamp", title.group(1))
+        self.assertIn("-webkit-line-clamp: 3;", title.group(1))
+        # Bold text is wider, so a bold current row could wrap onto more lines
+        # than the same title in a plain row.
+        current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
+        self.assertNotIn("font-weight", current.group(1))
 
 
 def served_summary(number: int, head: str) -> dict:
