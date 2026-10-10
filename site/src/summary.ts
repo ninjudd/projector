@@ -174,12 +174,19 @@ function renderSummary(data: SummaryData): void {
     return out;
   }
 
+  // Every published head, newest first, one line each with when it was
+  // published in the reader's own time zone, in a list that starts closed.
   function headsList(): string {
     const heads = data.heads ?? [];
     if (heads.length < 2) return '';
-    return '<div class="prmeta versions">Versions: ' + heads.map(function (h) {
-      return h.current ? `<b class="mono">${short(h.head)}</b>` : `<a href="${esc(h.url)}">${short(h.head)}</a>`;
-    }).join(' · ') + '</div>';
+    const rows = heads.map(function (h) {
+      const when = h.at !== undefined
+        ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
+        : '';
+      const row = `<span class="mono">${short(h.head)}</span>${when}`;
+      return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
+    }).join('');
+    return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
   }
 
   // The pull requests stacked with this one, one row each, this one marked; a

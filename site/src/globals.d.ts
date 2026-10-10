@@ -54,7 +54,8 @@ interface SummaryData {
   groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };
   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
-  heads?: { head: string; url: string; current: boolean }[];
+  /** Every published head of the pull request, newest first; `at` is when it was published, in Unix seconds. */
+  heads?: { head: string; url: string; current: boolean; at?: number }[];
   /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
   stack?: { number: number; title: string; url: string; current: boolean }[];
   projects?: { name: string; title: string; url: string }[];
