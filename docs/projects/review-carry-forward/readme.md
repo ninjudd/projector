@@ -68,8 +68,9 @@ from, so everything that reads a verdict keeps working.
    behavior.
 3. On exit 0, the subagent reads the whole patch, and the code around a hunk at
    the head when it needs context. It carries only when every hunk is one of
-   the kinds in § 2.2.2. Otherwise it continues at step 5 of `review-pr`, the
-   full method, on the setup from step 1.
+   the kinds in § 2.2.2 and every prose hunk passes the two readings there.
+   Otherwise it continues at step 5 of `review-pr`, the full method, on the
+   setup from step 1.
 4. To carry, the subagent runs
    `project review publish <number> --carry --change "<what changed>"`.
    Publish checks the lock and the head as it does today, applies the carry
@@ -125,10 +126,18 @@ content, and carries only when every hunk of the interdiff is one of these:
 - **Formatting.** Whitespace and line wrapping that the file's language
   ignores. Indentation in Python or YAML is not formatting.
 
-Run the full review when any hunk is something else, when a hunk reworks code
-an earlier finding thread was about, or when you are unsure. A needless full
-review costs a minute or two. A wrong carry signs off a change that no pass
-read.
+A prose hunk carries only when a full review would pass it, so read it the
+two ways a full review does. Read it as `method.md` § 2 reads documentation:
+against the code it describes at the head, for accuracy, broken references,
+and contradictions. Read each added or changed comment and docstring against
+`guidelines.md` § 1 as well. A comment that misstates the code is a
+correctness finding there, and one that narrates the code beneath it, excuses
+complexity, or asserts that a decision is correct is a written-rules finding.
+
+Run the full review when any hunk is something else, when a prose hunk fails
+either reading, when a hunk reworks code an earlier finding thread was about,
+or when you are unsure. A needless full review costs a minute or two. A wrong
+carry signs off a change that no pass read.
 
 ### 2.3 Measuring the pull request's own change
 
@@ -264,7 +273,7 @@ carried verdict.
 | `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker` and adds `carriedFrom` to a carried head's status. |
 | `site/src/globals.d.ts`, `site/src/summary.ts` | The optional `carriedFrom` on a clean status, and the header text **Clean (carried from `<short-sha>`)**. |
 | `site/assets/summary.js` | Rebuilt with `npm run build`. |
-| `skills/review-pr/SKILL.md` | A section, "Carry a clean verdict across a minimal change", with steps 2 to 4 of § 2.1, the kinds in § 2.2.2, and the publish command. The section on labels describes the carry marker, and the report names the carried-from head. A full re-review may read its new range from `interdiff`'s patch. |
+| `skills/review-pr/SKILL.md` | A section, "Carry a clean verdict across a minimal change", with steps 2 to 4 of § 2.1, the kinds in § 2.2.2 and the two readings a prose hunk must pass, and the publish command. The section on labels describes the carry marker, and the report names the carried-from head. A full re-review may read its new range from `interdiff`'s patch. |
 | `skills/start-review-loop/SKILL.md` | "Continue after fixes" says that every pushed SHA ends in a published verdict on that SHA, full or carried. A subagent's report names the carried-from head. |
 | `docs/cli.md` | The `review.carry_max_lines` row, `review interdiff`, `publish --carry`, and the header's carried status. |
 | `tests/test_review.py`, `tests/test_site.py` | The tests in § 4. |
@@ -281,10 +290,12 @@ carried verdict.
   a change safe, because one line can invert a condition. Judgment alone has
   no bound, and nothing would stop a reviewer from carrying a restyle of 300
   lines. The code enforces what needs no judgment, so the same rules hold every
-  time and tests prove them. The reviewer decides only whether the lines it
-  read are presentation, prose, or formatting. The skill lists the kinds that
-  carry rather than the kinds that do not, so a kind nobody listed gets a full
-  review.
+  time and tests prove them. The reviewer decides whether the lines it read
+  are presentation, prose, or formatting, and whether its prose is accurate
+  and within `guidelines.md` § 1. Those are the checks a full review makes on
+  such lines, since the kind alone does not make a comment right. The skill
+  lists the kinds that carry rather than the kinds that do not, so a kind
+  nobody listed gets a full review.
 - **Measure the pull request's own change.** `fix-pr` merges the base whenever
   a branch conflicts, and that merge can bring in thousands of lines the pull
   request does not own. `merge-tree` gives the change that Git would show for
@@ -394,8 +405,10 @@ The tests run in temporary Git repositories against the fake GitHub that
    request a clean full review, then push a one-line padding change. The loop
    posts a carried verdict, the pull request stays ready, and the summary for
    the new head shows the carried status in its header. Then push a one-line
-   change to a condition, and the loop runs a full review. The implementing
-   pull request's Testing section records these steps.
+   change to a condition, and the loop runs a full review. Then push a
+   one-line comment that misstates the code beside it, and the loop runs a
+   full review that flags it. The implementing pull request's Testing section
+   records these steps.
 
 Criteria 1 to 4 fail before the change, because neither `review interdiff` nor
 `publish --carry` exists.
