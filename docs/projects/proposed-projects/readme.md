@@ -286,7 +286,7 @@ A repository gets the new workflow in one of three ways:
   by hand gets none, since Projector cannot tell what its owner meant:
 
   ```text
-  warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]
+  warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' or 'project site workflow --write' to refresh it) [site-workflow-outdated]
   ```
 
 The new trigger takes effect once the refreshed workflow is on the default

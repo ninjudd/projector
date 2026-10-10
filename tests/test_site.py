@@ -2018,7 +2018,8 @@ class InitSiteTests(SiteRepoCase):
 
     def test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote(self) -> None:
         warning = (f"warning: {summary.WORKFLOW_PATH}: the site workflow is an earlier shape and does not deploy "
-                   "when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]")
+                   "when a pull request closes (run 'project init' or 'project site workflow --write' to refresh it) "
+                   "[site-workflow-outdated]")
         hand_edited = earlier_workflows()[-1].replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
         cases = {f"earlier shape {i}": (text, True) for i, text in enumerate(earlier_workflows())}
         cases.update({"current shape": (summary.workflow_text("v0", "main"), False),

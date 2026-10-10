@@ -88,7 +88,8 @@ is the GitHub repository:
    code. A pull request from a fork skips the deploy, and its run takes a
    concurrency group of its own, so it never replaces a deploy waiting in
    `pages`. `project check` warns while the workflow is an earlier shape
-   that Projector wrote, and `project init` rewrites it.
+   that Projector wrote, and `project init` or
+   `project site workflow --write` rewrites it.
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
    `@v0.5.0`, or a full commit SHA, to change only when you choose, with

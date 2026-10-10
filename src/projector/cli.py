@@ -1184,8 +1184,9 @@ def write_site_workflow(root: Path, text: str, force: bool = False) -> FileActio
 
 def site_workflow_issues(root: Path) -> list[Issue]:
     """A warning while the site workflow is an earlier shape Projector wrote,
-    which `project init` rewrites. A workflow edited by hand gets none, since
-    Projector cannot tell what its owner meant."""
+    which `project init` rewrites, or `project site workflow --write` where
+    `site.enabled = false` keeps `init` away from it. A workflow edited by hand
+    gets none, since Projector cannot tell what its owner meant."""
     path = root / WORKFLOW_PATH
     if not path.is_file():
         return []
@@ -1194,7 +1195,7 @@ def site_workflow_issues(root: Path) -> list[Issue]:
         return []
     return [Issue("site-workflow-outdated", WORKFLOW_PATH,
                   "the site workflow is an earlier shape and does not deploy when a pull request closes "
-                  "(run 'project init' to refresh it)", "warning")]
+                  "(run 'project init' or 'project site workflow --write' to refresh it)", "warning")]
 
 
 class NotOnGitHub(ProjectorError):
