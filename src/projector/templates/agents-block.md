@@ -1,4 +1,4 @@
-<!-- projector:begin 1 -->
+<!-- projector:begin 2 -->
 ## Projector conventions
 
 This repository keeps its project plans in Git with
@@ -19,6 +19,13 @@ body as prose that explains why the change exists, because a squash merge makes
 it the commit message. Match the line wrapping already used around a Markdown
 edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
 line breaks.
+
+Open dependent work that is too large to review as one pull request as a
+GitHub stack with `gh stack`, as Projector's `implement` skill describes
+under "Stack dependent work". Fix stacked code on the branch that introduced
+it, and let `gh stack` carry the fix up by rebasing the layers above. Chain
+pull requests by base branch, and update them by merging, only where
+`gh stack` is unavailable.
 
 Projector generates this section. To change it, change the template in
 Projector and run `project init`.

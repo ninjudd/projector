@@ -38,8 +38,10 @@ what it did to each:
   `docs/projects/` in another repository knows where the `project` command
   comes from. `init` creates it once and never rewrites it.
 - `AGENTS.md` carries a section Projector generates between two HTML-comment
-  markers: where plans live, how to use `project`, and the writing style for
-  documentation and GitHub prose. `init` appends the section to an existing
+  markers: where plans live, how to use `project`, the writing style for
+  documentation and GitHub prose, and how to open dependent work as a stack
+  with `gh stack`, or as pull requests chained by base branch where
+  `gh stack` is unavailable. `init` appends the section to an existing
   file or creates the file with only that section, and refreshes the section
   when it falls behind the template this command ships. Everything outside the
   markers is yours and is never changed.
