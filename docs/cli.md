@@ -683,7 +683,8 @@ that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
 one row each with its title, and highlights the current one; a pull request
-alone is a stack of one. Its older versions follow the sections. A summary's header shows the verdict of the
+with no stack is a stack of one, with its own row highlighted. Its older
+versions follow the sections. A summary's header shows the verdict of the
 newest Projector review of its head, **Clean** or **Changes requested**,
 linked to that review on GitHub, or **Unreviewed** when no Projector review
 names the head. A review counts only when its author owns the repository,
