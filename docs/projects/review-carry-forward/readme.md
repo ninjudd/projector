@@ -42,9 +42,9 @@ and measures the pull request's own change since that head, leaving out what a
 merge of the base branch brought in. It also checks the other rules that need
 no judgment: the head is trusted, no finding is open, the earlier head is an
 ancestor, and the change edits files in place and stays within
-`review.carry_max_lines`. When those rules pass, the subagent
-reads the change and carries the verdict only when every hunk is presentation,
-prose, or formatting. It then runs
+`review.carry_max_lines`. When those rules pass, the subagent reads the change
+and carries the verdict only when every hunk is presentation, prose, or
+formatting. It then runs
 `project review publish <number> --carry --change "<what changed>"`, which
 checks the same rules again and posts a clean review whose body is the
 signature line, the markers, and one sentence: what changed since the earlier
@@ -407,8 +407,8 @@ Criteria 1 to 4 fail before the change, because neither `review interdiff` nor
   reviews, the census, two `git merge-base` calls, at most one
   `git merge-tree`, and one `git diff`. That is a few requests and local Git
   commands, against the clean full reviews on #209, which took 76 to 116
-  seconds each.
-  Publish shares one listing between the collision check and the carry rules.
+  seconds each. Publish shares one listing between the collision check and the
+  carry rules.
 - **What a carry saves.** The method's passes, the reading outward from each
   changed definition, the gate and focused tests, and the long body. On #209
   the eight heads in § 1 took 638 seconds of full review. Each ran 514 unit
