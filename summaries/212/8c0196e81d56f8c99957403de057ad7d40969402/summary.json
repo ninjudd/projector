@@ -1,0 +1,95 @@
+{
+ "version": 1,
+ "name": "Review carry-forward plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 212,
+  "title": "Plan carrying a clean review across a minimal push",
+  "head": "8c0196e81d56f8c99957403de057ad7d40969402",
+  "headRef": "spec-review-carry-forward",
+  "base": "a7c5c14b827c68ab3d2fd97a6e559c73cd010f3b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>review loop</b> watches the operator's pull requests and runs a full review on every head pushed to them: it reads every changed file, runs the repository's tests and checks, and posts a verdict whose body restates the change's intent and what it checked. A <b>verdict</b> is the review's outcome, clean or changes requested, and on your own pull request the loop also marks it ready or draft to match.",
+   "A full review costs the same whether the push is a large rewrite or a one-pixel padding fix. On #209, eight of 18 verdicts followed pushes that changed only a stylesheet by 15 lines or fewer, and those eight reviews took 638 seconds.",
+   "This pull request adds one plan, at <code>status: ready</code> and <code>priority: next</code>, and changes no code. The plan lets the loop <b>carry</b> a clean verdict: when the pull request's own change since the last full review is small and is only presentation, prose, or formatting, the loop posts a short clean verdict that names the earlier head, in place of a full review.",
+   "<ol><li><b>A new command measures the change.</b> <code>project review interdiff</code> finds the head the newest clean verdict covered, and diffs it against the new head with <code>git merge-tree</code>, so that a merge of the base branch does not count. It also checks the rules that need no judgment: a trusted head, no open finding, an ancestor relationship, files changed only in place, and a size limit.</li><li><b>The reviewer judges the content.</b> The subagent reads the patch and carries only when every hunk is one of the listed kinds.</li><li><b>Publish posts the carried verdict.</b> <code>project review publish --carry --change \"...\"</code> rechecks the rules and posts a clean comment with the usual review marker, a new <code>projector-carry</code> marker line, and one sentence.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review at 8c0196e",
+    "html": "<p>The review requested changes with two P2 findings on the plan's design. Each lets a carried verdict sign off a head that a full review would flag.</p><ul class=\"tight\"><li>A comment or documentation edit carries on its kind alone, with no check that it is accurate or allowed by <code>guidelines.md</code> § 1.</li><li>A clean base merge gives an empty interdiff, so it carries with no gate run, even when the base change breaks the pull request's code.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Carry:</b> post a clean verdict on a new head on the strength of a clean full review of an earlier head.</li><li><b>Interdiff:</b> the change to the pull request's own diff between the earlier head and the new head, with base merges left out.</li><li><b>Gate:</b> the repository's validation commands, which <code>project review gate</code> runs on a trusted head.</li><li><b>Trusted head:</b> a head whose code the reviewer may run, because everyone who wrote it has write access.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The carry plan",
+   "kicker": "The rules a carry must pass, how the change is measured, and what the carried review says",
+   "intro": [
+    "The plan splits the decision in two. Code checks what needs no judgment: whether carrying is on, whether the head is trusted, whether a clean verdict precedes it, whether the change can be measured, and whether it is small and edits files in place. The reviewer then reads the patch and decides only whether each hunk is presentation, prose, or formatting.",
+    "The carry is measured from the last full review, never from the previous carry, so a chain of small pushes cannot add up past <code>review.carry_max_lines</code> (default 20, and <code>0</code> turns carrying off). The carried review keeps today's review marker unchanged and adds its own marker line, so every existing reader of verdicts keeps working.",
+    "Read § 2.2 and § 3 with the two open findings in mind: the reviewer's judgment covers the kind of a hunk, not its accuracy, and a base merge produces no hunk to judge."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan is at <code>status: ready</code>, which claims that every question blocking implementation is answered or deliberately deferred. § 6 defers a path exclusion list and carrying across a rebase."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/review-carry-forward/readme.md",
+     "collapsed": false,
+     "note": "The whole plan: the problem on #209, the design, its reasons, acceptance criteria, cost, deferred questions, and the code facts it rests on.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 30,
+       "text": "The #209 figures match GitHub: the pull request has 18 Projector verdicts, the eight review times in § 7 sum to 638 seconds, and <code>git diff --shortstat</code> gives the table's counts for the heads checked."
+      },
+      {
+       "kind": "context",
+       "line": 100,
+       "text": "<code>git merge-tree --merge-base</code> needs Git 2.40 or newer, so the rule refuses on an older Git rather than counting a plain diff that includes the base merge."
+      },
+      {
+       "kind": "flag",
+       "line": 118,
+       "text": "Open P2 finding: a comment or documentation edit carries on its kind alone. A comment that misstates the code, or one that narrates it against <code>guidelines.md</code> § 1, would carry as clean, though a full review flags both."
+      },
+      {
+       "kind": "context",
+       "line": 145,
+       "text": "<code>merge-tree</code> with base <code>MO</code> applies the earlier head's change to the new merge base <code>MN</code>, so diffing that tree against the new head leaves only what the author changed. When the merge is clean and the author changed nothing else, the interdiff is empty."
+      },
+      {
+       "kind": "verify",
+       "line": 244,
+       "text": "Checked in <code>src/projector/site/__init__.py</code>: <code>review_statuses</code> matches each body line against the anchored <code>MARKER</code> from <code>src/projector/review.py</code>, so an unchanged marker on its own line still reads as clean on older sites."
+      },
+      {
+       "kind": "flag",
+       "line": 335,
+       "text": "Open P2 finding: a clean base merge gives an empty interdiff and passes every rule, so a head whose base change broke the pull request's code carries as clean, and no gate runs to catch it."
+      },
+      {
+       "kind": "verify",
+       "line": 474,
+       "text": "Checked in <code>src/projector/permissions.py</code>: <code>RULES</code> allows only <code>project review publish</code> and <code>project summary publish</code>, which is why the carry is a flag of <code>publish</code> rather than a new command."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
