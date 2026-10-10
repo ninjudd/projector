@@ -1,0 +1,189 @@
+{
+ "version": 1,
+ "name": "Expand hidden diff lines",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 231,
+  "title": "Expand the hidden lines around a summary's diff hunks",
+  "head": "db6f86f88c3eb207880b8dc01485451233cc40c1",
+  "headRef": "summary-context-ui",
+  "base": "456870c734bf7dcc25fd3b11e174d2cab2426db2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page shows each changed file only as its diff hunks: the changed lines and the three unchanged lines Git puts around them. A reader who needs the function a hunk sits in, or the lines between two hunks, has had to leave the page for GitHub.",
+   "The data half of this work landed in #227. <code>project summary publish</code> now stores the head's copy of each changed file under <code>head/</code> on the summaries ref. The site build serves each copy once at <code>&lt;base&gt;reviews/blobs/&lt;id&gt;.txt</code> and gives the file a <code>context</code> in the page's <code>data.json</code>: that address, the line count, and each <b>gap</b>, a run of head lines the hunks leave hidden.",
+   "This pull request draws that context. Each gap gets an <b>expander</b> row above the first hunk, between two hunks, or below the last. The row has up to three controls:",
+   "<ul><li><b>Expand down</b> reveals the 20 lines just below the hunk above.</li><li><b>Expand up</b> reveals the 20 lines just above the hunk below.</li><li><b>Expand all</b> reveals the rest of the gap. Once 20 or fewer lines remain, it is the only control.</li></ul>",
+   "The first expand of a file fetches its copy once and highlights the whole text once, so a string or comment that opens inside a gap colours every line it covers. When a gap closes, nothing marks where it was. A file without <code>context</code>, including every file of a summary published before #227, draws no expander. The pull request also marks the <code>summary-diff-context</code> plan <code>completed</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Hunk table.</b> Each hunk renders as its own <code>&lt;table class=\"diff\"&gt;</code>, opened by a <code>tr.hunk</code> header row holding the <code>@@</code> line.</li><li><b>Gap.</b> A run of hidden head lines, <code>start</code> to <code>end</code> on the new side. <code>before</code> is the index of the hunk below it, or the hunk count for the gap below the last hunk. <code>oldStart</code> is the old-side number of <code>start</code>.</li><li><b>Expander.</b> A one-row <code>table.diff.gap</code> drawn in a gap's place, holding its controls and how many lines it hides.</li><li><b>Context view.</b> What <code>renderSummary</code> hands <code>wireSummary</code> for each file with context, so revealed rows use the file's own column layout.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review at this head is clean, with no finding threads.</li><li>It reproduced each control, the merge of two tables when a gap closes, a failed fetch and its retry, shared fetches, and token marks in headless Chromium, on a site served under <code>/projector/</code>.</li><li>Two suggestions stand: an ambiguous \"It\" in <code>docs/cli.md</code>, and keyboard focus that falls to the page body when expand all closes a gap.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "types",
+   "title": "The context the page receives",
+   "kicker": "Types for the data #227 added to each file.",
+   "intro": [
+    "The site build already writes <code>context</code> and each hunk's four header numbers into <code>data.json</code>. These declarations give the page's TypeScript the same shape, so the renderer can read <code>f.context</code> with type checking."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds <code>SummaryHunk</code>, <code>SummaryGap</code> and <code>SummaryContext</code>, and an optional <code>context</code> on <code>SummaryFile</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>context</code> is optional because a file the build stored no copy of, and every file of an older summary, has none. The renderer treats its absence as no gaps.",
+       "line": 61
+      },
+      {
+       "kind": "context",
+       "text": "The page never reads the hunk numbers <code>oldStart</code>, <code>newStart</code> and their counts. The build uses them to compute gaps, and the type records that the data carries them.",
+       "line": 57
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "render",
+   "title": "Drawing the expanders",
+   "kicker": "Where each expander goes and which controls it offers.",
+   "intro": [
+    "<code>renderFile</code> builds the hunk tables as before, then places an expander table before hunk <code>i</code> when a gap has <code>before === i</code>, and one after the last hunk when a gap has <code>before</code> equal to the hunk count. Each expander's controls follow from where it sits and how many lines are left:",
+    "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Gap</th><th>More than 20 lines left</th><th>20 or fewer left</th></tr></thead><tbody><tr><td>Above the first hunk</td><td>Expand up, expand all</td><td>Expand all</td></tr><tr><td>Between two hunks</td><td>Expand down, expand up, expand all</td><td>Expand all</td></tr><tr><td>Below the last hunk</td><td>Expand down, expand all</td><td>Expand all</td></tr></tbody></table></div>",
+    "The renderer returns a context view for each file with context. It holds the expander and row builders as closures over the file's column layout, so the wiring code redraws an expander or adds rows with the same columns and line-number cells as the diff's own rows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Draws the expanders, returns each file's context view, and wires the fetch, the row insertion and the gap closing.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>expanderCells</code> chooses the controls: expand all always, and expand down or expand up only while more than <code>STEP</code> lines remain and a hunk sits on that side of the gap.",
+       "line": 234
+      },
+      {
+       "kind": "verify",
+       "text": "Each revealed line goes into the page as the highlighter's markup or through <code>esc</code>, never raw. <code>ExpanderTests</code> passes a <code>&lt;script&gt;</code> line through <code>contextRows</code> and gets it back escaped. Verified by reading and by running the test.",
+       "line": 246
+      },
+      {
+       "kind": "context",
+       "text": "The fetch is cached by URL, so two files with identical content share one request. A failed fetch is removed from the cache, so the next click tries again.",
+       "line": 864
+      },
+      {
+       "kind": "context",
+       "text": "The whole file is highlighted once per language and URL. When the highlighter returns a different number of lines than the file has, the page falls back to escaped text rather than misaligned markup.",
+       "line": 875
+      },
+      {
+       "kind": "verify",
+       "text": "Closing a gap between two hunks removes the lower table's <code>tr.hunk</code> header and moves its rows into the upper table. Above the first hunk, it removes only that header. Below the last, nothing else. Verified in headless Chromium: expanding every gap of a 120-line file left one table numbered 1 to 120 with no header, equal to the served file line for line.",
+       "line": 896
+      },
+      {
+       "kind": "context",
+       "text": "A click waits for the fetch, then works from the gap's current <code>start</code> and <code>end</code>. Several clicks queued on one pending fetch therefore apply in order, and one that arrives after the gap closed does nothing. Six queued expand downs and an expand all in the browser ended in one merged table.",
+       "line": 928
+      },
+      {
+       "kind": "context",
+       "text": "Expand up, and expand all on the gap above the first hunk, insert at the start of the following table. That puts the rows above the hunk header and above any rows an earlier expand up added, so the lines stay in order.",
+       "line": 933
+      },
+      {
+       "kind": "context",
+       "text": "When expand all closes a gap, the focused button is removed with it, and keyboard focus falls back to the page body. The review left this as a suggestion. A partial expand keeps focus on the control used.",
+       "line": 918
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles the expander row in the hunk header's colours, with compact icon buttons in the line-number gutter."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "The compiled <code>site/src/summary.ts</code>. <code>npm run build</code> reproduces it exactly."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The compiled renderer, run under node against a built site.",
+   "intro": [
+    "<code>ExpanderTests</code> builds a site with base <code>/projector/</code> from a summary with a two-hunk file that has a stored copy and a file without one. It runs the compiled <code>renderSummary</code> under node. <code>rendered_summary</code> now takes a script to run after rendering, so a test can call a context view's <code>contextRows</code> directly."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "note": "Adds <code>ExpanderTests</code> and lets <code>rendered_summary</code> run a follow-up script.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The test checks the order of expanders and hunk headers, each expander's controls and hidden-line count, that a file without context draws none, and that a revealed line holding <code>&lt;script&gt;</code> comes out escaped.",
+       "line": 1227
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "What a page can expand, and the plan marked completed.",
+   "intro": [
+    "<code>docs/cli.md</code> and the <code>summarize-pr</code> skill now say what a reader can do with the stored copies. The plan moves to <code>completed</code>, and its outcome section records the evidence for each acceptance criterion and the measured cost."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the expander controls and that a standalone <code>site page</code> draws none.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The next sentence, \"It reads only <code>summary.json</code>\", means <code>site build</code>. Read after these new sentences about the page, its \"It\" can seem to mean the page. The review suggested moving the page sentences or naming <code>site build</code> there.",
+       "line": 803
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/summary-diff-context/readme.md",
+     "note": "Marks the plan <code>completed</code>, spells out where expand up and expand all insert rows, and replaces the implementation state with the outcome.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 8, Outcome, cites the tests behind each criterion and the cost figures: 289 distinct files and about 11 MB for this repository's summaries, and under 200 ms for the first expand all on a 5,000-line file.",
+       "line": 275
+      }
+     ]
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Says the stored copies let a reader expand the lines around each hunk, and rewraps the paragraph."
+    }
+   ]
+  }
+ ]
+}
