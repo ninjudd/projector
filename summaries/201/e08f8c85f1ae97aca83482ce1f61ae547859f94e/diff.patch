@@ -1,0 +1,788 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 2fb0a19..80bc037 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -604,7 +604,8 @@ project site workflow --write
+ unassigned group. `summary publish` fetches the pull request's diff, checks
+ that the summary builds against it, commits the summary and the diff to the
+ hidden ref without touching the checkout, and starts the repository's site
+-workflow.
++workflow. It commits the head's `linguist-generated` attributes beside them
++as `attributes.json`, as [Generated files](#generated-files) describes.
+ Publishes that run at the same time, as a review loop's subagents run them,
+ each land. A publish whose push loses the race for the ref fetches the ref
+ again, rebuilds its commit on the new tip, keeping every other publisher's
+@@ -727,6 +728,8 @@ deploy, when a private repository's Pages site is public or GitHub cannot say
+ whether it is. For summaries it builds every
+ `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
+ for nothing, and skips and reports any summary that fails or has no stored diff.
++It marks generated files by the `attributes.json` beside a summary, or by the
++checkout's `.gitattributes` for a summary stored without one.
+ It reads only `summary.json`, so it also reports each summary stored only as
+ `spec.json`, the name older releases wrote. To show such a summary, publish it
+ again with a current release, as
+@@ -807,6 +810,55 @@ when a summary is published, when a push to the default branch changes
+ `.projector.toml`, or the workflow itself, and on demand; `--branch` names the
+ default branch when `origin` does not record it.
+ 
++### Generated files
++
++A summary page counts each changed file's lines as hand-written, test,
++generated, or documentation, labels generated files, and starts every file but
++a hand-written one collapsed. A file is generated when the repository's
++`.gitattributes` marks it `linguist-generated`, which is how GitHub decides to
++collapse it in a pull request's diff:
++
++```text
++site/assets/summary.js linguist-generated=true
++yarn.lock -linguist-generated
++```
++
++Setting `linguist-generated`, bare or to any value but `false`, makes a file
++generated. `-linguist-generated` or `linguist-generated=false` keeps a file
++out, even one whose path looks generated. When the attributes do not mention a
++file, its path decides: a name such as `package-lock.json`, `yarn.lock`,
++`api.pb.go`, or `client_pb2.py`, or a path through a `gen/`, `generated/`,
++`mocks/`, or `__generated__/` directory, makes it generated.
++
++`summary init` and `site page` read the attributes with `git check-attr` in
++the checkout they run in. `site build` and `site serve` read them in the
++checkout `--repo-root` names, for each summary stored without them:
++
++- **The checkout has the pull request's head commit.** The head's own
++  `.gitattributes` files answer, so a pull request that changes them is
++  summarized as it changes them. Git 2.40 and later read them with
++  `check-attr --source`. An earlier Git reads the head's tree into a
++  temporary index and checks the attributes there.
++- **The checkout lacks the head, but one of its remotes is the pull request's
++  repository.** Its working tree answers.
++- **Anything else**, such as a checkout of another repository or a directory
++  outside one. The path alone decides.
++
++Only the repository's `.gitattributes` files count, as on GitHub. The commands
++leave out your global attributes file and the system's, and a pattern matches
++a path's exact case even in a checkout on a case-insensitive file system.
++
++A deploy checks out the default branch, which lacks the head of an open pull
++request. So `summary publish` reads the head's attributes itself and stores
++them beside the summary as `attributes.json`, which the site build uses in
++place of its checkout's. When the checkout lacks the head, `publish` first
++fetches it from the remote it publishes to. The fetch adds the commit's
++objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
++remote cannot serve the head either, `publish` says so and stores no
++attributes. A summary stored without them, as every summary an earlier
++release published was, takes its attributes from the default branch when the
++site builds.
++
+ ## Review a pull request
+ 
+ `project review` runs the mechanical steps of the `review-pr` skill, so
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 96a9e94..11dcb57 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -91,7 +91,9 @@ push to, or approve the pull request unless the user asks.
+      that line in the diff. A note about one file goes on that file. Only a
+      note that ties several files together stays on the group.
+    - **Collapse noise.** Generated code, tests and documentation start
+-     collapsed unless a file's `collapsed` says otherwise. Give the files a
++     collapsed unless a file's `collapsed` says otherwise. A file the
++     repository marks `linguist-generated` in `.gitattributes` counts as
++     generated, as on GitHub; `format.md` says how. Give the files a
+      reviewer must read a one-line `note` that says what the file is for and
+      what changed in it, not a list of the names it defines.
+    - **Open the overview with orientation.** Say first what the part of the
+@@ -253,16 +255,19 @@ add them yourself.
+ that does not build. It then commits the summary and that diff to
+ `summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,
+ without touching the checkout, and sends a `repository_dispatch` event that
+-starts the workflow. Publishes that run at the same time, as a review loop's
+-subagents run them, each land. A publish whose push loses the race for the
+-ref fetches the ref again, rebuilds its commit on the new tip, and pushes
+-again, up to five pushes in all. `publish` fetches the diff from the compare
+-API, which serves pull requests past the 300-file limit of `gh pr diff`, so
+-pass `--diff` only when `publish` reports that GitHub could not serve the
+-diff. The file is then the local `git diff` from step 3, since the compare
+-call there fails with `publish`'s. It must be the diff from the summary's
+-`pr.base` to its `pr.head`, because every later deploy serves the stored diff
+-as it is. Because the diff is
++starts the workflow. The deploy checks out the default branch, which lacks
++the head, so `publish` also stores the `linguist-generated` attributes the
++head's `.gitattributes` gives the changed files, as `attributes.json`, and
++fetches the head first when the checkout lacks it. Publishes that run at the
++same time, as a review loop's subagents run them, each land. A publish whose
++push loses the race for the ref fetches the ref again, rebuilds its commit on
++the new tip, and pushes again, up to five pushes in all. `publish` fetches the
++diff from the compare API, which serves pull requests past the 300-file limit
++of `gh pr diff`, so pass `--diff` only when `publish` reports that GitHub
++could not serve the diff. The file is then the local `git diff` from step 3,
++since the compare call there fails with `publish`'s. It must be the diff from
++the summary's `pr.base` to its `pr.head`, because every later deploy serves
++the stored diff as it is. Because the diff is
+ stored, the site deploy asks GitHub for nothing: it checks each summary against
+ its stored diff and writes each page's data beside it, and the page loads
+ that data when it opens. The deploy reports and skips any summary that still
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index 7632272..d6ef901 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -80,6 +80,14 @@ it. The summary is JSON:
+   also check off each `flag` note; `context` and `verify` notes have no box.
+ - `groups[].files[].collapsed` overrides the default, which collapses
+   generated, test and documentation files.
++- A file is generated when the repository's `.gitattributes` marks it
++  `linguist-generated`, as GitHub does when it collapses the file in a pull
++  request's diff. `-linguist-generated` or `linguist-generated=false` keeps a
++  file out. A file the attributes do not mention is generated when its path
++  looks generated, such as `package-lock.json` or a file under `gen/`. The
++  CLI reads the attributes at the head when the checkout it runs in has that
++  commit, and from the working tree otherwise. `publish` fetches the head
++  when the checkout lacks it and stores the head's attributes for the site.
+ 
+ ## HTML in text fields
+ 
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 933e95d..9a38d0d 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -29,7 +29,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, title_from_text
+-from ..summary import DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page
++from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
+ 
+ 
+ 
+@@ -129,8 +129,14 @@ def summary_time(path: Path) -> int:
+     return int(path.stat().st_mtime)
+ 
+ 
+-def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
+-    """Build every summary that can be built; report and skip the rest."""
++def build_summaries(root: Path, out: Path, base: str = "/", link=None,
++                    repo_root: Path | None = None) -> tuple[list[dict], list[str]]:
++    """Build every summary that can be built; report and skip the rest.
++
++    A file is generated as the `attributes.json` that `publish` stored beside
++    a summary says, or, for a summary without one, as the checkout at
++    `repo_root` reads its .gitattributes.
++    """
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+               if not path.with_name("summary.json").is_file()]
+@@ -158,7 +164,10 @@ def skip(path: Path, reason: object) -> None:
+             stored = path.with_name(DIFF_FILE)
+             if not stored.is_file():
+                 raise SummaryError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
+-            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True)
++            attributes = path.with_name(ATTRIBUTES_FILE)
++            generated = stored_attributes(attributes) if attributes.is_file() else None
++            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True, root=repo_root,
++                                   generated=generated)
+             payload["projects"] = link(summary, payload) if link else []
+         except (SummaryError, ValueError, KeyError, TypeError) as exc:
+             skip(path, exc)
+@@ -461,7 +470,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     files = collect_files(repo_root, projects_dir, out) if repo_root else []
+     assign_routes(docs, described)
+     link = project_linker(described, base)
+-    built = build_summaries(summaries, out, base, link) if summaries and summaries.is_dir() else ([], [])
++    built = build_summaries(summaries, out, base, link, repo_root) if summaries and summaries.is_dir() else ([], [])
+     entries, failures = built
+     for project in described:
+         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index ec7fc76..081be84 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -33,6 +33,8 @@
+ DISPATCH_EVENT = "projector-summaries"
+ PAGES_ROOT = "summaries"
+ DIFF_FILE = "diff.patch"
++# What `publish` read from the head's .gitattributes, stored beside the diff.
++ATTRIBUTES_FILE = "attributes.json"
+ # Publishes running at once, as a review loop's subagents run them, race to
+ # move the summaries ref, so a push that loses is rebuilt on the new tip and
+ # tried again, up to this many pushes in all.
+@@ -65,6 +67,8 @@
+ }
+ GENERATED_SUFFIXES = (".pb.go", ".swagger.json", ".pb.ts", "_pb2.py", ".lock", "-lock.json", ".snap")
+ GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
++GENERATED_ATTRIBUTE = "linguist-generated"
++FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+ 
+ WORKFLOW = """name: Projector site
+ on:
+@@ -188,9 +192,16 @@ def lang_of(path: str) -> str:
+     return LANGS.get(name[dot:], "") if dot >= 0 else ""
+ 
+ 
+-def kind_of(path: str) -> str:
++def kind_of(path: str, generated: bool | None = None) -> str:
++    """What a summary shows `path` as: generated, test, docs, or '' for hand-written.
++
++    `generated` is the file's `linguist-generated` value from .gitattributes,
++    None when it has none. True makes the file generated and False keeps it
++    out of that class, whatever its path says; with None, the path decides.
++    """
+     lower = path.lower()
+-    if lower.endswith(GENERATED_SUFFIXES) or any(part in "/" + lower for part in GENERATED_PARTS):
++    if generated or (generated is None and (lower.endswith(GENERATED_SUFFIXES)
++                                            or any(part in "/" + lower for part in GENERATED_PARTS))):
+         return "generated"
+     name = lower.rsplit("/", 1)[-1]
+     if (
+@@ -303,6 +314,121 @@ def parse_diff(text: str) -> list[dict]:
+     return files
+ 
+ 
++def classify(files: list[dict], generated: dict[str, bool]) -> None:
++    """Set each file's kind again, letting its `linguist-generated` value in `generated` say if it is generated."""
++    for f in files:
++        f["kind"] = kind_of(f["path"], generated.get(f["path"]))
++
++
++# Attributes
++
++def checkout_root(start: Path | None = None) -> Path | None:
++    """The top of the Git checkout holding `start`, the current directory by default, or None outside one."""
++    try:
++        found = subprocess.run(["git", "-C", str(start or Path.cwd()), "rev-parse", "--show-toplevel"],
++                               capture_output=True, text=True)
++    except OSError:
++        return None
++    top = found.stdout.strip()
++    return Path(top) if found.returncode == 0 and top else None
++
++
++def names_repository(root: Path, repo: str) -> bool:
++    """Whether one of the checkout's remotes is `repo`, OWNER/NAME on any host."""
++    want = repo.strip("/").lower()
++    if not want:
++        return False
++    found = subprocess.run(["git", "-C", str(root), "config", "--get-regexp", r"^remote\..*\.url$"],
++                           capture_output=True, text=True)
++    for line in found.stdout.splitlines():
++        url = line.split(None, 1)[-1].strip().rstrip("/").lower().removesuffix(".git")
++        if url == want or url.endswith(("/" + want, ":" + want)):
++            return True
++    return False
++
++
++def check_attr(root: Path, paths: list[str], *options: str, env: dict | None = None) -> list[str] | None:
++    """Each path's `linguist-generated` value as `git check-attr` prints it, in order, or None when git fails.
++
++    The answer is GitHub's: only the repository's own .gitattributes files
++    count, so the system's attributes file and the user's global one are left
++    out, and patterns match a path's exact case even in a checkout on a
++    case-insensitive file system, where Git would otherwise ignore case.
++    """
++    command = ["git", "-C", str(root), "-c", "core.attributesFile=", "-c", "core.ignoreCase=false",
++               "check-attr", "-z", "--stdin", *options, GENERATED_ATTRIBUTE]
++    try:
++        done = subprocess.run(command, input=b"".join(p.encode("utf-8", "replace") + b"\0" for p in paths),
++                              capture_output=True, env=dict(env or os.environ, GIT_ATTR_NOSYSTEM="1"))
++    except OSError:
++        return None
++    # Each path prints as three fields: the path, the attribute, and its value.
++    fields = done.stdout.split(b"\0")
++    if done.returncode != 0 or len(fields) < 3 * len(paths):
++        return None
++    return [fields[3 * i + 2].decode("utf-8", "replace") for i in range(len(paths))]
++
++
++def generated_values(paths: list[str], values: list[str]) -> dict[str, bool]:
++    """Each path whose `linguist-generated` is specified, mapped to whether GitHub calls it generated.
++
++    GitHub reads an unset attribute, `-linguist-generated`, or the value
++    `false` as not generated, and any other setting as generated.
++    """
++    return {path: value not in ("unset", "false") for path, value in zip(paths, values) if value != "unspecified"}
++
++
++def head_attributes(root: Path, head: str, paths: list[str]) -> dict[str, bool] | None:
++    """`linguist-generated` for each of `paths` as the .gitattributes files of commit `head` set it.
++
++    None when the checkout at `root` does not have that commit, or git cannot
++    read it. Git 2.40 added `check-attr --source`; an older Git reads the
++    commit's tree into a scratch index and checks the attributes there.
++    """
++    if not FULL_SHA.fullmatch(head or ""):
++        return None
++    if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{head}^{{commit}}"],
++                      capture_output=True).returncode != 0:
++        return None
++    values = check_attr(root, paths, f"--source={head}")
++    if values is None:
++        with tempfile.TemporaryDirectory() as scratch:
++            env = dict(os.environ, GIT_INDEX_FILE=str(Path(scratch) / "index"))
++            read = subprocess.run(["git", "-C", str(root), "read-tree", head], capture_output=True, env=env)
++            values = check_attr(root, paths, "--cached", env=env) if read.returncode == 0 else None
++    return None if values is None else generated_values(paths, values)
++
++
++def generated_attributes(paths: list[str], head: str, repo: str, root: Path | None = None) -> dict[str, bool]:
++    """`linguist-generated` for each of `paths` at pull request head `head` of `repo`, read from a checkout.
++
++    The checkout is the one holding `root`, the current directory by default.
++    When it has the head commit, the head's own .gitattributes files answer.
++    Otherwise a checkout of `repo` answers from its working tree, the
++    nearest thing it has, which for a deploy is the default branch. Any other
++    directory has no answer, so the path alone decides each file's kind.
++    """
++    top = checkout_root(root)
++    if top is None or not paths:
++        return {}
++    found = head_attributes(top, head, paths)
++    if found is not None:
++        return found
++    if not names_repository(top, repo):
++        return {}
++    values = check_attr(top, paths)
++    return {} if values is None else generated_values(paths, values)
++
++
++def stored_attributes(path: Path) -> dict[str, bool]:
++    """The `linguist-generated` values `publish` stored in `path`, as `attributes.json`."""
++    data = json.loads(path.read_text(encoding="utf-8"))
++    values = data.get(GENERATED_ATTRIBUTE) if isinstance(data, dict) else None
++    if not isinstance(values, dict) or not all(isinstance(v, bool) for v in values.values()):
++        raise SummaryError(f"{path.name} must map each path to whether it is {GENERATED_ATTRIBUTE}")
++    return values
++
++
+ # GitHub
+ 
+ def gh(*args: str, input: str | None = None) -> str:
+@@ -740,7 +866,14 @@ def summary_diff(summary: dict) -> str:
+     return fetch_diff(pr["repo"], base, pr["head"])
+ 
+ 
+-def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
++def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, extra: dict | None = None,
++                 root: Path | None = None, generated: dict[str, bool] | None = None) -> dict:
++    """The data a summary page renders: the summary, sanitized, with its diff's files and counts.
++
++    `generated` holds the `linguist-generated` values `publish` stored for the
++    head. Without it they are read from the checkout holding `root`, as
++    `generated_attributes` describes.
++    """
+     pr = dict(summary.get("pr") or {})
+     if not pr.get("repo") or not pr.get("number") or not pr.get("head"):
+         raise SummaryError("pr.repo, pr.number and pr.head are required")
+@@ -758,6 +891,9 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False,
+         diff = summary_diff(summary)
+     files = parse_diff(diff)
+     validate(summary, files)
++    if generated is None:
++        generated = generated_attributes([f["path"] for f in files], str(pr["head"]), str(pr["repo"]), root)
++    classify(files, generated)
+     overview, groups = sanitized(summary)
+     payload = {
+         "name": summary.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
+@@ -850,13 +986,21 @@ def ref_exists(ref: str) -> bool:
+                           capture_output=True).returncode == 0
+ 
+ 
+-def summary_tree(parent: str, folder: str, summary: dict, diff: str) -> str:
+-    """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`."""
++def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None) -> str:
++    """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`.
++
++    With `generated`, the head's `linguist-generated` values go beside them.
++    Without, an attributes file an earlier publish of this head left stays.
++    """
++    files = [("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)]
++    if generated is not None:
++        record = {GENERATED_ATTRIBUTE: dict(sorted(generated.items()))}
++        files.append((ATTRIBUTES_FILE, json.dumps(record, indent=1, ensure_ascii=False) + "\n"))
+     with tempfile.TemporaryDirectory() as tmp:
+         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+         if parent:
+             git("read-tree", parent, env=env)
+-        for name, content in (("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)):
++        for name, content in files:
+             blob = git("hash-object", "-w", "--stdin", input=content)
+             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
+         return git("write-tree", env=env)
+@@ -885,10 +1029,35 @@ def push_decision(repo: str) -> tuple[str | None, str]:
+         return None, f"could not tell whether {repo} hosts its Projector site: {error}"
+ 
+ 
++def publish_attributes(remote: str, head: str, paths: list[str]) -> dict[str, bool] | None:
++    """The head's `linguist-generated` values for `paths`, for `publish` to store, or None when it cannot read them.
++
++    A deploy builds from a checkout of the default branch, which lacks the
++    head, so they are read here. A head this checkout lacks is fetched from
++    `remote` first, into its objects and FETCH_HEAD alone, as `git fetch
++    REMOTE HEAD` would; no branch or tag changes.
++    """
++    top = checkout_root()
++    if top is None or not paths:
++        return None
++    found = head_attributes(top, head, paths)
++    if found is None and FULL_SHA.fullmatch(head):
++        fetched = subprocess.run(["git", "-C", str(top), "fetch", "--quiet", "--no-tags", remote, head],
++                                 capture_output=True, stdin=subprocess.DEVNULL)
++        if fetched.returncode == 0:
++            found = head_attributes(top, head, paths)
++    if found is None:
++        print(f"could not read the .gitattributes of {head[:9]}, which {remote} did not serve; the site will mark "
++              "generated files by the .gitattributes of the checkout it builds from", file=sys.stderr)
++    return found
++
++
+ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
+     """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
+ 
++    The head's `linguist-generated` values go beside them when this checkout
++    has the head or can fetch it, so a deploy classifies files as the head does.
+     Without `push`, the commit goes on this checkout's own `ref` and nothing
+     leaves it, no dispatch included; `reason` says why, for the report.
+     """
+@@ -898,18 +1067,21 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+     if slug and slug.lower() != pr["repo"].lower():
+         raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+     diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
+-    prepare_page(summary, diff=diff, at_head=True)
++    paths = [f["path"] for f in prepare_page(summary, diff=diff, at_head=True, generated={})["files"]]
++    generated = publish_attributes(remote, str(pr["head"]), paths)
+     folder = f"{root}/{pr['number']}/{pr['head']}"
++    written = (f"{folder}/summary.json, {DIFF_FILE} and {ATTRIBUTES_FILE}" if generated is not None
++               else f"{folder}/summary.json and {DIFF_FILE}")
+     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+     if not push:
+         parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
+-        tree = summary_tree(parent, folder, summary, diff)
++        tree = summary_tree(parent, folder, summary, diff, generated)
+         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+             print(f"{ref} in this checkout already has this summary; nothing to publish")
+             return None
+         commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+         git("update-ref", ref, commit, parent)
+-        print(f"committed {commit[:9]} to {ref} in this checkout: {folder}/summary.json and {DIFF_FILE}; nothing was "
++        print(f"committed {commit[:9]} to {ref} in this checkout: {written}; nothing was "
+               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
+         return commit
+     local = tracking_ref(remote, ref)
+@@ -921,7 +1093,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+             if seed is None:
+                 seed = seed_from_legacy(remote)
+             parent = seed
+-        tree = summary_tree(parent, folder, summary, diff)
++        tree = summary_tree(parent, folder, summary, diff, generated)
+         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+             print(f"{ref} already has this summary; nothing to publish")
+             return None
+@@ -946,7 +1118,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+     seeded = bool(seed) and parent == seed
+     git("update-ref", local, commit)
+     retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
+-    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}{retried}")
++    print(f"pushed {commit[:9]} to {remote} {ref}: {written}{retried}")
+     if seeded:
+         print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
+               "once every site reads the new ref")
+@@ -1125,6 +1297,7 @@ def init(repo: str, number: int, summary_path: str, diff_path: str | None = None
+     meta = pr_metadata(repo, number)
+     diff = Path(diff_path).read_text(encoding="utf-8") if diff_path else fetch_diff(repo, meta["base"], meta["head"])
+     files = parse_diff(diff)
++    classify(files, generated_attributes([f["path"] for f in files], meta["head"], repo))
+     summary = {
+         "version": SUMMARY_VERSION,
+         "name": "",
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 4dde86a..d796f9f 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -455,25 +455,29 @@ def setUp(self) -> None:
+         self.dispatches: list[str] = []
+         self.sleeps: list[float] = []
+         self.output = ""
++        self.err = ""
+ 
+     def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
+-        """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`."""
++        """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
++        and its warnings in `self.err`."""
+         data = make_summary(GOOD_GROUPS)
+         data["pr"]["head"] = head
+         path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
+         path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+         os.chdir(repo or self.repo)
+-        out = io.StringIO()
++        out, err = io.StringIO(), io.StringIO()
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                  mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+-                 mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out):
++                 mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out), \
++                 redirect_stderr(err):
+                 return summary.publish(path, "origin", **kwargs)
+         finally:
+             os.chdir(cwd)
+             if not repo:
+                 self.output = out.getvalue()
++                self.err = err.getvalue()
+ 
+     def other_publisher(self) -> Path:
+         """A second clone of the remote, committing as someone else, as another review loop subagent would."""
+@@ -577,7 +581,7 @@ def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+                  mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+-                 redirect_stdout(io.StringIO()):
++                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                 summary.publish(self.summary_path, "origin", diff_path=diff_file)
+         finally:
+             os.chdir(cwd)
+@@ -737,6 +741,246 @@ def test_refuses_a_summary_for_another_repository(self) -> None:
+         with self.assertRaisesRegex(summary.SummaryError, "origin is someone/else, but the summary is for owner/repo"):
+             self.publish("a" * 40)
+ 
++    def test_stores_the_heads_attributes_beside_the_diff_when_the_checkout_has_the_head(self) -> None:
++        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\ngen/** -linguist-generated\n")
++        run(self.repo, "git", "add", ".gitattributes")
++        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
++        head = run(self.repo, "git", "rev-parse", "HEAD")
++        # The head's attributes count, not an uncommitted change to them.
++        (self.repo / ".gitattributes").write_text("src/core_test.go linguist-generated\n")
++
++        self.publish(head)
++
++        folder = f"summaries/7/{head}"
++        self.assertEqual([f"{folder}/attributes.json", f"{folder}/diff.patch", f"{folder}/summary.json"],
++                         self.ref_files())
++        stored = Path(tempfile.mkdtemp()) / "attributes.json"
++        stored.write_text(run(self.remote, "git", "show", f"refs/projector/summaries:{folder}/attributes.json"))
++        self.assertEqual({"gen/api.pb.go": False, "src/core.go": True}, summary.stored_attributes(stored),
++                         "what publish writes is what the site build reads")
++        self.assertEqual("", self.err)
++        self.assertIsNone(self.publish(head), "an unchanged summary publishes nothing")
++
++    def test_fetches_a_head_the_checkout_lacks_to_read_its_attributes(self) -> None:
++        other = self.other_publisher()
++        (other / ".gitattributes").write_text("src/core.go linguist-generated\n")
++        run(other, "git", "add", ".gitattributes")
++        run(other, "git", "commit", "--quiet", "-m", "Mark the core generated")
++        run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
++        head = run(other, "git", "rev-parse", "HEAD")
++        refs = run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags")
++
++        self.publish(head)
++
++        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
++        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
++        self.assertEqual(refs, run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags"),
++                         "the fetch changes no branch or tag")
++
++    def test_says_so_and_stores_no_attributes_when_the_remote_cannot_serve_the_head(self) -> None:
++        self.publish("a" * 40)
++
++        self.assertNotIn(f"summaries/7/{'a' * 40}/attributes.json", self.ref_files())
++        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err)
++
++    def test_a_retry_after_losing_the_race_keeps_the_heads_attributes(self) -> None:
++        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
++        run(self.repo, "git", "add", ".gitattributes")
++        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
++        head = run(self.repo, "git", "rev-parse", "HEAD")
++        race, theirs = self.racing("e" * 40)
++
++        with race:
++            mine = self.publish(head)
++
++        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine))
++        self.assertIn("after 1 retry", self.output)
++        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
++        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
++        self.assertEqual([f"summaries/7/{head}/attributes.json"],
++                         [path for path in self.ref_files() if path.endswith("attributes.json")],
++                         "written once, for this head, and not for the other publisher's")
++
++
++ATTRIBUTES = {
++    ".gitattributes": "site/assets/*.js linguist-generated=true\n"
++                      "Build/Out.js linguist-generated\n"
++                      "yarn.lock -linguist-generated\n"
++                      "api/gen/** linguist-generated=false\n",
++    "pkg/.gitattributes": "*.js linguist-generated\nkeep.js -linguist-generated\n",
++}
++# The paths ATTRIBUTES decides, each with whether it is generated, and paths it leaves to the path heuristic.
++DECIDED = {"site/assets/summary.js": True, "Build/Out.js": True, "yarn.lock": False, "api/gen/client.pb.go": False,
++           "pkg/lib/index.js": True, "pkg/keep.js": False}
++UNDECIDED = ["build/out.js", "lib/index.js", "src/core.go"]
++
++
++def attributes_repo(files: dict[str, str], origin: str = "https://github.com/Owner/Repo.git") -> tuple[Path, str]:
++    """A checkout of `origin` whose one commit holds `files`, and that commit."""
++    repo = Path(tempfile.mkdtemp()) / "repo"
++    run(repo.parent, "git", "init", "--quiet", str(repo))
++    for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
++        run(repo, "git", "config", key, value)
++    run(repo, "git", "remote", "add", "origin", origin)
++    for path, text in files.items():
++        (repo / path).parent.mkdir(parents=True, exist_ok=True)
++        (repo / path).write_text(text)
++    run(repo, "git", "add", "--all")
++    run(repo, "git", "commit", "--quiet", "-m", "Add attributes")
++    return repo, run(repo, "git", "rev-parse", "HEAD")
++
++
++def embedded(page: Path) -> dict:
++    """The data a standalone page embeds."""
++    html = (page / "index.html").read_text()
++    start = html.index('type="application/json">') + len('type="application/json">')
++    return json.loads(html[start:html.index("</script>", start)])
++
++
++class GeneratedAttributeTests(unittest.TestCase):
++    def test_the_attribute_overrules_the_path(self) -> None:
++        self.assertEqual("", summary.kind_of("site/assets/summary.js"))
++        self.assertEqual("generated", summary.kind_of("site/assets/summary.js", True))
++        self.assertEqual("generated", summary.kind_of("yarn.lock"))
++        self.assertEqual("", summary.kind_of("yarn.lock", False))
++        self.assertEqual("test", summary.kind_of("gen/check_test.go", False), "a test unmarked as generated is a test")
++        self.assertEqual("docs", summary.kind_of("docs/generated/api.md", False))
++        self.assertEqual("generated", summary.kind_of("tests/fixtures/out_test.go", True))
++
++    def test_reads_the_heads_attributes_by_exact_case_and_nested_files(self) -> None:
++        repo, head = attributes_repo(ATTRIBUTES)
++        # As Git sets it on a case-insensitive file system, where it would match Build/Out.js to build/out.js.
++        run(repo, "git", "config", "core.ignoreCase", "true")
++        (repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
++
++        self.assertEqual(DECIDED, summary.head_attributes(repo, head, [*DECIDED, *UNDECIDED]),
++                         "the commit's attributes, not the working tree's")
++        self.assertEqual(DECIDED, summary.generated_attributes([*DECIDED, *UNDECIDED], head, "owner/repo", repo / "pkg"))
++        self.assertIsNone(summary.head_attributes(repo, "HEAD", ["src/core.go"]), "only a full commit SHA is looked up")
++        self.assertIsNone(summary.head_attributes(repo, "f" * 40, ["src/core.go"]), "a commit the checkout lacks")
++
++    def test_a_git_without_check_attr_source_reads_the_head_through_a_scratch_index(self) -> None:
++        repo, head = attributes_repo(ATTRIBUTES)
++        index = (repo / ".git" / "index").read_bytes()
++        real = summary.check_attr
++
++        def before_git_2_40(root: Path, paths: list[str], *options: str, env: dict | None = None) -> list[str] | None:
++            if any(option.startswith("--source") for option in options):
++                return None
++            return real(root, paths, *options, env=env)
++
++        with mock.patch.object(summary, "check_attr", side_effect=before_git_2_40) as check:
++            self.assertEqual(DECIDED, summary.head_attributes(repo, head, [*DECIDED, *UNDECIDED]))
++        self.assertIn("--cached", check.call_args.args)
++        self.assertEqual(index, (repo / ".git" / "index").read_bytes(), "the checkout's own index is untouched")
++
++    def test_without_the_head_a_checkout_of_the_repository_reads_its_working_tree(self) -> None:
++        repo, _ = attributes_repo(ATTRIBUTES)
++        missing = "f" * 40
++        paths = [*DECIDED, *UNDECIDED]
++
++        self.assertEqual(DECIDED, summary.generated_attributes(paths, missing, "owner/repo", repo))
++        (repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
++        self.assertEqual({"src/core.go": True, "pkg/lib/index.js": True, "pkg/keep.js": False},
++                         summary.generated_attributes(paths, missing, "owner/repo", repo))
++        run(repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
++        self.assertEqual({}, summary.generated_attributes(paths, missing, "owner/repo", repo),
++                         "another repository's checkout says nothing about this one")
++        self.assertEqual({}, summary.generated_attributes(paths, missing, "owner/repo", Path(tempfile.mkdtemp())),
++                         "nor does a directory outside any checkout")
++
++    def test_only_the_repositorys_own_attributes_count(self) -> None:
++        repo, head = attributes_repo(ATTRIBUTES)
++        personal = repo.parent / "attributes"
++        personal.write_text("src/core.go linguist-generated\n")
++        run(repo, "git", "config", "core.attributesFile", str(personal))
++
++        self.assertEqual({}, summary.head_attributes(repo, head, ["src/core.go"]))
++        self.assertEqual({}, summary.generated_attributes(["src/core.go"], "f" * 40, "owner/repo", repo))
++
++    def marked_repo(self) -> tuple[Path, str]:
++        """A checkout whose head marks src/core.go generated and gen/api.pb.go not."""
++        return attributes_repo({".gitattributes": "src/core.go linguist-generated\ngen/** -linguist-generated\n",
++                                "src/.keep": ""})
++
++    def in_directory(self, directory: Path):
++        cwd = os.getcwd()
++        os.chdir(directory)
++        self.addCleanup(os.chdir, cwd)
++
++    def test_a_page_counts_files_as_the_heads_attributes_mark_them(self) -> None:
++        repo, head = self.marked_repo()
++        tmp = Path(tempfile.mkdtemp())
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = head
++        (tmp / "summary.json").write_text(json.dumps(data))
++        (tmp / "pr.diff").write_text(DIFF)
++        self.in_directory(repo / "src")
++
++        with redirect_stdout(io.StringIO()):
++            code = cli.main(["site", "page", "--summary", str(tmp / "summary.json"), "--out", str(tmp / "site"),
++                             "--diff", str(tmp / "pr.diff"), "--at-head"])
++
++        self.assertEqual(0, code)
++        payload = embedded(tmp / "site")
++        self.assertEqual({"src/core.go": "generated", "src/core_test.go": "test", "gen/api.pb.go": ""},
++                         {f["path"]: f["kind"] for f in payload["files"]})
++        self.assertEqual({"files": 3, "adds": 5, "dels": 2, "hand": 2, "test": 2, "generated": 3, "docs": 0},
++                         payload["stats"])
++
++    def test_init_flags_the_files_the_heads_attributes_mark(self) -> None:
++        repo, head = self.marked_repo()
++        tmp = Path(tempfile.mkdtemp())
++        (tmp / "pr.diff").write_text(DIFF)
++        self.in_directory(repo)
++        out = io.StringIO()
++
++        with mock.patch.object(summary, "pr_metadata", return_value=dict(make_summary([])["pr"], head=head)), \
++             redirect_stdout(out):
++            code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary",
++                             str(tmp / "summary.json"), "--diff", str(tmp / "pr.diff")])
++
++        self.assertEqual(0, code)
++        lines = out.getvalue().splitlines()
++        self.assertTrue(any(line.endswith("src/core.go [generated]") for line in lines), lines)
++        self.assertTrue(any(line.endswith(" gen/api.pb.go") for line in lines), lines)
++
++    def build_stored(self, checkout: Path, attributes: str | None) -> tuple[dict[str, str], list[str]]:
++        """Build a stored summary of head aaaa… from `checkout`, with `attributes` as its attributes.json.
++
++        Returns each file's kind, and the build's failures.
++        """
++        tmp = Path(tempfile.mkdtemp())
++        folder = tmp / "summaries" / "7" / ("a" * 40)
++        folder.mkdir(parents=True)
++        (folder / "summary.json").write_text(json.dumps(make_summary(GOOD_GROUPS)))
++        (folder / "diff.patch").write_text(DIFF)
++        if attributes is not None:
++            (folder / "attributes.json").write_text(attributes)
++        with redirect_stdout(io.StringIO()):
++            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
++        data = tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json"
++        files = json.loads(data.read_text())["files"] if data.is_file() else []
++        return {f["path"]: f["kind"] for f in files}, failures
++
++    def test_a_deploy_prefers_the_stored_attributes_to_its_own_checkout(self) -> None:
++        # The deploy's checkout is the default branch, which lacks the summary's head.
++        checkout, _ = attributes_repo({".gitattributes": "src/core.go linguist-generated\n"})
++
++        self.assertEqual(({"src/core.go": "generated", "src/core_test.go": "test", "gen/api.pb.go": "generated"}, []),
++                         self.build_stored(checkout, None), "a summary published without them reads the checkout")
++        self.assertEqual(({"src/core.go": "", "src/core_test.go": "test", "gen/api.pb.go": ""}, []),
++                         self.build_stored(checkout, '{"linguist-generated": {"gen/api.pb.go": false}}'))
++
++    def test_a_deploy_skips_a_summary_whose_stored_attributes_are_malformed(self) -> None:
++        checkout, _ = attributes_repo({".gitattributes": ""})
++
++        kinds, failures = self.build_stored(checkout, '{"linguist-generated": {"gen/api.pb.go": "no"}}')
++
++        self.assertEqual({}, kinds)
++        self.assertEqual([f"7/{'a' * 40}/summary.json: attributes.json must map each path to whether it is "
++                          "linguist-generated"], failures)
++
+ 
+ class RepoSlugTests(unittest.TestCase):
+     def test_repo_slug_reads_github_remotes(self) -> None:

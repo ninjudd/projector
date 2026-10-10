@@ -1,0 +1,136 @@
+{
+ "version": 1,
+ "name": "Generated files from .gitattributes",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 201,
+  "title": "Count linguist-generated files as generated in summaries",
+  "head": "e08f8c85f1ae97aca83482ce1f61ae547859f94e",
+  "headRef": "summary-generated-attributes",
+  "base": "ade9a2d7853e299ea7e97e947b8561358d8f9518",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page sorts each changed file into hand-written, test, generated, or documentation. It counts the lines of each kind and starts every file but a hand-written one collapsed. Before this change, only a file's path decided whether it was generated, through a list of suffixes such as <code>.lock</code> and directories such as <code>gen/</code>. So this repository's compiled <code>site/assets/*.js</code>, which <code>.gitattributes</code> marks <code>linguist-generated</code> and GitHub collapses, showed as hand-written lines on every summary.",
+   "Now the <code>linguist-generated</code> attribute decides first, read as GitHub reads it. A file the attributes do not mention falls back to the path list. The attributes come from the pull request's head, because a pull request can change <code>.gitattributes</code> itself.",
+   "The site deploy is the hard case. It builds every summary from a shallow checkout of the default branch, which never holds an open pull request's head. So <code>project summary publish</code> reads the head's attributes while it publishes, and stores them on the summaries ref beside the summary as <code>attributes.json</code>. The site build prefers that file. A summary that an earlier release published has no such file, and the build reads the attributes from its own checkout instead.",
+   "The head under review merges <code>main</code> into the branch. That merge brings in the publish retry loop, which rebuilds the summaries commit when another publish moves the ref first. The attributes are read once, before that loop, and written on every attempt."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b><code>linguist-generated</code></b>: a Git attribute that GitHub's Linguist reads. A file with it set is collapsed in a pull request's diff and left out of language statistics.</li><li><b>Kind</b>: what a summary shows a file as, the <code>kind</code> field: <code>generated</code>, <code>test</code>, <code>docs</code>, or empty for hand-written.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden ref that holds each published summary under <code>summaries/&lt;number&gt;/&lt;head&gt;/</code>.</li><li><b><code>git check-attr</code></b>: the Git command that prints a path's attribute value as <code>set</code>, <code>unset</code>, <code>unspecified</code>, or a string.</li></ul>"
+   },
+   {
+    "id": "sources",
+    "title": "Where each command reads the attributes",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>Source</th></tr></thead><tbody><tr><td><code>summary publish</code></td><td class=\"r\">The head commit, fetched from the remote if the checkout lacks it; stored as <code>attributes.json</code></td></tr><tr><td><code>site build</code>, <code>site serve</code></td><td class=\"r\">The stored <code>attributes.json</code>; without one, the <code>--repo-root</code> checkout</td></tr><tr><td><code>summary init</code>, <code>site page</code></td><td class=\"r\">The checkout they run in</td></tr></tbody></table></div><p class=\"note\">Reading from a checkout uses the head commit when the checkout has it, the working tree when one of its remotes is the pull request's repository, and nothing otherwise.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "classify",
+   "title": "Reading the attribute and deciding a file's kind",
+   "kicker": "summary.py asks git check-attr for linguist-generated at the head and lets the answer overrule the path.",
+   "intro": [
+    "<code>kind_of</code> decides what a summary shows a file as. It now takes the file's <code>linguist-generated</code> value. <code>True</code> makes the file generated and <code>False</code> keeps it out of that kind, whatever its path says. <code>None</code> means the attributes do not mention the file, and the path list decides as before.",
+    "<code>check_attr</code> runs <code>git check-attr</code> so that its answer matches GitHub's. It leaves out the user's global attributes file and the system's, and it matches patterns by exact case even where Git would ignore case. <code>head_attributes</code> reads the attributes of one commit. It uses <code>check-attr --source</code>, which needs Git 2.40, and on an older Git it reads the commit into a scratch index. <code>generated_attributes</code> picks the source for a checkout, as the overview's table shows.",
+    "The same file holds <code>publish</code>. <code>publish_attributes</code> reads the head's attributes, fetching the head commit from the remote when the checkout lacks it, and <code>summary_tree</code> writes them into the summary's folder as <code>attributes.json</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "The attribute lookup, the new kind rule, and where publish stores what it read.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 195,
+       "text": "A file whose attribute is <code>False</code> still falls through to the test and docs checks, so an unmarked <code>gen/check_test.go</code> is a test. <code>test_the_attribute_overrules_the_path</code> covers it."
+      },
+      {
+       "kind": "verify",
+       "line": 358,
+       "text": "In a scratch repository, an empty <code>core.attributesFile</code> also turned off the default <code>$XDG_CONFIG_HOME/git/attributes</code> file, not only a file set by name."
+      },
+      {
+       "kind": "context",
+       "line": 358,
+       "text": "Git still reads the checkout's own <code>.git/info/attributes</code>, with <code>--source</code> too. A scratch repository showed it. The docstring's claim that only the repository's <code>.gitattributes</code> files count is slightly too strong. The review lists this as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 393,
+       "text": "<code>head</code> reaches <code>--source</code>, <code>read-tree</code>, and the fetch only after <code>FULL_SHA</code> matches it, so a summary's <code>pr.head</code> cannot pass Git an option."
+      },
+      {
+       "kind": "verify",
+       "line": 1070,
+       "text": "Passing <code>generated={}</code> keeps the validation build from reading attributes a second time. The attributes are then read once, before the retry loop, and every attempt writes the same <code>attributes.json</code>. <code>test_a_retry_after_losing_the_race_keeps_the_heads_attributes</code> covers the retry."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "site",
+   "title": "The site build prefers the stored attributes",
+   "kicker": "build_summaries reads attributes.json beside each summary and falls back to its checkout.",
+   "intro": [
+    "<code>build_summaries</code> builds every summary on the summaries ref into the site. For each one, it now passes the stored <code>attributes.json</code> to <code>prepare_page</code> when the file exists. Otherwise it passes the checkout that <code>build_site</code> was given, so a summary from an earlier release still builds and takes the default branch's attributes.",
+    "A malformed <code>attributes.json</code> raises <code>SummaryError</code>, so the build skips and reports that one summary, as it does for any other summary that fails."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Threads the checkout into build_summaries and reads attributes.json beside each summary."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Temporary Git repositories cover each attribute source, the fallbacks, and publish.",
+   "intro": [
+    "<code>GeneratedAttributeTests</code> builds repositories with a root and a nested <code>.gitattributes</code>, and checks exact casing with <code>core.ignoreCase=true</code>, a personal attributes file that must not count, the scratch-index path of an older Git, and the working-tree fallback. Three new <code>PublishTests</code> check that publish stores the head's attributes, fetches a head the checkout lacks, and warns when the remote cannot serve the head. A fourth checks that a publish retry keeps them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and the summarize-pr skill say what counts as generated and where it is read.",
+   "intro": [
+    "<code>docs/cli.md</code> gains a \"Generated files\" section with the rules and the sources. The <code>summarize-pr</code> skill's <code>SKILL.md</code> and <code>format.md</code> say what counts as generated and that <code>publish</code> stores the head's attributes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 847,
+       "text": "This sentence names the global and system attributes files as the ones left out. Git also reads <code>.git/info/attributes</code> in the checkout, which this sentence does not mention."
+      }
+     ]
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-pr/format.md"
+    }
+   ]
+  }
+ ]
+}
