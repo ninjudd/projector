@@ -1,0 +1,1738 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a6ae0b3..e2a5b72 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -794,6 +794,40 @@ again with a current release, as
+ Each site page loads its `data.json` when it opens, where a `site page` embeds
+ its data so it opens from disk.
+ 
++The Projects page also lists each project that an open pull request
++proposes, so a plan in review is on the page where readers look for plans.
++A pull request proposes a project when the diff of its newest summary adds
++the project's lowercase `readme.md` under the projects directory, its head
++branch is in this repository, and the checkout the site is built from has
++neither a project of that name nor a file at that path. A repository's first
++plan counts too, before the checkout has a projects directory. The build
++rebuilds the plan from that diff, loads it as `project list` does, and
++serves it at `projects/<name>/`, the address it keeps once it merges, with
++the other Markdown files the diff adds in the project's folder. It never
++serves a proposed HTML page, image, or data file, because an HTML page runs
++on the site's origin, and a proposal has not been merged. The project sits
++in its status group with a **Proposed** badge that links the pull request's
++review. Each of its pages opens with a banner that names the pull request,
++its title and status, and the head the site shows, and its GitHub links
++point at that head. Typing `proposed` in the filter lists the proposed
++projects, and search marks their pages with the badge. A plan that does not
++load is left out with a `::warning title=Proposed project skipped::` line
++that names the pull request. When two open pull requests propose one name,
++the lower number's plan is shown, and the banner names the other. The build
++reads whether each pull request is open, and whether its head branch is in
++a fork, from the status query it already makes. When `gh` cannot answer, a
++pull request proposes nothing, and the build prints how many it left out.
++`site build` counts the proposed projects in its summary line:
++
++```console
++$ project site build --out _site --summaries summaries-ref/summaries
++…
++wrote _site/index.html: 15 projects, 1 proposed project, 23 reviews, 0 reviews skipped
++```
++
++A proposed project leaves the site with the deploy that runs when its pull
++request merges or closes.
++
+ For pages or files the repository generates rather than commits, `site build`
+ first runs the shell command `site.prepare` names, in the checkout, through
+ the system shell, and says so on stderr. `--prepare` runs a given command in
+diff --git a/docs/projects/proposed-projects/readme.md b/docs/projects/proposed-projects/readme.md
+index 6212a20..3555594 100644
+--- a/docs/projects/proposed-projects/readme.md
++++ b/docs/projects/proposed-projects/readme.md
+@@ -641,3 +641,44 @@ after the change.
+   branch for `pull_request_target`. This repository's `github-pages`
+   environment allows deploys only from `main`. A `GITHUB_TOKEN` event starts no
+   new run, except `workflow_dispatch` and `repository_dispatch`.
++
++## 8. Implementation status
++
++Two stacked pull requests implement this plan. The first makes a closed pull
++request deploy the site, as § 2.4 describes, and adds the
++`site-workflow-outdated` warning. The second finds, serves, and shows the
++proposed projects, as §§ 2.1 to 2.3 describe. Every test in § 4 is in the
++second, except the workflow tests, which are in the first.
++
++Implementation settled these details:
++
++- **The warning names both fixes.** `project init` leaves the site workflow
++  alone in a repository that sets `site.enabled = false`, so the
++  `site-workflow-outdated` warning names `project site workflow --write`
++  too, as § 2.4's example now shows.
++- **The line for unknown statuses.** When pull requests that add a plan
++  have no known status, the build prints
++  `::warning title=Proposed projects left out::the status of 1 pull request that adds a plan is unknown, because GitHub could not be asked, so its plan is not proposed`.
++- **The filter matches the word anywhere.** Typing `proposed` keeps every
++  row whose name, title, or owner holds the word, as well as every
++  proposed row. This project's own row matches by its name.
++- **The banner names other proposals in one line**: "A plan of this name is
++  also proposed in #12."
++- **A malformed `projects` list in a summary links nothing.** Linking now
++  runs after the summaries are read, so a `projects` value that is not a
++  list of names is ignored, rather than costing the summary its page.
++
++On this repository's summaries ref on 2026-10-10, with #219 and #222 open,
++`project site build` printed `16 projects, 34 reviews, 21 reviews skipped`
++in 16.4 seconds before the change, and
++`16 projects, 2 proposed projects, 34 reviews, 21 reviews skipped` in 15.6
++seconds after it. Both runs made the same status queries, which take most of
++the time. In a browser, `project site serve` showed both plans in their
++status groups with the badge, and each project page showed the banner. Both
++showed in the light and dark themes, at full width and at 375 pixels, with
++no horizontal scroll. The badge opened the review page, and search found the
++plans with the badge.
++
++What remains is the check after the merge in § 4: a throwaway plan's pull
++request, opened and then closed, must leave the deployed Projects page, and
++the close must run the workflow on `pull_request_target`.
+diff --git a/docs/site.md b/docs/site.md
+index b83ae2a..d9bd014 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -3,7 +3,8 @@
+ Projector can host a site for a repository on GitHub Pages, built from content
+ Projector keeps in the repository itself. Its menu has three sections:
+ **Projects**, the home page, lists the projects under `docs/projects` with
+-each one's priority, and its owner when any plan names one;
++each one's priority, and its owner when any plan names one, beside the plans
++that open pull requests propose, each marked **Proposed**;
+ **Reviews** lists the pull request summaries the `summarize-pr` skill
+ publishes; and **Docs** renders `README.md` beside a sidebar of every other
+ document under `docs/`. A document is Markdown, which the site renders, or an
+diff --git a/site/assets/site.css b/site/assets/site.css
+index f6bda91..b0ed4b3 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -169,6 +169,19 @@ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
+ .sitemain .badge.priority-now { color: var(--text); font-weight: 600; }
+ .sitemain .badge.status-ready { background: var(--ok-bg); color: var(--ok); }
+ .sitemain .badge.status-draft, .sitemain .badge.priority-next { background: var(--warn-bg); color: var(--warn); }
++/* A project an open pull request proposes: its badge links that pull request's
++   review, and a banner tops each of its pages. Both take the info colours,
++   which summary.css sets for the light and dark themes, apart from the
++   status and priority badges beside them. */
++.sitemain a.badge.proposed { background: var(--info-bg); color: var(--info); text-decoration: none; }
++.sitemain a.badge.proposed:hover { text-decoration: underline; }
++.proposal {
++  margin: 0 0 12px; padding: 10px 14px; font-size: 14px;
++  background: var(--info-bg); border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 8px;
++}
++.proposal p { margin: 0; }
++.proposal p + p { margin-top: 4px; }
++.proposal b { color: var(--info); }
+ 
+ .phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+ .crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+diff --git a/site/assets/site.js b/site/assets/site.js
+index 599222d..ee115c6 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -9,6 +9,8 @@
+ (function () {
+     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
+     const PRIORITY_ORDER = ['now', 'next', 'later'];
++    // What the site calls a project whose plan an open pull request adds.
++    const PROPOSED = 'Proposed';
+     // Projector's mark, as projector.bot draws it: an orange beam from a lens.
+     const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
+         '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
+@@ -35,8 +37,9 @@
+     function errorMessage(error) {
+         return error instanceof Error ? error.message : String(error);
+     }
+-    function repoUrl(kind, path) {
+-        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
++    // A repository file on GitHub at `ref`: the site's branch, or a proposed project's head.
++    function repoUrl(kind, path, ref = site.branch) {
++        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+     }
+     function contentUrl(path) {
+         return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
+@@ -96,8 +99,8 @@
+     }
+     // Render Markdown from the repository file at `path`: sanitize it, give headings
+     // ids, keep links between copied documents inside the site, and send every
+-    // other repository link to GitHub.
+-    function renderMarkdown(text, path) {
++    // other repository link to GitHub, at `ref`.
++    function renderMarkdown(text, path, ref = site.branch) {
+         const box = document.createElement('div');
+         box.className = 'markdown';
+         box.innerHTML = window.DOMPurify.sanitize(window.marked.parse(stripFrontmatter(text)));
+@@ -117,14 +120,14 @@
+             else if (siteFiles.has(target))
+                 a.setAttribute('href', contentUrl(target));
+             else
+-                a.setAttribute('href', repoUrl('blob', target));
++                a.setAttribute('href', repoUrl('blob', target, ref));
+         });
+         box.querySelectorAll('img[src]').forEach(function (img) {
+             const src = img.getAttribute('src') ?? '';
+             if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/'))
+                 return;
+             const target = resolve(path, src);
+-            img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target));
++            img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target, ref));
+         });
+         const hljs = window.hljs;
+         if (hljs !== undefined)
+@@ -134,6 +137,12 @@
+     function badge(kind, value) {
+         return value != null && value !== '' ? `<span class="badge ${kind}-${esc(value)}">${esc(value)}</span>` : '';
+     }
++    // The badge of a project an open pull request proposes, linking that pull request's review.
++    function proposedBadge(number) {
++        return number !== undefined
++            ? `<a class="badge proposed" href="${esc(`${base}reviews/${String(number)}/`)}">${PROPOSED} #${String(number)}</a>`
++            : '';
++    }
+     function nav(active) {
+         const items = [];
+         if (site.projects.length > 0)
+@@ -213,7 +222,8 @@
+         });
+         function link(item) {
+             return `<a href="${esc(routeFor(item.path))}"` +
+-                `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>`;
++                `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
++                (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
+         }
+         function render(node) {
+             const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+@@ -266,16 +276,17 @@
+             catch { /* a page that navigated elsewhere is no longer ours to read */ }
+         });
+     }
+-    function showPage(active, path, title, before, side) {
++    // `ref` is where a Markdown page's links to repository files the site lacks point on GitHub.
++    function showPage(active, path, title, before, side, ref = site.branch) {
+         if (isHtml(path))
+             showHtml(active, path, title, before, side);
+         else
+-            showDocument(active, path, title, before, side);
++            showDocument(active, path, title, before, side, ref);
+     }
+-    function showDocument(active, path, title, before, side) {
++    function showDocument(active, path, title, before, side, ref) {
+         frame(active, title, '<p class="note">Loading…</p>', side);
+         loadMarkdown(path).then(function (text) {
+-            const main = frame(active, title, renderMarkdown(text, path), side);
++            const main = frame(active, title, renderMarkdown(text, path, ref), side);
+             if (before !== null)
+                 main.insertBefore(before, main.firstChild);
+             const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+@@ -305,6 +316,7 @@
+     // the same in every table, so the columns line up from one status to the next.
+     function showProjects() {
+         const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
++        const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
+         const groups = STATUS_ORDER.map(function (status) {
+             const rows = site.projects.filter(function (p) { return p.status === status; });
+             rows.sort(function (a, b) {
+@@ -318,13 +330,16 @@
+                 `<colgroup><col><col class="priority">${owners ? '<col class="owner">' : ''}<col class="name"></colgroup>` +
+                 `<thead><tr><th>Project</th><th>Priority</th>${owners ? '<th>Owner</th>' : ''}<th class="name">Name</th></tr></thead><tbody>` +
+                 rows.map(function (p) {
+-                    return `<tr data-search="${esc(`${p.name} ${p.title} ${ownerName(p)}`.toLowerCase())}">` +
+-                        `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a></td>` +
++                    const search = `${p.name} ${p.title} ${ownerName(p)}${p.proposed !== undefined ? ` ${PROPOSED}` : ''}`;
++                    return `<tr data-search="${esc(search.toLowerCase())}">` +
++                        `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a>` +
++                        `${p.proposed !== undefined ? ` ${proposedBadge(p.proposed.number)}` : ''}</td>` +
+                         `<td>${badge('priority', p.priority)}</td>${owners ? `<td class="owner">${esc(ownerName(p))}</td>` : ''}` +
+                         `<td class="mono name">${esc(p.name)}</td></tr>`;
+                 }).join('') + '</tbody></table></div></section>';
+         }).join('');
+-        const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>. ` +
++        const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
++            `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
+             'Status says how finished a project is; priority says when it is scheduled.</p>' +
+             '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
+         const filter = main.querySelector('.filter');
+@@ -362,7 +377,7 @@
+         site.projects.forEach(function (p) {
+             if (p === top || !p.path.startsWith(prefix))
+                 return;
+-            items.push({ path: p.path, title: p.title });
++            items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
+         });
+         site.projects.forEach(function (p) {
+             if (p.path.startsWith(prefix))
+@@ -372,7 +387,7 @@
+         // project's readme is Overview, the page the tree starts from: on that page
+         // its title would repeat the heading, and on every other page of the
+         // project the breadcrumbs already name the project.
+-        const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview' }, path) : null;
++        const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview', proposed: top.proposed?.number }, path) : null;
+         const isReadme = path === project.path;
+         const file = project.files.find(function (f) { return f.path === path; });
+         const leaf = path.slice(path.lastIndexOf('/') + 1);
+@@ -381,18 +396,37 @@
+             const here = isReadme && i === parts.length - 1;
+             return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
+         }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
++        const ref = project.proposed?.head ?? site.branch;
+         const head = document.createElement('div');
+         head.className = 'phead';
+         head.innerHTML = `<div class="crumbs">${crumbs}</div>` +
++            (project.proposed !== undefined ? proposalBanner(project.proposed) : '') +
+             (isReadme ? `<div class="pmeta">${badge('status', project.status)}${badge('priority', project.priority)}` +
+                 (project.owner != null && project.owner !== '' ? `<span class="note">Owner ${esc(project.owner)}</span>` : '') +
+-                `<a class="note" href="${esc(repoUrl('blob', project.path))}">View on GitHub</a></div>` +
++                `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
+                 (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
+                     const r = reviewFor(n);
+                     return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
+                 }).join(' · ') + '</div>' : '')
+-                : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path))}">View on GitHub</a></div>`);
+-        showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side);
++                : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
++        showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
++    }
++    // The banner atop every page of a proposed project: the pull request that
++    // proposes it, with its title and status as the Reviews index draws them,
++    // the head the site shows, and any other open pull request that proposes a
++    // plan of the same name.
++    function proposalBanner(proposed) {
++        function review(number) {
++            return `<a href="${esc(`${base}reviews/${String(number)}/`)}">#${String(number)}</a>`;
++        }
++        const r = reviewFor(proposed.number);
++        const status = r !== null ? statusHtml(r.state, r.review) : '';
++        const also = proposed.also.length > 0
++            ? `<p class="note">A plan of this name is also proposed in ${proposed.also.map(review).join(', ')}.</p>` : '';
++        return `<div class="proposal"><p><b>${PROPOSED} in</b> ${review(proposed.number)}` +
++            `${r !== null ? ` ${esc(r.title)}` : ''}${status !== '' ? ` · <span class="eyebrow">${status}</span>` : ''}</p>` +
++            `<p class="note">This plan is in an open pull request and is not on <span class="mono">${esc(site.branch)}</span> yet. ` +
++            `It shows head <span class="mono">${esc(proposed.head.slice(0, 7))}</span>, the newest head with a summary.</p>${also}</div>`;
+     }
+     function reviewFor(number) {
+         return site.reviews.find(function (r) { return r.number === number; }) ?? null;
+@@ -513,6 +547,7 @@
+         });
+         return scored.sort(function (a, b) { return b.score - a.score; }).map(function (r) {
+             return `<li><a href="${esc(base + r.entry.route)}">${esc(r.entry.title)}</a> <span class="note">${esc(r.entry.kind)}</span>` +
++                (r.entry.proposed !== undefined ? ` ${proposedBadge(r.entry.proposed)}` : '') +
+                 `<div class="snippet">${snippet(r.entry.text, words)}</div></li>`;
+         });
+     }
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 3291296..e9750b8 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -92,6 +92,16 @@ interface SitePage {
+   route: string;
+ }
+ 
++/**
++ * The open pull request whose newest summary adds a proposed project's plan, the full SHA of that summary's head,
++ * and the other open pull requests whose newest summaries add a plan of the same name, lowest first.
++ */
++interface Proposal {
++  number: number;
++  head: string;
++  also: number[];
++}
++
+ interface SiteProject {
+   name: string;
+   path: string;
+@@ -101,6 +111,8 @@ interface SiteProject {
+   owner?: string | null;
+   files: SitePage[];
+   reviews: number[];
++  /** Present only on a project an open pull request proposes, which is not in the checkout the site was built from. */
++  proposed?: Proposal;
+ }
+ 
+ /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
+@@ -133,10 +145,11 @@ interface SiteData {
+   reviews: SiteReview[];
+ }
+ 
+-/** One entry of search.json. */
++/** One entry of search.json; `proposed` is the pull request that proposes the page's project, if one does. */
+ interface SearchEntry {
+   route: string;
+   title: string;
+   kind: string;
+   text: string;
++  proposed?: number;
+ }
+diff --git a/site/src/site.ts b/site/src/site.ts
+index b68c36e..1e5856d 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -9,10 +9,11 @@
+   type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
+   type Body = string | Node;
+ 
+-  /** A page in a sidebar's tree. */
++  /** A page in a sidebar's tree, and for a proposed project's plan the pull request that proposes it. */
+   interface Item {
+     path: string;
+     title: string;
++    proposed?: number | undefined;
+   }
+ 
+   interface TreeNode {
+@@ -23,6 +24,8 @@
+ 
+   const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
+   const PRIORITY_ORDER = ['now', 'next', 'later'];
++  // What the site calls a project whose plan an open pull request adds.
++  const PROPOSED = 'Proposed';
+   // Projector's mark, as projector.bot draws it: an orange beam from a lens.
+   const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
+     '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
+@@ -49,8 +52,9 @@
+   function errorMessage(error: unknown): string {
+     return error instanceof Error ? error.message : String(error);
+   }
+-  function repoUrl(kind: string, path: string): string {
+-    return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
++  // A repository file on GitHub at `ref`: the site's branch, or a proposed project's head.
++  function repoUrl(kind: string, path: string, ref: string = site.branch): string {
++    return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+   }
+   function contentUrl(path: string): string {
+     return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
+@@ -108,8 +112,8 @@
+ 
+   // Render Markdown from the repository file at `path`: sanitize it, give headings
+   // ids, keep links between copied documents inside the site, and send every
+-  // other repository link to GitHub.
+-  function renderMarkdown(text: string, path: string): HTMLElement {
++  // other repository link to GitHub, at `ref`.
++  function renderMarkdown(text: string, path: string, ref: string = site.branch): HTMLElement {
+     const box = document.createElement('div');
+     box.className = 'markdown';
+     box.innerHTML = window.DOMPurify.sanitize(window.marked.parse(stripFrontmatter(text)));
+@@ -124,13 +128,13 @@
+       const target = resolve(path, hashAt >= 0 ? href.slice(0, hashAt) : href);
+       if (pageFiles.has(target)) a.setAttribute('href', routeFor(target) + hash);
+       else if (siteFiles.has(target)) a.setAttribute('href', contentUrl(target));
+-      else a.setAttribute('href', repoUrl('blob', target));
++      else a.setAttribute('href', repoUrl('blob', target, ref));
+     });
+     box.querySelectorAll('img[src]').forEach(function (img) {
+       const src = img.getAttribute('src') ?? '';
+       if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) return;
+       const target = resolve(path, src);
+-      img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target));
++      img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target, ref));
+     });
+     const hljs = window.hljs;
+     if (hljs !== undefined) box.querySelectorAll('pre code').forEach(function (code) { hljs.highlightElement(code); });
+@@ -141,6 +145,13 @@
+     return value != null && value !== '' ? `<span class="badge ${kind}-${esc(value)}">${esc(value)}</span>` : '';
+   }
+ 
++  // The badge of a project an open pull request proposes, linking that pull request's review.
++  function proposedBadge(number: number | undefined): string {
++    return number !== undefined
++      ? `<a class="badge proposed" href="${esc(`${base}reviews/${String(number)}/`)}">${PROPOSED} #${String(number)}</a>`
++      : '';
++  }
++
+   function nav(active: Section): string {
+     const items: [string, string, Section][] = [];
+     if (site.projects.length > 0) items.push([base, 'Projects', 'projects']);
+@@ -214,7 +225,8 @@
+     });
+     function link(item: Item): string {
+       return `<a href="${esc(routeFor(item.path))}"` +
+-        `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>`;
++        `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
++        (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
+     }
+     function render(node: TreeNode): string {
+       const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+@@ -264,15 +276,18 @@
+     });
+   }
+ 
+-  function showPage(active: Section, path: string, title: string, before: Node | null, side: string | null): void {
++  // `ref` is where a Markdown page's links to repository files the site lacks point on GitHub.
++  function showPage(active: Section, path: string, title: string, before: Node | null, side: string | null,
++    ref: string = site.branch): void {
+     if (isHtml(path)) showHtml(active, path, title, before, side);
+-    else showDocument(active, path, title, before, side);
++    else showDocument(active, path, title, before, side, ref);
+   }
+ 
+-  function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null): void {
++  function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null,
++    ref: string): void {
+     frame(active, title, '<p class="note">Loading…</p>', side);
+     loadMarkdown(path).then(function (text) {
+-      const main = frame(active, title, renderMarkdown(text, path), side);
++      const main = frame(active, title, renderMarkdown(text, path, ref), side);
+       if (before !== null) main.insertBefore(before, main.firstChild);
+       const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+       if (target !== null) target.scrollIntoView();
+@@ -304,6 +319,7 @@
+   // the same in every table, so the columns line up from one status to the next.
+   function showProjects(): void {
+     const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
++    const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
+     const groups = STATUS_ORDER.map(function (status) {
+       const rows = site.projects.filter(function (p) { return p.status === status; });
+       rows.sort(function (a, b) {
+@@ -316,14 +332,17 @@
+         `<colgroup><col><col class="priority">${owners ? '<col class="owner">' : ''}<col class="name"></colgroup>` +
+         `<thead><tr><th>Project</th><th>Priority</th>${owners ? '<th>Owner</th>' : ''}<th class="name">Name</th></tr></thead><tbody>` +
+         rows.map(function (p) {
+-          return `<tr data-search="${esc(`${p.name} ${p.title} ${ownerName(p)}`.toLowerCase())}">` +
+-            `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a></td>` +
++          const search = `${p.name} ${p.title} ${ownerName(p)}${p.proposed !== undefined ? ` ${PROPOSED}` : ''}`;
++          return `<tr data-search="${esc(search.toLowerCase())}">` +
++            `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a>` +
++            `${p.proposed !== undefined ? ` ${proposedBadge(p.proposed.number)}` : ''}</td>` +
+             `<td>${badge('priority', p.priority)}</td>${owners ? `<td class="owner">${esc(ownerName(p))}</td>` : ''}` +
+             `<td class="mono name">${esc(p.name)}</td></tr>`;
+         }).join('') + '</tbody></table></div></section>';
+     }).join('');
+     const main = frame('projects', 'Projects',
+-      `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>. ` +
++      `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
++      `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
+       'Status says how finished a project is; priority says when it is scheduled.</p>' +
+       '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
+     const filter = main.querySelector('.filter');
+@@ -360,7 +379,7 @@
+     const items: Item[] = [];
+     site.projects.forEach(function (p) {
+       if (p === top || !p.path.startsWith(prefix)) return;
+-      items.push({ path: p.path, title: p.title });
++      items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
+     });
+     site.projects.forEach(function (p) {
+       if (p.path.startsWith(prefix)) p.files.forEach(function (f) { items.push(f); });
+@@ -369,7 +388,7 @@
+     // project's readme is Overview, the page the tree starts from: on that page
+     // its title would repeat the heading, and on every other page of the
+     // project the breadcrumbs already name the project.
+-    const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview' }, path) : null;
++    const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview', proposed: top.proposed?.number }, path) : null;
+ 
+     const isReadme = path === project.path;
+     const file = project.files.find(function (f) { return f.path === path; });
+@@ -379,18 +398,38 @@
+       const here = isReadme && i === parts.length - 1;
+       return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
+     }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
++    const ref = project.proposed?.head ?? site.branch;
+     const head = document.createElement('div');
+     head.className = 'phead';
+     head.innerHTML = `<div class="crumbs">${crumbs}</div>` +
++      (project.proposed !== undefined ? proposalBanner(project.proposed) : '') +
+       (isReadme ? `<div class="pmeta">${badge('status', project.status)}${badge('priority', project.priority)}` +
+         (project.owner != null && project.owner !== '' ? `<span class="note">Owner ${esc(project.owner)}</span>` : '') +
+-        `<a class="note" href="${esc(repoUrl('blob', project.path))}">View on GitHub</a></div>` +
++        `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
+         (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
+           const r = reviewFor(n);
+           return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
+         }).join(' · ') + '</div>' : '')
+-        : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path))}">View on GitHub</a></div>`);
+-    showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side);
++        : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
++    showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
++  }
++
++  // The banner atop every page of a proposed project: the pull request that
++  // proposes it, with its title and status as the Reviews index draws them,
++  // the head the site shows, and any other open pull request that proposes a
++  // plan of the same name.
++  function proposalBanner(proposed: Proposal): string {
++    function review(number: number): string {
++      return `<a href="${esc(`${base}reviews/${String(number)}/`)}">#${String(number)}</a>`;
++    }
++    const r = reviewFor(proposed.number);
++    const status = r !== null ? statusHtml(r.state, r.review) : '';
++    const also = proposed.also.length > 0
++      ? `<p class="note">A plan of this name is also proposed in ${proposed.also.map(review).join(', ')}.</p>` : '';
++    return `<div class="proposal"><p><b>${PROPOSED} in</b> ${review(proposed.number)}` +
++      `${r !== null ? ` ${esc(r.title)}` : ''}${status !== '' ? ` · <span class="eyebrow">${status}</span>` : ''}</p>` +
++      `<p class="note">This plan is in an open pull request and is not on <span class="mono">${esc(site.branch)}</span> yet. ` +
++      `It shows head <span class="mono">${esc(proposed.head.slice(0, 7))}</span>, the newest head with a summary.</p>${also}</div>`;
+   }
+ 
+   function reviewFor(number: number): SiteReview | null {
+@@ -510,6 +549,7 @@
+     });
+     return scored.sort(function (a, b) { return b.score - a.score; }).map(function (r) {
+       return `<li><a href="${esc(base + r.entry.route)}">${esc(r.entry.title)}</a> <span class="note">${esc(r.entry.kind)}</span>` +
++        (r.entry.proposed !== undefined ? ` ${proposedBadge(r.entry.proposed)}` : '') +
+         `<div class="snippet">${snippet(r.entry.text, words)}</div></li>`;
+     });
+   }
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 4d5e282..8b65b1a 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -933,16 +933,18 @@ def run_summary(arguments: argparse.Namespace) -> int:
+ SKIPPED_PLAN_ISSUES = {"invalid-project", "missing-plan", "wrong-entry-case"}
+ 
+ 
+-def site_projects(root: Path) -> tuple[list, Optional[Path]]:
+-    """The repository's projects for the site, without the plans that are broken.
++def site_projects(root: Path) -> tuple[list, Path]:
++    """The repository's projects for the site, without the plans that are broken, and its projects directory.
+ 
+     A broken plan should cost only its own place on the site, not the other
+     projects or the deploy that also carries the README, the docs, and the
+-    summaries, so each one is skipped with a warning that names it.
++    summaries, so each one is skipped with a warning that names it. The
++    projects directory is the configured one even when the checkout lacks
++    it, since a pull request can propose the repository's first plan.
+     """
+     store = ProjectStore(root, root, configured_projects_dir(root))
+     if not store.projects_dir.is_dir():
+-        return [], None
++        return [], store.projects_dir
+     projects, _ = store.readable_projects()
+     for issue in store.check(instructions_enabled=False):
+         if issue.code in SKIPPED_PLAN_ISSUES:
+@@ -1000,7 +1002,7 @@ def pr_status(number: int) -> Optional[dict]:
+         except summary.SummaryError:
+             return None
+ 
+-    entries, failures = site.build_site(
++    entries, failures, proposed = site.build_site(
+         out,
+         summaries=summaries,
+         repo_root=root,
+@@ -1013,7 +1015,8 @@ def pr_status(number: int) -> Optional[dict]:
+         lookup=base_pr if repo else None,
+         status_lookup=pr_status if repo else None,
+     )
+-    return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
++    return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
++            f"{len(entries)} reviews, {len(failures)} reviews skipped")
+ 
+ 
+ def run_site_build(arguments: argparse.Namespace) -> int:
+diff --git a/src/projector/core.py b/src/projector/core.py
+index a9d434f..cbaf57b 100644
+--- a/src/projector/core.py
++++ b/src/projector/core.py
+@@ -238,6 +238,46 @@ def title_from_text(text: str, fallback: str) -> str:
+     return fallback.rsplit("/", 1)[-1].replace("-", " ").title()
+ 
+ 
++def project_from_text(text: str, name: str, path: Path, display_path: Path) -> Project:
++    """The project named `name` whose plan at `path` holds `text`.
++
++    `name` is the plan's folder inside the projects directory. Every error
++    names the plan as `display_path`: an invalid name, bad frontmatter, or a
++    status, priority, or owner that `check` rejects.
++    """
++    if name == "." or not valid_name(name):
++        raise ProjectorError(f"{display_path}: invalid project name {name!r}")
++    metadata, _ = parse_frontmatter(text, display_path)
++    status = metadata.get("status")
++    if status not in STATUSES:
++        choices = "|".join(STATUSES)
++        raise ProjectorError(f"{display_path}: status must be one of {choices}")
++    priority = metadata.get("priority")
++    choices = "|".join(PRIORITIES)
++    if priority is None:
++        if status != "completed":
++            raise ProjectorError(
++                f"{display_path}: priority must be one of {choices}"
++                " unless status is completed"
++            )
++    elif priority not in PRIORITIES:
++        raise ProjectorError(f"{display_path}: priority must be one of {choices}")
++    owner = metadata.get("owner")
++    if owner is not None:
++        if not owner:
++            raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
++        if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
++            raise ProjectorError(f"{display_path}: owner must be a single line")
++    return Project(
++        name=name,
++        title=title_from_text(text, name),
++        status=status,
++        priority=priority,
++        owner=owner,
++        path=path,
++    )
++
++
+ class ProjectStore:
+     def __init__(
+         self,
+@@ -255,39 +295,7 @@ def __init__(
+ 
+     def _project_from_path(self, path: Path) -> Project:
+         relative = path.parent.relative_to(self.projects_dir).as_posix()
+-        display_path = Path(self._relative(path))
+-        if relative == "." or not valid_name(relative):
+-            raise ProjectorError(f"{display_path}: invalid project name {relative!r}")
+-        text = self._read_text(path)
+-        metadata, _ = parse_frontmatter(text, display_path)
+-        status = metadata.get("status")
+-        if status not in STATUSES:
+-            choices = "|".join(STATUSES)
+-            raise ProjectorError(f"{display_path}: status must be one of {choices}")
+-        priority = metadata.get("priority")
+-        choices = "|".join(PRIORITIES)
+-        if priority is None:
+-            if status != "completed":
+-                raise ProjectorError(
+-                    f"{display_path}: priority must be one of {choices}"
+-                    " unless status is completed"
+-                )
+-        elif priority not in PRIORITIES:
+-            raise ProjectorError(f"{display_path}: priority must be one of {choices}")
+-        owner = metadata.get("owner")
+-        if owner is not None:
+-            if not owner:
+-                raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
+-            if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
+-                raise ProjectorError(f"{display_path}: owner must be a single line")
+-        return Project(
+-            name=relative,
+-            title=title_from_text(text, relative),
+-            status=status,
+-            priority=priority,
+-            owner=owner,
+-            path=path,
+-        )
++        return project_from_text(self._read_text(path), relative, path, Path(self._relative(path)))
+ 
+     def _require_projects_dir(self) -> None:
+         if not self.projects_dir.is_dir():
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 5c9b046..a694174 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -28,9 +28,10 @@
+ from importlib import resources
+ from pathlib import Path
+ 
+-from ..core import Project, title_from_text
++from ..core import Project, ProjectorError, project_from_text, title_from_text
+ from ..review import MARKER
+-from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
++from ..summary import (ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, new_file_text, prepare_page,
++                       stored_attributes)
+ 
+ 
+ 
+@@ -164,8 +165,9 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+     return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
+ 
+ 
+-def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+-                    lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
++def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None, trunk: str = "main",
++                    lookup=None, repo_root: Path | None = None, status_lookup=None,
++                    projects_dir: str | None = None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+     The entries come in the order the Reviews index lists them, as
+@@ -185,7 +187,15 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
+     same way. Each page also carries `defaultBranch`, `trunk`, where a
+     merged pull request's files now are when the branch it merged into is
+     gone.
++
++    It asks `status_lookup` about each pull request before it links any
++    summary, finds the projects that open pull requests propose under
++    `projects_dir`, the projects directory's path in the repository, as
++    `proposed_projects` does, and links each summary to those and to
++    `described`, the checkout's projects. It returns the proposed projects
++    beside the entries and the failures.
+     """
++    described = described or []
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+               if not path.with_name("summary.json").is_file()]
+@@ -200,7 +210,7 @@ def skip(path: Path, reason: object) -> None:
+         skip(path, f"the site reads summary.json, not {LEGACY_SUMMARY_FILE}; run `project upgrade`, then republish it "
+                    "with `project summary publish`")
+ 
+-    by_pr: dict[str, list[tuple[int, dict]]] = {}
++    by_pr: dict[str, list[tuple[int, dict, dict]]] = {}
+     for path in summaries:
+         try:
+             summary = json.loads(path.read_text(encoding="utf-8"))
+@@ -217,26 +227,31 @@ def skip(path: Path, reason: object) -> None:
+             generated = stored_attributes(attributes) if attributes.is_file() else None
+             payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True, root=repo_root,
+                                    generated=generated)
+-            payload["projects"] = link(summary, payload) if link else []
+         except (SummaryError, ValueError, KeyError, TypeError) as exc:
+             skip(path, exc)
+             continue
+-        by_pr.setdefault(number, []).append((summary_time(path), payload))
++        by_pr.setdefault(number, []).append((summary_time(path), payload, summary))
+     for versions in by_pr.values():
+         versions.sort(key=lambda v: v[0], reverse=True)
++    # The review skill publishes its review before the summary, and publishing
++    # the summary starts this build, so the reviews include the verdict on the
++    # head the summary describes.
++    asked = {number: status_lookup(int(number)) if status_lookup is not None else None for number in by_pr}
++    proposed = proposed_projects({int(n): versions[0][1] for n, versions in by_pr.items()},
++                                 {int(n): status for n, status in asked.items()}, described, repo_root,
++                                 projects_dir, out) if repo_root is not None and projects_dir is not None else []
++    link = project_linker(described + proposed, base)
+     prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
+     bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
+     entries = []
+     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
+         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
+-                 for when, p in versions]
++                 for when, p, _ in versions]
+         stack = stack_rows(int(number), bases, prs, base)
+-        # The review skill publishes its review before the summary, and publishing
+-        # the summary starts this build, so the reviews include the verdict on the
+-        # head the summary describes.
+-        status = status_lookup(int(number)) if status_lookup is not None else None
++        status = asked[number]
+         statuses = review_statuses(status["reviews"]) if status is not None else None
+-        for _, payload in versions:
++        for _, payload, summary in versions:
++            payload["projects"] = link(summary, payload)
+             head = payload["pr"]["head"]
+             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
+             if status is not None:
+@@ -265,7 +280,90 @@ def skip(path: Path, reason: object) -> None:
+     for group in stack_groups(bases, prs):
+         for number in group:
+             ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
+-    return ordered, failures
++    return ordered, failures, proposed
++
++
++PLAN_FILE = "readme.md"
++
++
++def proposed_projects(newest: dict[int, dict], statuses: dict[int, dict | None], described: list[dict],
++                      repo_root: Path, projects_dir: str, out: Path) -> list[dict]:
++    """The projects open pull requests propose, described as `collect_projects` describes the checkout's, with `proposed`.
++
++    `newest` is each pull request's newest summary page, and `statuses` its
++    status from `summary.pr_status`, or None when GitHub could not be asked.
++    A pull request proposes each `<projects_dir>/<name>/readme.md` its diff
++    adds while it is open and its head branch is in this repository. One
++    whose status is unknown proposes nothing, and the build says how many it
++    left out. The checkout wins: a name it has as a project, or a path it
++    holds, is never proposed. A plan loads as a checkout's does, and one that
++    does not is skipped with a warning. When several pull requests propose
++    one name, the lowest number's plan is the project, and the others are its
++    `proposed.also`.
++
++    A proposed project's `files` are the other Markdown files the same diff
++    adds in its folder, outside hidden directories and deeper projects'
++    folders. They are Markdown alone, because the site renders Markdown
++    through DOMPurify but shows an HTML page as it is, on its own origin,
++    and a proposal has not been merged. Each plan and file is written under
++    out/content, beside the checkout's copies, and never over one.
++    """
++    plan_path = re.compile(re.escape(projects_dir.strip("/")) + r"/(.+)/" + re.escape(PLAN_FILE))
++    taken = {p["name"] for p in described}
++    found: dict[str, tuple[dict, dict, str]] = {}
++    unknown = 0
++    for number, payload in sorted(newest.items()):
++        plans = [(f, match.group(1)) for f in payload["files"]
++                 if f["new"] and (match := plan_path.fullmatch(f["path"])) is not None]
++        if not plans:
++            continue
++        status = statuses.get(number)
++        if status is None:
++            unknown += 1
++            continue
++        if status["state"] != "open" or status.get("fork") is not False:
++            continue
++        for f, name in plans:
++            if name in taken or (repo_root / f["path"]).exists():
++                continue
++            text = new_file_text(f) or ""
++            try:
++                project = project_from_text(text, name, repo_root / f["path"], Path(f["path"]))
++            except ProjectorError as error:
++                print(f"::warning title=Proposed project skipped::#{number} {error}")
++                continue
++            if name in found:
++                found[name][0]["proposed"]["also"].append(number)
++                continue
++            entry = project.public(repo_root)
++            entry["proposed"] = {"number": number, "head": payload["pr"]["head"], "also": []}
++            found[name] = (entry, payload, text)
++    if unknown:
++        many = unknown != 1
++        print(f"::warning title=Proposed projects left out::the status of {unknown} pull request{'s' if many else ''} "
++              f"that add{'' if many else 's'} a plan is unknown, because GitHub could not be asked, so "
++              f"{'their plans are' if many else 'its plan is'} not proposed")
++    folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"])
++                      for p in described + [entry for entry, _, _ in found.values()]), key=lambda f: -len(f[0]))
++    proposed = []
++    for name in sorted(found):
++        entry, payload, text = found[name]
++        write_content(out, entry["path"], text)
++        entry["files"] = []
++        for f in sorted(payload["files"], key=lambda f: f["path"]):
++            path = f["path"]
++            owner = next((owner for folder, owner in folders if path.startswith(folder)), None)
++            if owner != name or not f["new"] or not path.lower().endswith(".md") or path.endswith(f"/{PLAN_FILE}"):
++                continue
++            if hidden(repo_root, repo_root / path) or (repo_root / path).exists():
++                continue
++            page = new_file_text(f)
++            if page is None:
++                continue
++            write_content(out, path, page)
++            entry["files"].append({"path": path, "title": page_title(Path(path), page)})
++        proposed.append(entry)
++    return proposed
+ 
+ 
+ def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
+@@ -351,19 +449,26 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+ def copy_content(repo_root: Path, path: Path, out: Path) -> str:
+     """Copy one file under out/content, returning its repository path."""
+     relative = path.relative_to(repo_root).as_posix()
++    write_content(out, relative, path.read_bytes())
++    return relative
++
++
++def write_content(out: Path, relative: str, content: str | bytes) -> None:
++    """Write the file at `relative` in the repository under out/content."""
+     target = out / CONTENT / relative
+     target.parent.mkdir(parents=True, exist_ok=True)
+-    target.write_bytes(path.read_bytes())
+-    return relative
++    target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+ 
+ 
+ def is_page(path: Path) -> bool:
+     return path.suffix.lower() in PAGES
+ 
+ 
+-def page_title(path: Path) -> str:
+-    """A Markdown file's first heading, or an HTML page's <title>; else its name."""
+-    text = path.read_text(encoding="utf-8", errors="replace")
++def page_title(path: Path, text: str | None = None) -> str:
++    """A Markdown file's first heading, or an HTML page's <title>; else its name.
++    `text` is the file's text, read from `path` when not given."""
++    if text is None:
++        text = path.read_text(encoding="utf-8", errors="replace")
+     fallback = path.parent.name if path.stem.lower() == "index" else path.stem
+     if path.suffix.lower() == ".md":
+         return title_from_text(text, fallback)
+@@ -449,7 +554,8 @@ def page_of(name: str) -> dict:
+         return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
+ 
+     def link(summary: dict, payload: dict) -> list[dict]:
+-        names = [n for n in summary.get("projects") or [] if n in by_name]
++        named = summary.get("projects")
++        names = [n for n in named if isinstance(n, str) and n in by_name] if isinstance(named, list) else []
+         for f in payload["files"]:
+             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
+             if owner:
+@@ -476,15 +582,23 @@ def plain_text(markdown: str) -> str:
+     return re.sub(r"\s+", " ", text).strip()
+ 
+ 
+-def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects: list[dict],
++def search_index(content: Path, readme: str | None, docs: list[dict], projects: list[dict],
+                  projects_readme: str | None) -> list[dict]:
+-    """One entry per served document: its site path, title, kind, and plain text."""
++    """One entry per served document: its site path, title, kind, and plain text, read from its copy under
++    `content`, and the number of the pull request that proposes it as `proposed`, for a proposed project's.
++    A document with no copy, such as a plan under a hidden folder, gets none, since the page cannot load it."""
+     entries = []
+ 
+-    def add(path: str, route: str, title: str, kind: str) -> None:
+-        text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
++    def add(path: str, route: str, title: str, kind: str, proposed: dict | None = None) -> None:
++        copy = content / path
++        if not copy.is_file():
++            return
++        text = copy.read_text(encoding="utf-8", errors="replace")
+         text = html_text(text) if path.lower().endswith(".html") else plain_text(text)
+-        entries.append({"route": route, "title": title, "kind": kind, "text": text})
++        entry = {"route": route, "title": title, "kind": kind, "text": text}
++        if proposed is not None:
++            entry["proposed"] = proposed["number"]
++        entries.append(entry)
+ 
+     if readme:
+         add(readme, "docs/", "README", "doc")
+@@ -493,9 +607,9 @@ def add(path: str, route: str, title: str, kind: str) -> None:
+     if projects_readme:
+         add(projects_readme, "projects/", "How projects work", "project")
+     for project in projects:
+-        add(project["path"], f"projects/{project['name']}/", project["title"], "project")
++        add(project["path"], f"projects/{project['name']}/", project["title"], "project", project.get("proposed"))
+         for file in project["files"]:
+-            add(file["path"], file["route"], file["title"], "project")
++            add(file["path"], file["route"], file["title"], "project", project.get("proposed"))
+     return entries
+ 
+ 
+@@ -601,15 +715,19 @@ def review_row(entry: dict) -> dict:
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+-               trunk: str | None = None, lookup=None, status_lookup=None) -> tuple[list[dict], list[str]]:
++               trunk: str | None = None, lookup=None,
++               status_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+     `trunk` the default branch a pull request that is not stacked is based on.
+     `lookup` finds the pull request whose head is a branch, for a summary that
+     did not record the one it is stacked on. `status_lookup` returns a pull
+-    request's state and reviews, or None when it cannot ask, for each
+-    summary's file links and review status.
++    request's state, reviews, and whether it is a fork's, or None when it
++    cannot ask, for each summary's file links and review status and for the
++    projects open pull requests propose. `projects_dir` is the configured
++    projects directory, which a pull request can propose the first plan of.
++    Returns the reviews, the summaries skipped, and the proposed projects.
+     """
+     trunk = trunk or branch
+     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
+@@ -621,11 +739,14 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
+     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
+     files = collect_files(repo_root, projects_dir, out) if repo_root else []
++    projects_path = projects_dir.relative_to(repo_root).as_posix() \
++        if repo_root and projects_dir and projects_dir.is_relative_to(repo_root) else None
++    built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
++                            status_lookup=status_lookup, projects_dir=projects_path) \
++        if summaries and summaries.is_dir() else ([], [], [])
++    entries, failures, proposed = built
++    described = sorted(described + proposed, key=lambda p: p["name"])
+     assign_routes(docs, described)
+-    link = project_linker(described, base)
+-    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
+-                            status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
+-    entries, failures = built
+     for project in described:
+         project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
+     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+@@ -638,18 +759,18 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+         "content": CONTENT,
+         "readme": readme,
+         "docs": docs,
+-        "projectsDir": projects_dir.relative_to(repo_root).as_posix() if repo_root and projects_dir and projects_dir.is_dir() else None,
++        "projectsDir": projects_path if described or (projects_dir and projects_dir.is_dir()) else None,
+         "projects": described,
+         "projectsReadme": projects_readme,
+         "files": files,
+         "reviews": [review_row(e) for e in entries],
+     }
+     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+-    index = search_index(repo_root, readme, docs, described, projects_readme) if repo_root else []
++    index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
+     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+     shell = home_page(repo, base)
+     for route in site_routes(docs, described):
+         (out / route).mkdir(parents=True, exist_ok=True)
+         (out / route / "index.html").write_text(shell, encoding="utf-8")
+     (out / "404.html").write_text(shell, encoding="utf-8")
+-    return entries, failures
++    return entries, failures, proposed
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 4fba271..6f15292 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -350,6 +350,18 @@ def parse_diff(text: str) -> list[dict]:
+     return files
+ 
+ 
++def new_file_text(f: dict) -> str | None:
++    """The whole text of a file the diff adds, from `parse_diff`'s hunks: its
++    added lines, each ending in a newline unless the diff marks the last as
++    having none. None for a file the diff does not add, and for one with no
++    hunks, which is empty or binary."""
++    if not f["new"] or not f["hunks"]:
++        return None
++    lines = [line for hunk in f["hunks"] for line in hunk["lines"]]
++    text = "\n".join(line[3] for line in lines if line[0] == "a")
++    return text if lines[-1][0] == "m" else text + "\n"
++
++
+ def classify(files: list[dict], generated: dict[str, bool]) -> None:
+     """Set each file's kind again, letting its `linguist-generated` value in `generated` say if it is generated."""
+     for f in files:
+@@ -687,6 +699,7 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+   repository(owner: $owner, name: $name) {
+     pullRequest(number: $number) {
+       state
++      isCrossRepository
+       baseRef { name }
+       reviews(first: 100, after: $endCursor) {
+         nodes { body url submittedAt authorAssociation }
+@@ -698,24 +711,26 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+ 
+ 
+ def pr_status(repo: str, number: int) -> dict:
+-    """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, and its submitted `reviews`.
++    """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, whether it is a `fork`'s,
++    and its submitted `reviews`.
+ 
+     `base` is the name of the branch the pull request targets, or merged into,
+-    or None once that branch is deleted. Each review has its `body`, its page
+-    as `url`, its time as `at`, and its author's relation to the repository as
+-    `association`, GitHub's `authorAssociation`. One query answers all three,
+-    a page of reviews at a time.
++    or None once that branch is deleted. `fork` is True when its head branch
++    is in another repository, GitHub's `isCrossRepository`. Each review has
++    its `body`, its page as `url`, its time as `at`, and its author's relation
++    to the repository as `association`, GitHub's `authorAssociation`. One query
++    answers them all, a page of reviews at a time.
+     """
+     owner, name = repo.split("/", 1)
+     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
+                "-f", f"name={name}", "-F", f"number={number}",
+-               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, reviews: [.reviews.nodes[] "
+-                       "| select(.submittedAt != null) "
++               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, fork: .isCrossRepository, "
++                       "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
+                        "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
+     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
+     if not found or not found[0].get("state"):
+         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
+-    return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"),
++    return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"), "fork": found[0].get("fork") is True,
+             "reviews": [r for page in found for r in page["reviews"]]}
+ 
+ 
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 897ea73..6a58695 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -20,7 +20,7 @@
+ 
+ from projector import cli, instructions, permissions
+ from projector.cli import distribution_version, main
+-from projector.core import AmbiguousProject, ProjectStore
++from projector.core import AmbiguousProject, ProjectorError, ProjectStore, project_from_text
+ 
+ 
+ PLAN = """---
+@@ -1645,6 +1645,40 @@ def test_store_uses_git_root_from_deep_subdirectory(self) -> None:
+         self.assertEqual("alpha", store.resolve("alpha").name)
+ 
+ 
++    def test_project_from_text_loads_a_plan_exactly_as_the_store_does(self) -> None:
++        plans = {
++            "alpha": PLAN.format(status="ready", priority=priority_line("next"), title="Alpha", body="Text.",
++                                 extra="owner: someone\n"),
++            "no-frontmatter": "# No frontmatter\n",
++            "malformed": "---\nstatus ready\n---\n",
++            "unclosed": "---\nstatus: ready\n",
++            "bad-status": "---\nstatus: maybe\npriority: next\n---\n",
++            "no-priority": "---\nstatus: ready\n---\n",
++            "bad-priority": "---\nstatus: ready\npriority: soon\n---\n",
++            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
++            "block-owner": "---\nstatus: ready\npriority: next\nowner: |\n---\n",
++            "Bad_Name": PLAN.format(status="draft", priority=priority_line("later"), title="Bad", body="Text.", extra=""),
++        }
++        store = ProjectStore(self.root, self.root)
++        failures = 0
++        for name, text in plans.items():
++            with self.subTest(name):
++                path = self.projects / name / "readme.md"
++                path.parent.mkdir(parents=True)
++                path.write_text(text, encoding="utf-8")
++                display = Path(f"docs/projects/{name}/readme.md")
++                try:
++                    expected = store.resolve(name)
++                except ProjectorError as error:
++                    failures += 1
++                    with self.assertRaises(ProjectorError) as raised:
++                        project_from_text(text, name, store.projects_dir / name / "readme.md", display)
++                    self.assertEqual(str(error), str(raised.exception))
++                else:
++                    self.assertEqual(expected, project_from_text(text, name, expected.path, display))
++        self.assertEqual(len(plans) - 1, failures, "every plan but alpha is a kind of bad plan")
++
++
+ class SelfReportingTests(unittest.TestCase):
+     """`install.sh status` asks the installed command about itself.
+ 
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 6a848b1..394e367 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -170,6 +170,20 @@ def test_a_repository_without_docs_still_gets_a_home_page(self) -> None:
+         self.assertEqual(("README.md", [], [], None), (manifest["readme"], manifest["docs"], manifest["projects"],
+                                                        manifest["projectsDir"]))
+ 
++    def test_a_projects_directory_in_a_hidden_folder_still_builds_the_site(self) -> None:
++        # The site copies nothing under a hidden folder, so search has no copy of such a plan to read.
++        (self.repo / ".projector.toml").write_text('[projects]\ndir = ".plans"\n')
++        (self.repo / ".plans/alpha").mkdir(parents=True)
++        (self.repo / ".plans/alpha/readme.md").write_text(plan("Plan alpha", "draft", "later"))
++
++        code, manifest, err = self.build()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["alpha"], [p["name"] for p in manifest["projects"]])
++        routes = [e["route"] for e in json.loads((self.out / "search.json").read_text())]
++        self.assertIn("docs/guide/", routes)
++        self.assertNotIn("projects/alpha/", routes, "search lists no page the site cannot load")
++
+ 
+ class VisibilityTests(SiteRepoCase):
+     def build_checked(self, answers: dict[str, str | None]) -> tuple[int, str]:
+@@ -567,6 +581,220 @@ def test_the_search_index_covers_every_served_document(self) -> None:
+         self.assertTrue((self.out / "search" / "index.html").is_file())
+ 
+ 
++def new_file_diff(path: str, content: str | bytes) -> str:
++    """The diff that adds `path` with `content`: its lines, or a binary file's one line."""
++    head = f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n"
++    if isinstance(content, bytes):
++        return head + f"Binary files /dev/null and b/{path} differ\n"
++    lines = content.split("\n")
++    ends = content.endswith("\n")
++    if ends:
++        lines.pop()
++    body = "".join(f"+{line}\n" for line in lines) + ("" if ends else "\\ No newline at end of file\n")
++    return head + f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n" + body
++
++
++GAMMA = plan("Ship gamma", "ready", "next")
++
++
++class ProposedProjectTests(SiteRepoCase):
++    """The projects that open pull requests propose, read from their newest summaries' diffs."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
++        self.out_text = ""
++
++    def publish(self, number: int, files: dict[str, str | bytes], head: str | None = None, when: int = 1_700_000_000) -> str:
++        """Publish pull request `number`'s summary at `head`, whose diff adds `files` under docs/projects/."""
++        head = head or f"{number:02d}" * 20
++        paths = {f"docs/projects/{name}": content for name, content in files.items()}
++        data = {"version": 1, "name": f"Summary {number}",
++                "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
++                       "base": "b" * 40, "baseRef": "main", "headRef": f"change-{number}"},
++                "overview": {"summary": [], "cards": []},
++                "groups": [{"id": "all", "title": "All", "files": [{"path": path} for path in paths]}]}
++        folder = self.summaries / str(number) / head
++        folder.mkdir(parents=True)
++        (folder / "summary.json").write_text(json.dumps(data))
++        (folder / "diff.patch").write_text("".join(new_file_diff(path, content) for path, content in paths.items()))
++        os.utime(folder / "summary.json", (when, when))
++        return head
++
++    def build(self, states: dict[int, str] | None = None, forks: tuple[int, ...] = (), offline: bool = False) -> dict:
++        """Build the site, with each pull request open unless `states` says otherwise and in this repository
++        unless `forks` names it, and return site.json. GitHub is asked once for each pull request."""
++        asked: list[int] = []
++
++        def pr_status(repo: str, number: int) -> dict:
++            asked.append(number)
++            if offline:
++                raise summary.SummaryError("gh api failed: offline")
++            return {"state": (states or {}).get(number, "open"), "base": "main", "fork": number in forks,
++                    "reviews": []}
++
++        out = io.StringIO()
++        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
++             mock.patch.object(summary, "pr_status", side_effect=pr_status), \
++             redirect_stdout(out), redirect_stderr(out):
++            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
++                             "--summaries", str(self.summaries)])
++        self.out_text = out.getvalue()
++        self.assertEqual(0, code, self.out_text)
++        self.assertEqual(sorted(asked), sorted(int(p.name) for p in self.summaries.iterdir()),
++                         "the build asks once for each pull request")
++        return json.loads((self.out / "site.json").read_text())
++
++    @staticmethod
++    def project(manifest: dict, name: str) -> dict | None:
++        return next((p for p in manifest["projects"] if p["name"] == name), None)
++
++    def warnings(self, title: str) -> list[str]:
++        return [line for line in self.out_text.splitlines() if line.startswith(f"::warning title={title}::")]
++
++    def test_an_open_pull_request_proposes_the_plan_its_diff_adds_at_the_address_it_keeps(self) -> None:
++        head = self.publish(9, {"gamma/readme.md": GAMMA})
++
++        manifest = self.build()
++
++        gamma = self.project(manifest, "gamma")
++        self.assertEqual({"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
++                          "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
++                          "proposed": {"number": 9, "head": head, "also": []}}, gamma)
++        self.assertNotIn("proposed", self.project(manifest, "alpha"))
++        self.assertEqual(GAMMA.encode(), (self.out / "content/docs/projects/gamma/readme.md").read_bytes())
++        self.assertTrue((self.out / "projects/gamma/index.html").is_file())
++        index = {e["route"]: e for e in json.loads((self.out / "search.json").read_text())}
++        self.assertEqual(9, index["projects/gamma/"]["proposed"])
++        self.assertIn("Ship gamma", index["projects/gamma/"]["text"])
++        self.assertNotIn("proposed", index["projects/alpha/"])
++        data = json.loads((self.out / "reviews" / "9" / head / "data.json").read_text())
++        self.assertEqual({"name": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"},
++                         data["files"][0]["project"])
++        self.assertIn("2 projects, 1 proposed project, 1 reviews, 0 reviews skipped", self.out_text)
++
++    def test_a_merged_or_closed_pull_request_proposes_nothing(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA})
++        for state in ("merged", "closed"):
++            with self.subTest(state):
++                self.assertIsNone(self.project(self.build({9: state}), "gamma"))
++
++    def test_a_forks_pull_request_proposes_nothing_and_keeps_its_review(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA})
++
++        manifest = self.build(forks=(9,))
++
++        self.assertIsNone(self.project(manifest, "gamma"))
++        self.assertEqual([9], [r["number"] for r in manifest["reviews"]])
++
++    def test_a_pull_request_whose_status_is_unknown_proposes_nothing_and_the_build_says_so(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA})
++        self.publish(10, {"alpha/notes-2.md": "# More notes\n"})
++
++        manifest = self.build(offline=True)
++
++        self.assertIsNone(self.project(manifest, "gamma"))
++        self.assertEqual(["::warning title=Proposed projects left out::the status of 1 pull request that adds a plan "
++                          "is unknown, because GitHub could not be asked, so its plan is not proposed"],
++                         self.warnings("Proposed projects left out"))
++
++    def test_only_the_newest_summary_proposes(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA}, head="a" * 40, when=1_700_000_000)
++        self.publish(9, {"alpha/notes-2.md": "# More notes\n"}, head="b" * 40, when=1_700_000_100)
++
++        self.assertIsNone(self.project(self.build(), "gamma"))
++
++    def test_a_plan_without_a_final_newline_keeps_it_out(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA.rstrip("\n")})
++
++        self.build()
++
++        self.assertEqual(GAMMA.rstrip("\n").encode(), (self.out / "content/docs/projects/gamma/readme.md").read_bytes())
++
++    def test_a_plan_that_does_not_load_is_skipped_with_a_warning(self) -> None:
++        self.publish(9, {"gamma/readme.md": plan("Ship gamma", "maybe", "next")})
++
++        manifest = self.build()
++
++        self.assertIsNone(self.project(manifest, "gamma"))
++        self.assertEqual(["::warning title=Proposed project skipped::#9 docs/projects/gamma/readme.md: status must be "
++                          "one of draft|ready|in-progress|completed"], self.warnings("Proposed project skipped"))
++        self.assertFalse((self.out / "content/docs/projects/gamma").exists())
++
++    def test_the_checkout_wins_over_a_proposal_of_the_same_name(self) -> None:
++        checkout = (self.repo / "docs/projects/alpha/readme.md").read_bytes()
++        self.publish(9, {"alpha/readme.md": plan("Rewrite alpha", "draft", "later")})
++
++        alpha = self.project(self.build(), "alpha")
++
++        self.assertEqual("Build alpha", alpha["title"])
++        self.assertNotIn("proposed", alpha)
++        self.assertEqual(checkout, (self.out / "content/docs/projects/alpha/readme.md").read_bytes())
++
++    def test_a_repositorys_first_plan_can_be_proposed(self) -> None:
++        shutil.rmtree(self.repo / "docs/projects")
++        self.publish(9, {"gamma/readme.md": GAMMA})
++
++        manifest = self.build()
++
++        self.assertEqual(["gamma"], [p["name"] for p in manifest["projects"]])
++        self.assertEqual(9, manifest["projects"][0]["proposed"]["number"])
++        self.assertEqual("docs/projects", manifest["projectsDir"])
++
++    def test_the_lowest_pull_request_takes_a_name_and_the_others_are_named_beside_it(self) -> None:
++        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
++        self.publish(9, {"gamma/readme.md": GAMMA})
++
++        gamma = self.project(self.build(), "gamma")
++
++        self.assertEqual(("Ship gamma", 9, [12]), (gamma["title"], gamma["proposed"]["number"], gamma["proposed"]["also"]))
++
++    def test_a_plan_that_does_not_load_takes_no_name(self) -> None:
++        self.publish(9, {"gamma/readme.md": plan("Ship gamma", "maybe", "next")})
++        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
++
++        gamma = self.project(self.build(), "gamma")
++
++        self.assertEqual(("Ship gamma later", 12, []), (gamma["title"], gamma["proposed"]["number"], gamma["proposed"]["also"]))
++        self.assertEqual(1, len(self.warnings("Proposed project skipped")))
++        self.assertIn("#9 ", self.warnings("Proposed project skipped")[0])
++
++    def test_a_forks_proposal_of_the_same_name_is_not_named_beside_it(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA})
++        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
++
++        gamma = self.project(self.build(forks=(12,)), "gamma")
++
++        self.assertEqual(("Ship gamma", []), (gamma["title"], gamma["proposed"]["also"]))
++
++    def test_a_nested_plan_can_be_proposed_under_a_checkout_project(self) -> None:
++        self.publish(9, {"alpha/delta/readme.md": plan("Add delta", "draft", "later")})
++
++        delta = self.project(self.build(), "alpha/delta")
++
++        self.assertEqual(9, delta["proposed"]["number"])
++        self.assertEqual("projects/alpha/delta/", next(
++            e["route"] for e in json.loads((self.out / "search.json").read_text()) if e["title"] == "Add delta"))
++
++    def test_a_nested_plan_loads_without_a_plan_above_it_as_in_the_checkout(self) -> None:
++        self.publish(9, {"omega/x/readme.md": plan("Explore x", "draft", "later")})
++
++        self.assertEqual(9, self.project(self.build(), "omega/x")["proposed"]["number"])
++
++    def test_only_markdown_outside_hidden_folders_comes_with_a_proposed_plan(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA, "gamma/design.md": "# Gamma design\n",
++                         "gamma/.notes/x.md": "# Hidden\n", "gamma/page.html": "<title>Page</title>",
++                         "gamma/data.json": "{}\n", "gamma/logo.png": b"\x89PNG"})
++
++        gamma = self.project(self.build(), "gamma")
++
++        self.assertEqual([{"path": "docs/projects/gamma/design.md", "title": "Gamma design",
++                           "route": "projects/gamma/design/"}], gamma["files"])
++        self.assertEqual(["design.md", "readme.md"],
++                         sorted(p.name for p in (self.out / "content/docs/projects/gamma").rglob("*") if p.is_file()))
++        self.assertTrue((self.out / "projects/gamma/design/index.html").is_file())
++
++
+ SITE_JS = Path(__file__).parents[1] / "site" / "assets" / "site.js"
+ SUMMARY_JS = SITE_JS.with_name("summary.js")
+ 
+@@ -577,6 +805,16 @@ def shared_js() -> str:
+     return text[:text.index("\n(function () {")]
+ 
+ 
++def js_const(name: str) -> str:
++    """One constant of the compiled site.js, as it declares it."""
++    return next(line.strip() for line in SITE_JS.read_text().splitlines() if line.startswith(f"    const {name} = "))
++
++
++def page_constants() -> str:
++    """The constants of the compiled site.js that the projects views draw with."""
++    return "\n".join(js_const(name) for name in ("STATUS_ORDER", "PRIORITY_ORDER", "PROPOSED"))
++
++
+ def js_function(name: str) -> str:
+     """One function of the compiled site.js, from its signature to the brace that closes it."""
+     lines = SITE_JS.read_text().splitlines()
+@@ -630,16 +868,14 @@ class ProjectsViewTests(unittest.TestCase):
+     def projects_html(self, projects: list[dict]) -> str:
+         """The projects view's markup for `projects`, drawn by the compiled showProjects."""
+         stub = (
+-            "const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];\n"
+-            "const PRIORITY_ORDER = ['now', 'next', 'later'];\n"
+             "const base = '/';\n"
+             f"const site = {{projects: {json.dumps(projects)}, projectsDir: 'docs/projects', projectsReadme: null}};\n"
+             "let drawn = '';\n"
+             "function frame(active, title, body) { drawn = body; return {querySelector: function () {"
+             " return {addEventListener: function () {}}; }}; }\n"
+         )
+-        program = stub + shared_js() + "\n" + \
+-            "\n".join(js_function(n) for n in ("badge", "depth", "ownerName", "showProjects")) + \
++        program = stub + shared_js() + "\n" + page_constants() + "\n" + \
++            "\n".join(js_function(n) for n in ("badge", "proposedBadge", "depth", "ownerName", "showProjects")) + \
+             "\nshowProjects(); process.stdout.write(drawn);"
+         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+ 
+@@ -699,6 +935,131 @@ def test_the_manifest_carries_each_owner(self) -> None:
+         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
+ 
+ 
++@unittest.skipUnless(shutil.which("node"), "the proposed project views need node")
++class ProposedViewTests(unittest.TestCase):
++    HEAD = "15cb40d18e911face2cd2393af143b526d6392e9"
++
++    def gamma(self, also: list[int] | None = None) -> dict:
++        return {"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
++                "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
++                "proposed": {"number": 9, "head": self.HEAD, "also": also or []}}
++
++    @staticmethod
++    def alpha() -> dict:
++        return {"name": "alpha", "title": "Build alpha", "status": "ready", "priority": "now", "owner": None,
++                "path": "docs/projects/alpha/readme.md", "files": [], "reviews": []}
++
++    @staticmethod
++    def site(projects: list[dict], title: str = "Plan gamma") -> dict:
++        return {"repo": "owner/example", "branch": "main", "content": "content", "readme": None, "docs": [],
++                "projectsDir": "docs/projects", "projectsReadme": None, "projects": projects, "files": [],
++                "reviews": [{"number": 9, "name": "Summary 9", "title": title, "heads": 1, "stack": None,
++                             "state": "open", "updated": "2026-10-10T12:00:00Z",
++                             "review": {"status": "changes-requested",
++                                        "url": "https://github.com/owner/example/pull/9#pullrequestreview-1"}}]}
++
++    def run_js(self, site: dict, functions: tuple[str, ...], main: str) -> dict:
++        """Run `main` under node beside the compiled `functions`, with `site` as site.json, and return what it writes as JSON."""
++        stub = (
++            "const base = '/';\n"
++            f"const site = {json.dumps(site)};\n"
++            "const pageFiles = new Set(), siteFiles = new Set();\n"
++            "let shown = null, drawn = '', filtered = null, rows = [];\n"
++            "function showPage(active, path, title, before, side, ref) {"
++            " shown = {banner: before.innerHTML, side: side, ref: ref}; }\n"
++            "const window = {DOMPurify: {sanitize: function (h) { return h; }}, marked: {parse: function (t) { return t; }}};\n"
++            "const links = [];\n"
++            "const document = {createElement: function () { return {querySelectorAll: function (selector) {"
++            " return selector === 'a[href]' ? links : []; }}; }};\n"
++            "function frame(active, title, body) { drawn = body;"
++            " rows = Array.from(body.matchAll(/<tr data-search=\"([^\"]*)\">/g),"
++            " function (m) { return {dataset: {search: m[1]}, hidden: false}; });"
++            " return {querySelector: function () { return {addEventListener: function (type, f) { filtered = f; }}; },"
++            " querySelectorAll: function () { return rows; }}; }\n"
++        )
++        program = stub + shared_js() + "\n" + page_constants() + "\n" + \
++            "\n".join(js_function(n) for n in functions) + "\n" + main
++        return json.loads(node(program))
++
++    def test_the_projects_page_lists_a_proposed_project_in_its_status_group_with_its_badge(self) -> None:
++        drawn = self.run_js(self.site([self.alpha(), self.gamma()]),
++                            ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
++                            "showProjects(); process.stdout.write(JSON.stringify({html: drawn}));")["html"]
++
++        self.assertIn('<p class="note">2 projects under <span class="mono">docs/projects</span>, '
++                      '1 of them proposed in open pull requests. ', drawn)
++        ready = drawn.split("<h2>ready ")[1].split("</section>")[0]
++        self.assertIn('<a href="/projects/gamma/">Ship gamma</a> <a class="badge proposed" href="/reviews/9/">'
++                      'Proposed #9</a></td>', ready)
++        self.assertNotIn("Proposed", ready.split("Ship gamma")[0], "only the proposed row carries the badge")
++
++    def test_the_filter_word_proposed_keeps_only_the_proposed_rows(self) -> None:
++        kept = self.run_js(self.site([self.alpha(), self.gamma()]),
++                           ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
++                           "showProjects(); filtered({target: {value: 'Proposed'}}); process.stdout.write(JSON.stringify("
++                           "rows.filter(function (r) { return !r.hidden; }).map(function (r) { return r.dataset.search; })));")
++
++        self.assertEqual(["gamma ship gamma  proposed"], kept)
++
++    def project_page(self, site: dict, path: str = "docs/projects/gamma/readme.md") -> dict:
++        functions = ("folderOf", "projectNamed", "ownerOf", "repoUrl", "contentUrl", "routeFor", "badge",
++                     "proposedBadge", "tree", "reviewFor", "showProjectFile", "proposalBanner")
++        return self.run_js(site, functions, f"showProjectFile({json.dumps(path)}); process.stdout.write(JSON.stringify(shown));")
++
++    def test_a_proposed_projects_page_has_the_banner_and_links_github_at_its_head(self) -> None:
++        shown = self.project_page(self.site([self.alpha(), self.gamma(also=[12])]))
++
++        banner = shown["banner"]
++        self.assertIn('<div class="proposal"><p><b>Proposed in</b> <a href="/reviews/9/">#9</a> Plan gamma · '
++                      '<span class="eyebrow"><a class="rstatus changes-requested" '
++                      'href="https://github.com/owner/example/pull/9#pullrequestreview-1" target="_blank" '
++                      'rel="noopener">Changes requested</a></span></p>', banner)
++        self.assertIn('is not on <span class="mono">main</span> yet. It shows head <span class="mono">15cb40d</span>', banner)
++        self.assertIn('A plan of this name is also proposed in <a href="/reviews/12/">#12</a>.', banner)
++        self.assertLess(banner.index('class="proposal"'), banner.index("badge status-ready"),
++                        "the banner sits above the status badges")
++        self.assertIn(f'<a class="note" href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
++                      'readme.md">View on GitHub</a>', banner)
++        self.assertEqual(self.HEAD, shown["ref"], "the page renders its links at the proposal's head")
++
++    def test_a_relative_link_to_a_file_the_site_lacks_points_at_the_given_ref(self) -> None:
++        functions = ("repoUrl", "contentUrl", "routeFor", "resolve", "stripFrontmatter", "slug", "renderMarkdown")
++        links = self.run_js(self.site([self.gamma()]), functions,
++                            "links.push({attrs: {href: '../../../src/app.py'}, getAttribute: function (n) {"
++                            " return this.attrs[n]; }, setAttribute: function (n, v) { this.attrs[n] = v; }});"
++                            f" renderMarkdown('text', 'docs/projects/gamma/readme.md', {json.dumps(self.HEAD)});"
++                            " process.stdout.write(JSON.stringify(links.map(function (a) { return a.attrs.href; })));")
++
++        self.assertEqual([f"https://github.com/owner/example/blob/{self.HEAD}/src/app.py"], links)
++
++    def test_a_checkout_projects_page_has_no_banner_and_its_sidebar_badges_a_proposed_nested_project(self) -> None:
++        delta = dict(self.gamma(), name="alpha/delta", title="Add delta", path="docs/projects/alpha/delta/readme.md")
++
++        shown = self.project_page(self.site([self.alpha(), delta]), "docs/projects/alpha/readme.md")
++
++        self.assertNotIn("proposal", shown["banner"])
++        self.assertIn("/blob/main/docs/projects/alpha/readme.md", shown["banner"])
++        self.assertEqual("main", shown["ref"])
++        self.assertIn('>Add delta</a> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>', shown["side"])
++
++    def test_a_pull_request_title_shows_as_text(self) -> None:
++        shown = self.project_page(self.site([self.gamma()], title="<script>alert(1)</script>"))
++
++        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", shown["banner"])
++        self.assertNotIn("<script>", shown["banner"])
++
++    def test_a_search_result_for_a_proposed_page_carries_the_badge(self) -> None:
++        index = [{"route": "projects/gamma/", "title": "Ship gamma", "kind": "project", "text": "Gamma text",
++                  "proposed": 9},
++                 {"route": "projects/alpha/", "title": "Build alpha", "kind": "project", "text": "Gamma too"}]
++        results = self.run_js(self.site([]), ("proposedBadge", "snippet", "highlight", "search"),
++                              f"process.stdout.write(JSON.stringify(search('gamma', {json.dumps(index)})));")
++
++        self.assertIn('<span class="note">project</span> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>'
++                      '<div class="snippet">', results[0])
++        self.assertNotIn("badge", results[1])
++
++
+ @unittest.skipUnless(shutil.which("node"), "the header test needs node")
+ class HeaderTests(unittest.TestCase):
+     def header_html(self, args: str) -> str:
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index b7a5686..32e9ef5 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -65,6 +65,31 @@ def make_summary(groups: list[dict]) -> dict:
+ ]
+ 
+ 
++class NewFileTextTests(unittest.TestCase):
++    HEAD = "diff --git a/notes.md b/notes.md\nnew file mode 100644\nindex 0000000..1111111\n"
++
++    def text(self, diff: str) -> str | None:
++        return summary.new_file_text(summary.parse_diff(diff)[0])
++
++    def test_a_new_files_text_is_its_added_lines(self) -> None:
++        diff = self.HEAD + "--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,3 @@\n+# Notes\n+\n+Text.\n"
++
++        self.assertEqual("# Notes\n\nText.\n", self.text(diff))
++
++    def test_a_new_file_without_a_final_newline_keeps_it_out(self) -> None:
++        diff = self.HEAD + "--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,2 @@\n+# Notes\n+Text.\n\\ No newline at end of file\n"
++
++        self.assertEqual("# Notes\nText.", self.text(diff))
++
++    def test_a_modified_empty_or_binary_file_has_no_text(self) -> None:
++        modified = ("diff --git a/notes.md b/notes.md\nindex 1111111..2222222 100644\n--- a/notes.md\n+++ b/notes.md\n"
++                    "@@ -1,1 +1,2 @@\n # Notes\n+Text.\n")
++        binary = self.HEAD + "Binary files /dev/null and b/notes.md differ\n"
++        for name, diff in (("modified", modified), ("empty", self.HEAD), ("binary", binary)):
++            with self.subTest(name):
++                self.assertIsNone(self.text(diff))
++
++
+ class ParseDiffTests(unittest.TestCase):
+     def test_parses_files_counts_line_numbers_and_kinds(self) -> None:
+         files = {f["path"]: f for f in summary.parse_diff(DIFF)}
+@@ -275,7 +300,7 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+              mock.patch.object(site, "summary_time", side_effect=lambda p: times[p]), \
+              redirect_stdout(io.StringIO()):
+-            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            _, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+ 
+         self.assertEqual([], failures)
+         built_site = tmp / "site"
+@@ -306,7 +331,7 @@ def test_a_summary_published_with_its_diff_builds_without_github(self) -> None:
+         with mock.patch.object(summary, "fetch_diff", side_effect=offline), \
+              mock.patch.object(summary, "merge_base", side_effect=offline), \
+              redirect_stdout(io.StringIO()):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+ 
+         self.assertEqual(([], 1), (failures, len(entries)))
+         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
+@@ -320,7 +345,7 @@ def test_a_summary_without_a_stored_diff_is_skipped_rather_than_fetched(self) ->
+         with mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
+              mock.patch.object(summary, "merge_base", side_effect=AssertionError("must not fetch")), \
+              redirect_stdout(io.StringIO()):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+ 
+         self.assertEqual(1, entries[0]["heads"])
+         self.assertEqual(1, len(failures))
+@@ -332,7 +357,7 @@ def test_a_summary_stored_as_spec_json_is_reported_until_it_is_republished(self)
+         old = path.rename(path.with_name("spec.json"))
+         out = io.StringIO()
+         with redirect_stdout(out):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+ 
+         self.assertEqual([], entries)
+         self.assertEqual(1, len(failures))
+@@ -342,7 +367,7 @@ def test_a_summary_stored_as_spec_json_is_reported_until_it_is_republished(self)
+ 
+         path.write_text(old.read_text())
+         with redirect_stdout(io.StringIO()):
+-            entries, failures = site.build_site(tmp / "republished", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "republished", summaries=tmp / "summaries")
+ 
+         self.assertEqual(([], 1), (failures, len(entries)), "a republished summary sits beside the old file")
+ 
+@@ -369,7 +394,7 @@ def test_skips_a_misfiled_summary_and_still_deploys_the_rest(self) -> None:
+         wrong.write_text(json.dumps(make_summary(GOOD_GROUPS)))
+         out = io.StringIO()
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(out):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+         self.assertEqual([7], [e["number"] for e in entries])
+         self.assertEqual(1, len(failures))
+         self.assertIn("must sit at <pr.number>/<pr.head>/summary.json", failures[0])
+@@ -386,7 +411,7 @@ def test_one_summary_that_does_not_match_its_diff_costs_only_its_own_page(self)
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+              mock.patch.object(site, "summary_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
+              redirect_stdout(io.StringIO()):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+         self.assertEqual(1, len(failures))
+         self.assertIn("gen/api.pb.go is in no group", failures[0])
+         self.assertFalse((tmp / "site" / "reviews" / "7" / ("c" * 40)).exists())
+@@ -399,7 +424,7 @@ def test_skips_a_summary_for_another_repository_when_the_workflow_names_its_own(
+         self.write_summary(tmp / "summaries", "a" * 40, "Theirs")
+         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
+-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
++            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
+         self.assertEqual([], entries)
+         self.assertIn("it is for owner/repo, not this repository", failures[0])
+         self.assertTrue((tmp / "site" / "index.html").is_file(), "the rest of the site still deploys")
+@@ -967,7 +992,7 @@ def build_stored(self, checkout: Path, attributes: str | None) -> tuple[dict[str
+         if attributes is not None:
+             (folder / "attributes.json").write_text(attributes)
+         with redirect_stdout(io.StringIO()):
+-            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
++            _, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
+         data = tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json"
+         files = json.loads(data.read_text())["files"] if data.is_file() else []
+         return {f["path"]: f["kind"] for f in files}, failures
+@@ -1055,11 +1080,12 @@ def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
+                  "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
+         second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+                   "at": "2026-10-02T10:00:00Z", "association": "NONE"}
+-        pages = [{"state": "MERGED", "base": "main", "reviews": [first]}, {"state": "MERGED", "base": "main", "reviews": [second]}]
++        pages = [{"state": "MERGED", "base": "main", "fork": False, "reviews": [first]},
++                 {"state": "MERGED", "base": "main", "fork": False, "reviews": [second]}]
+         with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
+             status = summary.pr_status("owner/example", 7)
+ 
+-        self.assertEqual({"state": "merged", "base": "main", "reviews": [first, second]}, status)
++        self.assertEqual({"state": "merged", "base": "main", "fork": False, "reviews": [first, second]}, status)
+         args = gh.call_args.args
+         self.assertEqual(("api", "graphql", "--paginate"), args[:3])
+         self.assertIn("owner=owner", args)
+@@ -1070,9 +1096,21 @@ def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
+         self.assertIn("baseRef { name }", " ".join(args), "the same query asks whether the base branch still exists")
+ 
+     def test_a_deleted_base_branch_reads_as_none(self) -> None:
+-        page = {"state": "MERGED", "base": None, "reviews": []}
++        page = {"state": "MERGED", "base": None, "fork": False, "reviews": []}
+         with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n"):
+-            self.assertEqual({"state": "merged", "base": None, "reviews": []}, summary.pr_status("owner/example", 7))
++            self.assertEqual({"state": "merged", "base": None, "fork": False, "reviews": []},
++                             summary.pr_status("owner/example", 7))
++
++    def test_the_same_query_says_whether_the_head_branch_is_in_a_fork(self) -> None:
++        for cross, fork in ((True, True), (False, False)):
++            with self.subTest(isCrossRepository=cross):
++                page = {"state": "OPEN", "base": "main", "fork": cross, "reviews": []}
++                with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n") as gh:
++                    status = summary.pr_status("owner/example", 7)
++
++                self.assertIs(fork, status["fork"])
++                self.assertIn("isCrossRepository", " ".join(gh.call_args.args))
++                self.assertIn("fork: .isCrossRepository", gh.call_args.args[-1])
+ 
+     def test_an_answer_without_a_state_is_an_error(self) -> None:
+         with mock.patch.object(summary, "gh", return_value=""):
