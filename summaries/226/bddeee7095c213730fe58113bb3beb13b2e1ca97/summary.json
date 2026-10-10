@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "name": "Stack header segments",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 226,
+  "title": "Let a stack carry several projects, with a header for each",
+  "head": "bddeee7095c213730fe58113bb3beb13b2e1ca97",
+  "headRef": "spec-stack-header-segments",
+  "base": "a38faacadfc2b0ff3c9f9888137f39cc489b54aa",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site lists the pull requests that have summaries on its <b>Reviews</b> index, and each summary page has a sidebar that lists the pull requests of its <b>stack</b>, the chain of pull requests built on each other. The <code>stack-header</code> plan, merged in #216 and not yet built, gives each stack a header above its rows: the project it carries out, linked to that project's page, or a short title when it has none. A <b>project</b> here is a plan under <code>docs/projects/</code>.",
+   "That plan allowed one header per stack. A stack can carry more than one project, though: one layer finishes a plan and the next starts another. With one header, the build had to show one project, hide the others, and print a warning on every such stack.",
+   "This pull request amends the plan before it is built. It changes one Markdown file and no code:",
+   "<ul><li><b>Each pull request still records one project or none.</b> No single pull request names several.</li><li><b>The build splits each stack into segments.</b> A segment is a run of consecutive layers that carry the same project, and each segment gets its own header. A layer with no project joins a neighboring segment instead of heading one.</li><li><b>The stack stays one group.</b> The Reviews index and the sidebar keep the stack in one place, in GitHub's order, with a header above each segment.</li><li><b>The warning goes.</b> Layers that name different projects are now normal.</li></ul>",
+   "The new § 8 holds the whole design: the segment rule, the <code>segments</code> data both pages read, the markup with worked examples, the rejected options, and acceptance tests. The earlier sections now point at § 8 where they used to describe one header per stack. The plan stays at <code>status: ready</code>, which claims it can be built as written."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests built on each other, bottom layer first. The build reads stacks from GitHub's stacks API, or from base branches when GitHub has none.</li><li><b>Layer, member</b>: one pull request in a stack.</li><li><b>Group</b>: the members of a stack that have a summary on the site, which are the rows the Reviews index can show.</li><li><b>Segment</b>: a run of consecutive layers that carry one project, with its own header.</li><li><b>Header</b>: a project's title linked to its page, or a plain title for a stack with no project.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>The review asked for changes with two findings, both places where the plan specifies the same behavior two ways:</p><ul class=\"tight\"><li>Where a layer with no project lands when the stack branches. The steps in § 8.1 follow the walk order, but the prose says the layer joins the nearest layer beneath it.</li><li>Whether <code>stack_segments</code> takes only the members with a summary or every member of the stack. The output must include members without a summary.</li></ul><p class=\"note\">Both are flagged on the lines they concern.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "Segments replace one header per stack",
+   "kicker": "The stack-header plan, amended to give each run of same-project layers its own header",
+   "intro": [
+    "The plan file is the whole change. Read the new § 8 first: it states the rule, then the data, then what the reader sees, then why, then the tests. The edits to §§ 1 to 4 replace each mention of one header per stack with a pointer to § 8, and keep every section number they cite.",
+    "<h4>How a stack splits</h4>",
+    "<code>stack_segments</code>, a new function in the site build, walks the stack's members bottom first. The first segment starts at the bottom and takes the first project any member names. A later member that names a different project starts a new segment. A member that names the same project, or none, joins the current one. A stack where no member names a project is one segment under a title.",
+    "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Projects, bottom first</th><th>Segments</th></tr></thead><tbody><tr><td>A, A, B</td><td class=\"r\">A: 1 and 2. B: 3.</td></tr><tr><td>blank, A, B</td><td class=\"r\">A: 1 and 2. B: 3.</td></tr><tr><td>A, blank, A</td><td class=\"r\">A: 1 to 3.</td></tr><tr><td>A, B, A</td><td class=\"r\">A: 1. B: 2. A: 3.</td></tr><tr><td>blank, blank</td><td class=\"r\">One title segment.</td></tr></tbody></table></div>",
+    "<h4>What each page reads</h4>",
+    "Each summary page's data gains <code>segments</code>, a list of <code>{header, members}</code>, which the sidebar draws with a new <code>stackSegmentsHtml</code>. Each row of the index's <code>site.json</code> carries its own segment's <code>header</code>. The index starts a new table body wherever a row's header differs from the one above it in the same stack. When the <b>Open</b> or <b>Closed</b> box hides a whole segment, the segments on either side join when they name the same project."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The index claims hold against current code. <code>showReviews</code> in <code>site/src/site.ts</code> calls <code>reviewsTable(shown)</code> again on every box change, so the index can compare the rows it actually draws. The divider the plan turns off for a <code>continued</code> body is the <code>tbody tr:last-child td</code> border in <code>site/assets/site.css</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "At this head, <code>project check</code> reports the plans valid, the unit suite passes with 531 tests and 1 skipped, and the Testing section's 80-column <code>awk</code> check prints only the two lines the body names."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/stack-header/readme.md",
+     "collapsed": false,
+     "note": "The plan. The new § 8 holds the segment design, and §§ 1 to 4 point at it.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The heading still says \"one project or a title\", although the plan now draws a header for each project. The site shows this heading as the project's title, and the JSON examples quote it. The review lists retitling as a suggestion.",
+       "line": 6
+      },
+      {
+       "kind": "context",
+       "text": "This row and § 8.1 describe where a no-project layer lands. Compare them with the flag on § 8.1 below, because they disagree when the stack branches.",
+       "line": 73
+      },
+      {
+       "kind": "flag",
+       "text": "In a stack that branches, the plan puts a no-project layer under two different headers. The steps in § 8.1 use the order of § 2.2's walk, but this sentence and § 2.1's <code>\"\"</code> row say the nearest member beneath it. Take #9 (<code>alpha</code>) and #10 (<code>alpha/beta</code>) in a GitHub stack, plus #15, which records <code>\"\"</code> and is based on #9's branch. The walk is #9, #10, #15, so the steps put #15 under alpha/beta, while this sentence puts it under alpha. Choose one rule and add an acceptance row for it.",
+       "line": 681
+      },
+      {
+       "kind": "flag",
+       "text": "<code>stack_segments</code> is said to take the stack's group: § 2.3, step 1 defines the group as only the members with a summary. Yet <code>segments[].members</code> must include members without a summary, and § 8.5 expects #11, which has none, in alpha's segment. Passing the group as written drops #11 from every segment. Say in § 2.3, step 3, § 8.2, and § 2.6 that <code>stack_segments</code> takes every member from <code>find_stacks</code>.",
+       "line": 698
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
