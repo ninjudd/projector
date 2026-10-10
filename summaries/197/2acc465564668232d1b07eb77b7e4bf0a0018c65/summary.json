@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "name": "Files changed pane",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 197,
+  "title": "Add a Files changed pane to the top of a summary page",
+  "head": "2acc465564668232d1b07eb77b7e4bf0a0018c65",
+  "headRef": "summary-files-pane",
+  "base": "3710a64b15a0fb228c8909050283eef67d2ff1e6",
+  "baseRef": "summary-stack-sidebar",
+  "basePr": 196
+ },
+ "overview": {
+  "summary": [
+   "A summary page, the guided review page that <code>project site page</code> renders from a summary's JSON, groups a pull request's files into sections in reading order. Before this change, a reader who wanted one file had to know which section held it. The only file lists were each section's own <b>Files in this section</b> bar, and nothing listed the files that start collapsed, such as generated code, tests, and docs, apart from the rest.",
+   "This change adds a <b>Files changed</b> pane at the top of the page's main column, above the overview. It lists every file in the diff, sorted by path, with its new or deleted badge and its added and removed line counts. The files that start collapsed in the diff sit in a closed list of their own below the rest. Clicking a file unfolds its section, opens the file, and scrolls to it, even when the URL hash already names that file. A file marked Reviewed shows a check in the pane. The sidebar gains a <b>Files changed</b> link above <b>Overview</b>.",
+   "The pull request is stacked on #196, which moves the version list and adds the stack list in the sidebar. Its head merges that branch, and the merge leaves this pull request's own diff unchanged."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Collapsed file</b>: a file card whose diff starts hidden. By default that is a file whose kind is <code>generated</code>, <code>test</code>, or <code>docs</code>. A summary overrides the default per file with <code>collapsed</code>.</li><li><b>Folded section</b>: a group whose body is hidden, for example after the reader marks it Reviewed.</li><li><b><code>fid</code></b>: a file card's element id, <code>f-</code> plus ten hex digits of the SHA-1 of its path, which <code>src/projector/summary.py</code> generates.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review of this head is clean, with no finding threads.</li><li>It listed four optional suggestions, two of which appear here as concern notes on the code they are about.</li><li>The full validation gate passed at this head: <code>npm run check</code>, <code>npm run build</code> with no change to <code>summary.js</code>, 455 Python tests, <code>project check</code>, and both plugin validations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "pane",
+   "title": "The Files changed pane",
+   "kicker": "What the pane renders, how it navigates, and how it tracks Reviewed state.",
+   "intro": [
+    "The renderer in <code>site/src/summary.ts</code> builds the whole page as one HTML string in <code>renderSummary</code>, then <code>wireSummary</code> attaches the click handlers and restores each checkbox from <code>localStorage</code>. The pane follows the same split.",
+    "<ol><li><b>Rendering.</b> <code>renderFilesPane</code> collects every file from every group, sorts them by path, and splits them into an open list and a closed list with <code>startsCollapsed</code>. That function is the rule each file card already used, so a file sits in the closed list exactly when its card starts collapsed.</li><li><b>Navigation.</b> Each row is a link to its file card's <code>fid</code>. A click pushes the hash with <code>history.pushState</code> and calls <code>reveal</code>, which unfolds the section, opens the file, and scrolls to it. A plain hash change runs the same <code>reveal</code> without forcing a scroll, because the browser has already scrolled.</li><li><b>Reviewed state.</b> <code>syncJump</code> copies a file card's <code>reviewed</code> class to its pane row. It runs in <code>markFile</code> and when the page restores Reviewed state on load.</li></ol>",
+    "The stylesheet draws the pane as two <code>&lt;details&gt;</code> elements with the page's own chevron, and draws the Reviewed check with the <code>--check-icon</code> and <code>--ok</code> tokens, which both themes define."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The validation gate passed at this head in a scratch worktree: <code>npm run check</code> reported no findings, <code>npm run build</code> left <code>site/assets/summary.js</code> unchanged, and all 455 Python tests passed with no skip."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>startsCollapsed</code>, <code>splitPath</code>, <code>renderFilesPane</code>, <code>syncJump</code>, and <code>reveal</code>, and wires the pane's links.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 62,
+       "text": "<code>startsCollapsed</code> returns the same expression <code>renderFile</code> computed inline before, so the pane's open and closed lists match how each card starts. Checked by comparing the removed and added lines."
+      },
+      {
+       "kind": "flag",
+       "line": 204,
+       "text": "The pane takes the element id <code>files</code>, as the overview already takes <code>overview</code>. A summary that names a group or an overview card <code>files</code> produces a duplicate id, and that group's sidebar link then jumps to the pane. Decide whether the build should refuse both reserved ids."
+      },
+      {
+       "kind": "context",
+       "line": 208,
+       "text": "The closed list's label names generated, test, and docs files. A source file that a summary marks <code>collapsed: true</code> also lands here, under that label."
+      },
+      {
+       "kind": "verify",
+       "line": 330,
+       "text": "Every place that sets a file card's <code>reviewed</code> class also calls <code>syncJump</code>: here in <code>markFile</code>, and in the restore on load. A section's Reviewed box never marks a file, so it needs no sync. Checked by searching for every <code>classList.toggle('reviewed'</code>."
+      },
+      {
+       "kind": "flag",
+       "line": 679,
+       "text": "The handler calls <code>preventDefault</code> on every click, so a Ctrl-click or a Cmd-click on a row stays in the same tab instead of opening a new one. Decide whether to return early when a modifier key is held."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles the pane, its collapsed sublist, and the Reviewed check, using only existing theme tokens."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "collapsed": true,
+     "note": "Compiled from <code>site/src/summary.ts</code> by <code>npm run build</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill documentation",
+   "kicker": "The summarize-pr skill mentions the new list.",
+   "intro": [
+    "The <code>summarize-pr</code> skill tells the agent that writes a summary which files start collapsed. It now adds that the <b>Files changed</b> list keeps those files in a closed list of their own."
+   ],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
