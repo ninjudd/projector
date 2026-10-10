@@ -1,0 +1,213 @@
+{
+ "version": 1,
+ "name": "Incremental review of a minimal push",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 228,
+  "title": "Review a minimal push incrementally",
+  "head": "b6980ec929d3c4dc2b044dc8ff05a1fa22f60980",
+  "headRef": "incremental-review",
+  "base": "a38faacadfc2b0ff3c9f9888137f39cc489b54aa",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop (<code>start-review-loop</code>) watches the operator's pull requests and gives every pushed head a review. Each review runs the full method: it reads every changed file, runs the repository's checks, and posts a long review body. A push that changes one padding value on a pull request that already had a clean review pays the same cost, and its reader scans hundreds of words for a two-line change.",
+   "This pull request lets the loop publish an <b>incremental review</b> instead: a short clean verdict on the new head that names the loop's last <b>full review</b> of the pull request and reads only the change since that review's head. It implements the plan in <code>docs/projects/incremental-review/readme.md</code>.",
+   "<ol><li><b>Measure the change.</b> <code>project review interdiff &lt;number&gt;</code> finds the full review in the loop's record and diffs the pull request's own change since that head. When the merge base moved, because the author merged or rebased onto the base branch, it first replays the reviewed head onto the new merge base with <code>git merge-tree</code>, so the base branch's own changes stay out of the patch.</li><li><b>Check the rules a read cannot see.</b> The same command refuses unless incremental reviews are on, a loop runs the review, the head is trusted, the loop's newest verdict is a clean one on another head, the full review came from the same Projector version, model, and effort, no finding is open, the change can be measured, every file in it is readable text, and, after a moved merge base, a <code>project review gate</code> run passed on this head.</li><li><b>Decide by reading.</b> The reviewer reads every line of the patch and asks whether the full method would catch something this read cannot. Any doubt, or any refusal, means a full review.</li><li><b>Publish.</b> <code>project review publish --incremental</code> checks the rules again and posts a clean <code>COMMENT</code> with a lead that links the full review and states the change's size.</li></ol>",
+   "The site's page header shows such a review as <b>Clean · incremental from <code>&lt;sha&gt;</code></b>, linking the full review. The plan stays <code>in-progress</code>: unit tests prove its criteria 1 to 4, and criterion 5, a run of a live loop against a scratch repository on GitHub, has not run."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Full review</b>: a review that runs the whole method in <code>skills/review-pr/method.md</code>.</li><li><b>Incremental review</b>: a short clean verdict that builds on the loop's last full review.</li><li><b>Loop record</b>: <code>loops/&lt;id&gt;/published.json</code> in Projector's state directory, one entry per review the loop published.</li><li><b>Merge base</b>: the commit the pull request's diff is taken from. <code>O</code> and <code>MO</code> are the full review's head and merge base. <code>N</code> and <code>MN</code> are the new head's.</li><li><b>Interdiff</b>: the pull request's own change from <code>O</code> to <code>N</code>.</li><li><b>Gate</b>: the repository's check command, <code>review.gate</code>, which <code>project review gate</code> runs and records.</li></ul>"
+   },
+   {
+    "id": "kinds",
+    "title": "How the head moved (kind)",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Kind</th><th>When</th></tr></thead><tbody><tr><td class=\"r\"><code>push</code></td><td><code>O</code> is an ancestor of <code>N</code>, and the merge base did not move.</td></tr><tr><td class=\"r\"><code>merge</code></td><td>Ancestor, and a merge commit since <code>O</code> brought in the new merge base.</td></tr><tr><td class=\"r\"><code>retarget</code></td><td>Ancestor, and the merge base moved with no such merge, as after a stacked parent squash-merges.</td></tr><tr><td class=\"r\"><code>rebase</code></td><td>Not an ancestor, and the merge base moved.</td></tr><tr><td class=\"r\"><code>rewrite</code></td><td>Not an ancestor, and the merge base did not move, as after an amend.</td></tr></tbody></table></div><p class=\"note\">The kind labels the move. No rule reads it.</p>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>The Projector review of <code>b6980ec</code> is clean with no finding threads. It lists two suggestions: rewrap one long line in <code>skills/start-review-loop/SKILL.md</code>, and share one mapping of kinds to phrases between <code>interdiff_lines</code> and <code>incremental_lead</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "measure",
+   "title": "Measuring the change and checking the rules",
+   "kicker": "project review interdiff: the interdiff, its kind, and the rules a read cannot see",
+   "intro": [
+    "<code>project review interdiff</code> answers two questions before a reviewer reads anything. What did the pull request itself change since the loop's last full review? And do the facts a reader cannot see allow an incremental review at all?",
+    "A plain <code>git diff O N</code> would also count what a merge or rebase brought in from the base branch. So when the merge base moved, <code>measure</code> replays <code>O</code>'s change onto the new merge base with <code>git merge-tree --merge-base=MO MN O</code> and diffs that tree against <code>N</code>. A conflicted replay keeps diff3 markers in the file, so the patch shows the conflict region leaving and the author's resolution arriving. <code>MO</code> comes from the loop record, not from <code>git merge-base</code>, because that command gives the wrong commit after a stacked parent is rewritten.",
+    "<code>incremental_rules</code> then refuses at the first rule that fails, and <code>interdiff</code> and <code>publish --incremental</code> both call it. The gate rule is last, so a refusal that names it means every other rule passed. Its <code>needs_gate</code> flag tells the reviewer to read first and run the gate only when the read decides for an incremental review."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review ran the 577 unit tests at this head, all passing. The tests build real Git histories in temporary repositories for each kind, for conflicted rebases and merges, for a stack cascade, and for a Git without <code>merge-tree --merge-base</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>measure</code>, <code>incremental_rules</code>, the incremental marker and lead, and <code>publish --incremental</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 621,
+       "text": "The replay runs in the operator's checkout. <code>merge-tree</code> writes objects only, and touches neither the working tree nor the index, so uncommitted work stays as it is."
+      },
+      {
+       "kind": "context",
+       "line": 652,
+       "text": "A moved merge base with <code>O</code> still an ancestor is a <code>merge</code> only when a merge commit since <code>O</code> contains the new merge base. Otherwise it is a <code>retarget</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 723,
+       "text": "A record entry with no <code>base</code>, as an earlier release wrote, refuses as unmeasurable. <code>test_a_record_without_the_full_reviews_merge_base_cannot_be_measured</code> covers it, and the review ran it."
+      },
+      {
+       "kind": "verify",
+       "line": 736,
+       "text": "After a moved merge base, the rule requires a gate record whose <code>sha</code> is this head and whose exit code is 0. <code>setup</code> writes a fresh state, so a gate from an earlier review cannot count. The tests the review ran cover a failed gate, a gate on an earlier head, and an empty interdiff across a moved base."
+      },
+      {
+       "kind": "context",
+       "line": 1118,
+       "text": "Publish applies the rules again to the live state, after the head check and the collision check, so a thread opened since <code>interdiff</code> ran still refuses."
+      },
+      {
+       "kind": "context",
+       "line": 1181,
+       "text": "Every loop record entry now stores <code>base</code>, the merge base a later interdiff measures from, and <code>from</code>, which marks an incremental review that a later one never builds on."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>review interdiff</code>, makes <code>--verdict</code> and <code>--covered</code> required only without <code>--incremental</code>, and reads <code>review.incremental</code> from the operator's checkout, never from the head.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 842,
+       "text": "An unset key means on. A value that is not a boolean raises a <code>ConfigError</code> naming the key, so both commands exit non-zero and the head gets a full review."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "site",
+   "title": "Showing an incremental review on the site",
+   "kicker": "The page header names the full review an incremental review builds on",
+   "intro": [
+    "Each summary page's header shows the verdict of the newest Projector review of its head. <code>review_statuses</code> now reads each review body through <code>verdict_marker</code>, which also reads the <code>projector-incremental</code> line directly after the marker. A clean incremental head gains <code>incrementalFrom</code>: the full review's head and that review's URL.",
+    "The review marker itself is unchanged, so a site built by an earlier release still matches it and shows plain <b>Clean</b>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review ran <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code>. The build left the committed <code>summary.js</code> unchanged."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>review_statuses</code> keeps the newest review per head as before, and also the newest full review per head, to link from an incremental one.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 176,
+       "text": "The link is the newest full review of the <code>from</code> head, or null when the build found none."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "<code>ReviewStatus</code> gains an optional <code>incrementalFrom</code> on the clean variant only."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "The header appends <b>incremental from <code>&lt;sha&gt;</code></b> after the status, linked to the full review, while the pull request is open."
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Mutes the incremental segment and keeps the short SHA's case inside the uppercase header."
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Telling the reviewer when to review incrementally",
+   "kicker": "The review-pr and start-review-loop skills, and the CLI reference",
+   "intro": [
+    "The code enforces facts, and the skill carries the judgment. <code>review-pr</code> gains a section, \"Review a minimal push incrementally\", with the deciding question, the kinds of change that usually qualify, and the rule that any refusal or doubt means a full review.",
+    "Prose qualifies only when a full review would pass it. So the skill tells the reviewer to read changed documentation against the code it describes, and each changed comment against <code>guidelines.md</code> § 1. Text an agent follows, such as a <code>SKILL.md</code>, never counts as prose."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The new section, the incremental marker's description, and the report's new field.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 348,
+       "text": "This list decides which changes a reviewer may sign off without the full method. A command, a link target, or a string inside code is excluded from prose on purpose."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Every pushed head still ends in a verdict on that head, full or incremental.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 178,
+       "text": "The review suggests rewrapping this paragraph. One of its lines runs to 138 characters."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>review.incremental</code>, <code>review interdiff</code> and its JSON fields, <code>publish --incremental</code>, and the header's incremental status."
+    },
+    {
+     "path": "docs/projects/incremental-review/readme.md",
+     "note": "Moves the plan to <code>in-progress</code>, adds the <code>retarget</code> kind and the unmeasurable-record rule, and appends § 8, Implementation status.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 755,
+       "text": "§ 8 records that criterion 5, a live loop against a scratch repository, has not run, which is why the plan is not <code>completed</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Real Git histories against the fake GitHub, and the header under node",
+   "intro": [
+    "<code>tests/test_review.py</code> adds an <code>IncrementalCase</code> that publishes a clean full review in a temporary repository, then builds each next head with real Git: a push, a merge, a rebase, a conflict, an amend, a stack cascade, and a retarget. <code>tests/test_site.py</code> covers <code>review_statuses</code> and renders the header under node."
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  }
+ ]
+}

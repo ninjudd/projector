@@ -1,0 +1,2032 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a08bf1b..056073b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -502,12 +502,15 @@ These are the keys Projector reads today:
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+ | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
++| `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+-pull request, where GitHub refuses the verdict regardless.
++pull request, where GitHub refuses the verdict regardless. `review.incremental`
++is on unless it is `false`, and a value that is neither `true` nor `false`
++makes both commands that read it refuse and name the key.
+ 
+ The operator -- the account whose branches carry fixes and whose token pushes
+ them -- is deliberately not a key. It follows whichever token is authenticated,
+@@ -700,7 +703,10 @@ versions follow the sections. A summary's header shows the same status as its
+ row on Reviews: **Merged** or **Closed** once the pull request is, and until
+ then the verdict of the newest Projector review of its head, **Clean** or
+ **Changes requested**, linked to that review on GitHub, or **Unreviewed** when
+-no Projector review names the head. A review counts only when its author owns
++no Projector review names the head. When that review is incremental, the
++header reads **Clean · incremental from a8cf3d5**, where the second part names
++the head of the full review it builds on and links that review, while the row
++on Reviews shows **Clean** alone. A review counts only when its author owns
+ the repository, belongs to its organization, or collaborates on it, because
+ anyone can review a public repository's pull request. The build reads the
+ pull request's state and reviews through `gh` and shows no status when `gh`
+@@ -914,6 +920,8 @@ project review setup 66 --model claude-opus-5-5 --loop main-loop
+ project review move 66
+ project review census 66 --json
+ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
++project review interdiff 66
++project review publish 66 --incremental --body body.md
+ project review release 66
+ project review gate 66
+ project review rules
+@@ -970,6 +978,64 @@ review id to the loop's record, deletes the start comment, and releases the
+ lock. A run that fails after submitting exits non-zero, and running it again
+ finishes that review rather than posting another.
+ 
++`interdiff` decides whether the head may have an incremental review: a short
++clean verdict on a head that changed little since this loop's last full review
++of the pull request. It reads the loop's record, where `publish` stores each
++review's merge base as `base` and, for an incremental review, the full
++review's head as `from`. It measures the pull request's own change since that
++full review's head `O`. When the merge base moved, it replays `O`'s change
++onto the new merge base with
++`git -c merge.conflictStyle=diff3 merge-tree --write-tree --name-only --merge-base=<old base> <new base> O`
++and diffs the result against the head, so the base's own changes stay out
++however the head moved. A conflicted file shows the conflict region, its
++markers naming the new merge base, the old one, and `O` by full SHA, removed
++and the author's resolution added. `interdiff` then checks the rules that need
++no judgment, in this order, and refuses at the first that fails:
++`review.incremental` is not `false`; the review's state names a loop; the head
++is trusted; the loop's record holds a clean full review of the pull request,
++and its newest verdict is clean and on another head; that full review is on
++GitHub and its marker names this run's Projector version, model, and effort;
++no finding thread is open; the change can be measured, which takes the full
++review's recorded merge base, both heads in the checkout, and on a moved base
++a Git that knows `merge-tree --merge-base` (2.40 or newer); the change touches
++no binary file, symlink, or submodule; and when the merge base moved, a `gate`
++run on this head exited 0. It prints the earlier full review, the `kind` of
++move, any conflicted paths, the counts, `incremental: every rule passes` or
++`refused:` with the rule, and the patch when it measured one. A refusal that
++only the gate rule makes ends `(needs_gate)`. It exits 0 when every rule
++passes and 1 otherwise. With `--json` it prints one object:
++
++| Field | Value |
++| --- | --- |
++| `incremental` | `true` when every rule passes. |
++| `reason` | The rule that failed, in words, or `null`. |
++| `needs_gate` | `true` when the gate rule is the only one that fails. |
++| `from` | The full SHA of the full review's head, or `null` when there is none. |
++| `review` | The URL of that full review, or `null`. |
++| `kind` | `push` when `O` is an ancestor of the head and the merge base did not move; `merge` when the head also contains a merge commit that brought in the moved merge base; `retarget` when the merge base moved with no such merge, as when a stacked pull request is retargeted after the one beneath it merges; `rebase` when `O` is not an ancestor and the merge base moved; `rewrite` when `O` is not an ancestor and the merge base did not move. `null` when the change was not measured. |
++| `unchanged_commits` | For `rebase` and `rewrite`, `true` when every commit the full review read has a new commit with the same `git patch-id --stable`; `null` for the other kinds. |
++| `conflicts` | The paths the replay conflicted in, `[]` when it was clean or not needed, or `null` when the change was not measured. |
++| `insertions`, `deletions` | The change's line counts, or `null` when it was not measured. |
++| `files` | The paths the change touches, empty when it was not measured. |
++| `patch` | The change, or `""` when it was not measured. |
++
++`publish --incremental` publishes the incremental review. It applies the same
++rules to the live state, and `--body` names a file of at most 600 characters,
++once its placeholders are filled, on what changed and what was checked. It
++writes the signature line with `incremental from <short-sha>`, the review
++marker with `verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files
++the change touches, a `projector-incremental` line naming the full review's
++head, the kind, and the counts, and a lead that links the full review and
++states the change's size, the kind, and any resolved conflict. It always posts
++a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
++approval is what remains." on another author's pull request, and on a
++self-review marks the pull request ready. It refuses, keeping the lock, when a
++rule fails, when the body is empty, too long, or holds a signature line, a
++marker, or `{census}`, and when given `--threads`, `--covered`,
++`--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
++`--verdict` and `--covered` are required, and a body that holds a
++`projector-incremental` line is refused like one that holds its own marker.
++
+ `gate` runs the repository's validation gate: the shell command
+ `review.gate` names in `.projector.toml`, run with `sh -c` in the scratch
+ worktree, with the worktree and the merge base as `$1` and `$2` and as
+diff --git a/docs/projects/incremental-review/readme.md b/docs/projects/incremental-review/readme.md
+index eae370d..c9dfea0 100644
+--- a/docs/projects/incremental-review/readme.md
++++ b/docs/projects/incremental-review/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Review a minimal push incrementally
+@@ -113,7 +113,7 @@ these rules. It refuses at the first rule that fails:
+ | This loop's clean full review precedes it | The loop's record holds no full review of the pull request, or the newest verdict in it, full or incremental, requests changes or names this same head. |
+ | The same reviewer made it | The earlier full review is missing from GitHub, or its marker names a different `projector` version, `model`, or `effort` than this run would write. |
+ | No finding is open | The census counts an open Projector finding thread. |
+-| The change can be measured | The checkout lacks the earlier head or its recorded merge base, or the replay in § 2.3 fails, as it does on a Git older than 2.40 when the merge base moved. |
++| The change can be measured | The loop's record holds no merge base (`base`) for the earlier full review, as an entry an earlier release wrote does not, the checkout lacks the earlier head or its recorded merge base, or the replay in § 2.3 fails, as it does on a Git older than 2.40 when the merge base moved. |
+ | Every file can be read | The interdiff touches a binary file, a symlink, or a submodule. |
+ | The base's changes passed the gate | The merge base moved since the earlier head (`MO` differs from `MN` in § 2.3), and the review's state records no `project review gate` run on this head that exited 0. |
+ 
+@@ -187,6 +187,9 @@ How the head moved, the `kind` in § 2.3, also guides the decision:
+ - **A rewrite in place**, such as an amended or squashed commit, reads like a
+   pushed commit. `unchanged_commits` says whether any reviewed commit's
+   content changed or only its message did.
++- **A retarget** shows whatever the pull request's diff gained when its base
++  changed, such as a merged parent's commits, and the reviewer reads those
++  like any other hunk.
+ - **A resolved conflict** usually needs a full review, because the resolution
+   combines two changes that no review read together. Review it incrementally
+   only when every resolved hunk is trivial, such as two edits to one
+@@ -247,10 +250,17 @@ the same for every kind, and no rule reads it:
+ | Kind | When |
+ | --- | --- |
+ | `push` | `O` is an ancestor of `N`, and the merge base did not move. |
+-| `merge` | `O` is an ancestor of `N`, and the merge base moved, which takes a merge of the base branch. |
++| `merge` | `O` is an ancestor of `N`, the merge base moved, and a merge commit in `O..N` brought in `MN`, which `O` does not contain. |
++| `retarget` | `O` is an ancestor of `N`, and the merge base moved with no such merge, as when a stacked pull request is retargeted onto `main` after the one beneath it merges. |
+ | `rebase` | `O` is not an ancestor of `N`, and the merge base moved. |
+ | `rewrite` | `O` is not an ancestor of `N`, and the merge base did not move, as after an amend, a squash, or a reword in place. |
+ 
++A retarget moves the merge base without a merge. After a squash merge of the
++parent, `MN` is the commit the parent forked from, which `O` already contains,
++and `N` holds the parent's commits that the default branch does not. The
++interdiff then shows those commits as gained, because GitHub now shows them in
++the pull request's diff, and the reviewer judges them like any other hunk.
++
+ For `rebase` and `rewrite`, the command also compares the
+ `git patch-id --stable` of each commit in `MO..O` with those in `MN..N`,
+ leaving out merges, as `git range-diff` matches commits. When every reviewed
+@@ -306,7 +316,7 @@ With `--json`, `interdiff` prints one object, with the same exit status:
+ | `needs_gate` | `true` when the gate rule is the only one that fails, and `false` otherwise. |
+ | `from` | The full SHA of the earlier head, or `null` when there is none. |
+ | `review` | The URL of that head's full review, or `null`. |
+-| `kind` | `push`, `merge`, `rebase`, or `rewrite`, or `null` when the change was not measured. |
++| `kind` | `push`, `merge`, `retarget`, `rebase`, or `rewrite`, or `null` when the change was not measured. |
+ | `unchanged_commits` | For `rebase` and `rewrite`, `true` when every reviewed commit carried over unchanged and `false` otherwise; `null` for the other kinds. |
+ | `conflicts` | The paths the replay conflicted in, `[]` when it was clean or not needed, or `null` when the change was not measured. |
+ | `insertions`, `deletions` | The interdiff's line counts, or `null` when it was not measured. |
+@@ -351,7 +361,8 @@ The review contains, in this order:
+    `<short-sha>`: +`<insertions>` −`<deletions>` lines in `<files>` file or
+    files." The short SHA links to the full review. For a kind other than
+    `push`, a phrase before the colon names it: "across a merge of `<base>`",
+-   "across a rebase onto `<base>`", or "across a rewrite of its commits".
++   "across a retarget onto `<base>`", "across a rebase onto `<base>`", or
++   "across a rewrite of its commits".
+    After a conflict, the lead ends "with a resolved conflict in `<path>`",
+    naming each conflicted path.
+ 5. **The subagent's body.** On another author's pull request, publish adds
+@@ -589,6 +600,11 @@ The tests run in temporary Git repositories against the fake GitHub that
+    - An `O` missing from the checkout refuses as unmeasurable, with
+      `conflicts` at `null`. With `merge-tree` failing as an older Git does, a
+      moved merge base refuses, and an unmoved one still measures.
++   - A record entry with no `base` refuses as unmeasurable, which a version
++     check cannot catch when a checkout that was never installed names every
++     release `unknown`.
++   - A stacked child retargeted onto the trunk after its parent squash-merges,
++     with a commit pushed on top and no merge, gives `retarget`, not `merge`.
+ 2. **Rules.** Each row of the table in § 2.2.1 refuses with its own reason:
+    `review.incremental = false`, a review with no loop, an untrusted head, a
+    newest verdict in the loop's record that requests changes, one that names
+@@ -735,3 +751,13 @@ Running `merge-tree` in scratch repositories settled these:
+ - After a stack cascade, `git merge-base O MN` puts a conflict in the parent's
+   file that the child never had, and the recorded merge base gives the
+   child's edit alone.
++
++## 8. Implementation status
++
++`project review interdiff`, `publish --incremental`, the header's incremental
++status, and the skill text are built as § 2 describes, including the
++`retarget` kind in § 2.3 and the rule in § 2.2.1 for a record entry with no
++`base`. The tests in `tests/test_review.py` and `tests/test_site.py` prove
++criteria 1 to 4. Criterion 5 needs a review loop running against a scratch
++repository on GitHub, and has not been run, so the project stays
++`in-progress` until it has.
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 0e010ac..f68cd6e 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -77,6 +77,8 @@ a.rstatus:hover { text-decoration: underline; }
+ .rstatus.unreviewed { color: var(--muted); }
+ .rstatus.merged { color: var(--merged); }
+ .rstatus.closed { color: var(--closed); }
++.rstatus.incremental { color: var(--muted); }
++.eyebrow code { text-transform: none; letter-spacing: normal; }
+ 
+ /* sidebar */
+ /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 61f019f..28faa09 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -342,9 +342,19 @@ function statusHtml(state, review) {
+                 return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+             }).join('') + '</ul>';
+         }
++        // The header, as the page's statement of how well the head was checked,
++        // also links the full review a clean incremental review builds on.
+         function reviewStatus() {
+             const status = statusHtml(pr.state, data.review);
+-            return status !== '' ? ` · ${status}` : '';
++            if (status === '')
++                return '';
++            const review = data.review;
++            const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
++            if (from === undefined)
++                return ` · ${status}`;
++            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
++            const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
++            return ` · ${status} · ${link}`;
+         }
+         function renderPage() {
+             const nav = data.groups.map(function (g, i) {
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 3291296..b8b6c51 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -53,9 +53,13 @@ type PullState = 'open' | 'merged' | 'closed';
+ 
+ /**
+  * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
+- * Projector review names the head.
++ * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
++ * head of the full review it builds on, and that review's page, or null when the build found none.
+  */
+-type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
++type ReviewStatus =
++  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
++  | { status: 'changes-requested'; url: string }
++  | { status: 'unreviewed' };
+ 
+ /** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index d3a8d1e..2794cfc 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -337,9 +337,17 @@ function renderSummary(data: SummaryData): void {
+     }).join('') + '</ul>';
+   }
+ 
++  // The header, as the page's statement of how well the head was checked,
++  // also links the full review a clean incremental review builds on.
+   function reviewStatus(): string {
+     const status = statusHtml(pr.state, data.review);
+-    return status !== '' ? ` · ${status}` : '';
++    if (status === '') return '';
++    const review = data.review;
++    const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
++    if (from === undefined) return ` · ${status}`;
++    const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
++    const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
++    return ` · ${status} · ${link}`;
+   }
+ 
+   function renderPage(): string {
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index b090d4b..7284880 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -178,6 +178,12 @@ refused `setup` releases it. A lock older than a day is stale and cleared;
+ `project review release <number>` clears one left by a session that stopped,
+ and only when no review of that pull request is running.
+ 
++Under `start-review-loop`, run `project review interdiff <number>` next. A head
++that changed little since the loop's last full review can get an incremental
++review in place of steps 5 to 7, as
++[Review a minimal push incrementally](#review-a-minimal-push-incrementally)
++describes. Every other head continues here.
++
+ 5. Inspect the head by the method in `method.md`, next to this file: state
+    the change's intent, sort the changed files, run the passes, follow every
+    changed definition to the code that depends on it, and verify each
+@@ -281,6 +287,144 @@ its `sha=` with the verdict that preceded it.
+ Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
+ user explicitly requests that service. This skill performs the local review.
+ 
++## Review a minimal push incrementally
++
++An incremental review reads only the change since a review loop's last full
++review of the pull request, and publishes a short clean verdict on the new
++head that names the full review it builds on. It is a verdict like any other,
++so draft state, the site's header, and `fix-pr` read it as they read a full
++review. Only a loop's own full review can carry one, so a review run by hand
++is always full.
++
++After `setup`, run:
++
++```sh
++project review interdiff <number> [--json]
++```
++
++It finds this loop's last full review of the pull request and measures the
++pull request's own change since that review's head, whether the author pushed
++a commit, merged the base branch, rebased, or rewrote a commit. It leaves out
++what the base brought in. Where the author resolved a conflict, the patch
++removes the conflict region, with the base's side, the original lines, and the
++reviewed head's side between diff3 markers, and adds the resolution. It prints
++the earlier full review, how the head moved, the counts, any conflicted paths,
++and the patch. It exits 0 only when the rules that need no judgment all hold:
++
++- `review.incremental` is not `false`, and a loop runs the review.
++- The head is trusted.
++- The loop's record holds a clean full review of the pull request, and the
++  newest verdict in it is clean and names another head.
++- That full review is on GitHub, and its marker names the Projector version,
++  model, and effort this run would write.
++- No finding thread is open.
++- The change can be measured, and it touches no binary file, symlink, or
++  submodule.
++- When the merge base moved since the full review, a `project review gate`
++  run on this head has exited 0.
++
++The gate rule is checked last. When it is the only rule that fails, the
++refusal ends `(needs_gate)`, and `--json` sets `needs_gate`, so you read the
++change before you spend the gate on it. Any other non-zero exit means a full
++review: continue at step 5 above, on the same setup. That includes the exit
++from a `project` too old to know `interdiff`.
++
++On exit 0, or when only the gate remains, read every line of the patch, and
++the code around each hunk at the head where you need context. Then ask one
++question: would the full method, with its gate, focused tests, and reading
++outward from each changed definition, catch something this read cannot? The
++review is incremental only when the answer is no. Run the full review when the
++answer is yes, when a hunk reworks code an earlier finding thread was about,
++or when you are unsure. A needless full review costs a minute or two. A wrong
++incremental review signs off a change that no pass read. A problem the read
++finds goes to the full review, which verifies it and files it as a thread.
++
++These kinds of change usually qualify:
++
++- **Presentation.** A value in a stylesheet that changes only how something
++  looks: spacing, a size, a color, a border, or a font. A change to which
++  elements a rule selects, to whether content shows, or to whether it can be
++  clicked is not presentation.
++- **Prose.** Comments, docstrings, and documentation text. A command, a code
++  sample, a link target, or a configuration value in documentation is not
++  prose, because a reader runs or follows it. Text an agent follows as
++  instructions, such as a skill's `SKILL.md`, `AGENTS.md`, or `CLAUDE.md`, is
++  not prose either, because it changes what the agent does. A string inside
++  code, such as a label or an error message, is code, because a test or a
++  caller can match it.
++- **Formatting.** Whitespace and line wrapping that the file's language
++  ignores. Indentation in Python or YAML is not formatting.
++
++Prose qualifies only when a full review would pass it, so read it the two ways
++a full review does. Read it as `method.md` § 2 reads documentation: against
++the code it describes at the head, for accuracy, broken references, and
++contradictions. Read each added or changed comment and docstring against
++`../guidelines.md` § 1 as well. A comment that misstates the code is a
++correctness finding there, and one that narrates the code beneath it, excuses
++complexity, or asserts that a decision is correct is a written-rules finding.
++
++How the head moved, the `kind` that `interdiff` prints, also guides the
++decision:
++
++- **A pushed commit (`push`), a clean merge (`merge`), or a clean rebase
++  (`rebase`)** is the usual incremental case. The patch holds only the pull
++  request's own change.
++- **A rewrite in place (`rewrite`)**, such as an amended or squashed commit,
++  reads like a pushed commit. `unchanged_commits` says whether any reviewed
++  commit's content changed or only its message did.
++- **A retarget (`retarget`)** moved the merge base without a merge, as when a
++  stacked pull request is retargeted onto the default branch after the one
++  beneath it merges. The patch then holds whatever the pull request's diff
++  gained, such as the merged parent's commits that GitHub now shows in it.
++  Read those like any other hunk.
++- **A resolved conflict**, listed under `conflicts`, usually needs a full
++  review, because the resolution combines two changes that no review read
++  together. Review it incrementally only when every resolved hunk is trivial,
++  such as two edits to one stylesheet value, both sides adding independent
++  lines, or a version string.
++
++When the read decides for an incremental review and the gate is what remains,
++run `project review gate <number>`, and go on only when it exits 0. Where
++`review.gate` is unset, `gate` refuses, and the head gets a full review.
++
++Then write the body: a few sentences on what changed and what you checked
++about it, at most 600 characters once its placeholders are filled. Leave out
++the intent paragraph, the census, the coverage line, disclosures,
++`Suggestions`, and the list of checks, because the full review already says
++them. Publish it:
++
++```sh
++project review publish <number> --incremental --body <file>
++```
++
++`publish` checks the lock and the head as for any review, applies the rules
++again to the live state, and runs the collision check. It writes the
++signature line, both markers, and a lead that links the full review and states
++the size of the change, how the head moved, and any conflict the author
++resolved, so none of them is typed. It posts a `COMMENT`, even where
++`review.allow_approve` is `true`, because an incremental review vouches only
++that the change since a reviewed head needed nothing more. On a self-review it
++then marks the pull request ready, as any clean verdict does, and on another
++author's pull request it ends the body with "A human approval is what
++remains." It refuses, exiting 1 and keeping the lock so you can run the full
++review on the same setup, when:
++
++- a rule fails, such as a thread opened since `interdiff` ran;
++- the head moved since `setup`, in which case run
++  `project review move <number>` and start again at `interdiff`;
++- the body is empty, longer than 600 characters once filled, or holds a
++  signature line, a marker comment, or `{census}`;
++- you pass `--threads`, `--covered`, `--second-verdict`, or
++  `--verdict changes-requested`.
++
++Then summarize the new head as
++[Summarize the pull request](#summarize-the-pull-request) says, and report as
++[Publish one review](#publish-one-review) says, naming the head of the full
++review the incremental review builds on.
++
++A full review of a head that `interdiff` measured may read its new range from
++the patch `interdiff` printed: the change since the last full review.
++
+ ## Label every review and finding
+ 
+ The operator authors the pull request and posts the review, so nothing about
+@@ -344,6 +488,23 @@ marker, the intent paragraph, the census, the coverage line, any disclosures,
+ a `Suggestions` list of P3 items when there are any, and on a clean head what
+ was checked.
+ 
++**An incremental review adds one line.** Its signature line carries
++`incremental from <short-sha>` between the verdict word and the duration, and
++the line directly after its marker names the full review it builds on:
++
++```
++<!-- projector-incremental v=1 from=<full-sha> kind=<push|merge|retarget|rebase|rewrite> insertions=<n> deletions=<n> files=<n> conflicts=<n> -->
++```
++
++`from=` is the head of that full review, `kind=` is how the head moved since
++it, the counts are the change's size, and `conflicts=` is how many files the
++author resolved a conflict in. Its review marker keeps the grammar above, with
++`verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files the change
++touches, so everything that reads a verdict reads it. A lead linking the full
++review follows the two lines, and then the reviewer's short body, as
++[Review a minimal push incrementally](#review-a-minimal-push-incrementally)
++describes. `publish --incremental` writes all of it except that body.
++
+ **Every inline finding opens with a marker:**
+ 
+ ```
+@@ -548,8 +709,9 @@ steps, so a run that fails partway exits non-zero and running it again
+ finishes that review instead of posting a second one.
+ 
+ Report the review as done only after `publish` exits 0. Report the SHA, the
+-verdict, the review id, how many threads it opened, and the summary's URL when
+-the next section publishes one. Before a `clean` verdict, settle every
++verdict, the review id, how many threads it opened, the head of the full
++review an incremental review builds on, and the summary's URL when the next
++section publishes one. Before a `clean` verdict, settle every
+ earlier finding first; `publish` refuses one while a finding is open. Never
+ resolve another reviewer's thread, resolve a finding you have not verified at
+ this head, claim a newer SHA was reviewed, or merge.
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 9ecd5a7..db37978 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -129,9 +129,10 @@ reads the new head against that history instead of rediscovering it.
+   that arrives mid-review is the moved-head case that skill's start-comment
+   rule covers.
+ - The subagent reports each published review back: the SHA, the verdict, the
+-  review id, and how many threads it opened; `publish` has already added the
+-  id to the loop's record. A question for the user comes back to the main
+-  loop to ask.
++  review id, how many threads it opened, and for an incremental review the
++  head of the full review it builds on; `publish` has already added the id to
++  the loop's record. A question for the user comes back to the main loop to
++  ask.
+ - Each subagent summarizes every pull request it reviews, as `review-pr`
+   describes, another author's included. The loop never pauses or holds
+   summaries on its own judgment. The one off switch is `review.summarize =
+@@ -173,9 +174,11 @@ head.
+ 
+ ## Continue after fixes
+ 
+-Every pushed SHA, including a fix-only SHA, starts a complete review cycle.
+-Green CI and resolved threads are evidence about state, not substitutes for
+-review. When a pull request closes or merges, close its subagent and delete
++Every pushed SHA, including a fix-only SHA, starts a review cycle that ends in
++a verdict published on that SHA, full or incremental. `review-pr` decides
++which: a head that changed little since this loop's last full review can get
++an incremental review, and every other head gets a full one. Green CI and
++resolved threads are evidence about state, not substitutes for review. When a pull request closes or merges, close its subagent and delete
+ its line from the tracked file. The watcher adopts the operator's new pull
+ requests itself; append one the user assigns, and continue until the user
+ stops the loop.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index fefd7d6..240ac33 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -460,10 +460,15 @@ def parser() -> argparse.ArgumentParser:
+     review_gate = review_commands.add_parser(
+         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
+     )
++    review_interdiff = review_commands.add_parser(
++        "interdiff", help="measure the change since this loop's last full review and check whether the head may "
++                          "have an incremental review"
++    )
+     add_output(review_commands.add_parser(
+         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+     ))
+-    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate):
++    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
++                    review_interdiff):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                              "later: default the review set up for this pull request)")
+@@ -478,17 +483,22 @@ def parser() -> argparse.ArgumentParser:
+     review_setup.add_argument("--model", required=True, help="the model id the start comment names")
+     review_setup.add_argument("--rereview", action="store_true",
+                               help="a re-review of a head this loop already published a verdict on")
+-    review_publish.add_argument("--verdict", required=True, choices=("clean", "changes-requested"),
+-                                help="the verdict the signature line and marker carry")
++    review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
++                                help="the verdict the signature line and marker carry (required without "
++                                     "--incremental)")
+     review_publish.add_argument("--body", type=Path, required=True,
+                                 help="the review below its signature line, with {census} and optionally "
+-                                     "{took}, {seconds}, {sha}, {short_sha}")
++                                     "{took}, {seconds}, {sha}, {short_sha}; with --incremental, at most 600 "
++                                     "characters on what changed and what you checked, with no {census}")
+     review_publish.add_argument("--threads", type=Path,
+                                 help="a JSON list of findings, each {path, line, priority, body}")
+-    review_publish.add_argument("--covered", required=True,
+-                                help="files read over files changed, such as 12/12")
++    review_publish.add_argument("--covered",
++                                help="files read over files changed, such as 12/12 (required without --incremental)")
+     review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
+                                 help="outside a loop, the earlier verdict a user agreed to publish beside")
++    review_publish.add_argument("--incremental", action="store_true",
++                                help="publish a clean incremental review of the change since this loop's last "
++                                     "full review, when `project review interdiff` allows one")
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -829,6 +839,17 @@ def review_rules(json_output: bool) -> int:
+     return 0 if allowed else 1
+ 
+ 
++def incremental_enabled(checkout: Path) -> bool:
++    """`review.incremental` from the review's checkout; unset means incremental reviews are on."""
++
++    value = load_config(checkout).get("review.incremental")
++    if value is None:
++        return True
++    if not isinstance(value, bool):
++        raise ConfigError(f"review.incremental must be true or false, not {type(value).__name__}")
++    return value
++
++
+ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "rules":
+         return review_rules(arguments.json_output)
+@@ -853,19 +874,31 @@ def run_review(arguments: argparse.Namespace) -> int:
+             else:
+                 print("\n".join(review.census_lines(result)))
+             return 0
++        if command == "interdiff":
++            state = review.read_state(review.Paths(root, repo, arguments.pr))
++            enabled = incremental_enabled(Path(state["checkout"]))
++            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
++            if arguments.json_output:
++                print(json.dumps(result, indent=2))
++            else:
++                print("\n".join(review.interdiff_lines(result, state["base_ref"])))
++            return 0 if result["incremental"] else 1
+         if command == "publish":
+             state = review.read_state(review.Paths(root, repo, arguments.pr))
+             try:
+                 allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
+             except ProjectorError:
+                 allow = False
++            enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
+             result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
+-                                    arguments.threads, arguments.covered, arguments.second_verdict, allow)
++                                    arguments.threads, arguments.covered, arguments.second_verdict, allow,
++                                    arguments.incremental, enabled)
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+                 print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
+-                      f"{result['repo']}#{result['number']} at {result['sha']}")
++                      f"{result['repo']}#{result['number']} at {result['sha']}"
++                      + (f", incremental from {result['from'][:7]}" if result["from"] else ""))
+                 if result["draft"] is not None:
+                     print("marked draft" if result["draft"] else "marked ready")
+             return 0
+diff --git a/src/projector/review.py b/src/projector/review.py
+index a4168d4..5f9c8d8 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -541,6 +541,237 @@ def census_lines(result: dict) -> list[str]:
+     return lines
+ 
+ 
++# Incremental reviews
++
++class Unmeasurable(ReviewError):
++    pass
++
++
++def git_run(checkout: Path, *args: str, stdin: bytes = b"", ok: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess:
++    """Run git in the checkout for its bytes and exit status; a status outside `ok` cannot be measured."""
++    result = subprocess.run(["git", "-C", str(checkout), *args], input=stdin, capture_output=True)
++    if result.returncode not in ok:
++        raise Unmeasurable(f"git {' '.join(args[:3])} exited {result.returncode}: "
++                           f"{result.stderr.decode('utf-8', 'replace').strip()}")
++    return result
++
++
++def decoded(output: bytes) -> str:
++    return output.decode("utf-8", "replace")
++
++
++def is_ancestor(checkout: Path, ancestor: str, descendant: str) -> bool:
++    return git_run(checkout, "merge-base", "--is-ancestor", ancestor, descendant, ok=(0, 1)).returncode == 0
++
++
++def merges_base(checkout: Path, old: str, new: str, new_base: str) -> bool:
++    """Whether `new` brought in the base it now forks from through a merge commit since `old`."""
++    if is_ancestor(checkout, new_base, old):
++        return False
++    merges = decoded(git_run(checkout, "rev-list", "--merges", f"{old}..{new}").stdout).split()
++    return any(is_ancestor(checkout, new_base, merge) for merge in merges)
++
++
++def patch_ids(checkout: Path, base: str, head: str) -> set[str]:
++    """The stable patch id of each commit in base..head other than merges, as range-diff matches them."""
++    commits = git_run(checkout, "rev-list", "--no-merges", f"{base}..{head}").stdout
++    if not commits.strip():
++        return set()
++    patches = git_run(checkout, "diff-tree", "--stdin", "--root", "-r", "-p", "--no-renames", stdin=commits).stdout
++    ids = git_run(checkout, "patch-id", "--stable", stdin=patches).stdout
++    return {line.split()[0] for line in decoded(ids).splitlines() if line.strip()}
++
++
++@dataclass
++class Measurement:
++    kind: str
++    unchanged_commits: Optional[bool]
++    conflicts: list[str]
++    insertions: int
++    deletions: int
++    files: list[str]
++    unreadable: list[str]
++    patch: str
++
++
++def measure(checkout: Path, old: str, old_base: str, new: str, new_base: str) -> Measurement:
++    """What the pull request's diff against its base gained or lost from head `old` to head `new`.
++
++    A diff of the two heads would also count what a merge or a rebase brought
++    in from the base. So when the merge base moved, `old`'s change is replayed
++    onto the new one with `merge-tree`, which needs no ancestry between the
++    heads, and the result is diffed against `new`. A conflicting replay keeps
++    diff3 markers in the file, so the diff shows how the author resolved it.
++    `old_base` is the merge base recorded when `old` was reviewed, because
++    after a stack's parent is rewritten, the merge base Git would compute
++    brings the parent's old commits into the replay. `merge-tree` writes
++    objects and touches neither the working tree nor the index.
++
++    Raises Unmeasurable when the checkout lacks a commit or the replay cannot
++    run, as on a Git older than 2.40, which has no `--merge-base`."""
++    for sha, what in ((old, "the earlier head"), (old_base, "its recorded merge base"),
++                      (new, "the head"), (new_base, "the head's merge base")):
++        if git_run(checkout, "cat-file", "-e", f"{sha}^{{commit}}", ok=(0, 1, 128)).returncode:
++            raise Unmeasurable(f"the checkout lacks {what} {sha[:7]}")
++    moved = old_base != new_base
++    conflicts: list[str] = []
++    tree = old
++    if moved:
++        # With -z the output is the tree, each conflicted path, an empty field, and then messages.
++        replay = git_run(checkout, "-c", "merge.conflictStyle=diff3", "merge-tree", "--write-tree", "--name-only",
++                         "-z", f"--merge-base={old_base}", new_base, old, ok=(0, 1))
++        fields = decoded(replay.stdout).split("\0")
++        tree = fields[0].strip()
++        if replay.returncode == 1:
++            end = fields.index("", 1) if "" in fields[1:] else len(fields)
++            conflicts = list(dict.fromkeys(fields[1:end]))
++
++    def diff(*options: str) -> str:
++        return decoded(git_run(checkout, "diff-tree", "-r", "--no-renames", *options, tree, new).stdout)
++
++    numstat, raw = diff("--numstat", "-z").split("\0"), diff("--raw", "-z").split("\0")
++    insertions = deletions = 0
++    files, unreadable = [], []
++    for row in numstat:
++        if not row:
++            continue
++        added, removed, path = row.split("\t", 2)
++        files.append(path)
++        if added == "-":
++            unreadable.append(path)
++        else:
++            insertions, deletions = insertions + int(added), deletions + int(removed)
++    # --raw -z gives each file's ":<old mode> <new mode> <old id> <new id> <status>" and then its path.
++    for status, path in zip(raw[0::2], raw[1::2]):
++        modes = status.lstrip(":").split()[:2]
++        if any(mode in ("120000", "160000") for mode in modes) and path not in unreadable:
++            unreadable.append(path)
++    patch = diff("-p")
++    ancestor = is_ancestor(checkout, old, new)
++    if ancestor:
++        kind = "push" if not moved else "merge" if merges_base(checkout, old, new, new_base) else "retarget"
++        unchanged = None
++    else:
++        kind = "rebase" if moved else "rewrite"
++        unchanged = patch_ids(checkout, old_base, old) <= patch_ids(checkout, new_base, new)
++    return Measurement(kind, unchanged, conflicts, insertions, deletions, files, unreadable, patch)
++
++
++class Refused(Exception):
++    pass
++
++
++def gate_passed(state: dict) -> bool:
++    record = state.get("gate") or {}
++    return record.get("sha") == state["sha"] and record.get("exit_code") == 0
++
++
++def producer(version: str, model: str, effort: Optional[str]) -> str:
++    return f"Projector {version}, model {model}, " + (f"effort {effort}" if effort else "no effort")
++
++
++def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
++                      reviews: Optional[list[dict]] = None) -> dict:
++    """Whether the head may have an incremental review, with the change measured since this loop's
++    last full review of the pull request.
++
++    These are the facts a read of the change cannot see, and `review interdiff`
++    and `publish --incremental` both apply them. They are checked in order, and
++    the first that fails is the `reason`. The gate rule is last, so a refusal
++    that names it means every other rule passed, and `needs_gate` says so: a
++    moved merge base brings in code no review ran beside the pull request's own,
++    so the head needs a passing `project review gate` of its own. `reviews` is
++    the reviewer's listing from `reviewer_reviews`, read here when not given."""
++    result: dict = {"incremental": False, "reason": None, "needs_gate": False, "from": None, "review": None,
++                    "kind": None, "unchanged_commits": None, "conflicts": None, "insertions": None,
++                    "deletions": None, "files": [], "patch": ""}
++    repo, number, sha = state["repo"], state["number"], state["sha"]
++    try:
++        if not enabled:
++            raise Refused("review.incremental is false")
++        if loop is None:
++            raise Refused("no review loop runs this review, so it has no full review of its own to build on")
++        if not state.get("trusted"):
++            raise Refused(f"the head {sha[:7]} is untrusted ({state.get('untrusted_because') or 'no reason recorded'})")
++        entries = [r for r in read_record(root, loop) if r.get("repo") == repo and r.get("number") == number]
++        if entries and entries[-1].get("verdict") != "clean":
++            raise Refused(f"the newest verdict in loop {loop}'s record requests changes")
++        if entries and entries[-1].get("sha") == sha:
++            raise Refused(f"loop {loop} already published a verdict on {sha[:7]}")
++        full = next((r for r in reversed(entries) if not r.get("from")), None)
++        if full is None or full.get("verdict") != "clean":
++            raise Refused(f"loop {loop}'s record holds no clean full review of {repo}#{number}")
++        result["from"] = full["sha"]
++        if reviews is None:
++            reviews = reviewer_reviews(repo, number, state["reviewer"])
++        earlier = next((r for r in reviews if r.get("id") == full.get("review_id")), None)
++        if earlier is None:
++            raise Refused(f"the full review {full.get('review_id')} of {full['sha'][:7]} is missing from GitHub")
++        result["review"] = earlier.get("url")
++        marker = verdict_marker(earlier.get("body") or "")
++        mine = (distribution_version(), state["model"], live_effort() or None)
++        if marker is None or marker.sha != full["sha"]:
++            raise Refused(f"the full review of {full['sha'][:7]} carries no marker naming that head")
++        if (marker.projector, marker.model, marker.effort) != mine:
++            raise Refused(f"the full review of {full['sha'][:7]} was made by "
++                          f"{producer(marker.projector, marker.model, marker.effort)}, and this run is "
++                          f"{producer(*mine)}")
++        open_findings = census(repo, number)["open"]
++        if open_findings:
++            raise Refused(f"{open_findings} finding thread{'' if open_findings == 1 else 's'} "
++                          f"{'is' if open_findings == 1 else 'are'} open")
++        if not full.get("base"):
++            raise Refused(f"the change cannot be measured: loop {loop}'s record holds no merge base for the "
++                          f"full review of {full['sha'][:7]}, as a record an earlier release wrote does not")
++        try:
++            measured = measure(Path(state["checkout"]), full["sha"], full["base"], sha, state["base"])
++        except Unmeasurable as exc:
++            raise Refused(f"the change cannot be measured: {exc}") from exc
++        result.update(kind=measured.kind, unchanged_commits=measured.unchanged_commits,
++                      conflicts=measured.conflicts, insertions=measured.insertions, deletions=measured.deletions,
++                      files=measured.files, patch=measured.patch)
++        if measured.unreadable:
++            raise Refused("the change touches a binary file, a symlink, or a submodule: "
++                          + ", ".join(measured.unreadable))
++        if full["base"] != state["base"] and not gate_passed(state):
++            result["needs_gate"] = True
++            raise Refused("the merge base moved, and no `project review gate` run on this head has exited 0")
++    except Refused as refusal:
++        result["reason"] = str(refusal)
++        return result
++    result["incremental"] = True
++    return result
++
++
++def interdiff_lines(result: dict, base_ref: str) -> list[str]:
++    """`review interdiff`'s output without --json: what it found, the verdict on the rules, and the patch."""
++    lines = []
++    if result["from"]:
++        lines.append(f"earlier full review: {result['from'][:7]}" + (f", {result['review']}" if result["review"] else ""))
++    if result["kind"]:
++        kind = {"push": "push", "merge": f"merge of {base_ref}", "retarget": f"retarget onto {base_ref}",
++                "rebase": f"rebase onto {base_ref}", "rewrite": "rewrite"}[result["kind"]]
++        if result["unchanged_commits"] is not None:
++            kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
++                     else "; a reviewed commit changed")
++        lines.append(f"kind: {kind}")
++        if result["conflicts"]:
++            lines.append(f"conflicts: {', '.join(result['conflicts'])}")
++        lines.append(f"change: {change_size(result)}")
++    if result["incremental"]:
++        lines.append("incremental: every rule passes")
++    else:
++        lines.append(f"refused: {result['reason']}" + (" (needs_gate)" if result["needs_gate"] else ""))
++    if result["patch"]:
++        lines += ["", result["patch"].rstrip("\n")]
++    return lines
++
++
++def change_size(result: dict) -> str:
++    count = len(result["files"])
++    return f"+{result['insertions']} −{result['deletions']} lines in {count} file{'' if count == 1 else 's'}"
++
++
+ # Publishing
+ 
+ PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
+@@ -551,19 +782,56 @@ def census_lines(result: dict) -> list[str]:
+ # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
+ LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
+ # A comment of Projector's own at the start of a line, as a review or finding carries it.
+-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
++OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
+ SIGNATURE = re.compile(
+     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · `[^`\n]+` · model `[^`\n]+` · "
+-    r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · "
++    r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
+     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+ )
+ MARKER = re.compile(
+-    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=\S+ model=\S+ (?:effort=\S+ )?"
++    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=(\S+) model=(\S+) (?:effort=(\S+) )?"
+     r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+ )
++KINDS = ("push", "merge", "retarget", "rebase", "rewrite")
++# The line after an incremental review's marker, naming the full review it builds on.
++INCREMENTAL = re.compile(
++    r"^<!-- projector-incremental v=1 from=([0-9a-f]{40}) kind=(" + "|".join(KINDS) + r") "
++    r"insertions=\d+ deletions=\d+ files=\d+ conflicts=\d+ -->$"
++)
+ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+ PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
+ VERDICT_WORDS = {"clean": "CLEAN", "changes-requested": "CHANGES REQUESTED"}
++INCREMENTAL_BODY_LIMIT = 600
++
++
++@dataclass(frozen=True)
++class Verdict:
++    """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
++    incremental review, the head of the full review it builds on."""
++
++    verdict: str
++    sha: str
++    projector: str
++    model: str
++    effort: Optional[str]
++    incremental_from: Optional[str]
++
++
++def verdict_marker(body: str) -> Optional[Verdict]:
++    """The verdict a review body's marker line carries, or None when no line is a marker.
++
++    An incremental review's line counts only directly after the marker, where
++    publish writes it."""
++    lines = [line.strip() for line in body.splitlines()]
++    for i, line in enumerate(lines):
++        marker = MARKER.match(line)
++        if marker is None:
++            continue
++        verdict, projector, model, effort, sha = marker.groups()
++        incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
++        return Verdict(verdict, sha, projector, model, effort,
++                       incremental.group(1) if incremental else None)
++    return None
+ 
+ 
+ def duration(seconds: int, heads: int) -> str:
+@@ -645,12 +913,14 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+ 
+ 
+-def reviewer_verdicts(repo: str, number: int, reviewer: str, sha: str) -> list[int]:
+-    """The ids of every Projector verdict the reviewer posted on this exact SHA, from every page."""
++def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
++    """Every Projector review the reviewer posted on the pull request, from every page, each with
++    its `id`, `url`, `at`, and `body`."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                    "--jq", f'.[] | select(.user.login == "{reviewer}") '
+-                           f'| select(.body | test("projector-review .* sha={sha}")) | .id']).split()
+-    return [int(r) for r in rows]
++                           '| select(.body // "" | contains("projector-review")) '
++                           '| {id, url: .html_url, at: .submitted_at, body} | @json']).splitlines()
++    return [json.loads(row) for row in rows if row.strip()]
+ 
+ 
+ def read_record(root: Path, loop: str) -> list[dict]:
+@@ -658,9 +928,14 @@ def read_record(root: Path, loop: str) -> list[dict]:
+     return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
+ 
+ 
+-def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str) -> None:
+-    """The collision check review-pr § Publish one review describes, read from the loop's record."""
+-    earlier = reviewer_verdicts(state["repo"], state["number"], state["reviewer"], state["sha"])
++def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str,
++                    reviews: list[dict]) -> None:
++    """The collision check review-pr § Publish one review describes, read from the loop's record.
++
++    `reviews` is the reviewer's listing from `reviewer_reviews`; a verdict on the head is any whose
++    marker names it, in this loose form so a marker in an older shape still collides."""
++    on_head = re.compile(f"projector-review .* sha={state['sha']}")
++    earlier = [r["id"] for r in reviews if on_head.search(r.get("body") or "")]
+     if loop is not None:
+         mine = {r["review_id"] for r in read_record(root, loop)
+                 if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
+@@ -689,57 +964,137 @@ def self_review(repo: str, number: int, reviewer: str) -> bool:
+     return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
+ 
+ 
+-def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
+-            at: datetime) -> str:
+-    """The review's text: the signature line and marker, then the body with its placeholders filled.
+-
+-    The duration and `seconds=` come from one clock reading, so they cannot disagree."""
++def check_body(body: str) -> None:
+     if not body.strip():
+         raise ReviewError("the body is empty; write the review below the signature line")
+     if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
+-        raise ReviewError("leave the signature line and marker out of the body; publish writes them")
+-    prose = CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
+-    if "{census}" not in prose:
+-        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+-                          "outside code")
+-    seconds = elapsed(state["start_comment"]["created_at"], at)
+-    took = duration(seconds, state["heads"])
+-    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
+-              "census": census_line}
+-    # Placeholders are filled only in prose and in a span that holds one alone, so quoted code
+-    # keeps its braces; anything else in braces is the author's text, not a placeholder.
++        raise ReviewError("leave the signature line and markers out of the body; publish writes them")
++
++
++def prose(body: str) -> str:
++    """The body without its quoted code, keeping each span that holds a placeholder alone."""
++    return CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
++
++
++def fill(body: str, values: dict[str, str]) -> str:
++    """The body with each placeholder in `values` filled, and any other left as written.
++
++    Placeholders are filled only in prose and in a span that holds one alone, so quoted code
++    keeps its braces; anything else in braces is the author's text, not a placeholder."""
++    def replace(match: re.Match) -> str:
++        return values.get(match.group(1), "{" + match.group(1) + "}")
++
+     pieces, last = [], 0
+     for code in CODE.finditer(body):
+-        pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
++        pieces.append(PLACEHOLDER.sub(replace, body[last:code.start()]))
+         lone = LONE_PLACEHOLDER.fullmatch(code.group(0))
+-        pieces.append(f"`{values[lone.group(1)]}`" if lone else code.group(0))
++        pieces.append(f"`{replace(lone)}`" if lone else code.group(0))
+         last = code.end()
+-    pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
+-    filled = "".join(pieces)
++    pieces.append(PLACEHOLDER.sub(replace, body[last:]))
++    return "".join(pieces)
++
++
++def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime,
++            incremental_from: Optional[str] = None) -> tuple[str, str, dict[str, str]]:
++    """The signature line, the marker, and the placeholders' values, from one clock reading, so the
++    duration and `seconds=` cannot disagree."""
++    seconds = elapsed(state["start_comment"]["created_at"], at)
++    took = duration(seconds, state["heads"])
+     version, effort = distribution_version(), live_effort()
+     signature = (f"{MARK} **Projector review** · {producer_segments(version, state['model'], effort)}"
+-                 f"**{VERDICT_WORDS[verdict]}** · took {took}")
++                 f"**{VERDICT_WORDS[verdict]}** · "
++                 + (f"incremental from `{incremental_from[:7]}` · " if incremental_from else "")
++                 + f"took {took}")
+     marker = (f"<!-- projector-review v=1 verdict={verdict} projector={version} model={state['model']} "
+               + (f"effort={effort} " if effort else "")
+               + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
+     if not SIGNATURE.match(signature) or not MARKER.match(marker):
+         raise ReviewError("the signature line or marker does not match review-pr/SKILL.md; check the "
+                           f"model in the review's state ({state['model']})")
++    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7]}
++    return signature, marker, values
++
++
++def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
++            at: datetime) -> str:
++    """The review's text: the signature line and marker, then the body with its placeholders filled."""
++    check_body(body)
++    if "{census}" not in prose(body):
++        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
++                          "outside code")
++    signature, marker, values = heading(state, verdict, findings, covered, at)
++    filled = fill(body, dict(values, census=census_line))
+     return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
+ 
+ 
+-def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: str, body_path: Path,
+-            threads_path: Optional[Path], covered: str, second: Optional[int], allow_approve: bool) -> dict:
++def listed(items: list[str]) -> str:
++    if len(items) < 3:
++        return " and ".join(items)
++    return ", ".join(items[:-1]) + ", and " + items[-1]
++
++
++def incremental_lead(rules: dict, base_ref: str) -> str:
++    """The sentence that opens an incremental review: the full review it builds on, how the head
++    moved since, the size of the change, and any conflict the author resolved."""
++    across = {"push": "", "merge": f" across a merge of `{base_ref}`",
++              "retarget": f" across a retarget onto `{base_ref}`", "rebase": f" across a rebase onto `{base_ref}`",
++              "rewrite": " across a rewrite of its commits"}[rules["kind"]]
++    sentence = (f"Incremental review of the change since the full review of [`{rules['from'][:7]}`]"
++                f"({rules['review']}){across}: {change_size(rules)}")
++    conflicts = [f"`{path}`" for path in rules["conflicts"]]
++    if conflicts:
++        sentence += (f", with {'a resolved conflict' if len(conflicts) == 1 else 'resolved conflicts'} in "
++                     f"{listed(conflicts)}")
++    return sentence + "."
++
++
++def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool, at: datetime) -> str:
++    """An incremental review's text: the signature line, the marker and the incremental line, the
++    lead, and the reviewer's short body, which may hold every placeholder but `{census}`."""
++    check_body(body)
++    if "{census}" in prose(body):
++        raise ReviewError("an incremental review prints no census; take {census} out of the body")
++    count = len(rules["files"])
++    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", at, rules["from"])
++    filled = fill(body, values).strip()
++    if len(filled) > INCREMENTAL_BODY_LIMIT:
++        raise ReviewError(f"the body holds {len(filled)} characters once filled, and an incremental review's "
++                          f"holds at most {INCREMENTAL_BODY_LIMIT}; a change that needs more is a full review's")
++    incremental = (f"<!-- projector-incremental v=1 from={rules['from']} kind={rules['kind']} "
++                   f"insertions={rules['insertions']} deletions={rules['deletions']} files={count} "
++                   f"conflicts={len(rules['conflicts'])} -->")
++    closing = "\n\nA human approval is what remains." if cross_author else ""
++    return (f"{signature}\n\n{marker}\n{incremental}\n\n{incremental_lead(rules, state['base_ref'])}\n\n"
++            f"{filled}{closing}\n")
++
++
++def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Optional[str], body_path: Path,
++            threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
++            incremental: bool = False, enabled: bool = True) -> dict:
+     """Submit the review, then set draft state, re-read, record, delete the start comment, and
+-    release the lock, in that order. Every refusal leaves the lock held for this review to retry."""
++    release the lock, in that order. Every refusal leaves the lock held for this review to retry.
++
++    With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
++    review, published only while `incremental_rules` passes, with `enabled` from
++    `review.incremental`."""
+     paths = Paths(root, repo, number)
+     state = read_state(paths)
+     loop = loop if loop is not None else state.get("loop")
+     repo, sha = state["repo"], state["sha"]
+-    if verdict not in VERDICT_WORDS:
+-        raise ReviewError(f"--verdict must be clean or changes-requested, not {verdict}")
+-    if not re.fullmatch(r"\d+/\d+", covered or ""):
+-        raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
++    if incremental:
++        for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
++            if given is not None:
++                raise ReviewError(f"--incremental takes no {flag}: an incremental review opens no thread, covers "
++                                  "the files its change touches, and is never a second verdict")
++        if verdict not in (None, "clean"):
++            raise ReviewError("an incremental review is always clean; a problem the read finds goes to a full "
++                              "review, which files it")
++        verdict = "clean"
++    else:
++        if verdict not in VERDICT_WORDS:
++            raise ReviewError("--verdict must be clean or changes-requested" + (f", not {verdict}" if verdict else ""))
++        if not re.fullmatch(r"\d+/\d+", covered or ""):
++            raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
+     if not paths.lock(sha).exists():
+         raise ReviewError(f"no review of {repo}#{number} at {sha[:7]} holds the lock; "
+                           f"run `project review setup {number}` again")
+@@ -756,24 +1111,37 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
+         if pr["head"]["sha"] != sha:
+             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
+                               f"run `project review move {number}` and review the new head")
+-        check_collision(root, state, loop, second, body)
+-        check_threads(threads, diff_lines(repo, number) if threads else {})
+-        tally = census(repo, number)
+-        open_now = tally["open"] + len(threads)
+-        if verdict == "clean" and open_now:
+-            raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
+-                              f"{len(threads)} are being posted; settle them or request changes")
+-        if verdict == "changes-requested" and not open_now:
+-            raise ReviewError("changes-requested needs an open finding or a new one; with none open the head is clean")
+-        total = tally["total"] + len(threads)
+-        noun = "thread" if total == 1 else "threads"
+-        census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
+-        text = compose(state, verdict, body, covered, len(threads), census_line, now())
+-        mine = self_review(repo, number, state["reviewer"])
+-        if mine or (verdict == "clean" and not allow_approve):
++        reviews = reviewer_reviews(repo, number, state["reviewer"])
++        check_collision(root, state, loop, second, body, reviews)
++        incremental_from = None
++        if incremental:
++            rules = incremental_rules(root, state, loop, enabled, reviews)
++            if not rules["incremental"]:
++                raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
++                                  "on this setup")
++            incremental_from = rules["from"]
++            mine = self_review(repo, number, state["reviewer"])
++            text = compose_incremental(state, body, rules, not mine, now())
+             event = "COMMENT"
+         else:
+-            event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
++            check_threads(threads, diff_lines(repo, number) if threads else {})
++            tally = census(repo, number)
++            open_now = tally["open"] + len(threads)
++            if verdict == "clean" and open_now:
++                raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
++                                  f"{len(threads)} are being posted; settle them or request changes")
++            if verdict == "changes-requested" and not open_now:
++                raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
++                                  "is clean")
++            total = tally["total"] + len(threads)
++            noun = "thread" if total == 1 else "threads"
++            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
++            text = compose(state, verdict, body, covered, len(threads), census_line, now())
++            mine = self_review(repo, number, state["reviewer"])
++            if mine or (verdict == "clean" and not allow_approve):
++                event = "COMMENT"
++            else:
++                event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
+         draft_wanted = (verdict == "changes-requested") if mine else None
+         payload = {"commit_id": sha, "event": event, "body": text,
+                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
+@@ -790,7 +1158,7 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
+         # Recorded before anything else can fail, so a retry finishes this review rather than
+         # posting a second one.
+         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
+-                              "draft": draft_wanted}
++                              "draft": draft_wanted, "from": incremental_from}
+         write_state(paths, state)
+     token = reviewer_token(state["reviewer"])
+     if draft_wanted is not None:
+@@ -806,8 +1174,11 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
+     if loop is not None:
+         record = read_record(root, loop)
+         if not any(r.get("review_id") == review_id for r in record):
++            # `base` is the merge base a later incremental review measures from; `from` marks an
++            # incremental review, which a later one never builds on.
+             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+-                           "verdict": state["published"]["verdict"], "published_at": now().isoformat()})
++                           "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
++                           "base": state["base"], "from": state["published"].get("from")})
+             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
+             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+     comment = (state.get("start_comment") or {}).get("id")
+@@ -821,4 +1192,4 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
+     paths.lock(sha).unlink(missing_ok=True)
+     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+             "verdict": state["published"]["verdict"], "event": state["published"]["event"],
+-            "draft": draft_wanted}
++            "draft": draft_wanted, "from": state["published"].get("from")}
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 5c9b046..0fef643 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -29,7 +29,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, title_from_text
+-from ..review import MARKER
++from ..review import verdict_marker
+ from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
+ 
+ 
+@@ -147,21 +147,35 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+     A review is Projector's when a line of its body is the marker a Projector
+     review carries, which names the verdict and the head it reviewed, and its
+     author owns the repository, belongs to its organization, or collaborates
+-    on it.
++    on it. When a head's newest review is a clean incremental review, its
++    status also carries `incrementalFrom`: the head of the full review it
++    builds on, and that head's newest full review as `url`, or None when no
++    full review of it is among `reviews`.
+     """
+     newest: dict[str, dict] = {}
++    full: dict[str, dict] = {}
++
++    def keep(heads: dict[str, dict], head: str, found: dict) -> None:
++        if head not in heads or found["at"] >= heads[head]["at"]:
++            heads[head] = found
++
+     for review in reviews:
+         if review.get("association") not in REVIEWER_ASSOCIATIONS:
+             continue
+-        for line in (review.get("body") or "").splitlines():
+-            marker = MARKER.match(line.strip())
+-            if marker is None:
+-                continue
+-            verdict, head = marker.groups()
+-            if head not in newest or review["at"] >= newest[head]["at"]:
+-                newest[head] = {"status": verdict, "url": review["url"], "at": review["at"]}
+-            break
+-    return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
++        marker = verdict_marker(review.get("body") or "")
++        if marker is None:
++            continue
++        found = {"status": marker.verdict, "url": review["url"], "at": review["at"], "from": marker.incremental_from}
++        keep(newest, marker.sha, found)
++        if marker.incremental_from is None:
++            keep(full, marker.sha, found)
++    statuses = {}
++    for head, found in newest.items():
++        statuses[head] = {"status": found["status"], "url": found["url"]}
++        if found["from"] is not None and found["status"] == "clean":
++            statuses[head]["incrementalFrom"] = {"head": found["from"],
++                                                 "url": (full.get(found["from"]) or {}).get("url")}
++    return statuses
+ 
+ 
+ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 85085e6..b32c18d 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -28,10 +28,22 @@
+ REPO = "acme/app"
+ 
+ 
++def review_page(review_id: int) -> str:
++    return f"https://github.com/{REPO}/pull/1#pullrequestreview-{review_id}"
++
++
++GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
++           "GIT_COMMITTER_EMAIL": "t@example.com", "GIT_EDITOR": "true"}
++
++
+ def git(cwd: Path, *args: str) -> str:
+-    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+-    return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
++    return subprocess.run(["git", *args], cwd=cwd, env=dict(os.environ, **GIT_ENV), check=True, capture_output=True,
++                          text=True).stdout.strip()
++
++
++def git_status(cwd: Path, *args: str) -> int:
++    """Run git where a non-zero exit is expected, as a merge or rebase that stops on a conflict."""
++    return subprocess.run(["git", *args], cwd=cwd, env=dict(os.environ, **GIT_ENV), capture_output=True).returncode
+ 
+ 
+ class FakeGitHub:
+@@ -61,9 +73,9 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
+             login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
+-            sha = re.search(r"sha=([0-9a-f]+)", args[4]).group(1)
+-            return "".join(f"{r['id']}\n" for r in self.reviews if r["user"]["login"] == login
+-                           and re.search(f"projector-review .* sha={sha}", r["body"]))
++            return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
++                                       "body": r["body"]}) + "\n"
++                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"])
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
+             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
+         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
+@@ -938,11 +950,633 @@ def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
+         self.assertIn("project review setup 1", err)
+ 
+ 
++def css(**padding: int) -> str:
++    """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
++    return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
++
++
++class IncrementalCase(PublishCase):
++    """A pull request whose head `self.reviewed` has a clean full review that loop l1 published.
++
++    The trunk's `self.fork` adds a.css, and the reviewed head changes its row r1's padding
++    from 8px to 9px. Each test makes a new head from there and sets it up as loop l1.
++    """
++
++    BODY = ("The push widens row r2's padding in `a.css`. Only a `padding` value changes, so every selector "
++            "matches what it did.")
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.trunk = self.base
++        self.fork = self.move_trunk({"a.css": css()})
++        self.reviewed = self.push_feature(self.build(self.fork, {"a.css": css(r1=9)}))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++
++    def write(self, files: dict[str, str | None]) -> None:
++        for name, content in files.items():
++            path = self.work / name
++            if content is None:
++                path.unlink()
++            else:
++                path.write_text(content)
++        git(self.work, "add", "-A")
++
++    def build(self, start: str, *changes: dict[str, str | None], message: str = "change") -> str:
++        """Commit each change in turn on top of `start`, writing a file or deleting it for None."""
++        git(self.work, "checkout", "--quiet", "--detach", start)
++        for files in changes:
++            self.write(files)
++            git(self.work, "commit", "--quiet", "--allow-empty", "-m", message)
++        return git(self.work, "rev-parse", "HEAD")
++
++    def push_feature(self, sha: str) -> str:
++        git(self.work, "push", "--quiet", "--force", "origin", f"{sha}:refs/heads/feature", f"{sha}:refs/pull/1/head")
++        self.github.pr["head"]["sha"] = sha
++        return sha
++
++    def move_trunk(self, *changes: dict[str, str | None]) -> str:
++        self.trunk = self.build(self.trunk, *changes, message="trunk")
++        git(self.work, "push", "--quiet", "--force", "origin", f"{self.trunk}:refs/heads/trunk")
++        self.github.pr["base"]["sha"] = self.trunk
++        return self.trunk
++
++    def merge(self, head: str, other: str, resolved: dict[str, str | None] | None = None) -> str:
++        git(self.work, "checkout", "--quiet", "--detach", head)
++        if git_status(self.work, "merge", "--quiet", "--no-edit", other):
++            self.write(resolved or {})
++            git(self.work, "commit", "--quiet", "--no-edit")
++        return git(self.work, "rev-parse", "HEAD")
++
++    def rebase(self, head: str, onto: str, upstream: str | None = None,
++               resolved: dict[str, str | None] | None = None) -> str:
++        git(self.work, "checkout", "--quiet", "--detach", head)
++        if git_status(self.work, "rebase", "--quiet", "--onto", onto, upstream or self.fork):
++            self.write(resolved or {})
++            git(self.work, "rebase", "--continue")
++        return git(self.work, "rev-parse", "HEAD")
++
++    def review_head(self, sha: str, *extra: str) -> str:
++        self.push_feature(sha)
++        code, _, err = self.setup_review("--loop", "l1", *extra)
++        self.assertEqual(0, code, err)
++        return sha
++
++    def pushed(self, *extra: str) -> str:
++        """A one-line push on the reviewed head, set up for review."""
++        return self.review_head(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}), *extra)
++
++    def interdiff(self) -> dict:
++        code, out, err = self.later("interdiff", "--json")
++        result = json.loads(out)
++        self.assertEqual(0 if result["incremental"] else 1, code, err)
++        return result
++
++    def gate(self, command: str = "true") -> int:
++        (self.checkout / ".projector.toml").write_text(f"[review]\ngate = {json.dumps(command)}\n")
++        return self.later("gate")[0]
++
++    def publish_incremental(self, *extra: str, text: str | None = None) -> tuple[int, str, str]:
++        path = self.dir / "incremental.md"
++        path.write_text(self.BODY if text is None else text)
++        return self.later("publish", "--incremental", "--body", str(path), *extra)
++
++    def edit_record(self, change) -> None:
++        path = self.state / "loops" / "l1" / "published.json"
++        record = json.loads(path.read_text())
++        change(record)
++        path.write_text(json.dumps(record))
++
++
++class InterdiffMeasureTests(IncrementalCase):
++    def test_a_pushed_commit_counts_only_its_own_lines(self) -> None:
++        self.pushed()
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(("push", None, [], 1, 1, ["a.css"]),
++                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
++                          result["deletions"], result["files"]))
++        self.assertIn("-.r2 { padding: 8px; }\n+.r2 { padding: 9px; }", result["patch"])
++        self.assertEqual((self.reviewed, review_page(901), False), (result["from"], result["review"], result["needs_gate"]))
++
++    def test_a_merge_of_the_trunk_counts_the_edit_alone(self) -> None:
++        self.move_trunk({"trunk.txt": "".join(f"line {i}\n" for i in range(50))})
++        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(("merge", None, [], 1, 1, ["a.css"]),
++                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
++                          result["deletions"], result["files"]))
++
++    def test_a_clean_rebase_and_a_new_commit_give_that_commits_change(self) -> None:
++        self.move_trunk({"trunk.txt": "moved\n"})
++        self.review_head(self.build(self.rebase(self.reviewed, self.trunk), {"a.css": css(r1=9, r3=9)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(("rebase", True, [], 1, 1, ["a.css"]),
++                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
++                          result["deletions"], result["files"]))
++        self.assertIn("+.r3 { padding: 9px; }", result["patch"])
++
++    def assert_resolved(self, result: dict) -> None:
++        """The conflict the reviewed head's 9px and the trunk's 12px made, resolved to 10px."""
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual((["a.css"], 1, 7), (result["conflicts"], result["insertions"], result["deletions"]))
++        self.assertIn(f"-<<<<<<< {self.trunk}\n-.r1 {{ padding: 12px; }}\n-||||||| {self.fork}\n"
++                      f"-.r1 {{ padding: 8px; }}\n-=======\n-.r1 {{ padding: 9px; }}\n->>>>>>> {self.reviewed}\n"
++                      "+.r1 { padding: 10px; }", result["patch"])
++
++    def test_a_rebase_that_resolved_a_conflict_shows_the_resolution(self) -> None:
++        self.move_trunk({"a.css": css(r1=12)})
++        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++
++        self.assert_resolved(result)
++        self.assertEqual(("rebase", False), (result["kind"], result["unchanged_commits"]))
++
++    def test_a_merge_that_resolved_a_conflict_shows_the_resolution(self) -> None:
++        self.move_trunk({"a.css": css(r1=12)})
++        self.review_head(self.merge(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++
++        self.assert_resolved(result)
++        self.assertEqual(("merge", None), (result["kind"], result["unchanged_commits"]))
++
++    def test_an_amend_is_a_rewrite_and_a_reworded_message_changes_nothing(self) -> None:
++        self.review_head(self.build(self.fork, {"a.css": css(r1=9, r4=9)}))
++        amended = self.interdiff()
++        self.review_head(self.build(self.fork, {"a.css": css(r1=9)}, message="reworded"))
++        reworded = self.interdiff()
++
++        self.assertTrue(amended["incremental"], amended["reason"])
++        self.assertEqual(("rewrite", False, 1, 1), (amended["kind"], amended["unchanged_commits"],
++                                                    amended["insertions"], amended["deletions"]))
++        self.assertTrue(reworded["incremental"], reworded["reason"])
++        self.assertEqual(("rewrite", True, 0, 0, [], ""),
++                         (reworded["kind"], reworded["unchanged_commits"], reworded["insertions"],
++                          reworded["deletions"], reworded["files"], reworded["patch"]))
++
++    def test_a_stack_cascade_counts_the_childs_edit_alone(self) -> None:
++        parent = self.build(self.fork, {"p.txt": "parent\n"})
++        git(self.work, "push", "--quiet", "origin", f"{parent}:refs/heads/parent")
++        self.github.pr["base"] = {"ref": "parent", "sha": parent, "repo": {"full_name": REPO}}
++        child = self.review_head(self.build(parent, {"a.css": css(r1=9)}))
++        self.assertEqual(0, self.publish("clean")[0])
++        # A fix amends the parent's commit, and the child is rebased onto it with one more edit.
++        amended = self.build(self.fork, {"p.txt": "parent, fixed\n"})
++        git(self.work, "push", "--quiet", "--force", "origin", f"{amended}:refs/heads/parent")
++        self.github.pr["base"]["sha"] = amended
++        self.review_head(self.build(self.rebase(child, amended, upstream=parent), {"a.css": css(r1=9, r5=9)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(("rebase", True, [], 1, 1, ["a.css"]),
++                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
++                          result["deletions"], result["files"]))
++        # The merge base Git computes for the child sits below the parent, so a replay
++        # from it brings the parent's old commit along and conflicts with its amend.
++        below = git(self.checkout, "merge-base", child, amended)
++        self.assertEqual(["p.txt"], review.measure(self.checkout, child, below, self.github.pr["head"]["sha"],
++                                                   amended).conflicts)
++
++    def test_a_child_retargeted_after_its_parent_merges_is_a_retarget_not_a_merge(self) -> None:
++        parent = self.build(self.fork, {"p.txt": "parent\n"})
++        git(self.work, "push", "--quiet", "origin", f"{parent}:refs/heads/parent")
++        self.github.pr["base"] = {"ref": "parent", "sha": parent, "repo": {"full_name": REPO}}
++        child = self.review_head(self.build(parent, {"a.css": css(r1=9)}))
++        self.assertEqual(0, self.publish("clean")[0])
++        # The parent squash-merges, and GitHub retargets the child onto the trunk; the child
++        # then pushes a commit without merging or rebasing.
++        self.move_trunk({"p.txt": "parent\n"})
++        self.github.pr["base"] = {"ref": "trunk", "sha": self.trunk, "repo": {"full_name": REPO}}
++        self.review_head(self.build(child, {"a.css": css(r1=9, r2=9)}))
++        self.assertEqual(0, self.gate())
++
++        result = self.interdiff()
++        _, out, _ = self.later("interdiff")
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(("retarget", None, []), (result["kind"], result["unchanged_commits"], result["conflicts"]))
++        self.assertEqual(["a.css", "p.txt"], result["files"], "the parent's change is in the diff GitHub shows now")
++        self.assertIn("kind: retarget onto trunk\n", out)
++
++    def test_an_earlier_head_missing_from_the_checkout_cannot_be_measured(self) -> None:
++        missing = "f" * 40
++        self.edit_record(lambda record: record[-1].update(sha=missing))
++        self.github.reviews[-1]["body"] = self.github.reviews[-1]["body"].replace(self.reviewed, missing)
++        self.pushed()
++
++        result = self.interdiff()
++
++        self.assertIn("cannot be measured: the checkout lacks the earlier head fffffff", result["reason"])
++        self.assertEqual((None, None, [], ""), (result["kind"], result["conflicts"], result["files"], result["patch"]))
++
++    def test_a_record_without_the_full_reviews_merge_base_cannot_be_measured(self) -> None:
++        # An earlier release recorded no merge base, and a checkout that was never
++        # installed names every release `unknown`, so the version rule cannot catch it.
++        self.edit_record(lambda record: record[-1].pop("base"))
++        self.pushed()
++
++        result = self.interdiff()
++
++        self.assertIn("cannot be measured", result["reason"])
++        self.assertIn("holds no merge base for the full review", result["reason"])
++        self.assertEqual((self.reviewed, None, None), (result["from"], result["kind"], result["conflicts"]))
++
++    def test_without_merge_tree_a_moved_base_cannot_be_measured_but_an_unmoved_one_can(self) -> None:
++        real = subprocess.run
++
++        def older_git(args, *rest, **options):
++            if "merge-tree" in args:
++                return subprocess.CompletedProcess(args, 129, b"", b"error: unknown option `merge-base=...'")
++            return real(args, *rest, **options)
++
++        with mock.patch.object(review.subprocess, "run", older_git):
++            self.pushed()
++            unmoved = self.interdiff()
++            self.move_trunk({"trunk.txt": "moved\n"})
++            self.review_head(self.merge(self.reviewed, self.trunk))
++            moved = self.interdiff()
++
++        self.assertTrue(unmoved["incremental"], unmoved["reason"])
++        self.assertIn("cannot be measured: git -c merge.conflictStyle=diff3 merge-tree exited 129", moved["reason"])
++        self.assertIsNone(moved["conflicts"])
++
++    def test_prints_the_earlier_review_the_kind_the_counts_the_refusal_and_the_patch(self) -> None:
++        self.move_trunk({"a.css": css(r1=12)})
++        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
++
++        code, out, err = self.later("interdiff")
++
++        self.assertEqual(1, code, err)
++        self.assertEqual([
++            f"earlier full review: {self.reviewed[:7]}, {review_page(901)}",
++            "kind: rebase onto trunk; a reviewed commit changed",
++            "conflicts: a.css",
++            "change: +1 −7 lines in 1 file",
++            "refused: the merge base moved, and no `project review gate` run on this head has exited 0 (needs_gate)",
++            "",
++            "diff --git a/a.css b/a.css",
++        ], out.splitlines()[:7])
++
++
++class InterdiffRuleTests(IncrementalCase):
++    def refused(self, words: str) -> dict:
++        result = self.interdiff()
++        self.assertFalse(result["incremental"])
++        self.assertIn(words, result["reason"])
++        self.assertFalse(result["needs_gate"])
++        return result
++
++    def test_review_incremental_false_gives_a_full_review(self) -> None:
++        self.pushed()
++        (self.checkout / ".projector.toml").write_text("[review]\nincremental = false\n")
++
++        self.refused("review.incremental is false")
++
++    def test_review_incremental_that_is_not_a_boolean_refuses_and_names_the_key(self) -> None:
++        self.pushed()
++        for value in ('"yes"', "1"):
++            with self.subTest(value=value):
++                (self.checkout / ".projector.toml").write_text(f"[review]\nincremental = {value}\n")
++
++                code, _, err = self.later("interdiff", "--json")
++
++                self.assertNotEqual(0, code)
++                self.assertIn("review.incremental must be true or false", err)
++
++    def test_a_review_no_loop_runs_is_full(self) -> None:
++        self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
++        self.assertEqual(0, self.setup_review()[0])
++
++        self.refused("no review loop runs this review")
++
++    def test_an_untrusted_head_is_full(self) -> None:
++        self.github.commit_authors = ["operator", "stranger"]
++        self.pushed()
++
++        self.refused("is untrusted")
++
++    def test_a_newest_verdict_that_requests_changes_is_followed_by_a_full_review(self) -> None:
++        self.edit_record(lambda record: record[-1].update(verdict="changes-requested"))
++        self.pushed()
++
++        self.refused("the newest verdict in loop l1's record requests changes")
++
++    def test_a_head_the_loop_already_judged_gets_a_full_rereview(self) -> None:
++        self.review_head(self.reviewed, "--rereview")
++
++        self.refused(f"loop l1 already published a verdict on {self.reviewed[:7]}")
++
++    def test_a_record_with_no_full_review_is_full(self) -> None:
++        self.edit_record(lambda record: record.clear())
++        self.pushed()
++
++        self.refused("loop l1's record holds no clean full review")
++
++    def test_a_clean_full_review_from_another_loop_on_the_same_account_leads_to_a_full_review(self) -> None:
++        self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
++        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
++
++        self.refused("loop l2's record holds no clean full review")
++
++    def test_a_full_review_by_another_version_model_or_effort_is_not_built_on(self) -> None:
++        earlier = "was made by Projector 1.2.3, model claude-opus-5-5, no effort, and this run is "
++        head = self.build(self.reviewed, {"a.css": css(r1=9, r2=9)})
++        with mock.patch.object(metadata, "version", return_value="1.2.4"):
++            self.review_head(head)
++            self.refused(earlier + "Projector 1.2.4, model claude-opus-5-5, no effort")
++        self.assertEqual(0, self.later("release")[0])
++        self.review_head(head, "--model", "claude-sonnet-5")
++        self.refused(earlier + "Projector 1.2.3, model claude-sonnet-5, no effort")
++        self.assertEqual(0, self.later("release")[0])
++        self.review_head(head)
++        with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
++            self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")
++
++    def test_a_full_review_missing_from_github_is_not_built_on(self) -> None:
++        self.github.reviews.clear()
++        self.pushed()
++
++        self.refused("the full review 901 of")
++
++    def test_an_open_finding_gives_a_full_review(self) -> None:
++        self.pushed()
++        self.open_finding()
++
++        self.refused("1 finding thread is open")
++
++    def test_a_binary_file_a_symlink_or_a_submodule_cannot_be_read(self) -> None:
++        def binary() -> None:
++            (self.work / "blob.bin").write_bytes(b"\x00\x01\x02")
++            git(self.work, "add", "blob.bin")
++
++        def symlink() -> None:
++            os.symlink("a.css", self.work / "link")
++            git(self.work, "add", "link")
++
++        def submodule() -> None:
++            git(self.work, "update-index", "--add", "--cacheinfo", f"160000,{self.base},sub")
++
++        for name, make, path in (("binary", binary, "blob.bin"), ("symlink", symlink, "link"),
++                                 ("submodule", submodule, "sub")):
++            with self.subTest(name):
++                git(self.work, "checkout", "--quiet", "--detach", self.reviewed)
++                make()
++                git(self.work, "commit", "--quiet", "-m", name)
++                self.review_head(git(self.work, "rev-parse", "HEAD"))
++
++                result = self.refused(f"a binary file, a symlink, or a submodule: {path}")
++
++                self.assertEqual("push", result["kind"], "the change was measured")
++                self.assertIn(path, result["files"])
++
++    def test_an_added_deleted_renamed_or_mode_changed_file_is_read_like_any_other(self) -> None:
++        git(self.work, "checkout", "--quiet", "--detach", self.reviewed)
++        self.write({"new.txt": "new\n", "README.md": None, "a.css": None, "b.css": css(r1=9)})
++        os.chmod(self.work / "new.txt", 0o755)
++        git(self.work, "add", "-A")
++        git(self.work, "commit", "--quiet", "-m", "move things")
++        self.review_head(git(self.work, "rev-parse", "HEAD"))
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual(["README.md", "a.css", "b.css", "new.txt"], result["files"])
++
++    def test_after_an_incremental_review_the_change_is_measured_from_the_full_review(self) -> None:
++        first = self.pushed()
++        self.assertEqual(0, self.publish_incremental()[0])
++        self.review_head(self.build(first, {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        result = self.interdiff()
++
++        self.assertTrue(result["incremental"], result["reason"])
++        self.assertEqual((self.reviewed, 2, 2), (result["from"], result["insertions"], result["deletions"]))
++
++    def test_a_moved_base_needs_a_gate_that_passed_on_this_head(self) -> None:
++        self.move_trunk({"trunk.txt": "moved\n"})
++        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
++
++        before = self.interdiff()
++        failed = self.gate("false")
++        after_failure = self.interdiff()
++        passed = self.gate("true")
++        after_pass = self.interdiff()
++
++        for result in (before, after_failure):
++            self.assertFalse(result["incremental"])
++            self.assertTrue(result["needs_gate"])
++            self.assertIn("the merge base moved", result["reason"])
++            self.assertEqual("merge", result["kind"], "every other rule passed, so the change was measured")
++        self.assertEqual((1, 0), (failed, passed))
++        self.assertTrue(after_pass["incremental"], after_pass["reason"])
++
++    def test_a_gate_that_passed_on_an_earlier_head_does_not_count(self) -> None:
++        self.move_trunk({"trunk.txt": "moved\n"})
++        merged = self.review_head(self.merge(self.reviewed, self.trunk))
++        self.assertEqual(0, self.gate())
++        self.push_feature(self.build(merged, {"a.css": css(r1=9, r2=9)}))
++        self.assertEqual(0, self.later("move")[0])
++
++        result = self.interdiff()
++
++        self.assertTrue(result["needs_gate"])
++
++    def test_an_unmoved_base_needs_no_gate(self) -> None:
++        self.pushed()
++
++        self.assertTrue(self.interdiff()["incremental"])
++        self.assertNotIn("gate", self.read_state())
++
++    def test_an_empty_change_across_a_moved_base_still_needs_the_gate(self) -> None:
++        self.move_trunk({"trunk.txt": "moved\n"})
++        self.review_head(self.rebase(self.reviewed, self.trunk))
++
++        result = self.interdiff()
++
++        self.assertEqual(([], 0, 0, True), (result["files"], result["insertions"], result["deletions"],
++                                            result["needs_gate"]))
++
++
++class IncrementalPublishTests(IncrementalCase):
++    def test_publishes_a_clean_incremental_self_review_with_exactly_its_parts(self) -> None:
++        head = self.pushed()
++
++        code, out, err = self.publish_incremental()
++
++        self.assertEqual(0, code, err)
++        posted = self.posted()
++        self.assertEqual(
++            f"{review.MARK} **Projector review** · `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
++            f"incremental from `{self.reviewed[:7]}` · took 12m 34s\n\n"
++            f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 sha={head} findings=0 "
++            "seconds=754 covered=1/1 -->\n"
++            f"<!-- projector-incremental v=1 from={self.reviewed} kind=push insertions=1 deletions=1 files=1 "
++            "conflicts=0 -->\n\n"
++            f"Incremental review of the change since the full review of [`{self.reviewed[:7]}`]({review_page(901)}): "
++            "+1 −1 lines in 1 file.\n\n"
++            f"{self.BODY}\n",
++            posted["body"])
++        lines = posted["body"].splitlines()
++        self.assertIsNotNone(review.SIGNATURE.match(lines[0]))
++        self.assertIsNotNone(review.MARKER.match(lines[2]))
++        self.assertEqual(review.Verdict("clean", head, "1.2.3", "claude-opus-5-5", None, self.reviewed),
++                         review.verdict_marker(posted["body"]))
++        self.assertEqual(("COMMENT", head, []), (posted["event"], posted["commit_id"], posted["comments"]))
++        self.assertFalse(self.github.pr["draft"], "a clean self-review marks the pull request ready")
++        self.assertEqual({}, self.github.comments, "the start comment is gone")
++        self.assertFalse(self.lock(head).exists(), "the lock is released")
++        record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
++        self.assertEqual([(self.reviewed, "clean", self.fork, None), (head, "clean", self.fork, self.reviewed)],
++                         [(r["sha"], r["verdict"], r["base"], r["from"]) for r in record])
++        self.assertIn(f"at {head}, incremental from {self.reviewed[:7]}", out)
++
++    def test_after_a_rebase_with_a_conflict_the_lead_names_the_rebase_and_the_file(self) -> None:
++        self.move_trunk({"a.css": css(r1=12)})
++        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
++        self.assertEqual(0, self.gate())
++
++        code, _, err = self.publish_incremental()
++
++        self.assertEqual(0, code, err)
++        body = self.posted()["body"]
++        self.assertIn(f"Incremental review of the change since the full review of [`{self.reviewed[:7]}`]"
++                      f"({review_page(901)}) across a rebase onto `trunk`: +1 −7 lines in 1 file, with a resolved "
++                      "conflict in `a.css`.", body)
++        self.assertIn("kind=rebase insertions=1 deletions=7 files=1 conflicts=1 -->", body)
++
++    def test_on_another_authors_pull_request_it_comments_and_leaves_approval_to_a_person(self) -> None:
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.permissions = {"teammate": "write"}
++        self.github.commit_authors = ["teammate"]
++        (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
++        self.pushed()
++        before = len(self.github.calls)
++
++        code, _, err = self.publish_incremental()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("COMMENT", self.posted()["event"], "never an approval, even where approval is allowed")
++        self.assertTrue(self.posted()["body"].endswith(f"{self.BODY}\n\nA human approval is what remains.\n"))
++        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls[before:]),
++                         "draft state is the author's")
++
++    def refused(self, result: tuple[int, str, str], words: str, head: str) -> None:
++        code, _, err = result
++        self.assertEqual(1, code, "a refusal exits non-zero")
++        self.assertIn(words, err)
++        self.assertEqual(1, len(self.github.reviews), "only the full review was posted")
++        self.assertTrue(self.lock(head).exists(), "a refused publish keeps the lock for the full review")
++
++    def test_refuses_when_a_finding_opened_since_interdiff_ran(self) -> None:
++        head = self.pushed()
++        self.assertTrue(self.interdiff()["incremental"])
++        self.open_finding()
++
++        self.refused(self.publish_incremental(), "an incremental review is refused: 1 finding thread is open", head)
++
++    def test_refuses_a_moved_base_with_no_passing_gate_on_the_head(self) -> None:
++        self.move_trunk({"trunk.txt": "moved\n"})
++        head = self.review_head(self.merge(self.reviewed, self.trunk))
++
++        self.refused(self.publish_incremental(), "the merge base moved", head)
++
++    def test_refuses_a_head_that_moved(self) -> None:
++        head = self.pushed()
++        self.push_feature(self.build(head, {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        self.refused(self.publish_incremental(), "project review move 1", head)
++
++    def test_refuses_what_an_incremental_review_does_not_take(self) -> None:
++        head = self.pushed()
++        for extra, words in ((["--threads", str(self.threads(finding()))], "--threads"),
++                             (["--covered", "1/1"], "--covered"),
++                             (["--second-verdict", "901"], "--second-verdict"),
++                             (["--verdict", "changes-requested"], "always clean")):
++            with self.subTest(words):
++                self.refused(self.publish_incremental(*extra), words, head)
++
++    def test_refuses_a_body_that_is_empty_too_long_or_carries_what_publish_writes(self) -> None:
++        head = self.pushed()
++        signature = f"{review.MARK} **Projector review** · `1.2.3` · model `m` · **CLEAN** · took 1m 00s\n\nText.\n"
++        for text, words in (("  \n", "empty"),
++                            ("x" * 601, "601 characters once filled"),
++                            ("x" * 570 + " {sha}", "611 characters once filled"),
++                            (signature, "signature line"),
++                            (f"Text.\n<!-- projector-incremental v=1 from={self.reviewed} -->\n", "markers"),
++                            ("Text.\n<!-- projector-review v=1 verdict=clean -->\n", "markers"),
++                            ("Text.\n\n{census}\n", "prints no census")):
++            with self.subTest(words):
++                self.refused(self.publish_incremental(text=text), words, head)
++        self.assertEqual(0, self.publish_incremental(text="x" * 600)[0], "600 characters is the limit, not past it")
++
++    def test_an_ordinary_review_body_with_an_incremental_line_is_refused(self) -> None:
++        head = self.pushed()
++        body = self.body(f"{{census}}\n\n<!-- projector-incremental v=1 from={self.reviewed} kind=push -->\n")
++
++        self.refused(self.publish("clean", body=body), "markers", head)
++
++    def test_another_loops_incremental_review_on_the_head_is_a_collision(self) -> None:
++        head = self.pushed()
++        self.assertEqual(0, self.publish_incremental()[0])
++        self.assertEqual(0, self.setup_review("--loop", "l2", "--rereview")[0])
++
++        code, _, err = self.publish("clean", loop="l2")
++
++        self.assertEqual(1, code)
++        self.assertIn("another loop", err)
++        self.assertTrue(self.lock(head).exists())
++
++    def test_a_publish_without_incremental_still_needs_a_verdict_and_coverage(self) -> None:
++        self.pushed()
++        body = str(self.body())
++
++        no_verdict = self.later("publish", "--body", body, "--covered", "1/1")
++        no_coverage = self.later("publish", "--body", body, "--verdict", "clean")
++
++        self.assertEqual((1, 1), (no_verdict[0], no_coverage[0]))
++        self.assertIn("--verdict must be clean or changes-requested", no_verdict[2])
++        self.assertIn("--covered must be", no_coverage[2])
++
++
++class VerdictMarkerTests(unittest.TestCase):
++    SHA, FROM = "a" * 40, "b" * 40
++    MARKER = (f"<!-- projector-review v=1 verdict=clean projector=0.7.2 model=claude-opus-5-5 effort=high sha={'a' * 40} "
++              "findings=0 seconds=38 covered=1/1 -->")
++    INCREMENTAL = (f"<!-- projector-incremental v=1 from={'b' * 40} kind=push insertions=2 deletions=2 files=1 "
++                   "conflicts=0 -->")
++
++    def test_reads_the_verdict_what_produced_it_and_the_incremental_line_after_it(self) -> None:
++        self.assertEqual(review.Verdict("clean", self.SHA, "0.7.2", "claude-opus-5-5", "high", self.FROM),
++                         review.verdict_marker(f"Signature\n\n{self.MARKER}\n{self.INCREMENTAL}\n\nLead.\n"))
++        self.assertEqual(review.Verdict("clean", self.SHA, "0.7.2", "claude-opus-5-5", "high", None),
++                         review.verdict_marker(f"Signature\n\n{self.MARKER}\n\nBody.\n"))
++
++    def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
++        self.assertIsNone(review.verdict_marker(f"Body.\n{self.INCREMENTAL}\n"))
++        self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
++
++
+ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+         # wrong 40-character SHAs reached a publish.
+-        for command in ("setup", "move", "census", "release", "publish", "gate"):
++        for command in ("setup", "move", "census", "release", "publish", "gate", "interdiff"):
+             with self.subTest(command):
+                 help_text = io.StringIO()
+                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 7e83630..e1e0c5b 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -411,6 +411,22 @@ def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
+     def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
+         self.assertEqual({"c": None, "d": None}, self.statuses(None))
+ 
++    def test_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
++        statuses = self.statuses([projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
++                                  projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
++                                  incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)])
++
++        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
++                          "d": {"status": "clean", "url": review_url(3),
++                                "incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}}, statuses)
++
++    def test_an_incremental_line_without_a_review_marker_sets_no_status(self) -> None:
++        line = incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)["body"].splitlines()[3]
++        statuses = self.statuses([{"body": f"Quoting:\n{line}\n", "url": review_url(3), "at": "2026-10-03T10:00:00Z",
++                                   "association": "OWNER"}])
++
++        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
++
+     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
+         self.publish(9, "c" * 40, headRef="feature-a")
+         self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
+@@ -978,11 +994,12 @@ def rendered_summary(data: dict, popovers: bool = True) -> str:
+ class FileHeaderTests(SiteRepoCase):
+     """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
+ 
+-    def build(self, state: str | None = None, reported_base: object = ..., **pr: str) -> dict:
++    def build(self, state: str | None = None, reported_base: object = ..., reviews: list[dict] | None = None,
++              **pr: str) -> dict:
+         """The data the site build writes for pull request 9, which changes HEADER_FILES.
+ 
+-        GitHub reports the pull request as `state`, or cannot be asked when it is None, and
+-        reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
++        GitHub reports the pull request as `state` with `reviews`, or cannot be asked when it is
++        None, and reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
+         """
+         summaries = Path(tempfile.mkdtemp()) / "summaries"
+         folder = summaries / "9" / ("c" * 40)
+@@ -1001,7 +1018,8 @@ def build(self, state: str | None = None, reported_base: object = ..., **pr: str
+                 for p in HEADER_FILES]}],
+         }))
+         (folder / "diff.patch").write_text(HEADER_DIFF)
+-        reported = {"state": state, "reviews": [], **({} if reported_base is ... else {"base": reported_base})}
++        reported = {"state": state, "reviews": reviews or [],
++                    **({} if reported_base is ... else {"base": reported_base})}
+         status = mock.patch.object(summary, "pr_status", return_value=reported) \
+             if state is not None else nullcontext()
+         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
+@@ -1132,6 +1150,22 @@ def test_the_page_shows_merged_or_closed_in_place_of_its_verdict_and_the_sites_c
+                 shutil.rmtree(self.out)
+         self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
+ 
++    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
++    def test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
++        full = "a8cf3d5" + "0" * 33
++        reviews = [projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
++                   incremental_review("c" * 40, full, "2026-10-02T10:00:00Z", 2)]
++
++        open_html = rendered_summary(self.build(state="open", reviews=reviews))
++        shutil.rmtree(self.out)
++        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
++
++        self.assertIn(f' · <a class="rstatus clean" href="{review_url(2)}" target="_blank" rel="noopener">Clean</a>'
++                      f' · <a class="rstatus incremental" href="{review_url(1)}" target="_blank" rel="noopener">'
++                      'incremental from <code>a8cf3d5</code></a></div><h1>', open_html)
++        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
++                      "a merged pull request shows Merged alone")
++
+     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
+         # A backport, or a stack layer merged into its parent's branch, may
+@@ -1313,6 +1347,15 @@ def projector_review(verdict: str, head: str, at: str, review_id: int, associati
+             "url": review_url(review_id), "at": at, "association": association}
+ 
+ 
++def incremental_review(head: str, full: str, at: str, review_id: int) -> dict:
++    """A clean incremental review of `head`, building on the full review of `full`, as `projector_review` gives one."""
++    review = projector_review("clean", head, at, review_id)
++    marker = review["body"].splitlines()[2]
++    line = (f"<!-- projector-incremental v=1 from={full} kind=push insertions=2 deletions=2 files=1 "
++            "conflicts=0 -->")
++    return dict(review, body=f"**Projector review** · `0.6.13`\n\n{marker}\n{line}\n\nIncremental review.")
++
++
+ def served_summary(number: int, head: str) -> dict:
+     """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""
+     return {"version": 1, "name": f"Summary {number}", "overview": {"summary": [], "cards": []},
