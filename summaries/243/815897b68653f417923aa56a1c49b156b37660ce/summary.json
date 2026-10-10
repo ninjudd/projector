@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "Multi-model review sign-off",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 243,
+  "title": "Sign off on the newest verdict and drop the multi-verdict header",
+  "head": "815897b68653f417923aa56a1c49b156b37660ce",
+  "headRef": "multi-model-latest-wins",
+  "base": "121d49e324b97b9eba9a5be3cf96bd128194f0ba",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loops can run on several models at once, such as one loop in Claude Code and one in Codex, each posting reviews as the same GitHub account. On your own pull request, Projector cannot post an approval or a change request, so it uses <b>draft state</b> as the sign-off: draft means the head still needs changes, ready means a review found it clean. This pull request changes how that sign-off is decided when several models review one head.",
+   "Before this change (from #239), a head was signed off only when every model with a verdict on it was clean, no model was still reviewing it, and no finding thread was open, and <code>publish</code> waited up to <code>review.peer_wait</code> seconds for a model that had reviewed an earlier head. That broke when one model's loop was stopped partway: its last change request held the pull request in draft. Now the <b>newest verdict wins</b>: after each self-review publish, <code>publish</code> reads the Projector verdicts on the head and sets draft state by the newest one, whichever model gave it.",
+   "<ul><li><b>Sign-off.</b> <code>publish</code> drops the peer wait and the every-model rule, and <code>project review status</code> prints the newest verdict, each model's newest verdict, and the open finding threads.</li><li><b>Accounts.</b> Verdicts count from the reviewer's account and from any account that owns the repository, belongs to its organization, or collaborates on it, the same rule the site uses, so <code>fix-pr</code> runs <code>status</code> once instead of once per account.</li><li><b>Site.</b> The summary header goes back to one status chip linked to the newest review, restoring the front end to its state before #233.</li><li><b>Plan.</b> The plan gains § 9, which records the decision and marks the old rule and the adoption design superseded. It stays <code>in-progress</code> until a two-host run is done.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>One open finding: two models that publish within the same second or two can leave the pull request ready with a finding open. <code>publish</code> counts open threads before it submits but sets draft state from the newest verdict alone, so another model's change request that lands between those steps is outvoted by the newer clean verdict. The flag on <code>src/projector/review.py</code> carries it.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Verdict</b>: a Projector review's <code>clean</code> or <code>changes-requested</code> result, recorded in a marker comment that also names the head and the model.</li><li><b>Self-review</b>: a review of a pull request the reviewer account wrote, where GitHub allows only a <code>COMMENT</code> review.</li><li><b>Finding thread</b>: an inline review thread opened by a Projector review for a P1 or P2 finding.</li><li><b>Census</b>: the count of Projector finding threads, open and resolved, that a verdict rests on.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "signoff",
+   "title": "The newest verdict sets draft state",
+   "kicker": "How publish and status decide the sign-off now",
+   "intro": [
+    "After it submits a self-review, <code>publish</code> lists the pull request's Projector reviews, adds the review it just posted in case the listing lags, and takes the newest verdict on the head by submission time and then review id. Draft state follows it: draft for <code>changes-requested</code>, ready for <code>clean</code>. When another model posted between this review's submit and its draft step, <code>publish</code> prints that newer verdict.",
+    "The removed code is the every-model rule: <code>models_on</code>, <code>signoff</code>, <code>pending_peers</code>, <code>sign</code> with its polling wait, and the <code>review.peer_wait</code> setting. The new <code>verdicts</code> lists reviews from the reviewer's account and from trusted repository accounts, and <code>newest_verdicts</code> keeps each model's newest verdict on a head, newest first."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The design rests on a clean verdict needing every Projector finding thread settled first. <code>publish</code> enforces that with a census read before it submits, not after."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Replaces the every-model sign-off with <code>verdicts</code> and <code>newest_verdicts</code>, and sets draft state in <code>publish</code> from the newest verdict.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1399,
+       "text": "Open P2 finding: when another model's change request and its finding land between this review's census read and its submit, the newer clean verdict marks the pull request ready with that finding open, and <code>status</code> reports <code>clean</code>. The review reproduced it in the test harness. The suggested fix re-reads the census in the draft step and keeps the pull request draft while any finding thread is open."
+      },
+      {
+       "kind": "verify",
+       "line": 1370,
+       "text": "A cross-author review posts <code>APPROVE</code> only for a clean verdict where <code>review.allow_approve</code> is true, <code>REQUEST_CHANGES</code> for changes requested, and <code>COMMENT</code> otherwise; the review traced each branch and the full suite passes."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Stops reading <code>review.peer_wait</code> and prints the newest verdict when another model's decided the draft state."
+    },
+    {
+     "path": "tests/test_review.py"
+    }
+   ]
+  },
+  {
+   "id": "site",
+   "title": "One status per head on the site",
+   "kicker": "The summary header and Reviews row go back to a single chip",
+   "intro": [
+    "The site showed a head reviewed by several models as a button with an asterisk and a hover card of each model's verdict. That card existed to explain the every-model rule. Under the newest-verdict rule, the header shows the one status the newest review gave, linked to that review, as it did before #233.",
+    "The front-end files are restored byte for byte to their state before #233. One part of #233 stays: an incremental review's &quot;incremental from&quot; link names its own model's full review of the earlier head, never another model's."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review ran <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code>; the build left the tree clean, and <code>site/</code> is identical to commit b70745e."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>review_statuses</code> keeps each head's newest review, whichever model wrote it."
+    },
+    {
+     "path": "site/src/globals.d.ts"
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "Removes the multi-model button and its event wiring; <code>statusHtml</code> draws one link."
+    },
+    {
+     "path": "site/assets/summary.css"
+    },
+    {
+     "path": "site/assets/summary.js"
+    },
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills and CLI docs describe the newest-verdict rule",
+   "kicker": "What review and fix loops now read and report",
+   "intro": [
+    "<code>review-pr</code> now says the newest verdict on a head signs it off and that nothing waits. <code>fix-pr</code> runs <code>project review status</code> once, because <code>status</code> reads every account the repository lets in. The loop skills drop the sign-off from what a subagent reports and add the newer verdict when <code>publish</code> names one."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md"
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md"
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md"
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  },
+  {
+   "id": "plan",
+   "title": "The plan records the decision",
+   "kicker": "Plan § 9 and the superseded sections",
+   "intro": [
+    "The <code>multi-model-review</code> plan appends § 9, &quot;The newest verdict wins&quot;, with the rule, the <code>status</code> output, and the rejected alternatives. § 2.3 and § 2.8 and the superseded acceptance criteria stay as short stubs, so no cited number moves. The plan stays <code>in-progress</code> because criterion 15, a Claude Code loop and a Codex loop run by hand, needs two hosts."
+   ],
+   "files": [
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "Read § 9 for the decision and its rejected alternatives."
+    }
+   ]
+  }
+ ],
+ "project": "multi-model-review"
+}
