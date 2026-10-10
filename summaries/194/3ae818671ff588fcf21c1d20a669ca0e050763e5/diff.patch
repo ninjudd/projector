@@ -1,0 +1,371 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 793f923..7568fca 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -73,14 +73,15 @@ what it did to each:
+   terminal, as an agent refreshing the instructions runs it, `init` reports
+   the file as `kept` and says on stderr how to add the rules, and
+   `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+-  to leave the file alone for one run. `init` adds the rules to the file's
+-  existing settings, keeps every other setting, writes through a symlink such
+-  as one into a dotfiles repository, and writes the file back as two-space
+-  JSON. It keeps a file that is not valid UTF-8 JSON, holds settings of an
+-  unexpected shape, sits under a `.claude` that is not a directory, or cannot
+-  be written, as one linked into a read-only directory such as the Nix store
+-  cannot, and says on stderr how to add the rules yourself. `init` still
+-  exits 0.
++  to leave the file alone for one run. To check the rules without `init`, run
++  `project review rules`, which writes nothing. `init` adds the rules to the
++  file's existing settings, keeps every other setting, writes through a
++  symlink such as one into a dotfiles repository, and writes the file back as
++  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds settings
++  of an unexpected shape, sits under a `.claude` that is not a directory, or
++  cannot be written, as one linked into a read-only directory such as the Nix
++  store cannot, and says on stderr how to add the rules yourself. `init`
++  still exits 0.
+ - `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
+   commands, for Codex's approval reviewer, which otherwise can refuse
+   `project summary publish` as sending repository content to another host.
+@@ -807,6 +808,7 @@ project review census 66 --json
+ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
+ project review release 66
+ project review gate 66
++project review rules
+ ```
+ 
+ `setup` checks that pull request 66 is open, fetches its head into the
+@@ -870,6 +872,20 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
+ `setup` recorded as untrusted, whether or not `review.gate` is set, and when
+ `review.gate` is unset.
+ 
++`rules` checks whether your own settings allow `project review publish` and
++`project summary publish`: the rules `init` adds to `~/.claude/settings.json`,
++and to `~/.codex/rules/projector.rules` where Codex is installed. It prints
++each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
++whole check and for each file. It writes nothing, takes no pull request, and
++runs from any directory. It exits 0 when every file has the rules. It exits 1
++when a file lacks them or cannot be read, says on stderr what is missing, and
++asks for `project init` at a terminal, because `init` adds the rules only for a
++person. A review loop runs `rules` once before its first review, so it can warn
++you before a publish is refused rather than after. A file that lacks the rules
++means the host's automatic approval can refuse a publish, not that it will:
++the repository's own settings, or settings your organization manages, can still
++allow the commands.
++
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+ refuses outside one; the repository is that checkout's `origin`, and `--repo`
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 1799aee..877d7e4 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -36,20 +36,31 @@ nothing open.
+ 
+ 1. Read repository instructions, `../review-pr/SKILL.md`, and applicable
+    review or GitHub workflow skills.
+-2. Resolve the repository, checked-out branch, the operator's open pull
++2. Run `project review rules` once. It reads the user's own Claude Code
++   settings and Codex rules, writes nothing, and exits 1 when either lacks the
++   rules that allow `project review publish` and `project summary publish`.
++   On exit 1, tell the user once, before the first review, that the host's
++   automatic approval, such as Claude Code's auto mode or Codex's approval
++   reviewer, can refuse the loop's publishes, a summary on another author's
++   pull request especially. Say that running `project init` themselves in a
++   terminal adds the rules. Do not run `init` to add them yourself, because
++   `init` adds them only for a person. Then continue: the repository's own
++   settings can still allow the commands, so a missing rule means a publish
++   can be refused, not that it will be.
++3. Resolve the repository, checked-out branch, the operator's open pull
+    requests, any the user assigned, and the total open count:
+ 
+    ```sh
+    gh pr list --author <operator> --state open --limit 200
+    ```
+ 
+-3. Fetch each pull request's base SHA, head SHA, state, reviews, and
++4. Fetch each pull request's base SHA, head SHA, state, reviews, and
+    thread-aware review threads. Say how many operator pull requests are tracked
+    out of the repository total.
+-4. Determine the last reviewed SHA from durable GitHub state or the current
++5. Determine the last reviewed SHA from durable GitHub state or the current
+    conversation. Review any current head without a completed exact-head review
+    immediately; do not baseline it away.
+-5. Write the tracked set to a durable tracked file, one `owner/repo#number`
++6. Write the tracked set to a durable tracked file, one `owner/repo#number`
+    per line, kept beside the state file and outside any checkout. That file
+    is the watcher's whole scope and the record of the set. The watcher
+    appends the operator's pull requests itself; append one the user assigns,
+@@ -60,7 +71,7 @@ nothing open.
+    `project review` command. The record of which reviews this loop published
+    lives under that id in the review state directory, where `project review
+    publish` keeps it.
+-6. Seed the state file with only the SHAs already reviewed, then run one
++7. Seed the state file with only the SHAs already reviewed, then run one
+    pass:
+ 
+    ```sh
+@@ -71,7 +82,7 @@ nothing open.
+    It refuses to start, naming the line, on an entry that is not
+    `owner/repo#number` or a number that names no pull request, and it
+    distinguishes a lookup that failed for network or auth reasons from a
+-   missing pull request. Every head you found unreviewed in step 4 must come
++   missing pull request. Every head you found unreviewed in step 5 must come
+    back as `NEW PR`; one that does not is a pull request missing from the
+    file. The pass records those heads as announced, so the running watcher
+    will not repeat them; review them from this output. Then run the same
+@@ -129,6 +140,12 @@ reads the new head against that history instead of rediscovering it.
+   replacement under the same name. It rebuilds its context from GitHub: the
+   pull request's Projector reviews, their finding threads, and the replies on
+   them.
++- A subagent whose publish the host refused reports the refusal and stops
++  that publish; it never retries a refused publish in another form, as
++  `../review-pr/SKILL.md` and `../summarize-pr/SKILL.md` say. Tell the user
++  once for the loop, not once per pull request, that the host's automatic
++  approval refused a publish and that running `project init` in a terminal
++  adds the rules. Then keep reviewing.
+ 
+ The loop's record decides the collision check `project review publish` runs
+ before it submits. An id in the record is this loop's own, and a second one on
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 22ce319..eb221a7 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import review, site, summary
++from . import permissions, review, site, summary
+ from .permissions import allow_publish
+ from .summary import WORKFLOW_PATH
+ from .config import ConfigError
+@@ -456,6 +456,9 @@ def parser() -> argparse.ArgumentParser:
+     review_gate = review_commands.add_parser(
+         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
+     )
++    add_output(review_commands.add_parser(
++        "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
++    ))
+     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+@@ -788,7 +791,43 @@ def run_prepare(root: Path, command: str) -> None:
+ NOT_HOSTED = 3
+ 
+ 
++def review_rules(json_output: bool) -> int:
++    """`review rules`: whether the user's settings allow both publish commands, exiting 1 when one may not.
++
++    It asks `allow_publish` only to report, so it writes nothing, and a review
++    loop can run it before its first publish rather than learn of a refusal on
++    one pull request mid-loop. The rules belong in the person's own settings,
++    which only a person at a terminal adds, so the closing line asks for them
++    rather than naming a command an agent could run.
++    """
++
++    # Without the hint, a missing rule's note names no command, since the
++    # agent that runs this check must not add the rules itself.
++    files = allow_publish(apply=False, hint=False)
++    allowed = all(entry.action == "unchanged" for entry in files)
++    if json_output:
++        print(json.dumps({"allowed": allowed,
++                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
++                                    for entry in files]}, indent=2))
++    else:
++        for entry in files:
++            print(f"{'allows' if entry.action == 'unchanged' else 'lacks'} {entry.path}")
++    # The file lines first, so the reasons below them read in order on a terminal or in one captured stream.
++    sys.stdout.flush()
++    for entry in files:
++        if entry.note:
++            print(f"project: {entry.note}", file=sys.stderr)
++    if not allowed:
++        print(f"project: without these rules, the host's automatic approval can refuse {permissions.COMMANDS}, "
++              "unless the repository's own or managed settings allow them; ask the user to run `project init` "
++              "in a terminal, or to add the rules above, and do not run `project init --publish-rule` to add them "
++              "yourself", file=sys.stderr)
++    return 0 if allowed else 1
++
++
+ def run_review(arguments: argparse.Namespace) -> int:
++    if arguments.review_command == "rules":
++        return review_rules(arguments.json_output)
+     root = review.state_dir(arguments.state_dir)
+     loop = review.valid_loop(arguments.loop)
+     command = arguments.review_command
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 91a063b..ce419eb 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -81,21 +81,22 @@ def read_user_file(path: Path, environ: Mapping[str, str] = os.environ) -> tuple
+         return "", f"could not be read ({error.strerror})"
+ 
+ 
+-def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -> list[FileAction]:
++def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ,
++                  hint: bool = True) -> list[FileAction]:
+     """Add the publish rules for Claude Code, and for Codex where Codex is installed.
+ 
+     Without `apply`, a file that lacks the rules is only reported, with how to
+-    add them.
++    add them unless `hint` is false.
+     """
+ 
+-    actions = [allow_in_claude(apply, environ)]
+-    codex = allow_in_codex(apply, environ)
++    actions = [allow_in_claude(apply, environ, hint)]
++    codex = allow_in_codex(apply, environ, hint)
+     if codex is not None:
+         actions.append(codex)
+     return actions
+ 
+ 
+-def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ) -> FileAction:
++def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ, hint: bool = True) -> FileAction:
+     """Add the rules to `permissions.allow` in the user's Claude Code settings.
+ 
+     Everything else in the file is kept, and a file linked into a dotfiles
+@@ -132,9 +133,9 @@ def kept(reason: str) -> FileAction:
+     if not apply:
+         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
+                                         "mode can refuse a review loop's clean review of your own pull request or "
+-                                        "the publish of a summary, unless the repository's own settings allow it; "
+-                                        "run `project init` yourself in a terminal, or pass --publish-rule, to add "
+-                                        "them")
++                                        "the publish of a summary, unless the repository's own settings allow it"
++                                        + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
++                                           "add them" if hint else ""))
+     allow.extend(missing)
+     try:
+         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+@@ -144,7 +145,8 @@ def kept(reason: str) -> FileAction:
+     return FileAction(name, "updated" if existed else "created")
+ 
+ 
+-def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ) -> Optional[FileAction]:
++def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
++                   hint: bool = True) -> Optional[FileAction]:
+     """Write Projector's rules file into Codex's rules directory, or None where Codex is not installed.
+ 
+     Codex is taken to be installed when its configuration directory exists, so
+@@ -170,8 +172,9 @@ def kept(reason: str) -> FileAction:
+         return FileAction(name, "unchanged")
+     if not apply:
+         return FileAction(name, "kept", f"{name} lacks Projector's rule, without which Codex's approval reviewer "
+-                                        f"can refuse {COMMANDS}; run `project init` yourself in a terminal, or "
+-                                        "pass --publish-rule, to add it")
++                                        f"can refuse {COMMANDS}"
++                                        + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
++                                           "add it" if hint else ""))
+     try:
+         write_through(path, CODEX_RULES)
+     except OSError as error:
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 0457f52..897ea73 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1322,6 +1322,104 @@ def test_init_keeps_a_plain_file_claude_and_undecodable_settings(self) -> None:
+         self.assertIn("is not a directory", stderr)
+ 
+ 
++class ReviewRulesTests(RepositoryTestCase):
++    """`project review rules` reports the publish rules and writes nothing, inside a repository or outside one."""
++
++    def home_tree(self) -> dict[str, bytes | None]:
++        """Every path under the temporary home, with each file's bytes, so a test sees any write at all."""
++        return {path.relative_to(self.home).as_posix(): None if path.is_dir() else path.read_bytes()
++                for path in sorted(self.home.rglob("*"))}
++
++    def test_rules_present_exits_0_and_writes_nothing(self) -> None:
++        before = self.home_tree()
++        for cwd in (self.root, self.home):
++            with self.subTest(cwd=cwd):
++                code, stdout, stderr = self.invoke("review", "rules", cwd=cwd)
++
++                self.assertEqual(0, code, stderr)
++                self.assertEqual("allows ~/.claude/settings.json\n", stdout)
++                self.assertEqual("", stderr)
++                self.assertEqual(before, self.home_tree())
++                self.assertFalse((self.home / ".codex").exists(), "the check creates no Codex directory")
++
++        code, stdout, stderr = self.invoke("review", "rules", "--json")
++        self.assertEqual(0, code, stderr)
++        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
++                         json.loads(stdout))
++
++    def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
++        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
++        cases = {
++            "summary rule missing": lambda: None,
++            "settings absent": self.settings().unlink,
++        }
++        for name, arrange in cases.items():
++            with self.subTest(name):
++                arrange()
++                before = self.home_tree()
++
++                code, stdout, stderr = self.invoke("review", "rules")
++
++                self.assertEqual(1, code, stderr)
++                self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
++                self.assertIn("Bash(project summary publish *)", stderr)
++                self.assertIn("ask the user to run `project init` in a terminal", stderr)
++                self.assertIn("do not run `project init --publish-rule` to add them yourself", stderr)
++                self.assertIn("unless the repository's own or managed settings allow them", stderr)
++                self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
++                self.assertEqual(before, self.home_tree())
++        self.assertFalse(self.settings().exists(), "a missing settings file stays missing")
++
++        code, stdout, _ = self.invoke("review", "rules", "--json")
++        self.assertEqual(1, code)
++        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False}]},
++                         json.loads(stdout))
++        self.assertFalse(self.settings().exists())
++
++    def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
++        (self.home / ".codex").mkdir()
++        before = self.home_tree()
++
++        code, stdout, stderr = self.invoke("review", "rules")
++
++        self.assertEqual(1, code, stderr)
++        self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
++        self.assertIn("Codex's approval reviewer", stderr)
++        self.assertNotIn("or pass --publish-rule", stderr)
++        self.assertEqual(before, self.home_tree())
++
++        rules = self.home / ".codex" / "rules" / "projector.rules"
++        rules.parent.mkdir()
++        rules.write_text(permissions.CODEX_RULES)
++        code, stdout, stderr = self.invoke("review", "rules")
++        self.assertEqual(0, code, stderr)
++        self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
++
++    def test_unreadable_settings_exit_1_and_stay_untouched(self) -> None:
++        for content, reason in (
++            (b"{not json", "is not valid JSON"),
++            (b'{"permissions": []}', "`permissions` that is not an object"),
++            (b'{"env": {"NAME": "caf\xe9"}}', "is not UTF-8"),
++        ):
++            with self.subTest(reason=reason):
++                self.settings().write_bytes(content)
++                before = self.home_tree()
++
++                code, stdout, stderr = self.invoke("review", "rules")
++
++                self.assertEqual(1, code, stderr)
++                self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
++                self.assertIn(reason, stderr)
++                self.assertIn("do not run `project init --publish-rule`", stderr)
++                self.assertEqual(content, self.settings().read_bytes())
++                self.assertEqual(before, self.home_tree())
++
++    def test_rules_takes_no_pull_request(self) -> None:
++        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
++            main(["review", "rules", "66"])
++        self.assertEqual(2, stop.exception.code)
++
++
+ class ValidationTests(RepositoryTestCase):
+     def test_check_accepts_a_valid_tree_and_local_links(self) -> None:
+         self.plan("alpha", body="See [design](design.md) and [child](child/).")

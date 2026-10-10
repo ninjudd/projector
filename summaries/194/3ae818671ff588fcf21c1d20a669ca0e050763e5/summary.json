@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Publish rules check",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 194,
+  "title": "Check the publish rules before a review loop starts",
+  "head": "3ae818671ff588fcf21c1d20a669ca0e050763e5",
+  "headRef": "review-rules-preflight",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A review loop publishes reviews and pull request summaries from subagents with <code>project review publish</code> and <code>project summary publish</code>. A host's automatic approval, such as Claude Code's auto mode or Codex's approval reviewer, can refuse those commands unless the person's own settings allow them. <code>project init</code>, run by a person at a terminal, adds the allow rules. Until this change, nothing let an agent check for the rules first, so a loop learned that they were missing only when a publish was refused partway through.",
+   "This change adds <code>project review rules</code>, a read-only check. It prints <code>allows</code> or <code>lacks</code> for each settings file, and exits 0 when every file has the rules or 1 otherwise. <code>start-review-loop</code> runs it once before its first review and warns the user on exit 1, then keeps going.",
+   "<ol><li><b>The check reuses the report-only path of <code>init</code>.</b> It calls <code>allow_publish</code> with <code>apply=False</code>, which reads each file and never writes.</li><li><b>A new <code>hint</code> flag keeps commands out of its notes.</b> With <code>hint=False</code>, the note for a missing rule no longer says to pass <code>--publish-rule</code>, because the agent running the check must not add the rules itself.</li><li><b>The loop skill and the CLI reference document the check.</b></li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Publish rules</b>: the allow rules <code>Bash(project review publish *)</code> and <code>Bash(project summary publish *)</code> in <code>~/.claude/settings.json</code>, and Projector's rule file <code>~/.codex/rules/projector.rules</code> where Codex is installed.</li><li><b><code>allow_publish</code></b>: the function that <code>init</code> calls to add those rules, or with <code>apply=False</code> to report on them.</li><li><b><code>FileAction</code></b>: one file's result, with an <code>action</code> such as <code>unchanged</code> or <code>kept</code>, and an optional note.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of this head is clean, with no finding threads. It lists two suggestions: the closing line asks the user to add \"the rules above\" when only the Codex note, which names no rule, is above it, and a settings file that is not valid JSON gets a note saying the rules \"were not added\" though the check never tries to add them.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The read-only check",
+   "kicker": "The new <code>review rules</code> subcommand and the <code>hint</code> flag it passes",
+   "intro": [
+    "<code>project review rules</code> asks <code>allow_publish</code> to report on each settings file without writing. A file whose action is <code>unchanged</code> already has the rules and prints <code>allows</code>. Any other action, including a file that cannot be read, prints <code>lacks</code>. Each file's note goes to stderr after the file lines, followed by one closing line that asks the user to run <code>project init</code> in a terminal.",
+    "The <code>hint</code> flag defaults to true, so <code>init</code> keeps its notes as they were. Only the new check turns it off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>rules</code> subparser with <code>--json</code>, and <code>review_rules</code>, which <code>run_review</code> calls before it reads any review state.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The check writes nothing. Both <code>allow_in_claude</code> and <code>allow_in_codex</code> return before <code>write_through</code> when <code>apply</code> is false. The reviewer ran the command against a temporary home and found the tree unchanged after each run.",
+       "line": 806
+      },
+      {
+       "kind": "context",
+       "text": "<code>rules</code> defines no <code>--state-dir</code>, <code>--loop</code>, or pull request number, so this early return must come before <code>run_review</code> reads those arguments.",
+       "line": 830
+      }
+     ]
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Threads <code>hint</code> through <code>allow_publish</code> to the report-only notes for Claude Code and Codex.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>init</code>'s two callers of <code>allow_publish</code> pass no <code>hint</code>, so their notes still name <code>--publish-rule</code>. Python joins the adjacent string literals before it applies the conditional, so the suffix appears whole or not at all.",
+       "line": 136
+      },
+      {
+       "kind": "context",
+       "text": "With <code>hint=False</code>, this Codex note names no rule, while the closing line in <code>review_rules</code> asks the user to \"add the rules above\". The Claude Code note does list its missing rules.",
+       "line": 175
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "loop",
+   "title": "The review loop runs the check",
+   "kicker": "<code>start-review-loop</code> checks once, warns once, and keeps going",
+   "intro": [
+    "The check becomes step 2 of \"Establish the loop\". On exit 1 the loop tells the user, before the first review, that a publish can be refused and that running <code>project init</code> in a terminal adds the rules. A missing rule does not stop the loop, because the repository's own settings can still allow the commands.",
+    "A new bullet for subagents says a refused publish is never retried in another form, and the loop tells the user once for the loop rather than once for each pull request."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The renumbering moves the one citation of a later step: \"unreviewed in step 5\" names the step that determines the last reviewed SHA. The reviewer searched the skills and docs for other citations of these step numbers and found none."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "collapsed": false,
+     "note": "Adds the new step 2, renumbers the steps after it, and adds the bullet on refused publishes."
+    }
+   ]
+  },
+  {
+   "id": "docs-tests",
+   "title": "Reference and tests",
+   "kicker": "The CLI reference entry and the tests that hold the check to writing nothing",
+   "intro": [
+    "<code>docs/cli.md</code> documents the command's output, its <code>--json</code> fields, and its exit codes, and points to it from the <code>init</code> paragraph on publish rules. <code>ReviewRulesTests</code> runs the check through <code>main()</code> and compares every path and byte under a temporary home before and after each run."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The reviewer ran the repository's gate at this head: 459 tests passed with one skip, <code>project check</code> passed, both <code>claude plugin validate</code> runs passed, and <code>git diff --check</code> was clean."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>project review rules</code>."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Adds <code>ReviewRulesTests</code>: rules present, missing, unreadable, a Codex directory without the rule file, and a pull request number as a usage error."
+    }
+   ]
+  }
+ ]
+}
