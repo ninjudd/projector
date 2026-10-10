@@ -462,11 +462,11 @@ finding holds the sign-off, whichever model opened it, until it is settled.
 
 #### When a model has stopped
 
-A model has stopped when it owes the pull request a review and has posted
-nothing within `review.peer_wait` seconds of when it began to owe it. Posting
-means a start comment, a verdict, or a verify reply on the pull request. A
-model with a live start comment has not stopped. A model owes a review in two
-cases:
+A model has stopped when it owes the pull request a review, has posted
+nothing since it began to owe it, and `review.peer_wait` seconds have passed
+since then. Posting means a start comment, a verdict, or a verify reply on
+the pull request. A model with a live start comment has not stopped. A model
+owes a review in two cases:
 
 - **A new head.** It has a verdict on an earlier head and none on the current
   head. It began to owe the head when the adopting review began on it, the
@@ -511,10 +511,10 @@ claim, and the check that the claim won happen in one place:
 project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file>
 ```
 
-1. It reads the thread and every model's posts on the pull request. It
-   refuses when the thread's verifier owes no review, or has posted since it
-   began to owe one, or when a model that has not stopped adopted the thread
-   first.
+1. It reads the thread and every model's posts on the pull request. When the
+   thread has a verifier, it refuses if that model owes no review or has
+   posted since it began to owe one. It also refuses when a model that has
+   not stopped adopted the thread first.
 2. When the verifier's window is still open, it waits for the window to
    close, re-reading every 15 seconds. It refuses if the verifier posts in the
    meantime.
