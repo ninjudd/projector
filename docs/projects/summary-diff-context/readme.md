@@ -129,10 +129,18 @@ text once with the page's `hl` and `splitLines`. Revealed lines are context
 rows built by the same `numbers` function as the diff's own rows, so they show
 both line numbers in the file's column layout. Expand down appends rows to the
 preceding hunk's table; expand up inserts them into the following hunk's table
-above its `tr.hunk` header row. When a gap closes, the page removes its
-expander and the following hunk's header row and moves that table's rows into
-the preceding table, so the hunks read as one. After each insertion the page
-runs `markTokens` on the file, so a marked name is marked in the new lines too.
+above its `tr.hunk` header row. After each insertion the page runs
+`markTokens` on the file, so a marked name is marked in the new lines too.
+
+When a gap closes, the page removes its expander. What else it removes depends
+on where the gap sat:
+
+- **Between two hunks**, it removes the lower hunk's header row and moves the
+  lower table's rows into the upper table, so the hunks read as one.
+- **Above the first hunk**, it removes the first hunk's header row, because
+  the table then starts at line 1.
+- **Below the last hunk**, it removes nothing else, because the last table
+  then ends at the file's last line.
 
 When the fetch fails, the expander says the file could not be loaded and its
 controls stay usable for a retry. A file without `context` draws no expander.
