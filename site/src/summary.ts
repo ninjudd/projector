@@ -45,7 +45,7 @@ function renderSummary(data: SummaryData): void {
 
   // Drawn like the site bar's icons: a 20-unit square, stroked in the text colour.
   const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
-  const FOLDER_ICON = `${ICON}<path d="M3 6a1.5 1.5 0 0 1 1.5-1.5h3.25l1.75 2h6a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>`;
+  const FILE_ICON = `${ICON}<path d="M11.5 3H6a1.5 1.5 0 0 0-1.5 1.5v11A1.5 1.5 0 0 0 6 17h8a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 3v4h4"/></svg>`;
   const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
     '<path d="M10 6.75V10l2.25 1.5"/></svg>';
 
@@ -267,13 +267,13 @@ function renderSummary(data: SummaryData): void {
     }).join('') + '</ul>';
   }
 
-  // The projects the pull request touches, as rows like the stack's, a folder
-  // where a stack row has its number.
+  // The projects the pull request touches, as rows like the stack's, a page
+  // icon where a stack row has its number.
   function projectsList(): string {
     const projects = data.projects ?? [];
     if (projects.length === 0) return '';
     return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
-      return `<li><a href="${esc(p.url)}" title="${esc(p.title)}"><span class="snum">${FOLDER_ICON}</span>` +
+      return `<li><a href="${esc(p.url)}" title="${esc(p.title)}"><span class="snum">${FILE_ICON}</span>` +
         `<span class="stitle">${esc(p.title)}</span></a></li>`;
     }).join('') + '</ul>';
   }
