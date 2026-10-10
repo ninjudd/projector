@@ -97,11 +97,16 @@ head the merge produces, and that head is the one the next review reads.
 
 1. Fetch, and merge `origin/<baseRefName>` into the branch. Merge rather than
    rebase unless the repository's instructions say otherwise: a merge needs
-   no force-push, so review threads stay anchored to their commits. A stacked
-   pull request's base is its parent's branch until the parent merges. GitHub
-   then retargets it to the default branch, but only when the merge deletes
-   the parent's branch. Where the repository keeps merged branches, retarget
-   the child yourself with `gh pr edit <number> --base <default-branch>`.
+   no force-push, so review threads stay anchored to their commits. A layer
+   of a stack is the exception while `gh stack` works, because `gh stack`
+   keeps a stack current by rebasing it: run `gh stack rebase` and then
+   `gh stack push`, and resolve a conflict the rebase stops on as
+   `../gh-stack/SKILL.md` describes under "Handle rebase conflicts". A
+   stacked pull request's base is its parent's branch until the parent
+   merges. GitHub then retargets it to the default branch, but only when the
+   merge deletes the parent's branch. Where the repository keeps merged
+   branches, retarget the child yourself with
+   `gh pr edit <number> --base <default-branch>`.
 2. Resolve each conflicted file by reading both sides and the commits that
    made them, with `git log --merge -p <file>`. Keep what each side meant to
    do. When one side already contains the other's change, take that side.
@@ -193,17 +198,22 @@ GitHub prose.
 
 ## Preserve stacked ownership
 
-Fix code on the stack branch that introduced it. When a lower layer changes,
-use the installed stack workflow to cascade-rebase and push every layer above
-it, then rerun each affected layer's full gate. Do not patch parent code inside
-a child merely to avoid rebasing.
+Fix code on the stack branch that introduced it. Find the layers above it,
+and carry each fix up through every one of them, as `../implement/SKILL.md`
+describes under "Stack dependent work": with `gh stack rebase --upstack` and
+`gh stack push` where `gh stack` works, and from base branches where it does
+not. Then rerun each affected layer's full gate. Do not patch parent code
+inside a child merely to avoid rebasing.
 
-After a parent merges, verify the child points at the intended base and remains
-mergeable. Use the stack workflow's sync operation when available. When the
-parent was squash-merged, merge the new base into the child even though
-`mergeable` reads `MERGEABLE`: until then the child's diff still carries the
-parent's original commits, and no conflict event will say so. Never merge
-any layer; merging remains the user's checkpoint.
+After a parent merges, run `gh stack sync`, which rebases the layers above
+onto the new base and drops a squash-merged parent's commits from them as
+`../gh-stack/SKILL.md` describes under "Squash-merge recovery". Then verify
+each child points at the intended base and remains mergeable. Where
+`gh stack` cannot sync the stack and the parent was squash-merged, merge the
+new base into the child even though `mergeable` reads `MERGEABLE`: until then
+the child's diff still carries the parent's original commits, and no conflict
+event will say so. Never merge any layer; merging remains the user's
+checkpoint.
 
 ## Report the result
 
@@ -243,8 +253,9 @@ request for review that has not been answered yet.
   resolve a conflict; merging the pull request is the user's checkpoint.
 - Never push through the reviewer identity or to an unowned branch.
 - Never discard or overwrite uncommitted work to switch branches.
-- Never force-push to resolve a conflict unless the repository's instructions
-  call for a rebase, and then use `--force-with-lease`.
+- Never force-push except to push a stack's rebased layers, or to resolve a
+  conflict where the repository's instructions call for a rebase, and use
+  `--force-with-lease` either way.
 - Never close the pull request and open a replacement to escape a conflict.
   That discards its review threads; fix the branch in place.
 - Never claim a review or clean state without checking live evidence.

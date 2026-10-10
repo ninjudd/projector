@@ -37,7 +37,8 @@ adopted it. Never list a pull request you would not push to.
 2. Resolve the repository, checked-out branch, exact tracked pull request set,
    each base and head SHA, author, state, mergeability, review decision, and
    unresolved review threads. Include every layer of a stack created by this
-   conversation. Baseline only already-resolved threads. Never baseline an
+   conversation, found as `../implement/SKILL.md` describes under "Stack
+   dependent work". Baseline only already-resolved threads. Never baseline an
    unresolved thread; every finding already waiting when the loop starts
    remains outstanding.
 3. Verify the operator can push each tracked branch. Do not test with an empty
@@ -115,7 +116,10 @@ the recurrence it is instead of as new work.
 - Give a stack one subagent for all its layers, named `fix-stack-<number>`
   for the bottom layer, so the name says it covers more than that one pull
   request. A fix to a lower layer is carried up into every layer above it,
-  so two subagents working one stack would push the same branches.
+  so two subagents working one stack would push the same branches. Group
+  tracked pull requests into stacks by the same lookup as step 2. It reads
+  base branches when GitHub records no stack, so a chain opened without
+  `gh stack` still gets one subagent.
 - Have each subagent work in its own worktree of its pull request's branch,
   so two subagents never share a checkout and none touches the main loop's.
 - Send every later event for that pull request, or for any layer of its

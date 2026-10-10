@@ -131,7 +131,7 @@ the pull request that unblocked it, because none of those is worth anything
 alone. Split only at the reviewability ceiling: when a reviewer would be
 holding two unrelated arguments at once, or when one half would still be
 worth shipping if the other were abandoned. Work that crosses it becomes a
-stack, as `../gh-stack/SKILL.md` describes.
+stack, built as [Stack dependent work](#stack-dependent-work) describes.
 
 Open it as a draft. A review loop marks it ready on a clean head, so the
 draft says the work has not been signed off yet; never mark it ready
@@ -153,4 +153,63 @@ section: the exact commands, in order, that you ran yourself from the
 directory you name; what the reader should see; the signal that would show
 the change is wrong; and what needs building first and what state the
 commands leave behind. Where a change cannot be exercised by hand, say so
-and point at the test that covers it.
+and point at the test that covers it. `gh stack submit` writes each layer's
+body too, and it is the wrong body; replace it as rule 3 of
+`../gh-stack/SKILL.md` describes.
+
+## Stack dependent work
+
+A stack is a chain of pull requests, each based on the branch of the one
+below it, that GitHub records as one stack. Make and keep one with
+`gh stack`, the GitHub CLI extension that
+`../gh-stack/SKILL.md` describes; that file is the reference for every
+`gh stack` command named here. `fix-pr` and `start-fix-loop` find a stack's
+layers, and fall back when `gh stack` cannot help, as this section describes.
+
+- **Create it.** Plan the layers from the bottom up, make them with
+  `gh stack init` and `gh stack add`, and open them all as drafts with
+  `gh stack submit --auto`. Pull requests you chain yourself with
+  `gh pr create --base` look like a stack, but GitHub does not record them
+  as one, so open no layer that way while `gh stack` works.
+- **Adopt a chain.** Make pull requests already chained by base branch into
+  a stack with `gh stack link` and their numbers, bottom first.
+- **Carry a fix up it.** After a fix on a lower layer, run
+  `gh stack rebase --upstack` and then `gh stack push` from that layer, and
+  after a layer merges, run `gh stack sync`. `gh stack` keeps a stack current
+  by rebasing it, so these rewrite the layers above and push each branch with
+  `--force-with-lease`. In a checkout that does not track the stack yet,
+  `gh stack checkout <number>` sets it up from GitHub.
+- **Find its layers.** Ask GitHub which stack holds a pull request:
+
+  ```sh
+  gh api "repos/<owner>/<repo>/stacks?pull_request=<number>"
+  ```
+
+  It returns the stack with its pull requests from the bottom up, or `[]`
+  when the pull request is in none, and it needs neither a checkout nor the
+  extension. In a checkout that tracks the stack, `gh stack view --json`
+  lists the same layers with their branches.
+
+Fall back to base branches whenever `gh stack` cannot answer, and keep
+working. That is when `gh extension list` shows no `github/gh-stack`, when a
+`gh stack` command exits 9 because the repository does not have stacks
+enabled, or when the stacks API returns an error or `[]`. Then work from the
+pull requests' base branches:
+
+- **Find its layers** by following base branches. The layer below a pull
+  request is the open pull request whose head branch is its base branch,
+  from `gh pr list --head <baseRefName> --json number`, and the chain ends
+  at the default branch. The layers above it are the open pull requests
+  based on its head branch, from
+  `gh pr list --base <headRefName> --json number`.
+- **Create it** from the bottom up when `gh stack` is missing or exits 9:
+  push each layer's branch with `git push -u origin <branch>`, and open it
+  with `gh pr create --draft --base <branch of the layer below> --head <branch>`.
+- **Carry a fix up it** by rebasing each layer above onto the one below it,
+  in order, and pushing each with `git push --force-with-lease`.
+
+Tell the user at most once why the chain is not a stack: that
+`gh extension install github/gh-stack` would make it one when the extension
+is missing, or that the repository does not have stacks enabled when
+`gh stack` exits 9. A pull request that is simply in no stack needs no note.
+Never install the extension yourself.
