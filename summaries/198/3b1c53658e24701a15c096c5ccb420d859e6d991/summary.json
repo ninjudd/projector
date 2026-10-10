@@ -1,0 +1,67 @@
+{
+ "version": 1,
+ "name": "Test suite temporary directory cleanup",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 198,
+  "title": "Remove the test suite's temporary files when a run exits",
+  "head": "3b1c53658e24701a15c096c5ccb420d859e6d991",
+  "headRef": "test-temp-root",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's test suite builds scratch Git repositories, site builds, and summary files in the system temporary directory, using <code>tempfile.mkdtemp</code>. About 45 of those calls never remove what they create, so one full run leaves 336 directories, about 19,000 inodes, behind. A review loop runs the suite at every head it reviews. On a machine whose <code>/tmp</code> is a tmpfs with a fixed number of inodes, several loops running in parallel fill it within hours, and every program that writes there then fails with <code>No space left on device</code>.",
+   "This change fixes the leak in one place instead of at each call. <code>tests/__init__.py</code>, which Python imports before any test module, creates one <code>projector-tests-*</code> directory per run and makes it the temporary directory for the run and for every subprocess the run starts. When the run exits, an <code>atexit</code> handler deletes that directory and everything in it.",
+   "The review of this head found no problems. The full suite passes and leaves its temporary directory empty, both on a normal exit and after <code>SIGINT</code>. A run killed with <code>SIGKILL</code> skips <code>atexit</code> handlers and still leaves its one directory behind."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><code>tempfile.tempdir</code>: the module-level setting that Python's <code>tempfile</code> functions use as their parent directory when it is set.</li><li><code>TMPDIR</code>: the environment variable that Python, Git, and most Unix programs read to choose a temporary directory. Child processes inherit it.</li><li><code>atexit</code>: the Python module that runs registered functions when the interpreter exits normally, including after an unhandled exception such as <code>KeyboardInterrupt</code>, but not after <code>SIGKILL</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "temp-root",
+   "title": "One temporary directory per test run",
+   "kicker": "The test package's setup creates a per-run temporary directory and deletes it at exit.",
+   "intro": [
+    "The <code>tests</code> package's <code>__init__.py</code> already prepares the environment for every test, for example by clearing the <code>GITHUB_REPOSITORY</code> variable that GitHub Actions sets. It now also creates a fresh directory under the caller's temporary directory, and points both <code>tempfile.tempdir</code> and <code>TMPDIR</code> at it.",
+    "Setting <code>tempfile.tempdir</code> moves every <code>mkdtemp</code> and <code>TemporaryDirectory</code> call in the test process under the new directory. Setting <code>TMPDIR</code> does the same for the subprocesses the tests start, such as <code>git</code> and <code>project</code>. One <code>atexit</code> handler then removes the whole tree, so a test added later that forgets to clean up leaks nothing either."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/__init__.py",
+     "collapsed": false,
+     "note": "Creates the per-run directory, redirects temporary files into it, and registers its removal at exit.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 10,
+       "text": "The directory is created under whatever temporary directory the caller chose, because the first <code>mkdtemp</code> call reads <code>TMPDIR</code> before this file changes it. Running the suite with <code>TMPDIR</code> set to an empty directory left that directory empty afterwards, after 454 tests passed."
+      },
+      {
+       "kind": "verify",
+       "line": 12,
+       "text": "Nothing under <code>src/</code> reads <code>TMPDIR</code> or <code>tempfile.gettempdir</code>, so the redirect changes where files go, not what the code does. The one test that sets its own <code>TMPDIR</code>, the <code>site serve</code> signal test in <code>tests/test_site.py</code>, passes a directory that now sits inside the run's directory."
+      },
+      {
+       "kind": "verify",
+       "line": 13,
+       "text": "The handler also runs when you interrupt the suite: sending <code>SIGINT</code> six seconds into a run left the temporary directory empty. The suite uses neither <code>os.fork</code> nor <code>multiprocessing</code>, so no child process inherits this handler and deletes the directory while the parent is still running."
+      },
+      {
+       "kind": "context",
+       "text": "This setup runs only when the test modules are imported as part of the <code>tests</code> package, as <code>python3 -m unittest discover</code> from the repository root does in CI and in the documented gate. Running <code>discover -s tests</code> or a test file directly skips it, along with the existing environment resets in the same file."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
