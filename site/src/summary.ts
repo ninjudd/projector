@@ -26,19 +26,23 @@ const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requeste
 // of it requests changes and Clean otherwise, linked to the review that
 // decides it, or Unreviewed when no Projector review names the head. Nothing
 // when the build could not ask GitHub, so a status it does not know never
-// reads as unreviewed. A verdict that several models gave ends in an
-// asterisk, says to a screen reader how many models gave it, and is
-// described by their list, the element whose id `several` names.
+// reads as unreviewed. A verdict that several models gave is instead a button
+// that shows their list, the element whose id `several` names: it ends in an
+// asterisk and says to a screen reader how many models gave it, and a tap on
+// it shows the list rather than opening one model's review.
 function statusHtml(state: PullState | undefined, review: Verdict | undefined,
   several?: { list: string; count: number }): string {
   if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
   if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
   if (review === undefined) return '';
   if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
-  const described = several !== undefined ? ` aria-describedby="${esc(several.list)}"` : '';
-  const marked = several !== undefined
-    ? `<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span>` : '';
-  return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}${marked}</a>`;
+  const word = VERDICT_WORDS[review.status];
+  if (several !== undefined) {
+    const list = esc(several.list);
+    return `<button class="rstatus ${review.status}" type="button" aria-expanded="false" aria-controls="${list}" aria-describedby="${list}">` +
+      `${word}<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span></button>`;
+  }
+  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
 }
 
 (function (): void {
@@ -353,11 +357,11 @@ function renderSummary(data: SummaryData): void {
   // The header, as the page's statement of how well the head was checked,
   // shows the one status the Reviews index shows, and also links the full
   // review a clean incremental review builds on. When several models reviewed
-  // the head, the status ends in an asterisk, and hovering over it or
-  // focusing it shows each model's verdict, drawn as the status is and
-  // linked to that model's review. The list stays in the page, so a keyboard
-  // tabs from the status into its links, and the status names it with
-  // aria-describedby; wireSummary lets Escape hide it.
+  // the head, the status is a button ending in an asterisk, and hovering over
+  // it, focusing it, or tapping it shows each model's verdict, drawn as the
+  // status is and linked to that model's review. The list stays in the page,
+  // so a keyboard tabs from the status into its links; wireSummary keeps the
+  // button's aria-expanded current and lets Escape hide the list.
   function reviewStatus(): string {
     const review = data.review;
     const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
@@ -594,20 +598,40 @@ function wireSummary(): void {
     });
   });
 
-  // Escape hides the models a hover or focus shows beside the header's status,
-  // until the pointer leaves it or focus moves out of it. A hidden list is
-  // visibility: hidden, so Tab skips its links, and Escape on one of them
-  // first moves focus back to the status, which stays in sight.
+  // The header's status of a head several models reviewed is a button. A
+  // hover or focus shows the list of models, and a click or a tap, which
+  // need not focus a button, keeps it open until focus or a click goes
+  // elsewhere. Escape hides it until the pointer leaves or focus moves out.
+  // A hidden list is visibility: hidden, so Tab skips its links, and Escape
+  // on one of them first moves focus back to the button, which stays in sight.
   document.querySelectorAll<HTMLElement>('.rmodels').forEach(function (box) {
-    const list = box.querySelector('.rmodellist'), status = box.querySelector<HTMLElement>(':scope > .rstatus');
+    const list = box.querySelector<HTMLElement>('.rmodellist'), button = box.querySelector<HTMLElement>(':scope > button.rstatus');
+    if (list === null || button === null) return;
+    function sync(): void { button?.setAttribute('aria-expanded', String(list !== null && getComputedStyle(list).visibility === 'visible')); }
+    button.addEventListener('click', function () {
+      box.classList.toggle('open');
+      box.classList.remove('dismissed');
+      sync();
+    });
     box.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Escape') return;
-      if (list?.contains(document.activeElement) === true) status?.focus();
+      if (list.contains(document.activeElement)) button.focus();
+      box.classList.remove('open');
       box.classList.add('dismissed');
+      sync();
     });
-    box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); });
+    box.addEventListener('mouseenter', sync);
+    box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); sync(); });
+    box.addEventListener('focusin', sync);
     box.addEventListener('focusout', function (ev) {
-      if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget))) box.classList.remove('dismissed');
+      if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget))) box.classList.remove('dismissed', 'open');
+      setTimeout(sync, 0);
+    });
+    document.addEventListener('click', function (ev) {
+      if (ev.target instanceof Node && !box.contains(ev.target)) {
+        box.classList.remove('open');
+        sync();
+      }
     });
   });
 

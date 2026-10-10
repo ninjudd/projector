@@ -375,21 +375,25 @@ The site reads no start comments or threads, so it never shows `waiting`.
 A merged or closed pull request shows **Merged** or **Closed** in both
 places, as it does on `main`. Otherwise the summary page's header shows one
 status, the word the Reviews index shows, drawn by `statusHtml` exactly as it
-is today. When one model reviewed the head, that is all it shows. With
-several models, the status ends in an asterisk, and a note only a screen
-reader reads says how many models gave it. Hovering over the status, or
-focusing it from the keyboard, shows a card with a row for each model,
-changes requested first: the model's ID, its verdict drawn by `statusHtml` in
-the status's own capitals, letter spacing, weight, and colour and linked to
-that model's review, and for an incremental review the full review it builds
-on. The card stays in the page, so a keyboard tabs from the status into its
-links, and the status names it with `aria-describedby`. While it is hidden it
-is `visibility: hidden`, so Tab never lands on a link nobody can see. Escape
-hides it, moving focus back to the status first when focus is on one of its
-links. A `title` attribute would reach neither a keyboard nor a touch screen;
-a tap on the status focuses it, which shows the card. The status and each
-link in the card are targets at least 24 pixels tall, without changing the
-height of the header's line.
+is today: a link to the review that decides it. When one model reviewed the
+head, that is all it shows. With several models, the status is a button drawn
+the same way, ending in an asterisk, and a note only a screen reader reads
+says how many models gave it. No one review speaks for several models, and a
+tap on a link would open a review rather than show the models. Hovering over
+the button, focusing it from the keyboard, or clicking or tapping it shows a
+card with a row for each model, changes requested first: the model's ID, its
+verdict drawn by `statusHtml` in the status's own capitals, letter spacing,
+weight, and colour and linked to that model's review, and for an incremental
+review the full review it builds on. A click or a tap keeps the card open
+until focus or a click goes elsewhere. The card stays in the page, so a
+keyboard tabs from the button into its links. The button names it with
+`aria-controls` and `aria-describedby`, and its `aria-expanded` says whether
+it shows. While the card is hidden it is `visibility: hidden`, so Tab never
+lands on a link nobody can see. Escape hides it, moving focus back to the
+button first when focus is on one of its links. A `title` attribute would
+reach neither a keyboard nor a touch screen. The button and each link in the
+card are targets at least 24 pixels tall, without changing the height of the
+header's line.
 
 ```
 #66 · CLEAN
@@ -451,7 +455,7 @@ likely to wait for a peer. It waits only when the pull request is a draft.
 | `src/projector/review.py` | `identity()` and `model_key()`. `Paths` takes the model and puts the state, lock, request, and worktree paths under it. A resolver picks the model for commands after setup. `start_comment()` writes `model=`. `start_comments()` lists them with their model, SHA, and time, and applies the live rule. `setup` refuses another session's live start comment by the same model and records `head_started_at`. `move` updates it. `verdict_marker()` also returns the model. `check_collision` compares identities. `activity()` reads when each model last posted and whether it owes a review, and `verifier()` applies the rules in § 2.8, for `census`, `adopt`, and `signoff()`. `census` gives each thread the fields in § 2.4, counts the threads marked `mine`, and waits with `--wait`. `adopt()` runs the steps in § 2.8. `publish` writes `model=` into each finding marker, applies `signoff()` with the peer wait, records `model` in the loop's record, and reports the sign-off. `status()` returns the object in § 2.4. The layout comment at the top of the module describes the new paths. |
 | `src/projector/cli.py` | `--model` on `move`, `census`, `release`, `publish`, and `gate`. `census --wait`. `review adopt <number> <thread-id>` with `--result` and `--body`. `review status <number>` with `--reviewer` and `--json`. `publish`, `census`, and `adopt` read `review.peer_wait`. |
 | `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker`, groups each head's verdicts by model, and gives `status`, `url`, and `models`. `review_row` passes the same `review` to the Reviews index, as it does on `main`. |
-| `site/src/globals.d.ts`, `site/src/summary.ts` | `ReviewStatus` gains `models`. `statusHtml` keeps the one word for the Reviews index and the header, marks it with an asterisk when several models gave it, and draws each model's verdict in the card in § 2.5. |
+| `site/src/globals.d.ts`, `site/src/summary.ts` | `ReviewStatus` gains `models`. `statusHtml` keeps the one word for the Reviews index and the header, draws it as a button marked with an asterisk when several models gave it, and draws each model's verdict in the card in § 2.5. |
 | `site/assets/summary.js`, `site/assets/summary.css` | The script rebuilt with `npm run build`, and the list's styles, which show it on hover and focus. |
 | `skills/review-pr/SKILL.md` | A section on reviewing as one model among several: the identity, the collision check per model, which threads you re-check and when you adopt one with `project review adopt`, and the sign-off rule in place of "draft means changes are needed". The labels section gives the start, finding, and verify markers their `model=`, and the adoption reply its `adopted-from=`. The leftover start comment rule compares the comment's model. Run `publish`, `adopt`, and `census --wait` with a timeout of at least `review.peer_wait` plus two minutes. |
 | `skills/start-review-loop/SKILL.md` | Pass `--model` to every `project review` command. On `RESPONDED`, run `census --wait` first and re-review only as § 2.2 says. Find the last reviewed SHA from this model's verdicts. The collision paragraph says another loop of the same model. Give each model's loop its own id, such as `<repo>-review-<model-key>`, because two loops that write one record can lose an entry. |

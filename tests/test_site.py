@@ -1764,14 +1764,16 @@ class FileHeaderTests(SiteRepoCase):
         full, head = "a8cf3d5" + "0" * 33, "c" * 40
         words = {"clean": "Clean", "changes-requested": "Changes requested"}
 
-        def link(review_id: int, text: str, cls: str = "", described: bool = False) -> str:
-            attribute = (f' class="{cls}"' if cls else "") + (' aria-describedby="review-models"' if described else "")
+        def link(review_id: int, text: str, cls: str = "") -> str:
+            attribute = f' class="{cls}"' if cls else ""
             return f'<a{attribute} href="{review_url(review_id)}" target="_blank" rel="noopener">{text}</a>'
 
         def models(status: str, review_id: int, *rows: str) -> str:
-            chip = link(review_id, f'{words[status]}<span aria-hidden="true">*</span><span class="visually-hidden">, '
-                                   f'reviewed by {len(rows)} models</span>', f"rstatus {status}", described=True)
-            return f' · <span class="rmodels">{chip}<span class="rmodellist" id="review-models">{"".join(rows)}</span></span>'
+            button = (f'<button class="rstatus {status}" type="button" aria-expanded="false" '
+                      'aria-controls="review-models" aria-describedby="review-models">'
+                      f'{words[status]}<span aria-hidden="true">*</span><span class="visually-hidden">, '
+                      f'reviewed by {len(rows)} models</span></button>')
+            return f' · <span class="rmodels">{button}<span class="rmodellist" id="review-models">{"".join(rows)}</span></span>'
 
         def row(review_id: int, model: str, status: str, extra: str = "") -> str:
             chip = link(review_id, words[status], f"rstatus {status}")
@@ -1799,11 +1801,12 @@ class FileHeaderTests(SiteRepoCase):
             with self.subTest(name):
                 data = self.build(state="open", reviews=reviews)
                 index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
-                status = re.match(r" · (?:<span class=\"rmodels\">)?(<(a|span) [^>]*>.*?</\2>)", header).group(1)
+                word = re.search(r'class="rstatus ([a-z-]+)"[^>]*>([A-Za-z ]+)', header)
 
                 self.assertIn(f"{header}</div><h1>", rendered_summary(data))
-                self.assertEqual(index_row, re.sub(r' aria-describedby="review-models"|<span aria-hidden.*?models</span>',
-                                                   "", status), "the index row shows the header's status, unmarked")
+                self.assertIn(f'class="rstatus {word.group(1)}"', index_row, "the index row shows the header's status")
+                self.assertTrue(index_row.endswith(f">{word.group(2)}</a>") or index_row.endswith(f">{word.group(2)}</span>"),
+                                "unmarked, and a link to the review that decides it")
                 shutil.rmtree(self.out)
         data = self.build(state="merged", reviews=cases["split"][0])
         index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('merged', {json.dumps(data['review'])}));")
@@ -1812,15 +1815,18 @@ class FileHeaderTests(SiteRepoCase):
         self.assertNotIn("rmodels", merged, "a merged pull request lists no models")
         self.assertEqual('<span class="rstatus merged">Merged</span>', index_row)
         css = (SITE_JS.parent / "summary.css").read_text()
-        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { visibility: visible; }", css,
-                      "a pointer or the keyboard shows the list, never a title attribute")
+        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist, .rmodels.open .rmodellist "
+                      "{ visibility: visible; }", css, "a pointer, the keyboard, or a tap shows the list, never a title")
         hidden = re.search(r"^\.rmodellist \{[^}]*\}", css, re.M).group(0)
         self.assertIn("visibility: hidden;", hidden, "a hidden list's links leave the tab order")
         self.assertIn(".rmodels.dismissed .rmodellist { visibility: hidden; }", css)
-        self.assertIn(".rmodels > .rstatus { padding-block: 5px; }", css, "the status is a target 24px tall")
+        self.assertRegex(css, r"button\.rstatus \{ padding: 5px 0; margin: -5px 0;",
+                         "the button is a target 24px tall that leaves the header's line as it is")
         self.assertRegex(css, r"\.visually-hidden \{[^}]*clip-path: inset\(50%\)")
-        self.assertIn("querySelector(':scope > .rstatus')", SUMMARY_JS.read_text())
-        self.assertIn("status?.focus()", SUMMARY_JS.read_text(), "Escape on a model's link moves focus to the status")
+        script = SUMMARY_JS.read_text()
+        self.assertIn("box.classList.toggle('open')", script, "a click or a tap on the button keeps the list open")
+        self.assertIn("button.focus()", script, "Escape on a model's link moves focus to the button")
+        self.assertIn("setAttribute('aria-expanded'", script)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:

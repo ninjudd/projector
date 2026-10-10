@@ -731,17 +731,19 @@ bracketed variant such as `[1m]`. When one model reviewed the head and its
 review is incremental, the header reads **Clean · incremental from a8cf3d5**,
 where the second part names the head of the full review it builds on and
 links that review. When several models reviewed the head, the header still
-shows the one status, marked with an asterisk, as in **Changes requested\***.
-Hovering over the status, or moving keyboard focus to it, shows a list with a
-row for each model, changes requested first: the model's name, its verdict
-drawn as the status is and linked to its review, and for an incremental review
-the full review it builds on. Tab moves from the status into the list's links,
-and skips them while the list is hidden. Escape hides the list. The row on
-Reviews shows the status alone, unmarked. A review counts only when its
-author owns the repository, belongs to its organization, or collaborates on
-it, because anyone can review a public repository's pull request. The build
-reads the pull request's state and reviews through `gh` and shows no status
-when `gh` cannot answer. **Docs** renders `README.md`
+shows the one status, marked with an asterisk, as in **Changes requested\***,
+but as a button rather than a link to one review. Hovering over it, moving
+keyboard focus to it, or clicking or tapping it shows a list with a row for
+each model, changes requested first: the model's name, its verdict drawn as
+the status is and linked to its review, and for an incremental review the full
+review it builds on. A click or a tap keeps the list open until you click or
+move focus elsewhere. Tab moves from the status into the list's links, and
+skips them while the list is hidden. Escape hides the list. The row on
+Reviews shows the status alone, unmarked, as a link. A review counts only
+when its author owns the repository, belongs to its organization, or
+collaborates on it, because anyone can review a public repository's pull
+request. The build reads the pull request's state and reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
