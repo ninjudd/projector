@@ -502,12 +502,15 @@ These are the keys Projector reads today:
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+| `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
-pull request, where GitHub refuses the verdict regardless.
+pull request, where GitHub refuses the verdict regardless. `review.incremental`
+is on unless it is `false`, and a value that is neither `true` nor `false`
+makes both commands that read it refuse and name the key.
 
 The operator -- the account whose branches carry fixes and whose token pushes
 them -- is deliberately not a key. It follows whichever token is authenticated,
@@ -700,7 +703,10 @@ versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
 **Changes requested**, linked to that review on GitHub, or **Unreviewed** when
-no Projector review names the head. A review counts only when its author owns
+no Projector review names the head. When that review is incremental, the
+header reads **Clean · incremental from a8cf3d5**, where the second part names
+the head of the full review it builds on and links that review, while the row
+on Reviews shows **Clean** alone. A review counts only when its author owns
 the repository, belongs to its organization, or collaborates on it, because
 anyone can review a public repository's pull request. The build reads the
 pull request's state and reviews through `gh` and shows no status when `gh`
@@ -914,6 +920,8 @@ project review setup 66 --model claude-opus-5-5 --loop main-loop
 project review move 66
 project review census 66 --json
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
+project review interdiff 66
+project review publish 66 --incremental --body body.md
 project review release 66
 project review gate 66
 project review rules
@@ -969,6 +977,64 @@ draft state alone. It then re-reads the review and the draft state, adds the
 review id to the loop's record, deletes the start comment, and releases the
 lock. A run that fails after submitting exits non-zero, and running it again
 finishes that review rather than posting another.
+
+`interdiff` decides whether the head may have an incremental review: a short
+clean verdict on a head that changed little since this loop's last full review
+of the pull request. It reads the loop's record, where `publish` stores each
+review's merge base as `base` and, for an incremental review, the full
+review's head as `from`. It measures the pull request's own change since that
+full review's head `O`. When the merge base moved, it replays `O`'s change
+onto the new merge base with
+`git -c merge.conflictStyle=diff3 merge-tree --write-tree --name-only --merge-base=<old base> <new base> O`
+and diffs the result against the head, so the base's own changes stay out
+however the head moved. A conflicted file shows the conflict region, its
+markers naming the new merge base, the old one, and `O` by full SHA, removed
+and the author's resolution added. `interdiff` then checks the rules that need
+no judgment, in this order, and refuses at the first that fails:
+`review.incremental` is not `false`; the review's state names a loop; the head
+is trusted; the loop's record holds a clean full review of the pull request,
+and its newest verdict is clean and on another head; that full review is on
+GitHub and its marker names this run's Projector version, model, and effort;
+no finding thread is open; the change can be measured, which takes the full
+review's recorded merge base, both heads in the checkout, and on a moved base
+a Git that knows `merge-tree --merge-base` (2.40 or newer); the change touches
+no binary file, symlink, or submodule; and when the merge base moved, a `gate`
+run on this head exited 0. It prints the earlier full review, the `kind` of
+move, any conflicted paths, the counts, `incremental: every rule passes` or
+`refused:` with the rule, and the patch when it measured one. A refusal that
+only the gate rule makes ends `(needs_gate)`. It exits 0 when every rule
+passes and 1 otherwise. With `--json` it prints one object:
+
+| Field | Value |
+| --- | --- |
+| `incremental` | `true` when every rule passes. |
+| `reason` | The rule that failed, in words, or `null`. |
+| `needs_gate` | `true` when the gate rule is the only one that fails. |
+| `from` | The full SHA of the full review's head, or `null` when there is none. |
+| `review` | The URL of that full review, or `null`. |
+| `kind` | `push` when `O` is an ancestor of the head and the merge base did not move; `merge` when the head also contains a merge commit that brought in the moved merge base; `retarget` when the merge base moved with no such merge, as when a stacked pull request is retargeted after the one beneath it merges; `rebase` when `O` is not an ancestor and the merge base moved; `rewrite` when `O` is not an ancestor and the merge base did not move. `null` when the change was not measured. |
+| `unchanged_commits` | For `rebase` and `rewrite`, `true` when every commit the full review read has a new commit with the same `git patch-id --stable`; `null` for the other kinds. |
+| `conflicts` | The paths the replay conflicted in, `[]` when it was clean or not needed, or `null` when the change was not measured. |
+| `insertions`, `deletions` | The change's line counts, or `null` when it was not measured. |
+| `files` | The paths the change touches, empty when it was not measured. |
+| `patch` | The change, or `""` when it was not measured. |
+
+`publish --incremental` publishes the incremental review. It applies the same
+rules to the live state, and `--body` names a file of at most 600 characters,
+once its placeholders are filled, on what changed and what was checked. It
+writes the signature line with `incremental from <short-sha>`, the review
+marker with `verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files
+the change touches, a `projector-incremental` line naming the full review's
+head, the kind, and the counts, and a lead that links the full review and
+states the change's size, the kind, and any resolved conflict. It always posts
+a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
+approval is what remains." on another author's pull request, and on a
+self-review marks the pull request ready. It refuses, keeping the lock, when a
+rule fails, when the body is empty, too long, or holds a signature line, a
+marker, or `{census}`, and when given `--threads`, `--covered`,
+`--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
+`--verdict` and `--covered` are required, and a body that holds a
+`projector-incremental` line is refused like one that holds its own marker.
 
 `gate` runs the repository's validation gate: the shell command
 `review.gate` names in `.projector.toml`, run with `sh -c` in the scratch

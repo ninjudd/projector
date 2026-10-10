@@ -541,6 +541,237 @@ def census_lines(result: dict) -> list[str]:
     return lines
 
 
+# Incremental reviews
+
+class Unmeasurable(ReviewError):
+    pass
+
+
+def git_run(checkout: Path, *args: str, stdin: bytes = b"", ok: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess:
+    """Run git in the checkout for its bytes and exit status; a status outside `ok` cannot be measured."""
+    result = subprocess.run(["git", "-C", str(checkout), *args], input=stdin, capture_output=True)
+    if result.returncode not in ok:
+        raise Unmeasurable(f"git {' '.join(args[:3])} exited {result.returncode}: "
+                           f"{result.stderr.decode('utf-8', 'replace').strip()}")
+    return result
+
+
+def decoded(output: bytes) -> str:
+    return output.decode("utf-8", "replace")
+
+
+def is_ancestor(checkout: Path, ancestor: str, descendant: str) -> bool:
+    return git_run(checkout, "merge-base", "--is-ancestor", ancestor, descendant, ok=(0, 1)).returncode == 0
+
+
+def merges_base(checkout: Path, old: str, new: str, new_base: str) -> bool:
+    """Whether `new` brought in the base it now forks from through a merge commit since `old`."""
+    if is_ancestor(checkout, new_base, old):
+        return False
+    merges = decoded(git_run(checkout, "rev-list", "--merges", f"{old}..{new}").stdout).split()
+    return any(is_ancestor(checkout, new_base, merge) for merge in merges)
+
+
+def patch_ids(checkout: Path, base: str, head: str) -> set[str]:
+    """The stable patch id of each commit in base..head other than merges, as range-diff matches them."""
+    commits = git_run(checkout, "rev-list", "--no-merges", f"{base}..{head}").stdout
+    if not commits.strip():
+        return set()
+    patches = git_run(checkout, "diff-tree", "--stdin", "--root", "-r", "-p", "--no-renames", stdin=commits).stdout
+    ids = git_run(checkout, "patch-id", "--stable", stdin=patches).stdout
+    return {line.split()[0] for line in decoded(ids).splitlines() if line.strip()}
+
+
+@dataclass
+class Measurement:
+    kind: str
+    unchanged_commits: Optional[bool]
+    conflicts: list[str]
+    insertions: int
+    deletions: int
+    files: list[str]
+    unreadable: list[str]
+    patch: str
+
+
+def measure(checkout: Path, old: str, old_base: str, new: str, new_base: str) -> Measurement:
+    """What the pull request's diff against its base gained or lost from head `old` to head `new`.
+
+    A diff of the two heads would also count what a merge or a rebase brought
+    in from the base. So when the merge base moved, `old`'s change is replayed
+    onto the new one with `merge-tree`, which needs no ancestry between the
+    heads, and the result is diffed against `new`. A conflicting replay keeps
+    diff3 markers in the file, so the diff shows how the author resolved it.
+    `old_base` is the merge base recorded when `old` was reviewed, because
+    after a stack's parent is rewritten, the merge base Git would compute
+    brings the parent's old commits into the replay. `merge-tree` writes
+    objects and touches neither the working tree nor the index.
+
+    Raises Unmeasurable when the checkout lacks a commit or the replay cannot
+    run, as on a Git older than 2.40, which has no `--merge-base`."""
+    for sha, what in ((old, "the earlier head"), (old_base, "its recorded merge base"),
+                      (new, "the head"), (new_base, "the head's merge base")):
+        if git_run(checkout, "cat-file", "-e", f"{sha}^{{commit}}", ok=(0, 1, 128)).returncode:
+            raise Unmeasurable(f"the checkout lacks {what} {sha[:7]}")
+    moved = old_base != new_base
+    conflicts: list[str] = []
+    tree = old
+    if moved:
+        # With -z the output is the tree, each conflicted path, an empty field, and then messages.
+        replay = git_run(checkout, "-c", "merge.conflictStyle=diff3", "merge-tree", "--write-tree", "--name-only",
+                         "-z", f"--merge-base={old_base}", new_base, old, ok=(0, 1))
+        fields = decoded(replay.stdout).split("\0")
+        tree = fields[0].strip()
+        if replay.returncode == 1:
+            end = fields.index("", 1) if "" in fields[1:] else len(fields)
+            conflicts = list(dict.fromkeys(fields[1:end]))
+
+    def diff(*options: str) -> str:
+        return decoded(git_run(checkout, "diff-tree", "-r", "--no-renames", *options, tree, new).stdout)
+
+    numstat, raw = diff("--numstat", "-z").split("\0"), diff("--raw", "-z").split("\0")
+    insertions = deletions = 0
+    files, unreadable = [], []
+    for row in numstat:
+        if not row:
+            continue
+        added, removed, path = row.split("\t", 2)
+        files.append(path)
+        if added == "-":
+            unreadable.append(path)
+        else:
+            insertions, deletions = insertions + int(added), deletions + int(removed)
+    # --raw -z gives each file's ":<old mode> <new mode> <old id> <new id> <status>" and then its path.
+    for status, path in zip(raw[0::2], raw[1::2]):
+        modes = status.lstrip(":").split()[:2]
+        if any(mode in ("120000", "160000") for mode in modes) and path not in unreadable:
+            unreadable.append(path)
+    patch = diff("-p")
+    ancestor = is_ancestor(checkout, old, new)
+    if ancestor:
+        kind = "push" if not moved else "merge" if merges_base(checkout, old, new, new_base) else "retarget"
+        unchanged = None
+    else:
+        kind = "rebase" if moved else "rewrite"
+        unchanged = patch_ids(checkout, old_base, old) <= patch_ids(checkout, new_base, new)
+    return Measurement(kind, unchanged, conflicts, insertions, deletions, files, unreadable, patch)
+
+
+class Refused(Exception):
+    pass
+
+
+def gate_passed(state: dict) -> bool:
+    record = state.get("gate") or {}
+    return record.get("sha") == state["sha"] and record.get("exit_code") == 0
+
+
+def producer(version: str, model: str, effort: Optional[str]) -> str:
+    return f"Projector {version}, model {model}, " + (f"effort {effort}" if effort else "no effort")
+
+
+def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
+                      reviews: Optional[list[dict]] = None) -> dict:
+    """Whether the head may have an incremental review, with the change measured since this loop's
+    last full review of the pull request.
+
+    These are the facts a read of the change cannot see, and `review interdiff`
+    and `publish --incremental` both apply them. They are checked in order, and
+    the first that fails is the `reason`. The gate rule is last, so a refusal
+    that names it means every other rule passed, and `needs_gate` says so: a
+    moved merge base brings in code no review ran beside the pull request's own,
+    so the head needs a passing `project review gate` of its own. `reviews` is
+    the reviewer's listing from `reviewer_reviews`, read here when not given."""
+    result: dict = {"incremental": False, "reason": None, "needs_gate": False, "from": None, "review": None,
+                    "kind": None, "unchanged_commits": None, "conflicts": None, "insertions": None,
+                    "deletions": None, "files": [], "patch": ""}
+    repo, number, sha = state["repo"], state["number"], state["sha"]
+    try:
+        if not enabled:
+            raise Refused("review.incremental is false")
+        if loop is None:
+            raise Refused("no review loop runs this review, so it has no full review of its own to build on")
+        if not state.get("trusted"):
+            raise Refused(f"the head {sha[:7]} is untrusted ({state.get('untrusted_because') or 'no reason recorded'})")
+        entries = [r for r in read_record(root, loop) if r.get("repo") == repo and r.get("number") == number]
+        if entries and entries[-1].get("verdict") != "clean":
+            raise Refused(f"the newest verdict in loop {loop}'s record requests changes")
+        if entries and entries[-1].get("sha") == sha:
+            raise Refused(f"loop {loop} already published a verdict on {sha[:7]}")
+        full = next((r for r in reversed(entries) if not r.get("from")), None)
+        if full is None or full.get("verdict") != "clean":
+            raise Refused(f"loop {loop}'s record holds no clean full review of {repo}#{number}")
+        result["from"] = full["sha"]
+        if reviews is None:
+            reviews = reviewer_reviews(repo, number, state["reviewer"])
+        earlier = next((r for r in reviews if r.get("id") == full.get("review_id")), None)
+        if earlier is None:
+            raise Refused(f"the full review {full.get('review_id')} of {full['sha'][:7]} is missing from GitHub")
+        result["review"] = earlier.get("url")
+        marker = verdict_marker(earlier.get("body") or "")
+        mine = (distribution_version(), state["model"], live_effort() or None)
+        if marker is None or marker.sha != full["sha"]:
+            raise Refused(f"the full review of {full['sha'][:7]} carries no marker naming that head")
+        if (marker.projector, marker.model, marker.effort) != mine:
+            raise Refused(f"the full review of {full['sha'][:7]} was made by "
+                          f"{producer(marker.projector, marker.model, marker.effort)}, and this run is "
+                          f"{producer(*mine)}")
+        open_findings = census(repo, number)["open"]
+        if open_findings:
+            raise Refused(f"{open_findings} finding thread{'' if open_findings == 1 else 's'} "
+                          f"{'is' if open_findings == 1 else 'are'} open")
+        if not full.get("base"):
+            raise Refused(f"the change cannot be measured: loop {loop}'s record holds no merge base for the "
+                          f"full review of {full['sha'][:7]}, as a record an earlier release wrote does not")
+        try:
+            measured = measure(Path(state["checkout"]), full["sha"], full["base"], sha, state["base"])
+        except Unmeasurable as exc:
+            raise Refused(f"the change cannot be measured: {exc}") from exc
+        result.update(kind=measured.kind, unchanged_commits=measured.unchanged_commits,
+                      conflicts=measured.conflicts, insertions=measured.insertions, deletions=measured.deletions,
+                      files=measured.files, patch=measured.patch)
+        if measured.unreadable:
+            raise Refused("the change touches a binary file, a symlink, or a submodule: "
+                          + ", ".join(measured.unreadable))
+        if full["base"] != state["base"] and not gate_passed(state):
+            result["needs_gate"] = True
+            raise Refused("the merge base moved, and no `project review gate` run on this head has exited 0")
+    except Refused as refusal:
+        result["reason"] = str(refusal)
+        return result
+    result["incremental"] = True
+    return result
+
+
+def interdiff_lines(result: dict, base_ref: str) -> list[str]:
+    """`review interdiff`'s output without --json: what it found, the verdict on the rules, and the patch."""
+    lines = []
+    if result["from"]:
+        lines.append(f"earlier full review: {result['from'][:7]}" + (f", {result['review']}" if result["review"] else ""))
+    if result["kind"]:
+        kind = {"push": "push", "merge": f"merge of {base_ref}", "retarget": f"retarget onto {base_ref}",
+                "rebase": f"rebase onto {base_ref}", "rewrite": "rewrite"}[result["kind"]]
+        if result["unchanged_commits"] is not None:
+            kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
+                     else "; a reviewed commit changed")
+        lines.append(f"kind: {kind}")
+        if result["conflicts"]:
+            lines.append(f"conflicts: {', '.join(result['conflicts'])}")
+        lines.append(f"change: {change_size(result)}")
+    if result["incremental"]:
+        lines.append("incremental: every rule passes")
+    else:
+        lines.append(f"refused: {result['reason']}" + (" (needs_gate)" if result["needs_gate"] else ""))
+    if result["patch"]:
+        lines += ["", result["patch"].rstrip("\n")]
+    return lines
+
+
+def change_size(result: dict) -> str:
+    count = len(result["files"])
+    return f"+{result['insertions']} −{result['deletions']} lines in {count} file{'' if count == 1 else 's'}"
+
+
 # Publishing
 
 PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
@@ -551,19 +782,56 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
 LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
+OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
 SIGNATURE = re.compile(
     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · `[^`\n]+` · model `[^`\n]+` · "
-    r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · "
+    r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
 MARKER = re.compile(
-    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=\S+ model=\S+ (?:effort=\S+ )?"
+    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=(\S+) model=(\S+) (?:effort=(\S+) )?"
     r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+)
+KINDS = ("push", "merge", "retarget", "rebase", "rewrite")
+# The line after an incremental review's marker, naming the full review it builds on.
+INCREMENTAL = re.compile(
+    r"^<!-- projector-incremental v=1 from=([0-9a-f]{40}) kind=(" + "|".join(KINDS) + r") "
+    r"insertions=\d+ deletions=\d+ files=\d+ conflicts=\d+ -->$"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
 VERDICT_WORDS = {"clean": "CLEAN", "changes-requested": "CHANGES REQUESTED"}
+INCREMENTAL_BODY_LIMIT = 600
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
+    incremental review, the head of the full review it builds on."""
+
+    verdict: str
+    sha: str
+    projector: str
+    model: str
+    effort: Optional[str]
+    incremental_from: Optional[str]
+
+
+def verdict_marker(body: str) -> Optional[Verdict]:
+    """The verdict a review body's marker line carries, or None when no line is a marker.
+
+    An incremental review's line counts only directly after the marker, where
+    publish writes it."""
+    lines = [line.strip() for line in body.splitlines()]
+    for i, line in enumerate(lines):
+        marker = MARKER.match(line)
+        if marker is None:
+            continue
+        verdict, projector, model, effort, sha = marker.groups()
+        incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
+        return Verdict(verdict, sha, projector, model, effort,
+                       incremental.group(1) if incremental else None)
+    return None
 
 
 def duration(seconds: int, heads: int) -> str:
@@ -645,12 +913,14 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
 
 
-def reviewer_verdicts(repo: str, number: int, reviewer: str, sha: str) -> list[int]:
-    """The ids of every Projector verdict the reviewer posted on this exact SHA, from every page."""
+def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
+    """Every Projector review the reviewer posted on the pull request, from every page, each with
+    its `id`, `url`, `at`, and `body`."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
                    "--jq", f'.[] | select(.user.login == "{reviewer}") '
-                           f'| select(.body | test("projector-review .* sha={sha}")) | .id']).split()
-    return [int(r) for r in rows]
+                           '| select(.body // "" | contains("projector-review")) '
+                           '| {id, url: .html_url, at: .submitted_at, body} | @json']).splitlines()
+    return [json.loads(row) for row in rows if row.strip()]
 
 
 def read_record(root: Path, loop: str) -> list[dict]:
@@ -658,9 +928,14 @@ def read_record(root: Path, loop: str) -> list[dict]:
     return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
 
 
-def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str) -> None:
-    """The collision check review-pr § Publish one review describes, read from the loop's record."""
-    earlier = reviewer_verdicts(state["repo"], state["number"], state["reviewer"], state["sha"])
+def check_collision(root: Path, state: dict, loop: Optional[str], second: Optional[int], body: str,
+                    reviews: list[dict]) -> None:
+    """The collision check review-pr § Publish one review describes, read from the loop's record.
+
+    `reviews` is the reviewer's listing from `reviewer_reviews`; a verdict on the head is any whose
+    marker names it, in this loose form so a marker in an older shape still collides."""
+    on_head = re.compile(f"projector-review .* sha={state['sha']}")
+    earlier = [r["id"] for r in reviews if on_head.search(r.get("body") or "")]
     if loop is not None:
         mine = {r["review_id"] for r in read_record(root, loop)
                 if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
@@ -689,57 +964,137 @@ def self_review(repo: str, number: int, reviewer: str) -> bool:
     return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
 
 
-def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
-            at: datetime) -> str:
-    """The review's text: the signature line and marker, then the body with its placeholders filled.
-
-    The duration and `seconds=` come from one clock reading, so they cannot disagree."""
+def check_body(body: str) -> None:
     if not body.strip():
         raise ReviewError("the body is empty; write the review below the signature line")
     if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
-        raise ReviewError("leave the signature line and marker out of the body; publish writes them")
-    prose = CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
-    if "{census}" not in prose:
-        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
-                          "outside code")
-    seconds = elapsed(state["start_comment"]["created_at"], at)
-    took = duration(seconds, state["heads"])
-    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
-              "census": census_line}
-    # Placeholders are filled only in prose and in a span that holds one alone, so quoted code
-    # keeps its braces; anything else in braces is the author's text, not a placeholder.
+        raise ReviewError("leave the signature line and markers out of the body; publish writes them")
+
+
+def prose(body: str) -> str:
+    """The body without its quoted code, keeping each span that holds a placeholder alone."""
+    return CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
+
+
+def fill(body: str, values: dict[str, str]) -> str:
+    """The body with each placeholder in `values` filled, and any other left as written.
+
+    Placeholders are filled only in prose and in a span that holds one alone, so quoted code
+    keeps its braces; anything else in braces is the author's text, not a placeholder."""
+    def replace(match: re.Match) -> str:
+        return values.get(match.group(1), "{" + match.group(1) + "}")
+
     pieces, last = [], 0
     for code in CODE.finditer(body):
-        pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
+        pieces.append(PLACEHOLDER.sub(replace, body[last:code.start()]))
         lone = LONE_PLACEHOLDER.fullmatch(code.group(0))
-        pieces.append(f"`{values[lone.group(1)]}`" if lone else code.group(0))
+        pieces.append(f"`{replace(lone)}`" if lone else code.group(0))
         last = code.end()
-    pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
-    filled = "".join(pieces)
+    pieces.append(PLACEHOLDER.sub(replace, body[last:]))
+    return "".join(pieces)
+
+
+def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime,
+            incremental_from: Optional[str] = None) -> tuple[str, str, dict[str, str]]:
+    """The signature line, the marker, and the placeholders' values, from one clock reading, so the
+    duration and `seconds=` cannot disagree."""
+    seconds = elapsed(state["start_comment"]["created_at"], at)
+    took = duration(seconds, state["heads"])
     version, effort = distribution_version(), live_effort()
     signature = (f"{MARK} **Projector review** · {producer_segments(version, state['model'], effort)}"
-                 f"**{VERDICT_WORDS[verdict]}** · took {took}")
+                 f"**{VERDICT_WORDS[verdict]}** · "
+                 + (f"incremental from `{incremental_from[:7]}` · " if incremental_from else "")
+                 + f"took {took}")
     marker = (f"<!-- projector-review v=1 verdict={verdict} projector={version} model={state['model']} "
               + (f"effort={effort} " if effort else "")
               + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
         raise ReviewError("the signature line or marker does not match review-pr/SKILL.md; check the "
                           f"model in the review's state ({state['model']})")
+    values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7]}
+    return signature, marker, values
+
+
+def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
+            at: datetime) -> str:
+    """The review's text: the signature line and marker, then the body with its placeholders filled."""
+    check_body(body)
+    if "{census}" not in prose(body):
+        raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                          "outside code")
+    signature, marker, values = heading(state, verdict, findings, covered, at)
+    filled = fill(body, dict(values, census=census_line))
     return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
 
 
-def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: str, body_path: Path,
-            threads_path: Optional[Path], covered: str, second: Optional[int], allow_approve: bool) -> dict:
+def listed(items: list[str]) -> str:
+    if len(items) < 3:
+        return " and ".join(items)
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def incremental_lead(rules: dict, base_ref: str) -> str:
+    """The sentence that opens an incremental review: the full review it builds on, how the head
+    moved since, the size of the change, and any conflict the author resolved."""
+    across = {"push": "", "merge": f" across a merge of `{base_ref}`",
+              "retarget": f" across a retarget onto `{base_ref}`", "rebase": f" across a rebase onto `{base_ref}`",
+              "rewrite": " across a rewrite of its commits"}[rules["kind"]]
+    sentence = (f"Incremental review of the change since the full review of [`{rules['from'][:7]}`]"
+                f"({rules['review']}){across}: {change_size(rules)}")
+    conflicts = [f"`{path}`" for path in rules["conflicts"]]
+    if conflicts:
+        sentence += (f", with {'a resolved conflict' if len(conflicts) == 1 else 'resolved conflicts'} in "
+                     f"{listed(conflicts)}")
+    return sentence + "."
+
+
+def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool, at: datetime) -> str:
+    """An incremental review's text: the signature line, the marker and the incremental line, the
+    lead, and the reviewer's short body, which may hold every placeholder but `{census}`."""
+    check_body(body)
+    if "{census}" in prose(body):
+        raise ReviewError("an incremental review prints no census; take {census} out of the body")
+    count = len(rules["files"])
+    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", at, rules["from"])
+    filled = fill(body, values).strip()
+    if len(filled) > INCREMENTAL_BODY_LIMIT:
+        raise ReviewError(f"the body holds {len(filled)} characters once filled, and an incremental review's "
+                          f"holds at most {INCREMENTAL_BODY_LIMIT}; a change that needs more is a full review's")
+    incremental = (f"<!-- projector-incremental v=1 from={rules['from']} kind={rules['kind']} "
+                   f"insertions={rules['insertions']} deletions={rules['deletions']} files={count} "
+                   f"conflicts={len(rules['conflicts'])} -->")
+    closing = "\n\nA human approval is what remains." if cross_author else ""
+    return (f"{signature}\n\n{marker}\n{incremental}\n\n{incremental_lead(rules, state['base_ref'])}\n\n"
+            f"{filled}{closing}\n")
+
+
+def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Optional[str], body_path: Path,
+            threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
+            incremental: bool = False, enabled: bool = True) -> dict:
     """Submit the review, then set draft state, re-read, record, delete the start comment, and
-    release the lock, in that order. Every refusal leaves the lock held for this review to retry."""
+    release the lock, in that order. Every refusal leaves the lock held for this review to retry.
+
+    With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
+    review, published only while `incremental_rules` passes, with `enabled` from
+    `review.incremental`."""
     paths = Paths(root, repo, number)
     state = read_state(paths)
     loop = loop if loop is not None else state.get("loop")
     repo, sha = state["repo"], state["sha"]
-    if verdict not in VERDICT_WORDS:
-        raise ReviewError(f"--verdict must be clean or changes-requested, not {verdict}")
-    if not re.fullmatch(r"\d+/\d+", covered or ""):
-        raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
+    if incremental:
+        for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
+            if given is not None:
+                raise ReviewError(f"--incremental takes no {flag}: an incremental review opens no thread, covers "
+                                  "the files its change touches, and is never a second verdict")
+        if verdict not in (None, "clean"):
+            raise ReviewError("an incremental review is always clean; a problem the read finds goes to a full "
+                              "review, which files it")
+        verdict = "clean"
+    else:
+        if verdict not in VERDICT_WORDS:
+            raise ReviewError("--verdict must be clean or changes-requested" + (f", not {verdict}" if verdict else ""))
+        if not re.fullmatch(r"\d+/\d+", covered or ""):
+            raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
     if not paths.lock(sha).exists():
         raise ReviewError(f"no review of {repo}#{number} at {sha[:7]} holds the lock; "
                           f"run `project review setup {number}` again")
@@ -756,24 +1111,37 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
         if pr["head"]["sha"] != sha:
             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
                               f"run `project review move {number}` and review the new head")
-        check_collision(root, state, loop, second, body)
-        check_threads(threads, diff_lines(repo, number) if threads else {})
-        tally = census(repo, number)
-        open_now = tally["open"] + len(threads)
-        if verdict == "clean" and open_now:
-            raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
-                              f"{len(threads)} are being posted; settle them or request changes")
-        if verdict == "changes-requested" and not open_now:
-            raise ReviewError("changes-requested needs an open finding or a new one; with none open the head is clean")
-        total = tally["total"] + len(threads)
-        noun = "thread" if total == 1 else "threads"
-        census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
-        text = compose(state, verdict, body, covered, len(threads), census_line, now())
-        mine = self_review(repo, number, state["reviewer"])
-        if mine or (verdict == "clean" and not allow_approve):
+        reviews = reviewer_reviews(repo, number, state["reviewer"])
+        check_collision(root, state, loop, second, body, reviews)
+        incremental_from = None
+        if incremental:
+            rules = incremental_rules(root, state, loop, enabled, reviews)
+            if not rules["incremental"]:
+                raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
+                                  "on this setup")
+            incremental_from = rules["from"]
+            mine = self_review(repo, number, state["reviewer"])
+            text = compose_incremental(state, body, rules, not mine, now())
             event = "COMMENT"
         else:
-            event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
+            check_threads(threads, diff_lines(repo, number) if threads else {})
+            tally = census(repo, number)
+            open_now = tally["open"] + len(threads)
+            if verdict == "clean" and open_now:
+                raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
+                                  f"{len(threads)} are being posted; settle them or request changes")
+            if verdict == "changes-requested" and not open_now:
+                raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
+                                  "is clean")
+            total = tally["total"] + len(threads)
+            noun = "thread" if total == 1 else "threads"
+            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
+            text = compose(state, verdict, body, covered, len(threads), census_line, now())
+            mine = self_review(repo, number, state["reviewer"])
+            if mine or (verdict == "clean" and not allow_approve):
+                event = "COMMENT"
+            else:
+                event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
         draft_wanted = (verdict == "changes-requested") if mine else None
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
@@ -790,7 +1158,7 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
         # Recorded before anything else can fail, so a retry finishes this review rather than
         # posting a second one.
         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
-                              "draft": draft_wanted}
+                              "draft": draft_wanted, "from": incremental_from}
         write_state(paths, state)
     token = reviewer_token(state["reviewer"])
     if draft_wanted is not None:
@@ -806,8 +1174,11 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
     if loop is not None:
         record = read_record(root, loop)
         if not any(r.get("review_id") == review_id for r in record):
+            # `base` is the merge base a later incremental review measures from; `from` marks an
+            # incremental review, which a later one never builds on.
             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
-                           "verdict": state["published"]["verdict"], "published_at": now().isoformat()})
+                           "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
+                           "base": state["base"], "from": state["published"].get("from")})
             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     comment = (state.get("start_comment") or {}).get("id")
@@ -821,4 +1192,4 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: st
     paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
             "verdict": state["published"]["verdict"], "event": state["published"]["event"],
-            "draft": draft_wanted}
+            "draft": draft_wanted, "from": state["published"].get("from")}

@@ -29,7 +29,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, title_from_text
-from ..review import MARKER
+from ..review import verdict_marker
 from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
 
 
@@ -147,21 +147,35 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
     A review is Projector's when a line of its body is the marker a Projector
     review carries, which names the verdict and the head it reviewed, and its
     author owns the repository, belongs to its organization, or collaborates
-    on it.
+    on it. When a head's newest review is a clean incremental review, its
+    status also carries `incrementalFrom`: the head of the full review it
+    builds on, and that head's newest full review as `url`, or None when no
+    full review of it is among `reviews`.
     """
     newest: dict[str, dict] = {}
+    full: dict[str, dict] = {}
+
+    def keep(heads: dict[str, dict], head: str, found: dict) -> None:
+        if head not in heads or found["at"] >= heads[head]["at"]:
+            heads[head] = found
+
     for review in reviews:
         if review.get("association") not in REVIEWER_ASSOCIATIONS:
             continue
-        for line in (review.get("body") or "").splitlines():
-            marker = MARKER.match(line.strip())
-            if marker is None:
-                continue
-            verdict, head = marker.groups()
-            if head not in newest or review["at"] >= newest[head]["at"]:
-                newest[head] = {"status": verdict, "url": review["url"], "at": review["at"]}
-            break
-    return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
+        marker = verdict_marker(review.get("body") or "")
+        if marker is None:
+            continue
+        found = {"status": marker.verdict, "url": review["url"], "at": review["at"], "from": marker.incremental_from}
+        keep(newest, marker.sha, found)
+        if marker.incremental_from is None:
+            keep(full, marker.sha, found)
+    statuses = {}
+    for head, found in newest.items():
+        statuses[head] = {"status": found["status"], "url": found["url"]}
+        if found["from"] is not None and found["status"] == "clean":
+            statuses[head]["incrementalFrom"] = {"head": found["from"],
+                                                 "url": (full.get(found["from"]) or {}).get("url")}
+    return statuses
 
 
 def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",

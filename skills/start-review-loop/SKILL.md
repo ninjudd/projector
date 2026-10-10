@@ -129,9 +129,10 @@ reads the new head against that history instead of rediscovering it.
   that arrives mid-review is the moved-head case that skill's start-comment
   rule covers.
 - The subagent reports each published review back: the SHA, the verdict, the
-  review id, and how many threads it opened; `publish` has already added the
-  id to the loop's record. A question for the user comes back to the main
-  loop to ask.
+  review id, how many threads it opened, and for an incremental review the
+  head of the full review it builds on; `publish` has already added the id to
+  the loop's record. A question for the user comes back to the main loop to
+  ask.
 - Each subagent summarizes every pull request it reviews, as `review-pr`
   describes, another author's included. The loop never pauses or holds
   summaries on its own judgment. The one off switch is `review.summarize =
@@ -173,9 +174,11 @@ head.
 
 ## Continue after fixes
 
-Every pushed SHA, including a fix-only SHA, starts a complete review cycle.
-Green CI and resolved threads are evidence about state, not substitutes for
-review. When a pull request closes or merges, close its subagent and delete
+Every pushed SHA, including a fix-only SHA, starts a review cycle that ends in
+a verdict published on that SHA, full or incremental. `review-pr` decides
+which: a head that changed little since this loop's last full review can get
+an incremental review, and every other head gets a full one. Green CI and
+resolved threads are evidence about state, not substitutes for review. When a pull request closes or merges, close its subagent and delete
 its line from the tracked file. The watcher adopts the operator's new pull
 requests itself; append one the user assigns, and continue until the user
 stops the loop.

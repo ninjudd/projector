@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: in-progress
+priority: now
 ---
 
 # Review a minimal push incrementally
@@ -113,7 +113,7 @@ these rules. It refuses at the first rule that fails:
 | This loop's clean full review precedes it | The loop's record holds no full review of the pull request, or the newest verdict in it, full or incremental, requests changes or names this same head. |
 | The same reviewer made it | The earlier full review is missing from GitHub, or its marker names a different `projector` version, `model`, or `effort` than this run would write. |
 | No finding is open | The census counts an open Projector finding thread. |
-| The change can be measured | The checkout lacks the earlier head or its recorded merge base, or the replay in § 2.3 fails, as it does on a Git older than 2.40 when the merge base moved. |
+| The change can be measured | The loop's record holds no merge base (`base`) for the earlier full review, as an entry an earlier release wrote does not, the checkout lacks the earlier head or its recorded merge base, or the replay in § 2.3 fails, as it does on a Git older than 2.40 when the merge base moved. |
 | Every file can be read | The interdiff touches a binary file, a symlink, or a submodule. |
 | The base's changes passed the gate | The merge base moved since the earlier head (`MO` differs from `MN` in § 2.3), and the review's state records no `project review gate` run on this head that exited 0. |
 
@@ -187,6 +187,9 @@ How the head moved, the `kind` in § 2.3, also guides the decision:
 - **A rewrite in place**, such as an amended or squashed commit, reads like a
   pushed commit. `unchanged_commits` says whether any reviewed commit's
   content changed or only its message did.
+- **A retarget** shows whatever the pull request's diff gained when its base
+  changed, such as a merged parent's commits, and the reviewer reads those
+  like any other hunk.
 - **A resolved conflict** usually needs a full review, because the resolution
   combines two changes that no review read together. Review it incrementally
   only when every resolved hunk is trivial, such as two edits to one
@@ -247,9 +250,16 @@ the same for every kind, and no rule reads it:
 | Kind | When |
 | --- | --- |
 | `push` | `O` is an ancestor of `N`, and the merge base did not move. |
-| `merge` | `O` is an ancestor of `N`, and the merge base moved, which takes a merge of the base branch. |
+| `merge` | `O` is an ancestor of `N`, the merge base moved, and a merge commit in `O..N` brought in `MN`, which `O` does not contain. |
+| `retarget` | `O` is an ancestor of `N`, and the merge base moved with no such merge, as when a stacked pull request is retargeted onto `main` after the one beneath it merges. |
 | `rebase` | `O` is not an ancestor of `N`, and the merge base moved. |
 | `rewrite` | `O` is not an ancestor of `N`, and the merge base did not move, as after an amend, a squash, or a reword in place. |
+
+A retarget moves the merge base without a merge. After a squash merge of the
+parent, `MN` is the commit the parent forked from, which `O` already contains,
+and `N` holds the parent's commits that the default branch does not. The
+interdiff then shows those commits as gained, because GitHub now shows them in
+the pull request's diff, and the reviewer judges them like any other hunk.
 
 For `rebase` and `rewrite`, the command also compares the
 `git patch-id --stable` of each commit in `MO..O` with those in `MN..N`,
@@ -306,7 +316,7 @@ With `--json`, `interdiff` prints one object, with the same exit status:
 | `needs_gate` | `true` when the gate rule is the only one that fails, and `false` otherwise. |
 | `from` | The full SHA of the earlier head, or `null` when there is none. |
 | `review` | The URL of that head's full review, or `null`. |
-| `kind` | `push`, `merge`, `rebase`, or `rewrite`, or `null` when the change was not measured. |
+| `kind` | `push`, `merge`, `retarget`, `rebase`, or `rewrite`, or `null` when the change was not measured. |
 | `unchanged_commits` | For `rebase` and `rewrite`, `true` when every reviewed commit carried over unchanged and `false` otherwise; `null` for the other kinds. |
 | `conflicts` | The paths the replay conflicted in, `[]` when it was clean or not needed, or `null` when the change was not measured. |
 | `insertions`, `deletions` | The interdiff's line counts, or `null` when it was not measured. |
@@ -351,7 +361,8 @@ The review contains, in this order:
    `<short-sha>`: +`<insertions>` −`<deletions>` lines in `<files>` file or
    files." The short SHA links to the full review. For a kind other than
    `push`, a phrase before the colon names it: "across a merge of `<base>`",
-   "across a rebase onto `<base>`", or "across a rewrite of its commits".
+   "across a retarget onto `<base>`", "across a rebase onto `<base>`", or
+   "across a rewrite of its commits".
    After a conflict, the lead ends "with a resolved conflict in `<path>`",
    naming each conflicted path.
 5. **The subagent's body.** On another author's pull request, publish adds
@@ -589,6 +600,11 @@ The tests run in temporary Git repositories against the fake GitHub that
    - An `O` missing from the checkout refuses as unmeasurable, with
      `conflicts` at `null`. With `merge-tree` failing as an older Git does, a
      moved merge base refuses, and an unmoved one still measures.
+   - A record entry with no `base` refuses as unmeasurable, which a version
+     check cannot catch when a checkout that was never installed names every
+     release `unknown`.
+   - A stacked child retargeted onto the trunk after its parent squash-merges,
+     with a commit pushed on top and no merge, gives `retarget`, not `merge`.
 2. **Rules.** Each row of the table in § 2.2.1 refuses with its own reason:
    `review.incremental = false`, a review with no loop, an untrusted head, a
    newest verdict in the loop's record that requests changes, one that names
@@ -735,3 +751,13 @@ Running `merge-tree` in scratch repositories settled these:
 - After a stack cascade, `git merge-base O MN` puts a conflict in the parent's
   file that the child never had, and the recorded merge base gives the
   child's edit alone.
+
+## 8. Implementation status
+
+`project review interdiff`, `publish --incremental`, the header's incremental
+status, and the skill text are built as § 2 describes, including the
+`retarget` kind in § 2.3 and the rule in § 2.2.1 for a record entry with no
+`base`. The tests in `tests/test_review.py` and `tests/test_site.py` prove
+criteria 1 to 4. Criterion 5 needs a review loop running against a scratch
+repository on GitHub, and has not been run, so the project stays
+`in-progress` until it has.
