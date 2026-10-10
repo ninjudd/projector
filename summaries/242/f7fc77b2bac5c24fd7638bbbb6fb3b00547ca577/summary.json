@@ -1,0 +1,237 @@
+{
+ "version": 1,
+ "name": "Project page sidebar",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 242,
+  "title": "Give each project page a summary's sidebar",
+  "head": "f7fc77b2bac5c24fd7638bbbb6fb3b00547ca577",
+  "headRef": "project-page-nav",
+  "base": "121d49e324b97b9eba9a5be3cf96bd128194f0ba",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has two kinds of page that describe the same work. A <b>project page</b> renders one plan from <code>docs/projects/</code>. A <b>summary page</b> walks through one pull request, with a sidebar that lists the pull request's whole stack under <b>segment headers</b>: each header names the project that a run of the stack's layers carries out, and links to that project's page.",
+   "Before this change, a project page showed its plan under a small head with a flat line of review links, and a tree of its folder in a column at the window's edge. So the project's view left out stack order, layers with no summary, and layers of the same stack that carry out another project. A reader who moved from a project to one of its pull requests met two different pictures of one piece of work.",
+   "This change gives every project page the summary page's layout and the summary page's sidebar, drawn by the same code:",
+   "<ol><li><b>The build lists each project's stacks.</b> <code>site.json</code> gives each project <code>stacks</code>: the segments of every stack that holds a segment it heads, newest first. It replaces the old <code>reviews</code> list.</li><li><b>One renderer draws both sidebars.</b> <code>sideNavHtml</code> in <code>summary.ts</code> draws the box: the page's own project's header once, when there is one, then its stacks, a middle part, and a footer row. Inside a stack, a segment of the page's own project shows only its rows, below a thin rule when it follows another project's segment, and another project's segment keeps its linked header. The summary page passes no project header, its sections, and its versions. The project page passes its header, its other pages, and a history link.</li><li><b>A project page takes the summary layout.</b> A title row holds the breadcrumbs, badges, owner, and <b>View on GitHub</b> above the plan's title, and the plan's own first <code>&lt;h1&gt;</code> leaves the body. An HTML page keeps its full-window frame, with the sidebar in its collapsible column.</li></ol>",
+   "The pull request also marks the <code>project-page-nav</code> plan <code>completed</code> and records its outcome."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests that sit on one another, each based on the branch of the one below.</li><li><b>Segment</b>: a run of a stack's layers that carry out one project, bottom first. A stack where no layer names a project is one segment headed by a title.</li><li><b>Header</b>: a segment's heading in the sidebar, a <code>StackHeader</code>. A project's header links to its page; a title is plain text.</li><li><b>Current</b>: the item that is the page you are on. A sidebar marks exactly one with <code>aria-current=\"page\"</code>.</li><li><b>Title row</b>: the summary page's <code>&lt;header class=\"top\"&gt;</code>, an eyebrow line above an <code>&lt;h1&gt;</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first head, <code>d177d5c</code>, reviewed clean. The owner then held the pull request in draft to show the project's header once, at the top of the sidebar, rather than over every segment it heads.</li><li>The review of <code>8eac64e</code> found two problems. Where this project's segment followed another project's segment, its rows ran on under that project's header. One line in <code>docs/cli.md</code> was also not wrapped like its paragraph.</li><li><code>f7fc77b</code> fixes both. The owner chose a thin rule above this project's rows over repeating its name, so the name still shows once. This head reviewed clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "build",
+   "title": "site.json lists each project's stacks",
+   "kicker": "The data contract the project sidebar reads, and the build step that fills it",
+   "intro": [
+    "The site's front end draws every page from <code>site.json</code>, which <code>build_site</code> writes. Each project in it carried <code>reviews</code>, the numbers of the summarized pull requests whose segment the project heads. That list lost the stack's order and every layer without a summary.",
+    "Each project now carries <code>stacks</code>, a list of stacks, newest first, where each stack is the same <code>segments</code> list every summary page of that stack already carries: a <code>header</code> and its <code>members</code>, bottom first, with unsummarized layers included. Because both views read one value, a project's sidebar and its pull requests' sidebars cannot disagree, and the build asks GitHub for nothing new."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A stack appears once under each project any of its headers names. So a stack whose layers carry out projects A and B shows, whole, on both project pages."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Each Reviews index entry gains <code>segments</code>, and the new <code>project_stacks</code> files each stack under the projects its headers name.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 723,
+       "text": "Each stack is taken exactly once. <code>stack_groups</code> puts the lowest summarized member first in each group, and <code>build_summaries</code> sets that entry's <code>stack</code> to its own number, or to None when it is the only summarized member. I traced both paths, including a stack whose bottom layer has no summary."
+      },
+      {
+       "kind": "context",
+       "line": 1065,
+       "text": "Proposed projects are in <code>described</code> here, and their headers come from the same <code>headers</code> map, so a proposed project's page gets its stacks too."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "The types: <code>StackRow</code> for one pull request's row, <code>SideNav</code> for everything a sidebar is drawn from, and <code>stacks</code> in place of <code>reviews</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 205,
+       "text": "No reader of a project's <code>reviews</code> field remains in <code>src/</code> or <code>site/src/</code>; I searched both. The top-level <code>reviews</code> list in <code>site.json</code>, the Reviews index, is unchanged."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "renderer",
+   "title": "One renderer draws both sidebars",
+   "kicker": "The shared helpers at the top of summary.ts, and the styles they need",
+   "intro": [
+    "Every page of the site loads <code>summary.js</code> before <code>site.js</code>, so the functions at the top level of <code>summary.ts</code> are shared helpers both pages call. This group moves the whole sidebar there.",
+    "<ul><li><b><code>sideNavHtml(nav)</code></b> draws the box: <code>nav.head</code>, the page's own project's header, once; then one <code>stackgroup</code> per stack, or <code>nav.empty</code> when there is none; then <code>nav.middle</code>; then the footer row with the credit and <code>nav.foot</code>.</li><li><b><code>stackSegmentsHtml</code></b> gains <code>own</code>, a project name. A segment whose header names <code>own</code> draws only its list of rows, because the sidebar already named the project at its top. When that segment follows another project's segment, its list takes the class <code>split</code>, which draws a thin rule above its rows, so they do not read as the other project's layers.</li><li><b><code>segmentHeadHtml</code></b> draws one header in its box. When it names the page you are on, it is highlighted and carries <code>aria-current=\"page\"</code>.</li><li><b><code>titleRowHtml</code></b> draws the title row that <code>renderPage</code> used to write inline.</li></ul>",
+    "The summary page passes no <code>head</code>, so every segment keeps its header there, and its output stays the same apart from the new <code>stackgroup</code> wrapper around its one stack."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "The shared helpers, and <code>renderPage</code> rewritten to call them.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 93,
+       "text": "A rule appears only above this project's segment when another project's segment comes before it. <code>stack_segments</code> merges adjacent layers of one project, so the segment before a <code>split</code> list always belongs to another project. I drew <code>alpha/beta 9 · alpha 10</code> on alpha's readme under node and got <code>&lt;ul class=\"stack split\"&gt;</code> for #10."
+      },
+      {
+       "kind": "verify",
+       "line": 100,
+       "text": "Only <code>nav.head</code> can be current, so a readme's sidebar holds exactly one <code>aria-current</code>. <code>ProjectPageTests.drawn</code> asserts the count on every page it draws, and the 755 tests pass."
+      },
+      {
+       "kind": "context",
+       "line": 50,
+       "text": "<code>ICON</code> moves to the top level so <code>site.ts</code> can drop its copy. Both files are classic scripts, so a top-level <code>const</code> in <code>summary.js</code> is visible to <code>site.js</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles for the current header, the room between the project's header and another project's header below it, the rule that ends another project's segment, the divider between stacks, the empty line, and the history link, each scoped under <code>.prblock</code> or <code>.navfoot</code>."
+    }
+   ]
+  },
+  {
+   "id": "page",
+   "title": "A project page takes a summary's layout",
+   "kicker": "How site.ts frames a project page and builds its sidebar",
+   "intro": [
+    "<code>frame</code> draws every view of the site. It gains <code>top</code> and <code>nav</code>. With <code>top</code>, it draws the summary layout: a site bar that scrolls away, a 1440-pixel wrap, the title row, and a grid of the 250-pixel sidebar beside the content column. Without it, it draws the old layout, with <code>nav</code> as an HTML page's collapsible column.",
+    "<code>showProjectFile</code> builds the title row and calls the new <code>projectNav</code>, which turns the project's <code>stacks</code> into rows. A layer with a summary links to its review; one without links to the pull request on GitHub with an empty title. Below the stacks it lists the project's own pages with <code>tree</code>, the function that draws the docs tree.",
+    "Because the sidebar now sits inside the main element, the docs tree's old rules, written as <code>.sitemain .side</code>, would have restyled it. They now name the column as the main element's child, and the tree's list and link rules name a new <code>sidetree</code> class."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The project's header opens the sidebar once. On a readme it is current and plain text. On a supplemental or HTML page it links back to the readme, and the file's entry in the pages list is current instead."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "<code>frame</code>'s new layout, the first-heading removal, and <code>projectNav</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 305,
+       "text": "The plan's first element leaves only when it is an <code>&lt;h1&gt;</code>. A plan that opens with a paragraph keeps its heading, so its title shows twice."
+      },
+      {
+       "kind": "context",
+       "line": 410,
+       "text": "An HTML page keeps its old head of breadcrumbs and <b>View on GitHub</b> above its frame, because the frame fills the window and has no room for a title row."
+      },
+      {
+       "kind": "verify",
+       "line": 455,
+       "text": "Every value the sidebar and title row insert, including titles, URLs, and the owner, passes through <code>esc</code>. <code>test_a_project_title_is_escaped</code> covers a title."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "The <code>withnav</code> layout, the badges in the eyebrow, the column rules rescoped to <code>.sitemain &gt; .side</code>, and <code>.sidetree</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 79,
+       "text": "The docs tree looks as it did. <code>.sidetree ul</code> restores the 12-pixel indent for nested lists, and the top-level list stays flush. <code>.sidetop a</code> is muted, which is what the old, more specific <code>.sitemain .side a</code> made it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "compiled",
+   "title": "Compiled JavaScript",
+   "kicker": "What npm run build writes from the TypeScript",
+   "intro": [
+    "The site serves <code>site/assets/*.js</code> from a Git tree, so the compiled files are committed with the TypeScript that produces them."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In <code>site/</code>, <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> left both files unchanged at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/assets/site.js"
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Build tests for stacks, and page tests that run the compiled code under node",
+   "intro": [
+    "<code>SiteContentTests</code> checks each project's <code>stacks</code> in <code>site.json</code>. The new <code>ProjectPageTests</code> runs the compiled <code>showProjectFile</code> under node, against a stub DOM, and checks the layout, the title row, the first-heading removal, and the sidebar. <code>TreeColumnStyleTests</code> reads <code>site.css</code> to check the rescoped rules."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "All 755 tests pass at this head under Python 3.12."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference's site section, and the plan's outcome",
+   "intro": [
+    "<code>docs/cli.md</code> describes the project page as it now draws. The <code>project-page-nav</code> plan moves to <code>completed</code>, and its new § 8, Outcome, records that it shipped, the browser checks the author ran, and four details the implementation settled."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The project page paragraph, which describes the rule, the proposed project paragraph's banner and history link, and \"The Docs sidebar\" where the Docs paragraph said \"Each sidebar\".",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/project-page-nav/readme.md",
+     "note": "Status <code>completed</code>; § 2 and § 3 now describe the project's header shown once, with a thin rule where its segment follows another project's; § 8, Outcome.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "<code>completed</code> makes no readiness claim, so the plan's open questions do not gate the review."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "project": "project-page-nav"
+}
