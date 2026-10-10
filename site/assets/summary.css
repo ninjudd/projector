@@ -94,7 +94,7 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 .prblock .stack li.current { background: var(--accent-soft); color: var(--text); font-weight: 600; }
 .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
-.prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.prblock .stack .stitle { min-width: 0; overflow-wrap: anywhere; }
 .prbar { display: none; }
 @media (max-width: 980px) {
   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }

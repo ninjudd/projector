@@ -590,6 +590,13 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertTrue(stack, "summary.css has no .stack rule")
         self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
 
+    def test_a_stack_row_shows_its_whole_title(self) -> None:
+        css = (SITE_JS.parent / "summary.css").read_text()
+        title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
+        self.assertIn("overflow-wrap: anywhere;", title.group(1))
+        self.assertNotIn("line-clamp", title.group(1))
+
 
 def served_summary(number: int, head: str) -> dict:
     """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""
