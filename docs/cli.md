@@ -686,7 +686,8 @@ it has it looked up with `gh` at build time; when `gh` cannot answer, the
 review shows no stack. The list leaves out merged and closed pull requests
 until you check **Show merged and closed** above it. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
-one row each with its title, and highlights the current one; its older
+one row each with its title, and highlights the current one; a pull request
+with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
@@ -730,13 +731,22 @@ Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects
 its diff changes, and to any its summary names in a `projects` list, and each
-project page lists its reviews. Each file card's header links to the file's
-**Diff** on GitHub, to the **File** on the pull request's head branch, and, for
-a file in a project's folder, to that **Project** on the site. That is the
-deepest project the site has a page for, so a nested project owns its own
-files, not the project around it. Once the build finds the pull request merged
-or closed, the **File** link uses its head commit, because its branch is
-usually deleted then. `search/` searches every document the site
+project page lists its reviews. A review page's header has a **…** menu with
+the pull request's conversation, files, and compare views on GitHub. Each file
+card's header has one too: **View diff on GitHub**, **View file on GitHub**,
+and, for a file in a project's folder, **View project**, which opens that
+project on the site. That is the deepest project the site has a page for, so a
+nested project owns its own files, not the project around it. **View file on
+GitHub** shows the file as it is now: on the pull request's head branch while
+it is open, and once the build finds it merged, on the branch it merged into,
+since the merge usually deletes its own. That is the default branch, or a
+stacked pull request's parent branch while that branch exists. Once GitHub
+reports the parent's branch deleted, as merging the parent usually does, or
+when the summary records no `baseRef`, it is the default branch. A pull request
+closed without merging, or an unmerged one whose summary records no `headRef`,
+links its head commit. A file the pull request deleted links the merge base,
+the last commit that has it.
+`search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.

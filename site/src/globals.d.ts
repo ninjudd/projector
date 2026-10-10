@@ -60,8 +60,17 @@ type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { s
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
-  /** `state` is absent when the build could not ask GitHub. */
-  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string; state?: PullState };
+  /**
+   * `base` is the merge base the diff is taken from. `currentBaseRef` is the base branch GitHub reported when
+   * the site was built, or null once that branch was deleted; it and `state` are absent when the build could
+   * not ask GitHub.
+   */
+  pr: {
+    repo: string; number: number; title: string; head: string; base?: string; headRef?: string; baseRef?: string;
+    state?: PullState; currentBaseRef?: string | null;
+  };
+  /** The repository's default branch when the site was built, where a merged pull request's files now are once the branch it merged into is gone. */
+  defaultBranch?: string;
   files: SummaryFile[];
   groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };

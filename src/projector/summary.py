@@ -652,6 +652,7 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       state
+      baseRef { name }
       reviews(first: 100, after: $endCursor) {
         nodes { body url submittedAt authorAssociation }
         pageInfo { hasNextPage endCursor }
@@ -662,21 +663,25 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
 
 
 def pr_status(repo: str, number: int) -> dict:
-    """Pull request `number`'s `state`, `open`, `merged` or `closed`, and its submitted `reviews`.
+    """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, and its submitted `reviews`.
 
-    Each review has its `body`, its page as `url`, its time as `at`, and its
-    author's relation to the repository as `association`, GitHub's
-    `authorAssociation`. One query answers both, a page of reviews at a time.
+    `base` is the name of the branch the pull request targets, or merged into,
+    or None once that branch is deleted. Each review has its `body`, its page
+    as `url`, its time as `at`, and its author's relation to the repository as
+    `association`, GitHub's `authorAssociation`. One query answers all three,
+    a page of reviews at a time.
     """
     owner, name = repo.split("/", 1)
     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
                "-f", f"name={name}", "-F", f"number={number}",
-               "--jq", ".data.repository.pullRequest | {state, reviews: [.reviews.nodes[] | select(.submittedAt != null) "
+               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, reviews: [.reviews.nodes[] "
+                       "| select(.submittedAt != null) "
                        "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
     if not found or not found[0].get("state"):
         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
-    return {"state": str(found[0]["state"]).lower(), "reviews": [r for page in found for r in page["reviews"]]}
+    return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"),
+            "reviews": [r for page in found for r in page["reviews"]]}
 
 
 def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:

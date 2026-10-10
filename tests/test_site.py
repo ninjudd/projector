@@ -882,25 +882,28 @@ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/s
                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
 
 
-def rendered_summary(data: dict) -> str:
-    """The markup the compiled renderSummary draws for `data`, run under node."""
+def rendered_summary(data: dict, popovers: bool = True) -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers."""
     lines = SUMMARY_JS.read_text().splitlines()
     start = lines.index("    function renderSummary(data) {")
     end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
-               "const window = {};\n" + shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
+               "const window = {};\n"
+               f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
+               shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
                f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
 
 class FileHeaderTests(SiteRepoCase):
-    """Each file card's header links to its diff, to the file on the head branch, and to its project."""
+    """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
 
-    def build(self, state: str | None = None, **pr: str) -> dict:
+    def build(self, state: str | None = None, reported_base: object = ..., **pr: str) -> dict:
         """The data the site build writes for pull request 9, which changes HEADER_FILES.
 
-        GitHub reports the pull request as `state`, or cannot be asked when it is None.
+        GitHub reports the pull request as `state`, or cannot be asked when it is None, and
+        reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
         """
         summaries = Path(tempfile.mkdtemp()) / "summaries"
         folder = summaries / "9" / ("c" * 40)
@@ -910,15 +913,17 @@ class FileHeaderTests(SiteRepoCase):
             "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": "c" * 40, "base": "b" * 40,
                    "baseRef": "main", **pr},
             "overview": {"summary": [], "cards": []},
-            "groups": [{"id": "all", "title": "All", "files": [
+            "groups": [{"id": "all", "title": "All", "checks": [{"kind": "context", "text": "About the section."}], "files": [
                 {"path": p, "collapsed": False,
-                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
+                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1},
+                                {"kind": "verify", "text": "The whole file."}]} if p == "src/app#1.py" else
                     {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
                     else {})}
                 for p in HEADER_FILES]}],
         }))
         (folder / "diff.patch").write_text(HEADER_DIFF)
-        status = mock.patch.object(summary, "pr_status", return_value={"state": state, "reviews": []}) \
+        reported = {"state": state, "reviews": [], **({} if reported_base is ... else {"base": reported_base})}
+        status = mock.patch.object(summary, "pr_status", return_value=reported) \
             if state is not None else nullcontext()
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -942,7 +947,55 @@ class FileHeaderTests(SiteRepoCase):
                   "the site has no page for, such as one the pull request adds, owns nothing")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
-    def test_the_header_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
+    def test_the_page_header_menu_links_the_pull_request_on_github(self) -> None:
+        html = rendered_summary(self.build())
+        top = html[html.index('<header class="top">'):]
+        top = top[:top.index("</header>")]
+
+        pull = "https://github.com/owner/example/pull/9"
+        self.assertIn('<div class="sub"><button class="more" type="button" popovertarget="pr-menu" aria-haspopup="menu" '
+                      'aria-expanded="false" aria-label="Pull request links">', top)
+        self.assertIn('<div class="moremenu" id="pr-menu" popover role="menu" aria-label="Pull request links">'
+                      f'<a role="menuitem" href="{pull}" target="_blank" rel="noopener">Conversation on GitHub</a>'
+                      f'<a role="menuitem" href="{pull}/files" target="_blank" rel="noopener">Files on GitHub</a>'
+                      f'<a role="menuitem" href="https://github.com/owner/example/compare/main...{"c" * 40}" target="_blank" '
+                      'rel="noopener">Compare on GitHub</a></div>', top)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_each_reviewed_box_stands_alone_and_is_named_for_what_it_marks(self) -> None:
+        data = self.build()
+        html = rendered_summary(data)
+
+        fid = next(f["id"] for f in data["files"] if f["path"] == "src/app#1.py")
+        self.assertIn(f'<label class="freviewed"><input type="checkbox" class="file-box" id="{fid}-reviewed" '
+                      'aria-label="Mark src/app#1.py reviewed"></label>', html)
+        self.assertIn('<label class="greviewed"><input type="checkbox" class="reviewed-box" id="all-reviewed" '
+                      'aria-label="Mark section 1 reviewed"></label>', html)
+        self.assertNotIn("Reviewed</label>", html, "no box shows a visible label")
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_without_popovers_the_links_sit_in_place_instead_of_a_menu(self) -> None:
+        # A browser without popovers would draw every menu open, so it gets the
+        # links as a row under their short names, with no button and no menu.
+        data = self.build(headRef="feature/header-links")
+        html = rendered_summary(data, popovers=False)
+
+        pull = "https://github.com/owner/example/pull/9"
+        fid, anchor = next((f["id"], f["anchor"]) for f in data["files"] if f["path"] == "docs/projects/alpha/readme.md")
+        self.assertNotIn('class="more"', html)
+        self.assertNotIn("popover", html)
+        self.assertIn(f'<div class="sub"><span class="morelinks"><a href="{pull}" target="_blank" rel="noopener">Conversation</a>'
+                      f'<a href="{pull}/files" target="_blank" rel="noopener">Files</a>'
+                      f'<a href="https://github.com/owner/example/compare/main...{"c" * 40}" target="_blank" rel="noopener">'
+                      'Compare</a></span></div>', html)
+        card = html[re.search(f'<article class="file[^"]*" id="{fid}"', html).start():]
+        self.assertIn(f'<span class="morelinks"><a href="{pull}/files#{anchor}" target="_blank" rel="noopener">Diff</a>'
+                      '<a href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/readme.md" '
+                      'target="_blank" rel="noopener">File</a><a href="/projects/alpha/">Project</a></span>',
+                      card[:card.index("</header>")])
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_the_header_menu_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
         data = self.build(headRef="feature/header-links")
         html = rendered_summary(data)
 
@@ -951,31 +1004,40 @@ class FileHeaderTests(SiteRepoCase):
             start = re.search(f'<article class="file[^"]*" id="{fid}"', html).start()
             return html[start:html.index("</header>", start)]
 
-        survey = header("docs/projects/alpha/research/survey.md")
-        anchor = next(f["anchor"] for f in data["files"] if f["path"] == "docs/projects/alpha/research/survey.md")
-        self.assertIn(f'href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" rel="noopener">Diff</a>',
-                      survey)
-        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/research/'
-                      'survey.md" target="_blank" rel="noopener">File</a>', survey)
-        self.assertIn('<a class="flink" href="/projects/alpha/" title="Build alpha">Project</a>', survey)
-        self.assertIn('<a class="flink" href="/projects/alpha/beta/" title="Finish beta">Project</a>',
+        path = "docs/projects/alpha/research/survey.md"
+        survey = header(path)
+        fid, anchor = next((f["id"], f["anchor"]) for f in data["files"] if f["path"] == path)
+        self.assertIn(f'<button class="more" type="button" popovertarget="{fid}-menu" aria-haspopup="menu" '
+                      f'aria-expanded="false" aria-label="Links for {path}">', survey)
+        self.assertIn(f'<div class="moremenu" id="{fid}-menu" popover role="menu" aria-label="Links for {path}">'
+                      f'<a role="menuitem" href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" '
+                      'rel="noopener">View diff on GitHub</a>'
+                      '<a role="menuitem" href="https://github.com/owner/example/blob/feature/header-links/docs/projects/'
+                      'alpha/research/survey.md" target="_blank" rel="noopener">View file on GitHub</a>'
+                      '<a role="menuitem" href="/projects/alpha/">View project</a></div>', survey,
+                      "the project opens in the same tab, and GitHub in a new one")
+        self.assertIn('<a role="menuitem" href="/projects/alpha/beta/">View project</a>',
                       header("docs/projects/alpha/beta/readme.md"))
         for outside in ("docs/projects/gamma/readme.md", "src/app#1.py"):
-            self.assertNotIn(">Project</a>", header(outside))
+            self.assertNotIn(">View project</a>", header(outside))
         self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/src/app%231.py"',
                       header("src/app#1.py"), "each path segment is encoded and the branch keeps its slash")
         self.assertNotIn(">PR</a>", html)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
-    def test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes(self) -> None:
-        # GitHub usually deletes a merged or closed pull request's branch, and
-        # its head commit stays reachable, so those link the head.
+    def test_the_file_link_shows_the_file_as_it_is_now(self) -> None:
+        # An open pull request's file is current on its branch, and a merged
+        # one's on the branch it merged into, since the merge usually deletes
+        # its own. A closed one never reached its base, so it links the head
+        # commit, which stays reachable.
         branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
+        trunk = "https://github.com/owner/example/blob/develop/src/app%231.py"
         at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
-        for state, expected in (("open", branch), ("merged", at_head), ("closed", at_head), (None, branch)):
-            with self.subTest(state=state):
-                data = self.build(state=state, headRef="feature/header-links")
+        for state, expected in (("open", branch), ("merged", trunk), ("closed", at_head), (None, branch)):
+            with self.subTest(state=state), mock.patch.object(cli, "trunk_branch", return_value="develop"):
+                data = self.build(state=state, headRef="feature/header-links", baseRef="develop")
                 self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
+                self.assertEqual("develop", data["defaultBranch"], "the page records the default branch the build found")
                 self.assertIn(f'href="{expected}"', rendered_summary(data))
                 shutil.rmtree(self.out)
 
@@ -992,11 +1054,97 @@ class FileHeaderTests(SiteRepoCase):
         self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
+        # A backport, or a stack layer merged into its parent's branch, may
+        # never reach the default branch. Once the parent's branch is deleted,
+        # as merging the parent usually does, the change is on the default branch.
+        def link(branch: str) -> str:
+            return f'href="https://github.com/owner/example/blob/{branch}/src/app%231.py"'
+
+        for case, recorded, reported, expected in (
+                ("the base branch GitHub reports", "release/1.2", "release/1.2", "release/1.2"),
+                ("GitHub's base over the summary's, after a retarget", "stack/parent", "develop", "develop"),
+                ("the default branch once the base branch is deleted", "stack/parent", None, "develop"),
+                ("the summary's base when the lookup reports none", "release/1.2", ..., "release/1.2")):
+            with self.subTest(case), mock.patch.object(cli, "trunk_branch", return_value="develop"):
+                data = self.build(state="merged", reported_base=reported, headRef="feature/header-links", baseRef=recorded)
+                if reported is not ...:
+                    self.assertEqual(reported, data["pr"]["currentBaseRef"], "the page records the base GitHub reported")
+                self.assertIn(link(expected), rendered_summary(data))
+                shutil.rmtree(self.out)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_merged_pull_request_without_its_base_branch_links_the_default_branch(self) -> None:
+        with mock.patch.object(cli, "trunk_branch", return_value="develop"):
+            data = self.build(state="merged", headRef="feature/header-links", baseRef="")
+
+        self.assertIn('href="https://github.com/owner/example/blob/develop/src/app%231.py"', rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_deleted_file_links_the_merge_base_the_last_commit_that_has_it(self) -> None:
+        at_base = f'https://github.com/owner/example/blob/{"b" * 40}/src/app%231.py'
+        for state in ("open", "merged", "closed", None):
+            with self.subTest(state=state):
+                data = self.build(state=state, headRef="feature/header-links")
+                next(f for f in data["files"] if f["path"] == "src/app#1.py")["deleted"] = True
+                self.assertIn(f'href="{at_base}"', rendered_summary(data))
+                shutil.rmtree(self.out)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_merged_pull_request_with_neither_its_base_nor_the_default_branch_links_its_head(self) -> None:
+        data = self.build(state="merged", headRef="feature/header-links", baseRef="")
+        del data["defaultBranch"]
+
+        self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
         data = self.build()
         self.assertNotIn("headRef", data["pr"])
 
         self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_a_pull_request_alone_is_a_stack_of_one_in_the_sidebar(self) -> None:
+        data = self.build()
+        self.assertEqual([], data["stack"])
+
+        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page">'
+                      '<span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
+                      rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_versions_toggle_is_an_icon_named_for_how_many_there_are(self) -> None:
+        data = self.build()
+        data["heads"] = [{"head": "c" * 40, "url": f"/reviews/9/{'c' * 40}/", "current": True, "at": 1_700_000_500},
+                         {"head": "d" * 40, "url": f"/reviews/9/{'d' * 40}/", "current": False, "at": 1_700_000_000}]
+        html = rendered_summary(data)
+
+        self.assertIn('<div class="navfoot"><div class="credit">Generated by <a href="https://projector.bot">Projector</a>'
+                      '</div><details class="versions"><summary aria-label="Versions (2)" title="Versions (2)"><svg', html,
+                      "the credit and the versions icon share the box's last row")
+        self.assertNotIn("Versions ·", html)
+        data["heads"] = data["heads"][:1]
+        self.assertIn('<div class="navfoot"><div class="credit">Generated by <a href="https://projector.bot">Projector</a>'
+                      '</div></div></nav></aside>', rendered_summary(data), "one version leaves the credit on its own")
+
+    @unittest.skipUnless(shutil.which("node"), "the overview test needs node")
+    def test_the_overview_card_holds_only_what_the_summary_wrote(self) -> None:
+        self.assertIn('<div class="card prose"><h3>What this PR does</h3></div>', rendered_summary(self.build()),
+                      "the page adds no reading guide of its own")
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
+        html = rendered_summary(self.build())
+
+        projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
+        self.assertIsNotNone(projects, "the projects list is missing")
+        self.assertEqual('<li><a href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
+                         '<li><a href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
+                         projects.group(1), "each project's title fills its row, with nothing before it")
+        self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
+                        "the projects come first in the sidebar")
+        self.assertNotIn("Projects:", html)
 
     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
     def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
@@ -1010,6 +1158,13 @@ class FileHeaderTests(SiteRepoCase):
                                                 '<td class="nte"><input type="checkbox" class="nbox note-box"'),
                         "a new file has one line-number column, and a concern's checkbox sits with its text")
         self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its gutter keeps its width")
+        self.assertIn('<table class="diff fnotes"><colgroup><col class="lncol"><col class="lncol"><col></colgroup>'
+                      '<tr class="noterow verify"><td class="ngut" colspan="2"><span class="chip verify">verified</span></td>'
+                      '<td class="nte"><span class="ntext">The whole file.</span></td></tr></table>', html,
+                      "a note on the whole file sits above the diff in the diff's own columns")
+        self.assertIn('<div class="gnotes"><h4>Notes</h4><ul class="notes"><li class="context"><span class="chip context">'
+                      'context</span><span class="ntext">About the section.</span></li></ul></div>', html,
+                      "a section's note leads with its tag, like a note in a diff")
 
 
 class SummarySidebarTests(unittest.TestCase):
@@ -1017,24 +1172,17 @@ class SummarySidebarTests(unittest.TestCase):
         # The sidebar is sticky on a wide screen, so a list taller than the
         # window has no other way to reach its last sections. On a narrow
         # screen it sits above the content and scrolls with the page.
-        # The sidebar holds the list's box and the credit under it, so the
-        # sidebar is what fits the window, and the box takes what the credit
-        # leaves.
         css = (SITE_JS.parent / "summary.css").read_text()
-        side = re.search(r"^\.layout > \.side \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(side, "summary.css has no .layout > .side rule")
-        self.assertRegex(side.group(1), r"max-height: calc\(100vh\b")
-        self.assertRegex(side.group(1), r"display: flex; flex-direction: column;")
         wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
+        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
         self.assertRegex(wide.group(1), r"overflow-y: auto")
         # A scroll the list cannot take passes to the page, which is what pins
         # the sidebar and brings a long list's last sections into the window.
         self.assertNotIn("overscroll-behavior", wide.group(1))
-        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; max-height: none; \} (.*) \}$",
-                           css, re.M)
+        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; \} (.*) \}$", css, re.M)
         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
-        self.assertIn(".side .nav { overflow: visible; }", narrow.group(1))
+        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
 
     def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()

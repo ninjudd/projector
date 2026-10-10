@@ -54,13 +54,30 @@ function statusHtml(state, review) {
         function ext(href, text, cls) {
             return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
         }
-        // A file on the pull request's head branch, which always shows its current
-        // version. A merged or closed pull request's branch is usually deleted, so its
-        // files, and those of a summary that did not record its branch, link the head.
-        function blobUrl(path) {
-            const live = pr.state !== 'merged' && pr.state !== 'closed';
-            const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
-            return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
+        // A file as it is now. While the pull request is open, that is on its head
+        // branch, and once it merges, on the branch it merged into, since the merge
+        // usually deletes its own: the default branch, or for a stacked pull request
+        // its parent's branch. Once that branch is gone too, as a parent's is after
+        // it merges, the change is on the default branch. The build reports the base
+        // branch GitHub has, or null once it is deleted; a page built without asking
+        // falls back to the base the summary recorded. A closed pull request never
+        // reached its base, so its files link its head commit, as do those of a
+        // summary that did not record its branch and of a merged one with no base or
+        // default branch recorded. A file the pull request deleted is in none of
+        // those, so it links the merge base, the last commit that has it.
+        function blobUrl(f) {
+            const headRef = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : null;
+            const trunk = data.defaultBranch !== undefined && data.defaultBranch !== '' ? data.defaultBranch : null;
+            let ref = pr.head;
+            if (f.deleted === true && pr.base !== undefined && pr.base !== '')
+                ref = pr.base;
+            else if (pr.state === 'merged') {
+                const into = pr.currentBaseRef !== undefined ? pr.currentBaseRef : baseRef;
+                ref = (into !== null && into !== '' ? into : null) ?? trunk ?? pr.head;
+            }
+            else if (pr.state !== 'closed' && headRef !== null)
+                ref = headRef;
+            return `${repoUrl}/blob/${[...ref.split('/'), ...f.path.split('/')].map(encodeURIComponent).join('/')}`;
         }
         // The build checks every file a group names against the diff.
         function fileAt(path) {
@@ -70,6 +87,28 @@ function statusHtml(state, review) {
             return f;
         }
         const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
+        // Drawn like the site bar's icons: a 20-unit square, stroked in the text colour.
+        const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
+        const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
+            '<path d="M10 6.75V10l2.25 1.5"/></svg>';
+        const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
+            '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+        // A "…" button and the menu of links it opens, which wireSummary makes work.
+        // A link to GitHub opens in a new tab; a link within the site does not. A
+        // browser without popovers, such as Safari before 17, would draw every menu
+        // open, so there the links sit in place as a row, under their short names.
+        const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
+        function moreMenu(id, label, items) {
+            function link(i, attrs, text) {
+                return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
+            }
+            if (!popovers)
+                return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
+            return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
+                `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
+                items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
+                '</div>';
+        }
         const CHIPS = { context: 'context', verify: 'verified', flag: 'concern' };
         function kindOf(c) { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
         // A note's checkbox state is keyed by where it sits and what it says, so a
@@ -92,12 +131,11 @@ function statusHtml(state, review) {
             const k = kindOf(c);
             return `<span class="chip ${k}">${CHIPS[k] ?? k}</span>`;
         }
-        function notesList(checks, cls, scope) {
+        function notesList(checks, scope) {
             if (checks.length === 0)
                 return '';
-            return `<ul class="notes ${cls}">` + checks.map(function (c) {
-                const box = noteBox(c, scope);
-                return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
+            return '<ul class="notes">' + checks.map(function (c) {
+                return `<li class="${kindOf(c)}">${chip(c)}<span class="ntext">${c.text}</span>${noteBox(c, scope)}</li>`;
             }).join('') + '</ul>';
         }
         // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
@@ -137,15 +175,18 @@ function statusHtml(state, review) {
             function numbers(l) {
                 return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
             }
+            const tableClass = `diff${sides === 1 ? ' oneside' : ''}`;
+            // Each note is a row: its tag in the line-number gutter, its text where the code starts.
+            function noteRow(c) {
+                return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
+                    `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
+            }
             function notesAt(l) {
                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
-                const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-                // Each note is a row: its tag in the line-number gutter, its text where the code starts.
-                return found.map(function (c) {
-                    return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
-                        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
-                }).join('');
+                return keys.flatMap(function (k) { return atLine[k] ?? []; }).map(noteRow).join('');
             }
+            // The notes on the whole file sit above its diff, in the diff's own columns.
+            const topNotes = loose.length > 0 ? `<table class="${tableClass} fnotes">${columns}${loose.map(noteRow).join('')}</table>` : '';
             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
             if (f.new === true)
                 badges += '<span class="badge new">new</span>';
@@ -166,7 +207,7 @@ function statusHtml(state, review) {
                     rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
                     rows.push(notesAt(l));
                 });
-                return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
+                return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
             }).join('') || '<p class="fnote">No content changes.</p>';
             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
                 '<div class="fsentinel" aria-hidden="true"></div>' +
@@ -178,14 +219,16 @@ function statusHtml(state, review) {
                 `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
                 `<span class="fmeta">${badges}` +
                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
-                ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
-                ext(blobUrl(f.path), 'File', 'flink') +
-                (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
-                `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+                moreMenu(`${f.id}-menu`, `Links for ${f.path}`, [
+                    { href: `${prUrl}/files#${f.anchor}`, text: 'View diff on GitHub', short: 'Diff', external: true },
+                    { href: blobUrl(f), text: 'View file on GitHub', short: 'File', external: true },
+                    ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', short: 'Project', external: false }] : []),
+                ]) +
+                `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed" aria-label="Mark ${esc(f.path)} reviewed"></label>` +
                 '</span>' +
                 '</header>' +
                 (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
-                notesList(loose, 'fnotes', f.path) +
+                topNotes +
                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
                 '</article>';
         }
@@ -195,7 +238,7 @@ function statusHtml(state, review) {
             const gid = esc(g.id);
             const intro = (g.intro ?? []).map(block).join('');
             const checks = g.checks ?? [];
-            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Notes</h4>${notesList(checks, `group:${g.id}`)}</div>` : '';
             const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
             return `<section class="group" id="${gid}" data-gid="${gid}">` +
                 '<div class="gsentinel" aria-hidden="true"></div>' +
@@ -203,7 +246,7 @@ function statusHtml(state, review) {
                 `<h2 class="gtitle"><button class="gtoggle" type="button" aria-expanded="true" aria-controls="${gid}-body" title="Collapse or expand">` +
                 `<span class="chev" aria-hidden="true"></span><span class="gnum">${String(i + 1)}</span><span class="gname">${g.title}</span></button></h2>` +
                 `<span class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></span>` +
-                `<label class="greviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed"> Reviewed</label>` +
+                `<label class="greviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed" aria-label="Mark section ${String(i + 1)} reviewed"></label>` +
                 '</header>' +
                 `<div class="gbody" id="${gid}-body">` +
                 (g.kicker !== undefined && g.kicker !== '' ? `<p class="kicker">${g.kicker}</p>` : '') +
@@ -218,8 +261,7 @@ function statusHtml(state, review) {
             const o = data.overview ?? {};
             const s = data.stats;
             const summary = (o.summary ?? []).map(block).join('');
-            let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
-                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+            let out = `<div class="card prose"><h3>What this PR does</h3>${summary}</div>`;
             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
                 [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
             out += '<div class="card stats" id="files"><div class="statgrid">' +
@@ -273,30 +315,32 @@ function statusHtml(state, review) {
                 const row = `<span class="mono">${short(h.head)}</span>${when}`;
                 return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
             }).join('');
-            return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
+            const label = `Versions (${String(heads.length)})`;
+            return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
         }
         // The pull requests stacked with this one, one row each, this one marked; a
-        // pull request alone shows its title instead. A pull request in the stack
-        // with no summary on the site links to GitHub.
+        // pull request alone is a stack of one. A pull request in the stack with no
+        // summary on the site links to GitHub.
         function stackList() {
-            const stack = data.stack ?? [];
-            if (stack.length < 2)
-                return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
+            const listed = data.stack ?? [];
+            const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
             return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
                 const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
                 if (s.current)
-                    return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
+                    return `<li class="current" aria-current="page">${row}</li>`;
                 const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
-                return `<li><a href="${esc(href)}" title="${esc(s.title)}">${row}</a></li>`;
+                return `<li><a href="${esc(href)}">${row}</a></li>`;
             }).join('') + '</ul>';
         }
+        // The projects the pull request touches, as rows like the stack's, each
+        // title across the whole row.
         function projectsList() {
             const projects = data.projects ?? [];
             if (projects.length === 0)
                 return '';
-            return '<div class="prmeta">Projects: ' + projects.map(function (p) {
-                return `<a href="${esc(p.url)}">${esc(p.title)}</a>`;
-            }).join(' · ') + '</div>';
+            return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
+                return `<li><a href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+            }).join('') + '</ul>';
         }
         function reviewStatus() {
             const status = statusHtml(pr.state, data.review);
@@ -311,12 +355,16 @@ function statusHtml(state, review) {
             return '<div class="wrap">' +
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
-                `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+                `<div class="sub">${moreMenu('pr-menu', 'Pull request links', [
+                    { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
+                    { href: `${prUrl}/files`, text: 'Files on GitHub', short: 'Files', external: true },
+                    { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
+                ])}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
-                `<div class="prblock">${stackList()}${projectsList()}</div>` +
+                `<div class="prblock">${projectsList()}${stackList()}</div>` +
                 `<div class="extra">${extra}</div>` +
-                `<ol>${nav}</ol>${headsList()}</nav>` +
-                `<div class="credit">${creditHtml()}</div></aside>` +
+                `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
+                `${headsList()}</div></nav></aside>` +
                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
         }
@@ -538,6 +586,71 @@ function statusHtml(state, review) {
                 }
             });
         });
+        // A "…" button, on the page header or a file's, opens its links as a popover,
+        // which sits in the top layer, clear of the card's clipping and the sticky
+        // headers. An auto popover closes on Escape or a click outside it, and
+        // opening one closes any other. The menu opens under its button, right-aligned
+        // to it, or above it where the window has no room below, and closes when the
+        // page scrolls rather than drift from its button.
+        if ('popover' in HTMLElement.prototype) {
+            document.querySelectorAll('.moremenu').forEach(function (menu) {
+                const button = menu.previousElementSibling;
+                if (!(button instanceof HTMLButtonElement))
+                    return;
+                const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+                function close() { if (menu.matches(':popover-open'))
+                    menu.hidePopover(); }
+                menu.addEventListener('beforetoggle', function (ev) {
+                    if (ev.newState === 'open') {
+                        const b = button.getBoundingClientRect();
+                        menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
+                        menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
+                    }
+                    else if (menu.contains(document.activeElement)) {
+                        button.focus({ preventScroll: true });
+                    }
+                });
+                menu.addEventListener('toggle', function (ev) {
+                    const open = ev.newState === 'open';
+                    button.setAttribute('aria-expanded', String(open));
+                    if (!open)
+                        return;
+                    const b = button.getBoundingClientRect(), h = menu.offsetHeight;
+                    if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0)
+                        menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
+                    items[0]?.focus({ preventScroll: true });
+                });
+                menu.addEventListener('keydown', function (ev) {
+                    const at = items.findIndex(function (item) { return item === document.activeElement; });
+                    let next;
+                    if (ev.key === 'ArrowDown')
+                        next = (at + 1) % items.length;
+                    else if (ev.key === 'ArrowUp')
+                        next = at <= 0 ? items.length - 1 : at - 1;
+                    else if (ev.key === 'Home')
+                        next = 0;
+                    else if (ev.key === 'End')
+                        next = items.length - 1;
+                    else {
+                        // Tab leaves the menu from its button, so focus moves on to the
+                        // control after it, or back to the one before it.
+                        if (ev.key === 'Tab') {
+                            button.focus({ preventScroll: true });
+                            close();
+                        }
+                        return;
+                    }
+                    ev.preventDefault();
+                    items[next]?.focus();
+                });
+                items.forEach(function (item) { item.addEventListener('click', close); });
+            });
+            const closeOpenMenu = function () {
+                document.querySelectorAll('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
+            };
+            window.addEventListener('scroll', closeOpenMenu, { passive: true });
+            window.addEventListener('resize', closeOpenMenu);
+        }
         // Pinned-header detection: a 1px sentinel sits at the top of each section and
         // each file card. Once it scrolls above its header's sticky offset the header
         // is pinned: a section header gains a shadow, and a file header, pinned just
