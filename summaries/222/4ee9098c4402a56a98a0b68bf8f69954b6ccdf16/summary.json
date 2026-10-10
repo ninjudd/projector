@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Project page sections plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 222,
+  "title": "Plan a sidebar list of a plan's sections and its nearby projects",
+  "head": "4ee9098c4402a56a98a0b68bf8f69954b6ccdf16",
+  "headRef": "spec-project-page-sections",
+  "base": "ae970ea1bac5b12c848b881102277052aa007e99",
+  "baseRef": "spec-project-page-nav",
+  "basePr": 219
+ },
+ "overview": {
+  "summary": [
+   "Projector's site gives each project a page that renders its plan, the <code>readme.md</code> under <code>docs/projects/&lt;name&gt;/</code>. The <code>project-page-nav</code> plan, in #219 beneath this pull request, gives that page the sidebar a pull request summary already has. The sidebar shows every stack of pull requests that holds a segment of the project, each segment under a header naming the project it carries out, then the project's other pages and a footer row.",
+   "That plan leaves two things out on purpose, and this pull request records a plan for them. First, a summary's sidebar lists its numbered sections so a reader can jump to any of them, but a project page's sidebar would list none, though the longest plans here run 500 to 800 lines. Second, a nested project's sidebar lists only its own pages, so reaching a sibling project usually means going back through the breadcrumbs.",
+   "The new plan, <code>project-page-sections</code>, is a <code>draft</code> at priority <code>later</code>. It settles nothing. For each question it lays out the options and their trade-offs, and its § 3 lists six questions for the user. The plan moves to <code>ready</code> once they are answered. The pull request changes no code."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Sidebar</b>: the boxed column at the left of a summary page, and, under <code>project-page-nav</code>, of a project page. <code>sideNavHtml</code> is the shared helper that plan adds to draw it.</li><li><b>Segment</b>: a run of layers in one stack of pull requests that carries out one project. Each segment gets a header naming its project. On a project's readme, that project's headers are current, and the first of them is the sidebar's one <code>aria-current=\"page\"</code>.</li><li><b>Section list</b>: the summary sidebar's <code>&lt;ol&gt;</code> of links to its sections, each row a number (<code>nnum</code>), a title (<code>ntitle</code>), and a reviewed dot (<code>ncheck</code>).</li><li><b><code>slug</code></b>: the function in <code>site/src/site.ts</code> that turns a rendered heading's text into its id, the anchor a link like <code>#2-solution</code> lands on.</li><li><b>Nested project</b>: a project inside another project's folder, with its own <code>readme.md</code>.</li></ul>"
+   },
+   {
+    "id": "questions",
+    "title": "The six open questions",
+    "html": "<ol><li>Where the headings come from: read from the rendered plan, extracted at build time, or both (§ 2.1).</li><li>How the sidebar's links match the ids the rendered headings get (§ 2.2).</li><li>Which heading levels to list, and how to show a plan's own section numbers (§ 2.3).</li><li>Whether to mark the section you are scrolled to, and on summary pages too (§ 2.4).</li><li>What a nested project's sidebar lists (§ 2.6).</li><li>How the sections and the pages share the sidebar, and whether a supplemental page lists its own sections (§ 2.7, § 2.8).</li></ol>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>ff11e3d</code></b>: clean, with three suggestions.</li><li><b><code>c1213b6</code></b>: one commit that follows #219's switch to a header per segment. Clean, with four suggestions.</li><li><b><code>4ee9098</code></b>: this head rebases onto #219 at <code>ae970ea</code>, now on current <code>main</code>, and adds one commit that takes all four suggestions. The review is clean, with no finding threads and no suggestions left. A <code>draft</code> plan makes no readiness claim, so its open questions do not block.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The project-page-sections plan",
+   "kicker": "A draft plan that lays out the options for a sidebar section list and sibling navigation",
+   "intro": [
+    "The plan has the shape every Projector plan has: § 1 states the problem, § 2 the solution, then open questions and background. Here § 2 is a survey rather than a design. Each subsection asks one question, usually with a table of options and trade-offs.",
+    "<ul><li><b>§ 2.1 and § 2.2, data.</b> The browser has a plan's headings only after it renders the Markdown, so the list either waits for the render or comes from the build, which then has to produce the same ids the browser's <code>slug</code> gives the rendered headings.</li><li><b>§ 2.3 to § 2.5, the list itself.</b> Which levels to show, whether to mark the current section with an <code>IntersectionObserver</code>, and a shared <code>sectionListHtml</code> beside <code>sideNavHtml</code> so the summary and the plan draw one list.</li><li><b>§ 2.6 to § 2.8, layout.</b> What a nested project's sidebar lists, how the section list and the project's pages share the sidebar, and pages that have no sections. The readme has no entry in the pages list, because the project's headers link to it, so its sections need a place of their own.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Read this beside <code>docs/projects/project-page-nav/readme.md</code> from #219. That plan's introduction and its § 3, \"Why this design\", name <code>project-page-sections</code> as where the section list and sibling navigation are settled. Its § 2.3 and § 2.6 define the sidebar this plan builds on: the segment headers, the pages list without the readme, and the one <code>aria-current</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/project-page-sections/readme.md",
+     "collapsed": false,
+     "note": "The whole plan: a draft that surveys the options for listing a plan's sections and its nearby projects in a project page's sidebar.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "<code>project check</code> prints <code>Project plans are valid.</code>, and <code>project list</code> shows the plan as <code>draft</code> under <code>later</code>. Both were run at this head."
+      },
+      {
+       "kind": "verify",
+       "line": 48,
+       "text": "§ 2.1, first option. <code>frame</code> in <code>site/src/site.ts</code> rewrites <code>root.innerHTML</code>, and <code>showDocument</code> calls it once for <code>Loading…</code> and again with the rendered plan, so a list read from the rendered headings arrives in the redraw that shows the plan, as this row now says."
+      },
+      {
+       "kind": "verify",
+       "line": 59,
+       "text": "§ 2.2 describes <code>slug</code> as it is at this head: <code>text.toLowerCase().trim().replace(/[^\\w\\s-]/g, '').replace(/\\s+/g, '-')</code>, applied by <code>renderMarkdown</code> to every heading without an id, with no step that tells two identical headings apart."
+      },
+      {
+       "kind": "verify",
+       "line": 87,
+       "text": "§ 2.4 is right that a summary page marks no current section: the only <code>IntersectionObserver</code> in <code>site/src/summary.ts</code> pins section and file headers as they stick."
+      },
+      {
+       "kind": "verify",
+       "line": 113,
+       "text": "§ 2.6, first option. Under <code>project-page-nav</code> § 2.3, a header naming another project links to that project's page, so a stack that spans the current project and a neighbor already reaches the neighbor, as this row now says."
+      },
+      {
+       "kind": "verify",
+       "line": 132,
+       "text": "§ 2.7, narrow screens. At 980 pixels and narrower, <code>site/assets/summary.css</code> makes <code>.layout &gt; .side</code> static and lays <code>.nav ol</code> out as a grid, and <code>project-page-nav</code> puts the sidebar before the plan."
+      },
+      {
+       "kind": "verify",
+       "line": 138,
+       "text": "This current-page rule matches <code>project-page-nav</code> § 2.6: on a project's readme, the first of the project's headers carries <code>aria-current=\"page\"</code>, and on a supplemental page, the file's entry."
+      },
+      {
+       "kind": "verify",
+       "line": 164,
+       "text": "§ 4. A count that skips fenced code, run at this head, gives 4 to 14 <code>##</code> sections per plan and eight plans with <code>###</code> subsections of up to 8 each, nine with this plan. <code>main</code> has gained no plan since this base."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
