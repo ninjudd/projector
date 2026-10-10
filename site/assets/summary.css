@@ -59,11 +59,13 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 @media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 
 /* top */
-.top { padding-block: 28px 20px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
+.top { padding-block: 28px 20px; display: flex; gap: 12px 24px; align-items: flex-end; justify-content: space-between; }
+.top > div:first-child { min-width: 0; }
 .top h1 { font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
-.top .sub { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 14px; }
-.top .sub a { color: inherit; text-decoration: none; }
-.top .sub a:hover { color: var(--text); }
+/* The pull request's links sit behind a "…" button level with the title's last line, at the content's right edge. */
+.top .sub { flex: none; display: flex; margin-bottom: 1px; }
+.top .more { width: 30px; height: 30px; }
+.top .more svg { width: 18px; height: 18px; }
 .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--muted); font-weight: 600; }
 .rstatus { text-decoration: none; }
 a.rstatus:hover { text-decoration: underline; }
@@ -252,8 +254,14 @@ input.nbox { cursor: pointer; }
 .badge.notes { color: var(--text); }
 .badge.notes.open { color: var(--accent); border-color: var(--accent); }
 .stat { font-variant-numeric: tabular-nums; }
-.flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
-.flink:hover { color: var(--accent); border-color: var(--accent); }
+/* A "…" button and the menu of links it opens, on the page header and on each file's; the menu is a popover over the page. */
+.more { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; padding: 0; }
+.more:hover, .more[aria-expanded="true"] { background: var(--surface); border-color: var(--border); color: var(--text); }
+.more svg { width: 16px; height: 16px; }
+.moremenu { position: fixed; inset: auto; margin: 0; min-width: 180px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-size: 13.5px; line-height: 1.3; }
+.moremenu a { display: block; padding: 7px 10px; border-radius: 5px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.moremenu a:hover, .moremenu a:focus-visible { background: var(--surface-2); }
+.moremenu a:focus-visible { outline-offset: -2px; }
 .freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
 .freviewed input { accent-color: var(--ok); margin: 0; }
 .fnote { margin: 0; padding: 13px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }

@@ -46,6 +46,18 @@
         const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
         const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
             '<path d="M10 6.75V10l2.25 1.5"/></svg>';
+        const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
+            '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+        // A "…" button and the menu of links it opens, which wireSummary makes work.
+        // A link to GitHub opens in a new tab; a link within the site does not.
+        function moreMenu(id, label, items) {
+            return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
+                `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
+                items.map(function (i) {
+                    return `<a role="menuitem" href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(i.text)}</a>`;
+                }).join('') +
+                '</div>';
+        }
         const CHIPS = { context: 'context', verify: 'verified', flag: 'concern' };
         function kindOf(c) { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
         // A note's checkbox state is keyed by where it sits and what it says, so a
@@ -156,9 +168,11 @@
                 `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
                 `<span class="fmeta">${badges}` +
                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
-                ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
-                ext(blobUrl(f.path), 'File', 'flink') +
-                (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
+                moreMenu(`${f.id}-menu`, `Links for ${f.path}`, [
+                    { href: `${prUrl}/files#${f.anchor}`, text: 'View diff on GitHub', external: true },
+                    { href: blobUrl(f.path), text: 'View file on GitHub', external: true },
+                    ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', external: false }] : []),
+                ]) +
                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
                 '</span>' +
                 '</header>' +
@@ -299,7 +313,11 @@
             return '<div class="wrap">' +
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
-                `<div class="sub">${ext(prUrl, 'Conversation')}${ext(`${prUrl}/files`, 'Files')}${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+                `<div class="sub">${moreMenu('pr-menu', 'Pull request links', [
+                    { href: prUrl, text: 'Conversation on GitHub', external: true },
+                    { href: `${prUrl}/files`, text: 'Files on GitHub', external: true },
+                    { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', external: true },
+                ])}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
                 `<div class="prblock">${projectsList()}${stackList()}</div>` +
                 `<div class="extra">${extra}</div>` +
@@ -526,6 +544,71 @@
                 }
             });
         });
+        // A "…" button, on the page header or a file's, opens its links as a popover,
+        // which sits in the top layer, clear of the card's clipping and the sticky
+        // headers. An auto popover closes on Escape or a click outside it, and
+        // opening one closes any other. The menu opens under its button, right-aligned
+        // to it, or above it where the window has no room below, and closes when the
+        // page scrolls rather than drift from its button.
+        if ('popover' in HTMLElement.prototype) {
+            document.querySelectorAll('.moremenu').forEach(function (menu) {
+                const button = menu.previousElementSibling;
+                if (!(button instanceof HTMLButtonElement))
+                    return;
+                const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+                function close() { if (menu.matches(':popover-open'))
+                    menu.hidePopover(); }
+                menu.addEventListener('beforetoggle', function (ev) {
+                    if (ev.newState === 'open') {
+                        const b = button.getBoundingClientRect();
+                        menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
+                        menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
+                    }
+                    else if (menu.contains(document.activeElement)) {
+                        button.focus({ preventScroll: true });
+                    }
+                });
+                menu.addEventListener('toggle', function (ev) {
+                    const open = ev.newState === 'open';
+                    button.setAttribute('aria-expanded', String(open));
+                    if (!open)
+                        return;
+                    const b = button.getBoundingClientRect(), h = menu.offsetHeight;
+                    if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0)
+                        menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
+                    items[0]?.focus({ preventScroll: true });
+                });
+                menu.addEventListener('keydown', function (ev) {
+                    const at = items.findIndex(function (item) { return item === document.activeElement; });
+                    let next;
+                    if (ev.key === 'ArrowDown')
+                        next = (at + 1) % items.length;
+                    else if (ev.key === 'ArrowUp')
+                        next = at <= 0 ? items.length - 1 : at - 1;
+                    else if (ev.key === 'Home')
+                        next = 0;
+                    else if (ev.key === 'End')
+                        next = items.length - 1;
+                    else {
+                        // Tab leaves the menu from its button, so focus moves on to the
+                        // control after it, or back to the one before it.
+                        if (ev.key === 'Tab') {
+                            button.focus({ preventScroll: true });
+                            close();
+                        }
+                        return;
+                    }
+                    ev.preventDefault();
+                    items[next]?.focus();
+                });
+                items.forEach(function (item) { item.addEventListener('click', close); });
+            });
+            const closeOpenMenu = function () {
+                document.querySelectorAll('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
+            };
+            window.addEventListener('scroll', closeOpenMenu, { passive: true });
+            window.addEventListener('resize', closeOpenMenu);
+        }
         // Pinned-header detection: a 1px sentinel sits at the top of each section and
         // each file card. Once it scrolls above its header's sticky offset the header
         // is pinned: a section header gains a shadow, and a file header, pinned just

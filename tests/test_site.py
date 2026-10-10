@@ -703,7 +703,7 @@ def rendered_summary(data: dict) -> str:
 
 
 class FileHeaderTests(SiteRepoCase):
-    """Each file card's header links to its diff, to the file on the head branch, and to its project."""
+    """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
 
     def build(self, state: str | None = None, **pr: str) -> dict:
         """The data the site build writes for pull request 9, which changes HEADER_FILES.
@@ -751,7 +751,22 @@ class FileHeaderTests(SiteRepoCase):
                   "the site has no page for, such as one the pull request adds, owns nothing")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
-    def test_the_header_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
+    def test_the_page_header_menu_links_the_pull_request_on_github(self) -> None:
+        html = rendered_summary(self.build())
+        top = html[html.index('<header class="top">'):]
+        top = top[:top.index("</header>")]
+
+        pull = "https://github.com/owner/example/pull/9"
+        self.assertIn('<div class="sub"><button class="more" type="button" popovertarget="pr-menu" aria-haspopup="menu" '
+                      'aria-expanded="false" aria-label="Pull request links">', top)
+        self.assertIn('<div class="moremenu" id="pr-menu" popover role="menu" aria-label="Pull request links">'
+                      f'<a role="menuitem" href="{pull}" target="_blank" rel="noopener">Conversation on GitHub</a>'
+                      f'<a role="menuitem" href="{pull}/files" target="_blank" rel="noopener">Files on GitHub</a>'
+                      f'<a role="menuitem" href="https://github.com/owner/example/compare/main...{"c" * 40}" target="_blank" '
+                      'rel="noopener">Compare on GitHub</a></div>', top)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_the_header_menu_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
         data = self.build(headRef="feature/header-links")
         html = rendered_summary(data)
 
@@ -760,17 +775,22 @@ class FileHeaderTests(SiteRepoCase):
             start = re.search(f'<article class="file[^"]*" id="{fid}"', html).start()
             return html[start:html.index("</header>", start)]
 
-        survey = header("docs/projects/alpha/research/survey.md")
-        anchor = next(f["anchor"] for f in data["files"] if f["path"] == "docs/projects/alpha/research/survey.md")
-        self.assertIn(f'href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" rel="noopener">Diff</a>',
-                      survey)
-        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/research/'
-                      'survey.md" target="_blank" rel="noopener">File</a>', survey)
-        self.assertIn('<a class="flink" href="/projects/alpha/" title="Build alpha">Project</a>', survey)
-        self.assertIn('<a class="flink" href="/projects/alpha/beta/" title="Finish beta">Project</a>',
+        path = "docs/projects/alpha/research/survey.md"
+        survey = header(path)
+        fid, anchor = next((f["id"], f["anchor"]) for f in data["files"] if f["path"] == path)
+        self.assertIn(f'<button class="more" type="button" popovertarget="{fid}-menu" aria-haspopup="menu" '
+                      f'aria-expanded="false" aria-label="Links for {path}">', survey)
+        self.assertIn(f'<div class="moremenu" id="{fid}-menu" popover role="menu" aria-label="Links for {path}">'
+                      f'<a role="menuitem" href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" '
+                      'rel="noopener">View diff on GitHub</a>'
+                      '<a role="menuitem" href="https://github.com/owner/example/blob/feature/header-links/docs/projects/'
+                      'alpha/research/survey.md" target="_blank" rel="noopener">View file on GitHub</a>'
+                      '<a role="menuitem" href="/projects/alpha/">View project</a></div>', survey,
+                      "the project opens in the same tab, and GitHub in a new one")
+        self.assertIn('<a role="menuitem" href="/projects/alpha/beta/">View project</a>',
                       header("docs/projects/alpha/beta/readme.md"))
         for outside in ("docs/projects/gamma/readme.md", "src/app#1.py"):
-            self.assertNotIn(">Project</a>", header(outside))
+            self.assertNotIn(">View project</a>", header(outside))
         self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/src/app%231.py"',
                       header("src/app#1.py"), "each path segment is encoded and the branch keeps its slash")
         self.assertNotIn(">PR</a>", html)
