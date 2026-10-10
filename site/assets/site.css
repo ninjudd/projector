@@ -160,8 +160,12 @@ table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1
 table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }
 table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
 table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
+/* On a phone the time's column stays at no width rather than leaving the
+   table, since each segment's header spans it and would otherwise give it
+   the room the titles need. */
 @media (max-width: 640px) {
-  table.tbl.reviews .date { display: none; }
+  table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }
+  table.tbl.reviews col.date { width: 0; }
   table.tbl.reviews col.status { width: 7.5em; }
   table.tbl.reviews td.status { white-space: normal; }
 }

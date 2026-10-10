@@ -1838,6 +1838,17 @@ function frame(active, title, body) {
         self.assertEqual([[[9]]], self.stacks(html))
         self.assertNotIn("continued", html)
 
+    def test_on_a_phone_the_hidden_time_column_takes_no_width_from_the_titles(self) -> None:
+        # A header spans all three columns, so a column left out of the table
+        # entirely would come back as one with no set width and take the room
+        # the titles need.
+        css = (SITE_JS.parent / "site.css").read_text()
+        phone = re.search(r"@media \(max-width: 640px\) \{(.*?)\n\}", css, re.S)
+        assert phone is not None
+        self.assertIn("table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }", phone.group(1))
+        self.assertIn("table.tbl.reviews col.date { width: 0; }", phone.group(1))
+        self.assertNotIn("col.date { display: none", css)
+
     def test_a_header_s_title_is_escaped(self) -> None:
         drawn = self.draw([self.review(9, None, "open", header={"title": "<script>alert(1)</script>"})])
 
