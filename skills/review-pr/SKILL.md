@@ -579,7 +579,9 @@ you review, whoever opened it. A summary matters most on another author's
 pull request, because that is how its reviewers read the change. Neither
 the author, a brief, nor your own judgment is a reason to skip or hold one.
 The one off switch is `review.summarize = false` in `.projector.toml`,
-and the user sets it.
+and the user sets it. The only other reason to skip is a repository
+instruction that forbids agents to edit pull request descriptions, which
+the end of this section covers.
 
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
