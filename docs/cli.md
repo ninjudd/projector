@@ -73,14 +73,15 @@ what it did to each:
   terminal, as an agent refreshing the instructions runs it, `init` reports
   the file as `kept` and says on stderr how to add the rules, and
   `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
-  to leave the file alone for one run. `init` adds the rules to the file's
-  existing settings, keeps every other setting, writes through a symlink such
-  as one into a dotfiles repository, and writes the file back as two-space
-  JSON. It keeps a file that is not valid UTF-8 JSON, holds settings of an
-  unexpected shape, sits under a `.claude` that is not a directory, or cannot
-  be written, as one linked into a read-only directory such as the Nix store
-  cannot, and says on stderr how to add the rules yourself. `init` still
-  exits 0.
+  to leave the file alone for one run. To check the rules without `init`, run
+  `project review rules`, which writes nothing. `init` adds the rules to the
+  file's existing settings, keeps every other setting, writes through a
+  symlink such as one into a dotfiles repository, and writes the file back as
+  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds settings
+  of an unexpected shape, sits under a `.claude` that is not a directory, or
+  cannot be written, as one linked into a read-only directory such as the Nix
+  store cannot, and says on stderr how to add the rules yourself. `init`
+  still exits 0.
 - `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
   commands, for Codex's approval reviewer, which otherwise can refuse
   `project summary publish` as sending repository content to another host.
@@ -818,6 +819,7 @@ project review census 66 --json
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
 project review release 66
 project review gate 66
+project review rules
 ```
 
 `setup` checks that pull request 66 is open, fetches its head into the
@@ -880,6 +882,20 @@ command, its exit status, the head, and when it ran. The command runs the
 head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `setup` recorded as untrusted, whether or not `review.gate` is set, and when
 `review.gate` is unset.
+
+`rules` checks whether your own settings allow `project review publish` and
+`project summary publish`: the rules `init` adds to `~/.claude/settings.json`,
+and to `~/.codex/rules/projector.rules` where Codex is installed. It prints
+each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+whole check and for each file. It writes nothing, takes no pull request, and
+runs from any directory. It exits 0 when every file has the rules. It exits 1
+when a file lacks them or cannot be read, says on stderr what is missing, and
+asks for `project init` at a terminal, because `init` adds the rules only for a
+person. A review loop runs `rules` once before its first review, so it can warn
+you before a publish is refused rather than after. A file that lacks the rules
+means the host's automatic approval can refuse a publish, not that it will:
+the repository's own settings, or settings your organization manages, can still
+allow the commands.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

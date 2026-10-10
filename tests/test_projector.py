@@ -1322,6 +1322,104 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("is not a directory", stderr)
 
 
+class ReviewRulesTests(RepositoryTestCase):
+    """`project review rules` reports the publish rules and writes nothing, inside a repository or outside one."""
+
+    def home_tree(self) -> dict[str, bytes | None]:
+        """Every path under the temporary home, with each file's bytes, so a test sees any write at all."""
+        return {path.relative_to(self.home).as_posix(): None if path.is_dir() else path.read_bytes()
+                for path in sorted(self.home.rglob("*"))}
+
+    def test_rules_present_exits_0_and_writes_nothing(self) -> None:
+        before = self.home_tree()
+        for cwd in (self.root, self.home):
+            with self.subTest(cwd=cwd):
+                code, stdout, stderr = self.invoke("review", "rules", cwd=cwd)
+
+                self.assertEqual(0, code, stderr)
+                self.assertEqual("allows ~/.claude/settings.json\n", stdout)
+                self.assertEqual("", stderr)
+                self.assertEqual(before, self.home_tree())
+                self.assertFalse((self.home / ".codex").exists(), "the check creates no Codex directory")
+
+        code, stdout, stderr = self.invoke("review", "rules", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
+                         json.loads(stdout))
+
+    def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+        cases = {
+            "summary rule missing": lambda: None,
+            "settings absent": self.settings().unlink,
+        }
+        for name, arrange in cases.items():
+            with self.subTest(name):
+                arrange()
+                before = self.home_tree()
+
+                code, stdout, stderr = self.invoke("review", "rules")
+
+                self.assertEqual(1, code, stderr)
+                self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
+                self.assertIn("Bash(project summary publish *)", stderr)
+                self.assertIn("ask the user to run `project init` in a terminal", stderr)
+                self.assertIn("do not run `project init --publish-rule` to add them yourself", stderr)
+                self.assertIn("unless the repository's own or managed settings allow them", stderr)
+                self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
+                self.assertEqual(before, self.home_tree())
+        self.assertFalse(self.settings().exists(), "a missing settings file stays missing")
+
+        code, stdout, _ = self.invoke("review", "rules", "--json")
+        self.assertEqual(1, code)
+        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False}]},
+                         json.loads(stdout))
+        self.assertFalse(self.settings().exists())
+
+    def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
+        (self.home / ".codex").mkdir()
+        before = self.home_tree()
+
+        code, stdout, stderr = self.invoke("review", "rules")
+
+        self.assertEqual(1, code, stderr)
+        self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("Codex's approval reviewer", stderr)
+        self.assertNotIn("or pass --publish-rule", stderr)
+        self.assertEqual(before, self.home_tree())
+
+        rules = self.home / ".codex" / "rules" / "projector.rules"
+        rules.parent.mkdir()
+        rules.write_text(permissions.CODEX_RULES)
+        code, stdout, stderr = self.invoke("review", "rules")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
+
+    def test_unreadable_settings_exit_1_and_stay_untouched(self) -> None:
+        for content, reason in (
+            (b"{not json", "is not valid JSON"),
+            (b'{"permissions": []}', "`permissions` that is not an object"),
+            (b'{"env": {"NAME": "caf\xe9"}}', "is not UTF-8"),
+        ):
+            with self.subTest(reason=reason):
+                self.settings().write_bytes(content)
+                before = self.home_tree()
+
+                code, stdout, stderr = self.invoke("review", "rules")
+
+                self.assertEqual(1, code, stderr)
+                self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
+                self.assertIn(reason, stderr)
+                self.assertIn("do not run `project init --publish-rule`", stderr)
+                self.assertEqual(content, self.settings().read_bytes())
+                self.assertEqual(before, self.home_tree())
+
+    def test_rules_takes_no_pull_request(self) -> None:
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
+            main(["review", "rules", "66"])
+        self.assertEqual(2, stop.exception.code)
+
+
 class ValidationTests(RepositoryTestCase):
     def test_check_accepts_a_valid_tree_and_local_links(self) -> None:
         self.plan("alpha", body="See [design](design.md) and [child](child/).")
