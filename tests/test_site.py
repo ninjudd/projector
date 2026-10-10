@@ -561,17 +561,24 @@ class SummarySidebarTests(unittest.TestCase):
         # The sidebar is sticky on a wide screen, so a list taller than the
         # window has no other way to reach its last sections. On a narrow
         # screen it sits above the content and scrolls with the page.
+        # The sidebar holds the list's box and the credit under it, so the
+        # sidebar is what fits the window, and the box takes what the credit
+        # leaves.
         css = (SITE_JS.parent / "summary.css").read_text()
+        side = re.search(r"^\.layout > \.side \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(side, "summary.css has no .layout > .side rule")
+        self.assertRegex(side.group(1), r"max-height: calc\(100vh\b")
+        self.assertRegex(side.group(1), r"display: flex; flex-direction: column;")
         wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
-        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
         self.assertRegex(wide.group(1), r"overflow-y: auto")
         # A scroll the list cannot take passes to the page, which is what pins
         # the sidebar and brings a long list's last sections into the window.
         self.assertNotIn("overscroll-behavior", wide.group(1))
-        narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
+        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; max-height: none; \} (.*) \}$",
+                           css, re.M)
         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
-        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
+        self.assertIn(".side .nav { overflow: visible; }", narrow.group(1))
 
     def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()
