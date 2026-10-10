@@ -1,0 +1,241 @@
+{
+ "version": 1,
+ "name": "Proposed projects on the Projects page",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 229,
+  "title": "Show projects proposed in open pull requests on the Projects page",
+  "head": "1846576d33976668758af6bda6419b63b11bc5d9",
+  "headRef": "proposed-projects",
+  "base": "db3cf8e85aa068eaacf1b35b06f766578972ff17",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site's <b>Projects</b> page lists the plans under <code>docs/projects</code>, built from the checkout of the default branch. A new plan reaches that branch only when its pull request merges, and Projector writes plans as pull requests so that people review them first. So the page leaves out exactly the plans that need a reader's attention.",
+   "The site already holds those plans. The review loop publishes a summary of every pull request to the hidden ref <code>refs/projector/summaries</code>, and each summary stores the pull request's diff as <code>diff.patch</code>. A new file's diff holds every line of the file. This pull request reads those diffs at build time and lists each plan an open pull request adds as a <b>proposed project</b>, with a <b>Proposed #N</b> badge that links its review.",
+   "<ol><li><b>Ask GitHub first.</b> The build now asks for each pull request's status before it links any summary. It is the same one query per pull request as before, moved earlier, and it now also returns whether the branch is in a fork.</li><li><b>Pick the plans.</b> From the newest summary of each open, same-repository pull request, it takes every new <code>&lt;projects dir&gt;/&lt;name&gt;/readme.md</code> the checkout does not have, rebuilds its text from the diff, and loads it with the parser <code>project list</code> uses.</li><li><b>Serve them like any project.</b> Each proposed project is an ordinary entry in <code>site.json</code> with an extra <code>proposed</code> field, served at <code>projects/&lt;name&gt;/</code>, the address it keeps after the merge, together with the other Markdown files its diff adds.</li><li><b>Mark them on the page.</b> The badge appears on the Projects page, in the sidebar, and in search results. A banner tops every page of the project and names the pull request, its review status, and the head the site shows.</li></ol>",
+   "The layer beneath, #225, has merged: the site now deploys when a pull request closes, so a proposal leaves the page as soon as its pull request merges or closes. This branch has <code>main</code> merged in, up to #228. The plan stays <code>in-progress</code> until a throwaway plan's pull request is opened and closed against the deployed site."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used on this page",
+    "html": "<ul class=\"tight\"><li><b>Proposed project</b>: a project whose <code>readme.md</code> is a new file in the newest summary's diff of an open pull request from this repository, and that the checkout does not have.</li><li><b>Checkout</b>: the tree the site is built from, the default branch on a deploy.</li><li><b>Summary</b>: the guided review page the review loop publishes per pull request head, stored with its <code>diff.patch</code> under <code>summaries/&lt;number&gt;/&lt;head&gt;/</code>.</li><li><b><code>pr_status</code></b>: the one GraphQL query per pull request that returns its state, base branch, reviews, and now <code>fork</code>.</li><li><b><code>also</code></b>: the other open pull requests that propose a plan of the same name.</li></ul>"
+   },
+   {
+    "id": "rules",
+    "title": "When a pull request proposes a plan",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Case</th><th>Result</th></tr></thead><tbody><tr><td>Open, branch in this repository</td><td class=\"r\">Proposed</td></tr><tr><td>Merged or closed</td><td class=\"r\">Not proposed</td></tr><tr><td>Branch in a fork</td><td class=\"r\">Not proposed; its review stays</td></tr><tr><td>Status unknown (GitHub not reachable)</td><td class=\"r\">Not proposed; one warning with the count</td></tr><tr><td>Checkout has the name or the path</td><td class=\"r\">Checkout wins</td></tr><tr><td>Plan fails to load</td><td class=\"r\">Skipped with a warning; takes no name</td></tr><tr><td>Two pull requests propose one name</td><td class=\"r\">Lowest number wins; others in <code>also</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b>Head <code>6a3a95d</code>.</b> The Projector review found one P2: a repository whose projects directory sits inside a hidden folder, such as <code>.plans</code>, failed the whole site build, because the search index read plans from <code>content/</code>, where those plans are never copied. It also suggested fixing <code>by_pr</code>'s type annotation.</li><li><b>Head <code>7264fc6</code>.</b> Two commits fixed both: the search index now skips a document with no copy, and a new test builds the <code>.plans</code> case. The branch was rebased onto <code>main</code> after #225 merged, with no change to its diff. The review found it clean.</li><li><b>Head <code>a3a91e2</code>.</b> The branch was rebased onto #227, which stores each summary's changed files at the head. One commit fixes #227's new tests for <code>build_site</code>'s third return value. The review found it clean.</li><li><b>Head <code>1846576</code>.</b> A merge of <code>main</code> brought in #228's incremental review and the plans from #219, #222, and #226. Git merged it without conflicts, and this pull request's diff is unchanged. The review found it clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Reading a plan out of a diff",
+   "kicker": "Two small helpers let the build load a plan from text rather than from a file, and the status query learns about forks.",
+   "intro": [
+    "A proposed plan exists only as lines in a stored diff, never as a file on disk. To treat it exactly like a checkout plan, the build needs the plan's text and a parser that accepts text. Using the same parser means a plan shows as proposed exactly when <code>project list</code> would load it after the merge.",
+    "<ul><li><b><code>project_from_text</code></b>, in <code>core.py</code>, is the half of <code>ProjectStore._project_from_path</code> that runs after the file is read: the name check and the status, priority, and owner checks. <code>_project_from_path</code> now reads the file and calls it.</li><li><b><code>new_file_text</code></b>, in <code>summary.py</code>, joins a new file's added lines from <code>parse_diff</code>'s hunks and keeps or drops the final newline as the diff's <code>\\ No newline at end of file</code> marker says.</li><li><b><code>pr_status</code></b> asks GitHub for <code>isCrossRepository</code> in the same query and returns it as <code>fork</code>.</li></ul>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>new_file_text</code>, and the <code>fork</code> field on <code>pr_status</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 372,
+       "text": "<code>parse_diff</code> splits the patch on <code>\\n</code> alone, so a plan with CRLF line endings keeps its <code>\\r</code> bytes and the rebuilt text matches the file. Checked by reading <code>parse_diff</code>; the build test compares the content byte for byte."
+      },
+      {
+       "kind": "context",
+       "line": 746,
+       "text": "<code>fork</code> is <code>True</code> only when GitHub says so. The build treats anything but an explicit <code>False</code> as a fork, so a status without the field proposes nothing."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/core.py",
+     "note": "Moves the plan checks into <code>project_from_text</code> unchanged, so the build and <code>project list</code> share one parser.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 241,
+       "text": "The body is the old <code>_project_from_path</code> code with <code>relative</code> renamed <code>name</code>. Error messages still name the plan by its repository path."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "build",
+   "title": "Finding proposed projects in the site build",
+   "kicker": "The build asks for statuses first, picks the proposed plans, writes their files, and links summaries over both lists.",
+   "intro": [
+    "<code>build_summaries</code> reads every summary and keeps each pull request's versions, newest first. Before this change it linked each summary to the checkout's projects while reading it, and asked GitHub for the pull request's status afterwards. Now it reads everything, asks for every status, and only then links, because a summary can link to a project that another pull request proposes.",
+    "The new <code>proposed_projects</code> function does the selection the overview's table describes. It writes each proposed plan and its Markdown files under <code>content/</code>, never over a checkout file. HTML pages, images, and data files are left out on purpose: the site shows an HTML page unsandboxed on its own origin, and a proposal has not been merged.",
+    "<code>build_site</code> then merges the proposed projects into its project list before it assigns routes, so routes, <code>site.json</code>, <code>search.json</code>, and each project's list of reviews include them. <code>search_index</code> now reads every document from the site's <code>content/</code> copy, so proposed pages are indexed the same way as checkout pages.",
+    "<code>build_summaries</code> also runs <code>add_context</code> on each summary, which #227 added on <code>main</code>. It attaches each file's stored head copy, so the summary page can expand the lines around a hunk. It sets only each file's <code>context</code> and leaves the hunks alone, so <code>proposed_projects</code> still reads a plan's full text from the diff."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The build still asks <code>pr_status</code> once per pull request. Every <code>ProposedProjectTests</code> build asserts the call count, and the suite ran 633 tests <code>OK</code> at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>proposed_projects</code>, reorders <code>build_summaries</code> so statuses come before linking, and makes <code>search_index</code> read from <code>content/</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 351,
+       "text": "Every status is asked here, before linking. The loop below reuses <code>asked[number]</code> instead of asking again."
+      },
+      {
+       "kind": "context",
+       "line": 436,
+       "text": "Only an explicitly open pull request whose <code>fork</code> is <code>False</code> proposes. An unknown status was counted just above and leads to one warning line."
+      },
+      {
+       "kind": "context",
+       "line": 439,
+       "text": "The checkout wins twice: on a project name it loads, and on any file at the same path, even a plan that failed to load in the checkout."
+      },
+      {
+       "kind": "context",
+       "line": 448,
+       "text": "Pull requests are visited lowest number first, so the first plan that loads takes the name and later ones join its <code>also</code> list. A plan that fails to load never gets here."
+      },
+      {
+       "kind": "context",
+       "line": 470,
+       "text": "Hidden folders are judged relative to the repository root, as <code>pages_under</code> does for checkout files."
+      },
+      {
+       "kind": "verify",
+       "line": 705,
+       "text": "A document with no copy under <code>content/</code> is left out of search, since the page cannot load it. Before this, a checkout with <code>projects.dir = \".plans\"</code> made the build exit 65. Re-running that checkout at this head builds it and prints <code>1 projects, 0 proposed projects</code>, and <code>test_a_projects_directory_in_a_hidden_folder_still_builds_the_site</code> pins it."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Returns the configured projects directory even when the checkout lacks it, so a repository's first plan can be proposed, and counts proposed projects in the build's summary line.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 980,
+       "text": "Before, a checkout with no projects directory passed <code>None</code>, and the build could not tell where a proposed plan would live."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "page",
+   "title": "Showing proposed projects on the page",
+   "kicker": "One constant labels the badge and the banner, and GitHub links on a proposed page point at the proposal's head.",
+   "intro": [
+    "The site's front end is TypeScript in <code>site/src/</code>, compiled to <code>site/assets/site.js</code>, which is committed. It reads <code>site.json</code>, which now gives a proposed project a <code>proposed</code> object: the pull request's <code>number</code>, the summary's <code>head</code>, and <code>also</code>.",
+    "<ul><li><b>Projects page.</b> A proposed project sits in its status group with a <b>Proposed #N</b> badge that links its review. The note under the heading counts proposed projects, and typing <code>proposed</code> in the filter keeps them.</li><li><b>Project pages.</b> Every page of a proposed project opens with a banner: the pull request, its title and review status as the Reviews index draws them, the head shown, and any other proposals of the name.</li><li><b>GitHub links.</b> <b>View on GitHub</b> and Markdown links to repository files the site lacks point at the proposal's head, where the file exists, rather than at the site's branch.</li><li><b>Sidebar and search.</b> Both draw the badge.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Rendered a built fixture site in headless Chromium at 1100 and 375 pixels: the badge sits in the right status group, the banner names the other proposal, a checkout project's sidebar badges its proposed nested project, and a pull request title holding markup shows as text."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>npm run check</code> reported nothing, and <code>npm run build</code> left <code>site/assets/site.js</code> unchanged."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds the <code>Proposal</code> type, and <code>proposed</code> on a project and on a search entry."
+    },
+    {
+     "path": "site/src/site.ts",
+     "note": "Adds <code>PROPOSED</code>, <code>proposedBadge</code>, and <code>proposalBanner</code>, and threads a <code>ref</code> through <code>repoUrl</code>, <code>renderMarkdown</code>, and <code>showPage</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 401,
+       "text": "<code>ref</code> is the proposal's head on any page of a proposed project, and the site's branch everywhere else. A checkout project nested under a proposed one keeps the site's branch."
+      },
+      {
+       "kind": "context",
+       "line": 421,
+       "text": "The title and status come from the pull request's row in <code>site.json</code>'s reviews, which every proposed project has, since its summary is what proposed it. Since #228, a clean incremental review shows here as <b>Clean</b>, as on the Reviews index; only the summary page's header adds its \"incremental from\" link."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Styles the badge and banner with the existing <code>--info</code> colours, which already have light and dark values."
+    },
+    {
+     "path": "site/assets/site.js",
+     "note": "Compiled from <code>site.ts</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Build tests for each selection rule, node tests for the page, and unit tests for the helpers.",
+   "intro": [
+    "<code>ProposedProjectTests</code> publishes fake summaries into a temporary checkout and replaces <code>pr_status</code> with a fake, one case per row of the plan's acceptance table. <code>ProposedViewTests</code> runs functions from the compiled <code>site.js</code> under node. The unit tests cover <code>new_file_text</code>, the <code>fork</code> field, and <code>project_from_text</code> against <code>ProjectStore</code>.",
+    "One commit at this head fixes #227's <code>ContextBuildTests</code>, which unpacked two values from <code>build_site</code> where it now returns three."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    },
+    {
+     "path": "tests/test_projector.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and site docs describe proposed projects, and the plan records what implementation settled.",
+   "intro": [
+    "<code>docs/cli.md</code> explains when a pull request proposes a project and what the build prints. <code>docs/site.md</code> mentions the badge in its menu description. The plan gains section 8, which records how the work splits across #225 and this pull request, the details implementation settled, the measured build time before and after, and the one acceptance check left for after the merge."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan stays <code>in-progress</code> because its last acceptance check, opening and closing a throwaway plan's pull request against the deployed site, can only run after this merges."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/proposed-projects/readme.md",
+     "note": "Section 8, implementation status."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/site.md"
+    }
+   ]
+  }
+ ]
+}
