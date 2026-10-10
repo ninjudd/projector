@@ -690,14 +690,16 @@ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/s
 SUMMARY_JS = SITE_JS.with_name("summary.js")
 
 
-def rendered_summary(data: dict) -> str:
-    """The markup the compiled renderSummary draws for `data`, run under node."""
+def rendered_summary(data: dict, popovers: bool = True) -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers."""
     lines = SUMMARY_JS.read_text().splitlines()
     start = lines.index("    function renderSummary(data) {")
     end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
-               "const window = {};\n" + "\n".join(lines[start:end + 1]) +
+               "const window = {};\n"
+               f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
+               "\n".join(lines[start:end + 1]) +
                f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -764,6 +766,27 @@ class FileHeaderTests(SiteRepoCase):
                       f'<a role="menuitem" href="{pull}/files" target="_blank" rel="noopener">Files on GitHub</a>'
                       f'<a role="menuitem" href="https://github.com/owner/example/compare/main...{"c" * 40}" target="_blank" '
                       'rel="noopener">Compare on GitHub</a></div>', top)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_without_popovers_the_links_sit_in_place_instead_of_a_menu(self) -> None:
+        # A browser without popovers would draw every menu open, so it gets the
+        # links as a row under their short names, with no button and no menu.
+        data = self.build(headRef="feature/header-links")
+        html = rendered_summary(data, popovers=False)
+
+        pull = "https://github.com/owner/example/pull/9"
+        fid, anchor = next((f["id"], f["anchor"]) for f in data["files"] if f["path"] == "docs/projects/alpha/readme.md")
+        self.assertNotIn('class="more"', html)
+        self.assertNotIn("popover", html)
+        self.assertIn(f'<div class="sub"><span class="morelinks"><a href="{pull}" target="_blank" rel="noopener">Conversation</a>'
+                      f'<a href="{pull}/files" target="_blank" rel="noopener">Files</a>'
+                      f'<a href="https://github.com/owner/example/compare/main...{"c" * 40}" target="_blank" rel="noopener">'
+                      'Compare</a></span></div>', html)
+        card = html[re.search(f'<article class="file[^"]*" id="{fid}"', html).start():]
+        self.assertIn(f'<span class="morelinks"><a href="{pull}/files#{anchor}" target="_blank" rel="noopener">Diff</a>'
+                      '<a href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/readme.md" '
+                      'target="_blank" rel="noopener">File</a><a href="/projects/alpha/">Project</a></span>',
+                      card[:card.index("</header>")])
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_the_header_menu_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:

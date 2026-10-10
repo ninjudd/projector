@@ -60,13 +60,19 @@
         const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
             '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
         // A "…" button and the menu of links it opens, which wireSummary makes work.
-        // A link to GitHub opens in a new tab; a link within the site does not.
+        // A link to GitHub opens in a new tab; a link within the site does not. A
+        // browser without popovers, such as Safari before 17, would draw every menu
+        // open, so there the links sit in place as a row, under their short names.
+        const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
         function moreMenu(id, label, items) {
+            function link(i, attrs, text) {
+                return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
+            }
+            if (!popovers)
+                return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
             return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
                 `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
-                items.map(function (i) {
-                    return `<a role="menuitem" href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(i.text)}</a>`;
-                }).join('') +
+                items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
                 '</div>';
         }
         const CHIPS = { context: 'context', verify: 'verified', flag: 'concern' };
@@ -180,9 +186,9 @@
                 `<span class="fmeta">${badges}` +
                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
                 moreMenu(`${f.id}-menu`, `Links for ${f.path}`, [
-                    { href: `${prUrl}/files#${f.anchor}`, text: 'View diff on GitHub', external: true },
-                    { href: blobUrl(f), text: 'View file on GitHub', external: true },
-                    ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', external: false }] : []),
+                    { href: `${prUrl}/files#${f.anchor}`, text: 'View diff on GitHub', short: 'Diff', external: true },
+                    { href: blobUrl(f), text: 'View file on GitHub', short: 'File', external: true },
+                    ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', short: 'Project', external: false }] : []),
                 ]) +
                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
                 '</span>' +
@@ -325,9 +331,9 @@
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
                 `<div class="sub">${moreMenu('pr-menu', 'Pull request links', [
-                    { href: prUrl, text: 'Conversation on GitHub', external: true },
-                    { href: `${prUrl}/files`, text: 'Files on GitHub', external: true },
-                    { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', external: true },
+                    { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
+                    { href: `${prUrl}/files`, text: 'Files on GitHub', short: 'Files', external: true },
+                    { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
                 ])}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
                 `<div class="prblock">${projectsList()}${stackList()}</div>` +

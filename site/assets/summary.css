@@ -262,6 +262,11 @@ input.nbox { cursor: pointer; }
 .moremenu a { display: block; padding: 7px 10px; border-radius: 5px; color: var(--text); text-decoration: none; white-space: nowrap; }
 .moremenu a:hover, .moremenu a:focus-visible { background: var(--surface-2); }
 .moremenu a:focus-visible { outline-offset: -2px; }
+/* Where a browser has no popovers, the links sit in place instead. */
+.morelinks { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; }
+.morelinks a { color: var(--muted); text-decoration: none; }
+.morelinks a:hover { color: var(--text); }
+.top .morelinks { font-size: 14px; }
 .freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
 .freviewed input { accent-color: var(--ok); margin: 0; }
 .fnote { margin: 0; padding: 13px 14px; font-size: 15px; line-height: 1.55; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
