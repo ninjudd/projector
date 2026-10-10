@@ -812,6 +812,11 @@ again with a current release, as
 [the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
+The page draws an expander in each hidden run, above, between, and below the
+hunks. Expand down reveals the 20 lines below the hunk above, expand up the
+20 lines above the hunk below, and expand all the rest of the run. The page
+fetches the file the first time a reader expands one of its runs. A page
+`site page` writes has no site to fetch from, so it draws no expanders.
 
 The Projects page also lists each project that an open pull request
 proposes, so a plan in review is on the page where readers look for plans.
@@ -985,9 +990,9 @@ place of its checkout's. When the checkout lacks the head, `publish` first
 fetches it from the remote it publishes to. The fetch adds the commit's
 objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
 remote cannot serve the head either, `publish` says so and stores no
-attributes and no files under `head/`. A summary stored without them, as every summary an earlier
-release published was, takes its attributes from the default branch when the
-site builds.
+attributes and no files under `head/`. A summary stored without them, as
+every summary an earlier release published was, takes its attributes from
+the default branch when the site builds.
 
 ## Review a pull request
 
