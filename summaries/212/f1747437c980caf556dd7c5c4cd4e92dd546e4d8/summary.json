@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Incremental review plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 212,
+  "title": "Plan incremental reviews of minimal pushes",
+  "head": "f1747437c980caf556dd7c5c4cd4e92dd546e4d8",
+  "headRef": "spec-review-carry-forward",
+  "base": "a7c5c14b827c68ab3d2fd97a6e559c73cd010f3b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>review loop</b> watches the operator's pull requests and runs a full review on every head pushed to them. A full review reads every changed file, runs the repository's tests and checks, and posts a verdict whose body restates the change's intent and what it checked. A <b>verdict</b> is the review's outcome, clean or changes requested, and on your own pull request the loop also marks it ready or draft to match.",
+   "A full review costs the same whether the push is a large rewrite or a one-pixel padding fix. On #209, eight of 18 verdicts followed pushes that changed only a stylesheet by 15 lines or fewer, and those eight reviews took 638 seconds.",
+   "This pull request adds one plan, at <code>status: ready</code> and <code>priority: next</code>, and changes no code. The plan lets the loop post an <b>incremental review</b>: a short clean verdict on a head whose change since the loop's last full review the reviewer has read in full and judged to need nothing more.",
+   "<ol><li><b>A new command measures the change.</b> <code>project review interdiff</code> finds the loop's last full review and replays that head's change onto the new merge base with <code>git merge-tree</code>. A pushed commit, a merge of the base, a rebase, and an amend all measure the same way, and a resolved conflict shows against both sides. The command also checks the rules that need no judgment, including a passing gate when the merge base moved.</li><li><b>The reviewer decides.</b> The subagent reads every line and asks whether the full method would catch something the read cannot. Prose is also read for accuracy and against the comment rules.</li><li><b>Publish posts the review.</b> <code>project review publish --incremental --body &lt;file&gt;</code> rechecks the rules and posts a clean comment with the usual review marker, a new <code>projector-incremental</code> marker line, a lead that links the full review, and the reviewer's few sentences.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review history",
+    "html": "<ul class=\"tight\"><li><b>8c0196e:</b> changes requested with two findings. A prose edit carried on its kind alone, with no accuracy check, and a clean base merge carried with no gate run.</li><li><b>f174743:</b> clean. § 2.2.2 now reads prose for accuracy and against <code>guidelines.md</code> § 1, and § 2.2.1 requires a passing gate when the merge base moved. The plan also moved to <code>incremental-review</code> and replaced the line limit with the reviewer's judgment.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Incremental review:</b> a clean verdict on a new head that rests on the loop's clean full review of an earlier head plus a read of the change since.</li><li><b>Interdiff:</b> the change to the pull request's own diff between the full review's head <code>O</code> and the new head <code>N</code>, with what the base brought in left out.</li><li><b><code>MO</code> and <code>MN</code>:</b> the merge bases of <code>O</code> and <code>N</code> with the base branch.</li><li><b>Gate:</b> the repository's validation commands, which <code>project review gate</code> runs on a trusted head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The incremental review plan",
+   "kicker": "The rules an incremental review must pass, how the change is measured, and what the review says",
+   "intro": [
+    "The plan splits the decision in two. Code checks what a read of the patch cannot see: whether a loop runs the review, whether the head is trusted, whether this loop's clean full review precedes it with the same version, model, and effort, whether a finding is open, whether the change can be measured and read, and whether the gate passed when the merge base moved. The reviewer then reads every line and decides.",
+    "The change is always measured from the last full review, never from the previous incremental one, so a chain of small pushes is read together. The incremental review keeps today's review marker unchanged and adds its own marker line, so every existing reader of verdicts keeps working."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan is at <code>status: ready</code>, which claims that every question blocking implementation is answered or deliberately deferred. § 6 defers a list of always-full-review paths and an incremental review that requests changes."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/incremental-review/readme.md",
+     "collapsed": false,
+     "note": "The whole plan: the problem on #209, the design, its reasons, acceptance criteria, cost, deferred questions, and the code facts it rests on.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 31,
+       "text": "The #209 figures match GitHub: the pull request has 18 Projector verdicts, the eight review times in § 7 sum to 638 seconds, and <code>git diff --shortstat</code> gives the table's counts for the heads checked."
+      },
+      {
+       "kind": "verify",
+       "line": 118,
+       "text": "Checked in <code>src/projector/review.py</code>: <code>gate</code> writes the command's <code>exit_code</code> and the head's <code>sha</code> to the review's state, so this rule can read the record rather than the reviewer's word."
+      },
+      {
+       "kind": "context",
+       "line": 175,
+       "text": "This paragraph answers the first review's finding: a prose hunk qualifies only when it is accurate against the code and a comment passes <code>guidelines.md</code> § 1."
+      },
+      {
+       "kind": "verify",
+       "line": 210,
+       "text": "Run in a scratch repository: this command exits 1 on a conflicting replay, writes a tree whose diff3 markers carry the full SHAs of <code>MN</code>, <code>MO</code>, and <code>O</code>, and lists the conflicted path after the tree id."
+      },
+      {
+       "kind": "context",
+       "line": 238,
+       "text": "Why <code>MO</code> comes from the loop's record: after a stack's parent is amended and the child rebased, <code>git merge-base O MN</code> falls below the parent's old commits, and the replay would bring them along as false conflicts."
+      },
+      {
+       "kind": "context",
+       "line": 250,
+       "text": "Retargeting a stacked child onto <code>main</code> after its parent merges also moves the merge base without a merge, so this label and the lead's \"across a merge\" would misdescribe that head. The review lists this as a suggestion."
+      },
+      {
+       "kind": "context",
+       "line": 724,
+       "text": "A checkout that was never installed reports its version as <code>unknown</code>, so the same-version rule alone does not guarantee a record entry has <code>base</code>. The review suggests saying that an entry without one refuses as unmeasurable."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
