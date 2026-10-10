@@ -1,0 +1,672 @@
+diff --git a/docs/projects/project-page-nav/readme.md b/docs/projects/project-page-nav/readme.md
+new file mode 100644
+index 0000000..8541d49
+--- /dev/null
++++ b/docs/projects/project-page-nav/readme.md
+@@ -0,0 +1,666 @@
++---
++status: ready
++priority: next
++---
++
++# Give each project page a summary's sidebar
++
++Every page of a project shows the sidebar a summary page shows, drawn by the
++same code: every stack of pull requests that carries out part of the project,
++each under the headers of its segments, then the project's other pages and
++the footer row, beside the plan.
++
++This plan builds on [`stack-header`](../stack-header/readme.md), the plan
++#216 merged, and on its amendment, which lets one stack span several
++projects. Under the amendment, each pull request records one project or none.
++In GitHub's order, a stack gets a header at its bottom layer and at each layer
++that names a different project from the layer below it, and a layer that
++names no project joins the segment below it. The stack stays one group, with
++a header per segment. This plan uses the amendment's working names, a stack's
++`segments`, each a `header` and its `members`, and takes the names the
++amendment settles. It is implemented after `stack-header`'s implementation.
++
++A list of the plan's sections in the sidebar, and how a nested project's
++sidebar reaches its siblings, are left to the draft plan
++`project-page-sections` (#222), which builds on this one.
++
++## 1. Problem
++
++A project's page on the site renders its plan under a short head:
++breadcrumbs, the status and priority badges, the owner, and a link to the file
++on GitHub. When reviews link to the project, the head adds one line of them.
++The page for `incremental-review`, at
++`https://ninjudd.com/projector/projects/incremental-review/`, reads
++**Reviews** `#212 Incremental review plan` above the plan.
++
++A summary page shows the same pull requests another way. Its sidebar, a boxed
++column at the page's left, lists the pull request's whole stack, one row per
++pull request, and `stack-header` puts a header above each segment of the
++stack, naming the project the segment carries out. A reader who moves between
++a project and its pull requests meets two ways of showing the same work, and
++the project page's way says less:
++
++- **No stacks.** The line is flat. It does not say which pull requests form a
++  stack or in which order the layers sit. `stack-header` changes which reviews
++  the line holds, but keeps the line.
++- **Only reviewed pull requests.** A layer with no summary on the site is left
++  out of the line, while the sidebar of every other layer lists it.
++- **Gone once you scroll.** The line sits in the page head, not in a column
++  that stays beside the plan.
++
++The project's other pages sit in a third place. A project with supplemental
++files or nested projects gets a tree of its top-level project's folder in a
++plain column at the window's left edge, and a project with only its readme
++gets none.
++
++When this plan was written, 5 of the 14 projects on this repository's site
++listed a review (§ 7). Under `stack-header`, every summary records the
++project its pull request carries out, so every project that a pull request
++specs, implements, or completes will list reviews.
++
++## 2. Solution
++
++Each page of a project draws the summary page's sidebar at its left, from one
++renderer that both pages share. The sidebar lists every stack that holds a
++segment of this project, newest first as the Reviews index orders them. Each
++stack shows whole, as a summary's sidebar shows it: its segments in GitHub's
++order, each under its header as `stack-header` draws one, in the summary
++sidebar's rows, merged and closed layers included. On the project's own page,
++this project's headers are current rather than links, and other projects'
++headers link to their pages. The project's supplemental files and nested
++projects move out of the tree column into the sidebar, below the stacks. The
++footer row keeps Projector's credit, and its history icon opens the plan's
++history on GitHub. The page takes a summary page's layout whole: a title row
++across the top, drawn by the code that draws a summary's, holds the
++breadcrumbs, the badges, the GitHub link, and the plan's title, and the
++sidebar and the plan sit side by side beneath it. The plan's own first
++heading leaves the body, so the title shows once, and the line of reviews
++goes. The build writes each project's stacks into `site.json` from the
++segments `stack-header` already works out, with no new request to GitHub.
++
++### 2.1 The page after the change
++
++Here is the page for `incremental-review` at full width. It supposes a later
++stack of two pull requests: #303, which records `stack-header`, and #304 on
++top of it, which records `incremental-review`.
++
++```text
++ ▲ ninjudd/projector   Projects  Reviews  Docs                       [ Search      ]
++
++ PROJECTS / INCREMENTAL-REVIEW · READY  NEXT · VIEW ON GITHUB
++ Review a minimal push incrementally
++
++ ┌──────────────────────────────────┐  When a push changes a cleanly reviewed pull
++ │ Head each stack with one project │  request only a little, the review loop reads
++ │ or a title                       │  just that change and publishes an incremental
++ │ #303  Record each layer's        │  review: …
++ │       project                    │
++ │ Review a minimal push            │  1. Problem
++ │ incrementally                    │  ─────────────────────────────────────────────
++ │ #304  Publish an incremental     │  The review loop (`start-review-loop`)
++ │       review                     │  reviews every head pushed to the operator's
++ │ ──────────────────────────────── │  pull requests. …
++ │ Review a minimal push            │
++ │ incrementally                    │
++ │ #212  Plan incremental reviews   │
++ │       of minimal pushes          │
++ │ ──────────────────────────────── │
++ │ Generated by Projector       (⟲) │
++ └──────────────────────────────────┘
++```
++
++- **The title row** spans the page, as a summary's does. Its eyebrow holds
++  the breadcrumbs, the status and priority badges, and the link to the plan
++  on GitHub, and its heading is the plan's title.
++- **The plan** starts below the title row, beside the sidebar, without its
++  own first heading, which the title row already shows.
++- **The first stack**, #303 and #304, is newer than the spec pull request, so
++  it comes first. It spans two projects, so it has two segments. #303's
++  header names `stack-header` and links to that project's page. #304's header
++  names this project, so it is current: highlighted like a summary sidebar's
++  current row, not a link, and the sidebar's one `aria-current`.
++- **The second stack** is #212 alone, merged, listed as an open one would be.
++  Its header names this project too, so it is highlighted and not a link, and
++  carries no second `aria-current`.
++- **The footer row** holds the credit and, at its right, the history icon,
++  which opens the plan's commits on GitHub.
++
++On `stack-header`'s page, the first stack shows whole as well, with
++`stack-header`'s header current and this project's header a link.
++
++A project with supplemental files or nested projects lists them below its
++stacks. On the page of a supplemental file, the project's headers link to the
++project, and the file is the current page. A project that no segment names
++shows its own header, current, and a line in place of its stacks:
++
++```text
++ ┌──────────────────────────────────┐   ┌──────────────────────────────────┐
++ │ Build alpha                      │   │ Install and upgrade without git  │
++ │ #9    Plan alpha                 │   │ No reviews of this project.      │
++ │ ──────────────────────────────── │   │ ──────────────────────────────── │
++ │ Alpha notes                      │   │ Generated by Projector       (⟲) │
++ │ Beta                             │   └──────────────────────────────────┘
++ │   Beta design                    │
++ │ ──────────────────────────────── │
++ │ Generated by Projector       (⟲) │
++ └──────────────────────────────────┘
++```
++
++On the left, the page is `alpha/notes`, so **Alpha notes** is bold and
++current, and **Build alpha** links to the project. **Beta** is the nested
++project `alpha/beta`, labeled by its plan's title, with its own file under
++it.
++
++### 2.2 The page takes a summary page's layout
++
++`frame` in `site/src/site.ts` draws every view of the site. It gains two last
++arguments: `top`, the title row's markup, and `nav`, the sidebar's markup.
++With them, it draws the layout a summary page draws:
++
++1. The site bar takes the class `scrolls`, as on a summary page. It scrolls
++   away with the page, and its ends line up with the 1440-pixel layout below
++   it. Its menu button's slot is hidden, because the sidebar has no toggle.
++2. The main element is `<main class="sitemain withnav">`. It holds
++   `<div class="wrap">`, the summary page's 1440-pixel width with its
++   16-pixel side gutters. `.sitemain.withnav` drops the padding that
++   `.sitemain` gives every other view, because `.wrap` brings the gutters and
++   the title row brings the space above it, as on a summary page. The
++   sidebar's left edge then lines up with the site name.
++3. The wrap opens with the title row, `<header class="top">`, drawn by
++   `titleRowHtml`, the helper that draws a summary's (§ 2.5).
++4. Below it, `<div class="layout">` holds the summary page's grid of a
++   250-pixel sidebar and a content column. The first cell is
++   `<aside class="side">` around the sidebar. It sticks 16 pixels below the
++   window's top and scrolls on its own when it is taller than the window, by
++   the summary page's rules.
++5. The second cell is the `sidebody` that every view draws into. The plan
++   goes there, at its 880-pixel reading width, beside the sidebar.
++6. No `<footer class="sitefoot">` follows, because the sidebar's footer row
++   carries the credit.
++
++The title row is a summary's element with a summary's styles, so the sidebar
++starts at the same height on both pages whenever their titles take the same
++number of lines. Once the reader scrolls, both sidebars stick 16 pixels below
++the window's top. The row holds:
++
++| Part | On a project's readme | On a supplemental file |
++| --- | --- | --- |
++| Eyebrow | The breadcrumbs, `Projects / incremental-review`, each part but the last linked; the status and priority badges; the owner, when the plan names one; and **View on GitHub** | The breadcrumbs, ending in the file's name, and **View on GitHub** |
++| Heading | The project's `title` from `site.json` | The file's `title` from `site.json` |
++
++A ` · ` separates the eyebrow's groups, as it separates a summary's pull
++request from its status. The badges keep their pill style at `line-height: 1`,
++so they fit the eyebrow's line and the row is as tall as a summary's.
++
++The heading needs no Markdown parsing. The build already takes each page's
++first `# ` heading as its title, and `site.json` carries it: `title_from_text`
++in `src/projector/core.py` reads a project's, and `page_title` in
++`src/projector/site/__init__.py` reads a supplemental file's. The body still
++renders through `renderMarkdown`, as today. On a page with a title row,
++`showDocument` then removes the rendered box's first element child when it is
++an `<h1>`, because the title row shows that heading. When the first element
++is anything else, such as a paragraph or an `<h2>`, the body stays as it
++renders.
++
++`showPage` and `showDocument` pass `top` and `nav` through, and `showHtml`
++passes `nav`. An HTML page keeps the frame it has today, which fills the
++window and can go full screen, and keeps today's head of breadcrumbs and
++**View on GitHub** above its frame. Its collapsible column holds the sidebar
++in place of the tree, as an `<aside class="side" id="siteside">` rather than
++a `<nav>`, because the sidebar is itself the navigation landmark. The column
++starts hidden, and the header's menu button shows it, as it does today.
++
++### 2.3 What the sidebar shows
++
++`showProjectFile` draws every page of a project, its readme or a supplemental
++file. It stops building the tree column, the page head, and the review line.
++It draws the title row of § 2.2, and calls a new `projectNav(project, path)`,
++where `project` is the deepest project whose folder holds `path`, as
++`ownerOf` finds it today. `projectNav` builds the sidebar from three parts:
++
++1. **The stacks.** One group per entry of the project's `stacks` in
++   `site.json` (§ 2.4), in that order. A group is the whole stack: each
++   segment's header, then its rows, as a summary's sidebar draws the stack.
++   - **Headers.** A header that names another project links to that
++     project's page. A header that names this project links to it on a
++     supplemental page. On the project's readme it is current instead: a
++     highlighted `<span>`, not a link. The first current header in the
++     sidebar carries `aria-current="page"`, and the others carry none,
++     because a page has one current item.
++   - **Rows.** Each number becomes a row from the review with that number in
++     `site.json`'s `reviews`: its title, linked to its summary. A number with
++     no review there gets an empty title and links to the pull request on
++     GitHub, as the summary sidebar does for a layer with no summary. No row
++     is current, because no pull request is this page.
++   - **No stacks.** When `stacks` is empty, the sidebar draws the project's
++     own header, current on its readme, then the line
++     `No reviews of this project.`
++2. **The pages.** `tree`, the function that draws the docs tree, run over the
++   project's folder with no top entry: every supplemental file, subdirectory,
++   and nested project under that folder, and the files of each nested
++   project. The project's readme is left out, because the project's headers
++   link to it. The current file is bold and marked `aria-current="page"`, as
++   `tree` already marks it. A project with only its readme draws no pages
++   part.
++3. **The footer row.** Projector's credit, and at its right the history icon,
++   a link to `https://github.com/<repo>/commits/<branch>/<path>` labeled
++   **History on GitHub**: the commits that changed this page's file.
++
++Each kind of project and pull request lands like this:
++
++| Case | Where it shows |
++| --- | --- |
++| A project with one stack | One group, under this project's header |
++| A project with several stacks, such as a spec pull request and then an implementation stack | One group per stack, newest first, with a divider between groups |
++| A stack whose segments carry out projects A and B | On both pages, whole, with both headers. On A's readme, A's header is current and B's links to B's page, and on B's readme the other way round. |
++| A stack with two segments of this project, around a segment of another | One group, with both of this project's headers current and only the first carrying `aria-current` |
++| A stack with merged or closed layers | Every layer, in the stack's order, drawn as an open one is |
++| A layer with no summary on the site | Its row in its segment, with its number and an empty title, linked to GitHub |
++| A project with no stack | Its own header, then `No reviews of this project.` |
++| A stack whose every header is a title | On no project's page |
++| A nested project, such as `alpha/beta` | On its own page, with the stacks that hold a segment of it and with its own pages. Its parent's page lists it under the pages, and lists a stack of it only when that stack also holds a segment of the parent. |
++
++The breadcrumbs, badges, owner, and **View on GitHub** link move from the
++page head into the title row, and the review line goes. On the project's own
++page, the current headers repeat the title row's heading. They stay, because
++they head their segments and mark the project's readme as current among the
++project's pages.
++
++### 2.4 The build lists each project's stacks
++
++`stack-header` already works out, in `build_summaries` in
++`src/projector/site/__init__.py`, each stack's members, through `find_stacks`,
++before it writes a page. Under its amendment, each stack's `segments` list,
++in GitHub's order, holds each segment's `header` and its `members`: the
++numbers of its pull requests, from the bottom layer up, members without a
++summary included. Every member's summary page carries its stack's segments.
++Each entry also carries `stack`, the number of the first review in its stack
++on the index, or None when it is alone there. The entries come in the Reviews
++index's order: newest stack first, each stack's layers together.
++
++This plan adds one field to each entry and replaces one field of each
++project:
++
++1. Each entry gains `segments`: the segments its page carries.
++2. A new `project_stacks(entries)` walks the entries in order and takes each
++   stack once, at its first entry. That is an entry whose `stack` is None or
++   its own number. For each project that the header of any of the stack's
++   segments names, the function appends the entry's `segments` to that
++   project's list, once per stack.
++3. `build_site` sets each project's `stacks` from that result, or `[]`, in
++   place of today's `reviews`.
++
++A project in `site.json` changes like this:
++
++| Field | Value | Meaning |
++| --- | --- | --- |
++| `stacks` | `[[{"header": {…}, "members": [303]}, {"header": {…}, "members": [304]}], [{"header": {…}, "members": [212]}]]` | Every stack that holds a segment of this project, newest first. Each is its segments as every member's summary page carries them. `[]` when no segment names the project. |
++| `reviews` | Removed | Its one reader, the review line, goes. |
++
++A stack's rows take their titles from `site.json`'s `reviews`, so each pull
++request's title is written once.
++
++### 2.5 One renderer draws both sidebars
++
++The site's pages load `summary.js` first, for the helpers at its top, such as
++`esc`, `creditHtml`, and `stackHeaderHtml`. The sidebar's pieces move there,
++and both pages call them:
++
++| Helper | Draws | Called by |
++| --- | --- | --- |
++| `stackHeaderHtml(header, current)` | One segment's header content, as `stack-header` defines it: a link for a project, a `<span>` for a title. It gains `current`: when true, it draws a `<span>` for a project too. | The Reviews index, the summary sidebar, the project sidebar |
++| `stackListHtml(rows, repo)` | One `<ul class="stack" aria-label="Pull requests in this stack">` of `.srow` rows: a current row as a highlighted `<li aria-current="page">`, every other row as a link, to GitHub when its `url` is empty. Today this is the summary page's `stackList`. | Through `sideNavHtml` |
++| `sideNavHtml(nav)` | The whole sidebar: `<nav class="nav">` named by `nav.label`, then the `.prblock`, holding one `<div class="stackgroup">` per stack with a `<div class="stackhead">` and a `stackListHtml` per segment, or `nav.empty` when there is none, then `nav.middle`, then the `.navfoot` row with `creditHtml()` and `nav.foot`. A header that names `nav.current` gets the class `current`, and the first such header gets `aria-current="page"`. | `renderPage` on a summary page, `projectNav` on a project page |
++| `titleRowHtml(eyebrow, title, sub)` | The title row: `<header class="top">` holding `<div class="eyebrow">` and the `<h1>`, then `<div class="sub">` when `sub` is not empty. Today `renderPage` writes this inline. | `renderPage` on a summary page, with the "…" menu as `sub`, and `showProjectFile` on a project page, with no `sub` |
++| `ICON`, `HISTORY_ICON` | The 20-unit stroked icon frame and the history icon | `headsList` on a summary page, the project sidebar's footer, and the site bar's icons, which today keep a copy of `ICON` in `site.ts` |
++
++`nav` is a `SideNav`, a new type in `site/src/globals.d.ts`:
++
++| Field | Summary page | Project page |
++| --- | --- | --- |
++| `label` | `Sections` | `Project` |
++| `stacks` | One stack: the page data's segments, each with its rows | The project's stacks, each segment with its rows |
++| `current` | `""`: no header is current | This project's name on its readme, and `""` on any other page |
++| `empty` | `""` | The project's own header, then the line `No reviews of this project.` |
++| `middle` | The Overview and Files tabs, and the numbered sections | The pages (§ 2.3), in `<div class="navpages">`, or `""` |
++| `foot` | `headsList()`, the versions list | The history link |
++
++The summary page draws what the amended `stack-header` draws. Only the code
++that draws it moves. A stack row's type, `StackRow`, is
++`{number, title, url, current?}`, which the page data already holds.
++
++The style rules stay where they reach only what they style:
++
++- **The sidebar's rules stay scoped to the sidebar.** New rules in
++  `site/assets/summary.css` name `.prblock` or `.navfoot`: the current
++  header's highlight joins the rule for `.prblock .stack li.current`, a
++  divider sits between two stacks as `.prblock .stackgroup + .stackgroup`,
++  the empty line is `.prblock .snone`, and the history link joins the
++  `.versions > summary` rules as `.navfoot > a.history`. Every `.stack` rule
++  still starts with `.prblock .stack`, so none reaches the Reviews index.
++- **The tree column's rules stop reaching inside other elements.** Today
++  `site/assets/site.css` writes the column's rules as `.sitemain .side`, which
++  matches any `.side` inside the main element, the sidebar's `aside.side`
++  included, and its link and list rules would restyle the sidebar's rows. The
++  column's own rules become `.sitemain > .side`, with each state, such as
++  `.sitemain.wide > .side`, written the same way. The tree's list and link
++  rules move to the tree itself: `tree` gives its outer list the class
++  `sidetree`, and the rules become `.sidetree ul`, `.sidetree li`, and
++  `.sidetree a`. The docs tree looks as it does today, and the same tree in
++  the sidebar keeps that look at the sidebar's 13.5-pixel size.
++
++### 2.6 Narrow screens and accessibility
++
++At 980 pixels and narrower, the summary page's rules put the grid in one
++column. The title row stays on top, the sidebar follows it at the full width,
++and the plan comes last. The sidebar stops sticking and grows to its full
++height, as a summary page's does. The 16-pixel side gutters stay, the eyebrow
++and the row titles wrap, a row title shows at most three lines, and the
++plan's wide tables and code blocks scroll inside themselves, so the page
++never scrolls sideways. A project page draws no compact bar like a summary's
++`.prbar`, which keeps a pull request's number in view as you scroll.
++
++```text
++ ▲ ninjudd/projector
++ Projects  Reviews  Docs   [ Search  ]
++
++ PROJECTS / INCREMENTAL-REVIEW
++ · READY  NEXT · VIEW ON GITHUB
++ Review a minimal push
++ incrementally
++ ┌───────────────────────────────────┐
++ │ Head each stack with one project  │
++ │ or a title                        │
++ │ #303  Record each layer's project │
++ │ Review a minimal push             │
++ │ incrementally                     │
++ │ #304  Publish an incremental      │
++ │       review                      │
++ │ …                                 │
++ │ Generated by Projector        (⟲) │
++ └───────────────────────────────────┘
++ When a push changes a cleanly
++ reviewed pull request only a little,
++ …
++```
++
++The sidebar is a `<nav>` landmark named **Project**. On each page, exactly one
++item in it carries `aria-current="page"`: on a project's readme, the first of
++the project's headers, and on a supplemental page, the file's entry. In the
++order of the page, the sidebar comes before the plan, so the Tab key reaches
++the headers that link, the stacks' rows, the pages, and the history link
++before the plan's links.
++
++### 2.7 A proposed project's page
++
++`proposed-projects` is a separate plan for projects that exist only on
++unmerged branches. A proposed project's page gets this sidebar when that plan
++meets two conditions, which this plan does not design:
++
++- **The page has a project record.** `projectNav` reads only `name`, `title`,
++  `path`, `files`, and `stacks` from the record, and `site.projects` for the
++  nested projects under its folder.
++- **Its segments carry its name.** `project_stacks` files a stack under each
++  `project` its segments' headers name. `stack-header` turns a `project` that
++  names a plan the site lacks into a title header, so `proposed-projects`
++  decides when a proposed project's name counts as one the site has.
++
++### 2.8 Files that change
++
++| File | Change |
++| --- | --- |
++| `src/projector/site/__init__.py` | `build_summaries` gives each entry `segments`. A new `project_stacks`. `build_site` writes each project's `stacks` in place of `reviews`. |
++| `site/src/summary.ts` | `ICON` and `HISTORY_ICON` move to the shared helpers, beside a new `titleRowHtml`, `stackListHtml`, and `sideNavHtml`. `stackHeaderHtml` gains `current`. `renderPage` draws its title row with `titleRowHtml` and its sidebar with `sideNavHtml`, and `stackList` goes. |
++| `site/src/site.ts` | `projectNav`. `frame` takes `top` and `nav` and draws the layout in § 2.2. `showPage` and `showDocument` pass them through, `showHtml` passes `nav`, and `showDocument` removes the body's first `<h1>` on a page with a title row. `showProjectFile` draws the title row and calls `projectNav`, and stops building the top-level tree, a Markdown page's head, and the review line. `tree` marks its outer list `sidetree`. The copy of `ICON` goes. |
++| `site/src/globals.d.ts` | `StackRow` and `SideNav`. `stacks` replaces `reviews` in `SiteProject`, as a list of stacks, each a list of the amended `stack-header`'s segments. |
++| `site/assets/summary.css` | The rules in § 2.5: the current header, the divider between stacks, the empty line, and the history link |
++| `site/assets/site.css` | `.sitemain > .side` and `.sidetree` in place of `.sitemain .side`. `.sitemain.withnav` drops `.sitemain`'s width and padding and holds its `sidebody` to 880 pixels. `.top .eyebrow .badge` sets `line-height: 1`. `.nav .navpages` draws the pages under a divider at 13.5 pixels. The `.plist` rules go. |
++| `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/` |
++| `docs/cli.md` | The project pages paragraph: the title row, the sidebar with its stacks and pages, and where each goes on a narrow screen. The sentence that says each project page lists its reviews goes. |
++| `tests/test_site.py` | The tests in § 4 |
++
++## 3. Why this design
++
++- **The project page takes the summary page's layout, not the tree column.**
++  With a summary's title row above a summary's grid, the sidebar keeps the
++  same left edge, width, starting height, and sticking point on a project's
++  page and on each of its pull requests' pages. Moving between them changes
++  only what the title row and the content column say. Rejected:
++  - Drawing the sidebar inside today's tree column. That column runs down the
++    window's left edge at 240 pixels, so the sidebar would be 42 pixels
++    narrower than a summary's and would move sideways between a project and
++    its pull requests on any window wider than 1440 pixels.
++  - Keeping the sticky site bar. The sidebar would then need a second sticky
++    offset under the bar, and would stick at a different height from a
++    summary's.
++  - Keeping the page head in the content column, beside the sidebar. The
++    sidebar would then start at the top of the main element, about 70 pixels
++    above where a summary's starts below its title row, and would jump up and
++    down between a project and its pull requests.
++- **The title row shows the plan's title once.** The title row takes the
++  title the build already reads from the plan's first heading, so nothing
++  parses the Markdown again. The body still renders through `renderMarkdown`,
++  and one DOM removal drops its first element when that is an `<h1>`.
++  Rejected:
++  - Keeping the `<h1>` in the body as well. The title would show twice, one
++    above the other.
++  - Matching the `<h1>`'s text against the title before removing it. A
++    heading with inline code renders different text from the raw title the
++    build reads, so the match would miss and the title would show twice. A
++    plan opens with its title by this repository's planning rules, and a
++    plan that opens otherwise keeps its body as it renders.
++  - Removing the `<h1>` from the Markdown source before rendering. That is a
++    second, text-level parse of the plan for what one DOM operation does.
++- **Stacks come newest first.** The Reviews index places each stack where its
++  newest pull request would be, and `stack-header` lists a project's reviews
++  newest first, so the project page agrees with both. As a project grows, its
++  open work stays near the top. Rejected: oldest first. It reads as the
++  project's history, but a project's merged spec and finished stacks would
++  push its open stack down.
++- **Every layer shows, whatever its state.** `stack-header` keeps a merged
++  stack whole, and the summary sidebar lists every layer, so the project page
++  does too. Rejected:
++  - The Reviews index's **Open** and **Closed** boxes. They would hide the
++    merged layers of a stack the sidebar keeps whole, and a sidebar has no
++    room for controls. The index keeps them for its long list.
++  - A status on each row, for now. The summary sidebar shows none, and the
++    rows are one shared component, so a status would change both sidebars. A
++    later change can add one to both.
++- **A stack shows whole on the page of every project it carries out.** Under
++  the amended `stack-header`, one stack can hold segments of several
++  projects, and a summary's sidebar shows the whole stack with every
++  segment's header. The project page shows the same thing, so a stack looks
++  the same wherever it appears, and each project's page finds every stack
++  that did part of its work. Rejected:
++  - Showing only this project's segments of a stack. The layers would lose
++    the layers they sit on, and the stack would look different here from its
++    members' sidebars.
++  - Showing a stack only on the page of its bottom segment's project. A
++    project whose work sits higher in a stack would not list it.
++- **One `aria-current` when a project recurs.** A project's readme can have
++  several of its headers in the sidebar, one per stack or more. Every one is
++  highlighted and none is a link, because each names the page you are on.
++  Only the first carries `aria-current="page"`, because a page is one current
++  item, and a screen reader announcing it several times would say there were
++  several. Rejected: marking every one, and marking none.
++- **`stacks` holds segments, and rows take titles from `reviews`.** The rows
++  need each pull request's title, which `site.json`'s `reviews` already
++  carries, and the headers come with the segments. Rejected:
++  - Copying each row's title into the project. Each title would be written
++    twice.
++  - Working out the stacks and segments in the browser from `reviews` alone.
++    That list leaves out layers without a summary, which every summary
++    sidebar shows, and a layer without a summary has no project to segment
++    by.
++- **The segments are the pages' own.** `project_stacks` reads the segments
++  each summary page already carries, so the two cannot disagree, and the
++  build works out no membership or segmentation of its own.
++- **The pages move into the sidebar, scoped to its project.** Two columns of
++  navigation at the page's left would compete, so the tree joins the sidebar.
++  It lists the page's own project, the one the title row names. Rejected:
++  - The top-level project's tree, as today. On a nested project's page, the
++    tree would start at the parent's folder under the child's title, and on
++    the parent's readme the project's header and the tree's **Overview**
++    entry would both be current. The breadcrumbs already link to the parent.
++  - Keeping the tree as its own column beside the sidebar.
++
++  A nested project's page therefore reaches its siblings and its top-level
++  project through the breadcrumbs for now. The draft plan
++  `project-page-sections` settles that navigation together with a list of the
++  plan's sections.
++- **The tabs go, and the footer row stays.** On a summary page, **Overview**
++  and **Files** jump to the summary's top and to its file list. A plan has
++  neither a file list nor a top other than the page's top, so the tabs would
++  point at nothing new. The credit belongs on every page, and the plan's
++  history is the plan's counterpart to a summary's versions. A summary lists
++  its versions in place because the build has them. The build copies a plan
++  without its history, so the icon links to GitHub's.
++- **No list of the plan's sections yet.** A summary's sidebar lists its
++  numbered sections. A plan's list needs its own design: the browser has the
++  plan's headings only once its Markdown renders after the page loads, and
++  the list shares the sidebar with the project's pages. The draft plan
++  `project-page-sections` takes it up.
++- **A current header is a highlighted span.** A link to the page you are on
++  goes nowhere. The summary sidebar draws its current row as a highlighted
++  item with `aria-current`, and the header follows it.
++- **The sidebar comes before the plan on a narrow screen.** It does on a
++  summary page. This repository's longest plans run to 500 to 800 lines, and
++  a project's stacks run to a few rows, so the stacks would be out of reach
++  below the plan.
++- **One renderer.** `sideNavHtml`, `stackListHtml`, and `stackHeaderHtml`
++  draw both sidebars, and `projectNav` only gathers the project's data.
++  Without them, `site.ts` would draw a second copy of the rows, the header,
++  and the footer, and the two sidebars would drift. Rejected: a project
++  sidebar written in `site.ts` that copies the summary's markup.
++- **An HTML page keeps its own frame.** An HTML page needs the window's width,
++  so it starts with its column hidden. The sidebar takes the tree's place in
++  that column, so every page of a project offers the same sidebar.
++
++## 4. Acceptance criteria
++
++Build tests in `tests/test_site.py` give the build summaries in a temporary
++checkout with the projects `alpha` and `alpha/beta`, and stacks from
++`stack-header`'s `stacks_lookup`, as that plan's tests do. The tables write a
++stack as its segments, each as the project its header names and its members,
++so `alpha/beta 9 · alpha 10` is a stack of two segments.
++
++| Do | Expect |
++| --- | --- |
++| Build a stack of #9, #10, and #11, each recording alpha | alpha's `stacks` holds one stack, `alpha 9 10 11` |
++| Add #8, alone, recording alpha | `alpha 9 10 11`, then `alpha 8`: the newer stack first, as on the Reviews index |
++| Build a GitHub stack of #9 and #12, where #9 records alpha and #12 has no summary | `alpha 9 12` |
++| Build alpha's stack of #9 and #10 with #9 merged and #10 closed | `alpha 9 10` |
++| Build with no layer recording alpha | alpha's `stacks` is `[]` |
++| Build a stack whose bottom layer, #9, records `alpha/beta` and whose upper layer, #10, records `alpha` | Both projects' stacks hold `alpha/beta 9 · alpha 10` |
++| Build a stack of #9 recording alpha, #10 recording `alpha/beta`, and #11 recording alpha | alpha's stacks hold `alpha 9 · alpha/beta 10 · alpha 11` once, not twice |
++| Build a stack whose every layer records `""` | No project's stacks hold it |
++| For each number with a summary in any project's stacks, read that pull request's newest `data.json` | Its segments equal the stack that holds it |
++| Read `site.json` | No project has `reviews` |
++
++Page tests run under node against the compiled `site.js` and `summary.js`, as
++the existing view tests do. In every row, the sidebar holds exactly one
++`aria-current`.
++
++| Do | Expect |
++| --- | --- |
++| Draw alpha's readme | The page opens `<main class="sitemain withnav"><div class="wrap"><header class="top">`, whose eyebrow holds the breadcrumbs, alpha's status and priority badges, and **View on GitHub**, and whose `<h1>` is `Build alpha`. Then comes `<div class="layout"><aside class="side">` with the sidebar, then the `sidebody`. |
++| Draw a summary page and a project page, and take each one's `header.top` | Both come from `titleRowHtml`: the same element, classes, and children, differing only in their text and the summary's `sub` |
++| Draw alpha's readme, whose rendered body starts with `<h1>Build alpha</h1>` | The body has no `<h1>`, and its second element is now its first |
++| Draw alpha's readme, whose rendered body starts with a paragraph, then an `<h1>` | The body keeps both, in that order |
++| Draw alpha's readme, whose rendered body starts with an `<h2>` | The body keeps it |
++| Draw alpha's readme with the stack `alpha 9 10 11` | The sidebar opens `<nav class="nav" aria-label="Project"><div class="prblock"><div class="stackgroup"><div class="stackhead current" aria-current="page"><span>Build alpha</span></div>`, then one stack list whose rows link `/reviews/9/`, `/reviews/10/`, and `/reviews/11/` in that order. No row is current, and the page has no `plist`. |
++| Draw it with `alpha 9 10 11`, then `alpha 8` | Two stack groups, in that order. The second group's header has the class `current` and no `aria-current`. |
++| Draw it with `alpha/beta 9 · alpha 10` | One stack group. Its first header is `<a href="/projects/alpha/beta/">Build beta</a>`, and its second is alpha's, current, with the `aria-current`. |
++| Draw `alpha/beta`'s readme with `alpha/beta 9 · alpha 10` | Beta's header is current, with the `aria-current`, and alpha's links to `/projects/alpha/`. The pages list beta's files and none of alpha's. |
++| Draw alpha's readme with #12, which has no review | `<a class="srow" href="https://github.com/owner/example/pull/12"><span class="snum">#12</span><span class="stitle"></span></a>` |
++| Draw alpha's readme with stacks `[]` | Alpha's header, current, then `<p class="snone">No reviews of this project.</p>`, and no stack list |
++| Draw `alpha/notes` with `alpha 9` | Alpha's header is `<a href="/projects/alpha/">Build alpha</a>`, and the notes entry in the `sidetree` holds the `aria-current` |
++| Draw a project with only its readme | No `navpages` in the sidebar |
++| Draw any project page | The sidebar ends with the credit and `<a class="history" href="https://github.com/owner/example/commits/main/docs/projects/alpha/readme.md"`. The site bar has the class `scrolls`, and the page has no `sitefoot`. |
++| Draw a project whose title holds `<script>` | The header's text is escaped |
++| Draw a summary page | The sidebar tests, as the amended `stack-header` leaves them, pass unchanged |
++
++Style tests read the stylesheets, as the existing scoping test does:
++
++| Do | Expect |
++| --- | --- |
++| Read each selector in `site.css` that names `.side` | Each starts with `.sitemain > .side` or with `.sitemain` and its state classes before `> .side` |
++| Read each selector in `site.css` that styles the tree's lists and links | Each names `.sidetree` |
++| Read each `.stack` selector in `summary.css` | Each starts with `.prblock .stack`, as today |
++
++Every new test fails before the change. The last row of the page tests and
++the last row of the style tests are existing tests, which guard what the
++change must keep. The existing assertions on a project's `reviews` in
++`test_the_reviews_index_lists_each_stack_together_from_the_default_branch_up`,
++and in the two link tests that `stack-header` rewrites, move to `stacks`.
++
++In a browser, the implementing pull request runs `project site serve` on this
++repository's summaries ref, in the light and dark themes:
++
++- **At 1440 pixels**, the sidebar on `incremental-review`'s page has the
++  same `getBoundingClientRect()` left, width, and top as on #212's summary
++  page, scrolled to the top, because both titles fit on one line. The
++  sidebar sticks while the plan scrolls, and the plan's title shows once.
++- **At 375 pixels**, the title row comes first, the sidebar follows it, and
++  `document.documentElement.scrollWidth` equals
++  `document.documentElement.clientWidth`.
++- **From the keyboard**, Tab reaches the headers that link, the rows, the
++  pages, and the history link before the plan.
++
++The pull request's Testing section records these steps.
++
++## 5. Cost
++
++The build adds one pass over the entries it already holds, and no request to
++GitHub. Each entry's `segments` come from the segments its page already
++carries, so the build works out no membership or segmentation again.
++
++`site.json` trades each project's `reviews`, one number per review, for its
++`stacks`: one number per member of each of its stacks, and one header per
++segment, an object of up to three short strings. A stack that spans two
++projects is written once under each. For this repository, that is tens of
++numbers and a few headers in a file of about 13 kilobytes.
++
++In the browser, a project page draws at most tens of rows, each found by a
++linear search of `site.json`'s `reviews`. At 1,000 reviews, that is tens of
++thousands of comparisons, well under a millisecond. Every site page already
++loads `summary.js`, so the moved helpers add nothing to load.
++
++## 6. Rollout
++
++1. `stack-header`'s implementation merges, with its amendment. That plan
++   merged in #216, and the amendment that splits a stack into segments is in
++   review. `find_stacks`, each stack's `segments`, and `stackHeaderHtml` are
++   this plan's inputs. Before then, this plan takes the names the amendment
++   settles in place of its working names.
++2. This plan is implemented in one pull request. `site.json`'s `stacks`, the
++   page that reads it, and the compiled scripts ship together, because a
++   build copies the CLI's own assets.
++
++## 7. Background
++
++The evidence comes from this repository's site, `site.json` fetched on
++2026-10-10, and from the code on `main`:
++
++- **What project pages list today.** Of 14 projects, 5 list a review:
++  `agent-instructions` and `projector` list #182, `incremental-review` lists
++  #212, `multi-model-review` lists #214, and `summary-diff-context` lists
++  #204. The line labels each review by its summary's `name`, so #212 reads
++  `Incremental review plan`.
++- **No project page here draws the tree.** No project in this repository has
++  a supplemental file or a nested project, so the tree column appears only in
++  the tests' `alpha` fixture.
++- **How the summary sidebar is drawn.** `renderPage` in `site/src/summary.ts`
++  writes `<nav class="nav" aria-label="Sections">` with the `.prblock`, the
++  `.extra` tabs, the numbered sections, and the `.navfoot` row, inline. Its
++  `stackList` and `headsList` live inside the closure that draws one summary,
++  so `site.ts` cannot call them.
++- **Why the scoping matters.** Every site page loads `summary.css`, which is
++  why its column rules are written `.layout > .side`. `site.css` writes the
++  tree column's rules as `.sitemain .side`, and its list and link rules as
++  `.sitemain .side ul`, `.sitemain .side li`, and `.sitemain .side a`. Inside
++  a project page's main element, the first would pin the sidebar's `aside` to
++  the window's left edge at 240 pixels. The others would indent the sidebar's
++  lists by 12 pixels, space its rows 5 pixels apart, and turn its links muted,
++  because `site.css` loads after `summary.css` and its selectors are as
++  specific or more.

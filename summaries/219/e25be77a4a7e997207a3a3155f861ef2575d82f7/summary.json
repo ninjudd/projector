@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "Project page sidebar plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 219,
+  "title": "Plan giving each project page a summary's sidebar",
+  "head": "e25be77a4a7e997207a3a3155f861ef2575d82f7",
+  "headRef": "spec-project-page-nav",
+  "base": "daccae94ed181bc92331a3564c0359e801e62968",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has two kinds of page that show the same pull requests in different ways. A <b>summary page</b> describes one pull request and has a boxed sidebar at its left that lists the pull request's whole <b>stack</b>, the chain of dependent pull requests it belongs to, one row per pull request. A <b>project page</b> renders one plan from <code>docs/projects/</code> and lists the reviews that link to it as one flat line in its page head, such as <b>Reviews</b> <code>#212 Incremental review plan</code>.",
+   "The flat line shows no stacks, leaves out layers that have no summary, and scrolls away with the page head. A project with supplemental files also shows a separate tree of pages in a plain column at the window's left edge.",
+   "This pull request adds the plan <code>project-page-nav</code>, at status <code>ready</code> and priority <code>next</code>. It changes no code. The plan gives every page of a project the summary page's sidebar, drawn by the same code:",
+   "<ol><li><b>The stacks</b> are every stack that holds a <b>segment</b> of this project, newest first. A segment is a run of layers in one stack that carry the same project. Each stack shows whole, as a summary's sidebar shows it, with every segment's header, merged and closed layers included. This project's headers are current on its readme, and other projects' headers link to their pages.</li><li><b>The pages</b> are the project's supplemental files and nested projects, which move out of the tree column.</li><li><b>The footer row</b> keeps Projector's credit, and its history icon links to the plan's commits on GitHub.</li></ol>",
+   "The page takes the summary page's layout whole: a title row across the top, drawn by the same <code>titleRowHtml</code> helper a summary uses, holds the breadcrumbs, the badges, <b>View on GitHub</b>, and the plan's title, and the sidebar and the plan sit side by side beneath it. The plan's own first <code>&lt;h1&gt;</code> leaves the body, so the title shows once, and the review line goes. In the build, each project's <code>stacks</code> in <code>site.json</code>, a list of stacks that are each a list of segments, replaces its <code>reviews</code>.",
+   "The plan depends on <code>stack-header</code> (#216, merged as a plan, not yet implemented) and on its amendment in #226, still in review. Under the amendment, each pull request records one project or none, and the build splits each stack into segments, each with a <code>header</code> and its <code>members</code>. This plan reuses those segments, adds no request to GitHub, and takes the names the amendment settles. It leaves a list of the plan's sections in the sidebar to a follow-up plan."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests that build on one another, listed from the bottom layer up. A pull request alone is a stack of one.</li><li><b>Segment</b>: a run of layers in one stack that carry the same project, under one header. A layer that names no project joins the segment beneath it.</li><li><b>Header</b>: what <code>stack-header</code> puts above a segment, either a project, linked to its page, or a plain-text title for a stack that names no project.</li><li><b>Entry</b>: one pull request's record in <code>build_summaries</code>, in the order the Reviews index lists them.</li><li><b>Current header</b>: a header that names the page you are on, drawn highlighted and not as a link.</li><li><b>Tree column</b>: today's column of a project's pages, fixed to the window's left edge at 240 pixels.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>206c7fc</code>, found that the project sidebar would start about 70 pixels higher than a summary's. <code>6c508f7</code> fixed it by giving the project page a summary's title row.</li><li>Two reviews found prose lines past the plan's 80 columns, which <code>9765e89</code> and <code>eb396fa</code> rewrapped.</li><li><code>e25be77</code> moves the sidebar onto segments from #226. Its review is clean, with suggestions to name <code>stackSegmentsHtml</code>, to restate the segment rule as #226 words it, and to place #218's banner now that #218 has merged.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The project-page-nav plan",
+   "kicker": "One shared sidebar for project pages and summary pages, and the site.json field that feeds it",
+   "intro": [
+    "The plan has seven numbered sections. Section 1 shows what a project page lists today. Section 2 is the design: the page layout (2.2), what the sidebar shows (2.3), the build change (2.4), the shared renderer and its style rules (2.5), narrow screens and accessibility (2.6), and the interface a proposed project's page needs (2.7). Section 3 gives the reasons and the rejected alternatives, and section 4 lists the tests.",
+    "Three decisions carry the design. The project page takes the summary page's layout rather than drawing the sidebar inside the existing tree column. A stack shows whole on the page of every project that heads one of its segments, so it looks the same there as in each member's own sidebar. And <code>stacks</code> stores segments of pull request numbers, so each row takes its title from <code>site.json</code>'s <code>reviews</code> and every title is written once."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan is at <code>ready</code>, which claims it can be implemented without further questions. It is implemented after <code>stack-header</code> and its amendment in #226, whose segments, <code>find_stacks</code>, and <code>stackHeaderHtml</code> it reads."
+    },
+    {
+     "kind": "context",
+     "text": "Two questions are left to a follow-up plan, <code>project-page-sections</code> (#222, a draft stacked on this pull request): a list of the plan's sections in the sidebar, and how a nested project's sidebar reaches its sibling projects. Until then, a nested project's page reaches its parent through the breadcrumbs."
+    },
+    {
+     "kind": "context",
+     "text": "<code>proposed-projects</code> (#218) has merged. It gives a proposed project an ordinary record and resolves stack headers against proposed projects, which meets both conditions in § 2.7. Its banner sits above the status badges, which this plan moves into the title row."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/project-page-nav/readme.md",
+     "collapsed": false,
+     "note": "The new plan, at status <code>ready</code> and priority <code>next</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 154,
+       "text": "Section 2.2: with a title row and a sidebar, <code>frame</code> in <code>site/src/site.ts</code> draws the summary page's layout. A <code>.wrap</code> opens with <code>header.top</code>, followed by a <code>.layout</code> grid of a 250-pixel sidebar and a content column, under a site bar that scrolls away."
+      },
+      {
+       "kind": "verify",
+       "line": 181,
+       "text": "A summary's sidebar starts below its title row, because <code>renderPage</code> draws <code>header.top</code> inside <code>.wrap</code> and above <code>.layout</code>. The project page now does the same. Checked by reading <code>renderPage</code> and both stylesheets on <code>main</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 200,
+       "text": "The title row's heading matches the <code>&lt;h1&gt;</code> that this step removes. <code>title_from_text</code> in <code>src/projector/core.py</code>, which <code>page_title</code> also calls, takes the first line that starts with <code>#</code> and a space. Checked by reading both functions."
+      },
+      {
+       "kind": "context",
+       "line": 221,
+       "text": "Section 2.3: each stack draws whole. A header that names this project is current on its readme, and a link on a supplemental page. A header that names another project links to that project. Only the first current header carries <code>aria-current</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 285,
+       "text": "Every page of a stack carries the same <code>segments</code> under #226, and each entry's <code>stack</code> is its index group's first number, or None for a group of one. So <code>project_stacks</code> takes each stack once and files it under every project its headers name. Checked against #226's § 8.2 and <code>build_summaries</code> on <code>main</code>."
+      },
+      {
+       "kind": "context",
+       "line": 297,
+       "text": "Section 2.4: <code>stacks</code> holds each stack as its segments, newest stack first. A stack that spans two projects is written under each, and a stack whose only header is a title is under none."
+      },
+      {
+       "kind": "context",
+       "line": 313,
+       "text": "Section 2.5: <code>sideNavHtml</code> draws both sidebars, one <code>.stackgroup</code> per stack and a header with its rows per segment. #226 adds <code>stackSegmentsHtml</code> for the same part of a summary's sidebar, which this plan does not name yet."
+      },
+      {
+       "kind": "verify",
+       "line": 341,
+       "text": "The scoping problem is real. <code>site.css</code> writes the tree column as <code>.sitemain .side</code>, which also matches a sidebar <code>aside.side</code> inside <code>main</code>, and <code>site.css</code> loads after <code>summary.css</code> in <code>home_page</code>. Checked by reading both stylesheets and the page shell."
+      },
+      {
+       "kind": "context",
+       "line": 400,
+       "text": "Section 2.7 names what a proposed project's page needs: a project record, and stack headers that carry its name. Merged #218 provides both."
+      },
+      {
+       "kind": "verify",
+       "line": 430,
+       "text": "The 42-pixel figure holds. Every element is <code>border-box</code>, so the 240-pixel tree column with 16-pixel padding leaves 208 pixels, against the summary sidebar's 250-pixel grid column."
+      },
+      {
+       "kind": "context",
+       "line": 469,
+       "text": "Section 3: a stack shows whole on the page of every project it carries out. The rejected options were showing only this project's segments, and showing a stack only under its bottom segment's project."
+      },
+      {
+       "kind": "context",
+       "line": 541,
+       "text": "Section 4 writes a stack as its segments, such as <code>alpha/beta 9 · alpha 10</code>. The rows cover a stack that spans two projects, a project that recurs in one stack, and exactly one <code>aria-current</code> in every page test."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
