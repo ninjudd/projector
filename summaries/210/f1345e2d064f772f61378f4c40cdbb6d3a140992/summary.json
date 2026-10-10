@@ -1,0 +1,87 @@
+{
+ "version": 1,
+ "name": "SKILL.md counts as hand-written",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 210,
+  "title": "Count a skill's SKILL.md as hand-written, not documentation",
+  "head": "f1345e2d064f772f61378f4c40cdbb6d3a140992",
+  "headRef": "skill-md-not-docs",
+  "base": "71a57193dc002d3167914aedc9f28489894996ea",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page, the guided review page Projector builds for a pull request, sorts each changed file into a <b>kind</b>: hand-written, test, generated, or documentation. The kind decides two things a reviewer sees. Every file but a hand-written one starts collapsed, and the line counts at the top of the page add up each kind separately.",
+   "Before this change, every Markdown file was documentation. That includes a skill's <code>SKILL.md</code>, the instructions an agent follows when it runs the skill. In a pull request that changes a skill, that file is the part a reviewer most needs to read, and the page hid it by default and counted its lines as documentation.",
+   "Now a file named exactly <code>SKILL.md</code> counts as hand-written, so it starts expanded with no DOCS badge. A skill's other Markdown files, such as its reference guides, stay documentation. A <code>linguist-generated</code> mark in <code>.gitattributes</code> and a test path still take precedence."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review, at <code>f1345e2</code>: clean, with no finding threads.</li><li>The full test suite passes under Python 3.12, and the new test fails against the base's code.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Kind</b>: the class a summary page gives a changed file, one of hand-written (an empty string in the code), <code>test</code>, <code>generated</code>, or <code>docs</code>.</li><li><b>Skill</b>: a folder of instructions an agent loads; its entry point is <code>SKILL.md</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "kind",
+   "title": "How a file's kind is chosen",
+   "kicker": "One exception in kind_of, with a test that pins it down",
+   "intro": [
+    "<code>kind_of</code> decides a changed file's <b>kind</b>, the class a summary page shows it as. It checks in a fixed order: generated first, then test, then documentation, and anything left is hand-written. This change adds one exception to the documentation step, so a file whose name is exactly <code>SKILL.md</code> falls through to hand-written.",
+    "The page computes each file's kind from the diff every time it is built, so summaries already published pick up the new kind the next time the site deploys. Nothing stored needs to change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "The documentation step in <code>kind_of</code> now skips a file named exactly <code>SKILL.md</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The name is compared in its original case, while the rest of <code>kind_of</code> works on a lowercased path. That is why the line takes the file name from <code>path</code> rather than reusing the lowercased <code>name</code> above it: <code>docs/skill.md</code> stays documentation.",
+       "line": 215
+      },
+      {
+       "kind": "verify",
+       "text": "Every reader of the kind still works: <code>parse_diff</code> and <code>classify</code> set it, <code>stats</code> counts a <code>SKILL.md</code> under hand-written lines, and the page's renderer starts it expanded with no badge. Checked by reading each caller at this head."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "A new <code>KindTests</code> case covers a nested and a root <code>SKILL.md</code>, a skill's other Markdown file, a lowercase <code>skill.md</code>, and a <code>SKILL.md</code> marked generated.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test fails when run against the base's <code>summary.py</code> and passes at this head.",
+       "line": 840
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference names the exception",
+   "intro": [
+    "The CLI reference's section on how a summary classes files now says which files are documentation and that a skill's <code>SKILL.md</code> is not one of them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "A new paragraph under <b>Generated files</b> states the documentation rule and its <code>SKILL.md</code> exception."
+    }
+   ]
+  }
+ ]
+}

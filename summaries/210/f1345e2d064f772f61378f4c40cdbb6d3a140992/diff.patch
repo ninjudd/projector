@@ -1,0 +1,49 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 1fc9789..7f8443d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -847,6 +847,10 @@ file, its path decides: a name such as `package-lock.json`, `yarn.lock`,
+ `api.pb.go`, or `client_pb2.py`, or a path through a `gen/`, `generated/`,
+ `mocks/`, or `__generated__/` directory, makes it generated.
+ 
++A Markdown, MDX, reStructuredText, or AsciiDoc file is documentation, except a
++skill's `SKILL.md`. A skill is instructions an agent follows, so its
++`SKILL.md` counts as hand-written and starts expanded.
++
+ `summary init` and `site page` read the attributes with `git check-attr` in
+ the checkout they run in. `site build` and `site serve` read them in the
+ checkout `--repo-root` names, for each summary stored without them:
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 09faf76..872ef5e 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -211,7 +211,8 @@ def kind_of(path: str, generated: bool | None = None) -> str:
+         or "/__tests__/" in lower
+     ):
+         return "test"
+-    if lower.endswith((".md", ".mdx", ".rst", ".adoc")):
++    # A skill's SKILL.md is instructions an agent follows, so it is read as code, not as documentation.
++    if lower.endswith((".md", ".mdx", ".rst", ".adoc")) and path.rsplit("/", 1)[-1] != "SKILL.md":
+         return "docs"
+     return ""
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 3f273ef..ccfc4be 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -836,6 +836,15 @@ def embedded(page: Path) -> dict:
+     return json.loads(html[start:html.index("</script>", start)])
+ 
+ 
++class KindTests(unittest.TestCase):
++    def test_a_skill_file_is_hand_written_not_documentation(self) -> None:
++        self.assertEqual("", summary.kind_of("skills/summarize-pr/SKILL.md"))
++        self.assertEqual("", summary.kind_of("SKILL.md"))
++        self.assertEqual("docs", summary.kind_of("skills/summarize-pr/format.md"), "only the skill's entry point is code")
++        self.assertEqual("docs", summary.kind_of("docs/skill.md"), "the name is matched by its exact case")
++        self.assertEqual("generated", summary.kind_of("skills/made/SKILL.md", True))
++
++
+ class GeneratedAttributeTests(unittest.TestCase):
+     def test_the_attribute_overrules_the_path(self) -> None:
+         self.assertEqual("", summary.kind_of("site/assets/summary.js"))
