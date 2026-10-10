@@ -266,10 +266,10 @@ input.nbox { cursor: pointer; }
 .freviewed input { accent-color: var(--ok); margin: 0; }
 .fnote { margin: 0; padding: 13px 14px; font-size: 15px; line-height: 1.55; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
 .fnotes { border-bottom: 1px solid var(--border); }
-.file.collapsed .fnote, .file.collapsed .fnotes { border-bottom: 0; }
-.file.collapsed .fnote + .fnotes { border-top: 1px solid var(--border); }
+/* A collapsed file keeps its description, which then ends the card, and hides its notes with its diff. */
+.file.collapsed .fnote { border-bottom: 0; }
 .file.reviewed .fnote, .file.reviewed .fnotes { display: none; }
-.file.collapsed .fbody { display: none; }
+.file.collapsed .fnotes, .file.collapsed .fbody { display: none; }
 .fbody { max-height: none; }
 table.diff { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.45; table-layout: fixed; }
 table.diff + table.diff { border-top: 1px solid var(--border); }
