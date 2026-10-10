@@ -1,0 +1,178 @@
+{
+ "version": 1,
+ "name": "Expand controls in the header gutter",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 235,
+  "title": "Put a summary's expand controls in the @@ header's gutter, and let a file collapse again",
+  "head": "f7fac30a89b697d132d147281192a965f11541d9",
+  "headRef": "summary-context-controls",
+  "base": "fd55bc8d14fe3d2b117c0a18f6d4de21dc6e05bd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page shows each changed file as its diff hunks. On a Projector site, a reader can also reveal the unchanged lines hidden between those hunks, which the page fetches from a copy of the head's file. Each run of hidden lines is a <b>gap</b>. Before this change, the page drew every gap as a row of its own, holding the gap's controls and a count of its lines. Each of those rows took a full line of the diff, and once a reader had revealed lines, nothing put the file back.",
+   "This pull request makes three changes to that page:",
+   "<ul><li><b>Controls in the gutter.</b> A gap's controls move into the line-number gutter of the <code>@@</code> header row below it. Only the gap below the last hunk, which has no header after it, keeps a row of its own, a <code>gaptail</code> row with an empty code cell.</li><li><b>Headers that follow the lines.</b> Each header rewrites its <code>@@ -a,b +c,d @@</code> range as revealed lines join its hunk. When a gap between two hunks closes, the lower header goes and the upper one covers both hunks.</li><li><b>Collapse.</b> Once any line of a file is revealed, an icon in the gutter of the file's first header puts the file back as first drawn. The file's text stays fetched, so a later expand makes no new request.</li></ul>",
+   "To make collapse a plain redraw, the state each gap needs now lives on the row that holds its controls, and one click listener per file handles every control. The review found one defect in that redraw: it also redraws the concern notes under the diff's lines, and their checkboxes lose their saved state and listener."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Gap.</b> A run of head lines the diff hides, between two hunks or at either end of the file. The build lists each file's gaps in its <code>context</code>.</li><li><b>Tray.</b> A row's line-number gutter, where this change puts the gap's controls. <code>trayCells</code> draws it.</li><li><b>Header range.</b> The <code>-a,b +c,d</code> part of a hunk's <code>@@</code> line: the first line and the line count on the old and new sides.</li><li><b><code>gaptail</code>.</b> The row after the last hunk that holds the controls of the gap below it.</li><li><b>Expand up, down, all.</b> Reveal the 20 lines above the hunk below the gap, the 20 lines below the hunk above it, or the rest of the gap.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<ul class=\"tight\"><li><b>Line notes after a collapse.</b> Collapsing a file redraws its concern notes with checkboxes that have no stored state and no listener. A flag marks the line in <code>site/src/summary.ts</code>.</li><li><b>A stray CSS comment.</b> A comment about the collapse control sits above the <code>.moremenu</code> rule, and no rule for the control exists. A flag marks it in <code>site/assets/summary.css</code>.</li><li><b>Checked in Chromium.</b> Header ranges stayed accurate through 67 random expands. Collapse kept the scroll position, and keyboard focus moved only for keyboard users.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "page",
+   "title": "The page script draws trays and keeps headers accurate",
+   "kicker": "How site/src/summary.ts draws each gap's controls in a header's gutter, grows header ranges, merges hunks, and collapses a file.",
+   "intro": [
+    "The page script has two halves. <code>renderSummary</code> builds the page's HTML from the summary data. <code>wireSummary</code> then attaches the behavior. Each file that has hidden lines gets a <code>ContextView</code>, a small object through which the second half reuses the first half's drawing functions.",
+    "<h4>Drawing</h4>",
+    "<code>trayCells</code> draws a row's line-number gutter and code cell. On a hunk's header row, the gutter holds the controls of the gap above that hunk, and the code cell holds the header text. On the <code>gaptail</code> row, the code cell stays empty. The first header of a file with hidden lines also holds a collapse button, drawn <code>hidden</code> until something is expanded. <code>range</code> and <code>headerText</code> turn a hunk's numbers into a range and back into <code>@@</code> text, keeping whatever Git wrote after the second <code>@@</code>, such as the enclosing function. <code>bodyHtml</code> keeps the file's diff exactly as first drawn, for collapse.",
+    "<h4>Behavior</h4>",
+    "One click listener on each file's body finds the button clicked and calls one of three functions:",
+    "<ol><li><b><code>expand</code></b> fetches the file once, adds the revealed lines, and records on the rows what changed. Expand up inserts lines just under the header below the gap and moves that header's start up. Expand down appends lines to the hunk above and moves that header's end down. Each row stores the lines its gap has left in <code>data-start</code> and <code>data-end</code>, and each header stores its grown range in four <code>data-</code> attributes.</li><li><b><code>closeTray</code></b> runs when a gap has no lines left. Between two hunks, it removes the lower header, moves the lower table's rows into the upper table, and extends the upper header's range. Below the last hunk, it removes the <code>gaptail</code> row. Above the first hunk, it keeps the header, now starting at line 1, because that header holds the collapse button.</li><li><b><code>collapseFile</code></b> replaces the file's body with <code>bodyHtml</code>, highlights it again, and scrolls so that the first header stays where it was on screen.</li></ol>",
+    "Focus moves only for a reader on the keyboard. <code>focusVisible</code> asks whether the browser shows the clicked button's focus, as it does after a key press and not after a mouse click. When a gap closes, a keyboard reader moves to the next row with controls, or to the file header's toggle after the last gap. Collapse also moves a keyboard reader to that toggle. Every focus move passes <code>preventScroll</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each header's range matches the rows under it. In headless Chromium, on a fixture served with <code>project site serve --base /projector/</code>, I checked every table after each of 67 random expand clicks. Each header's numbers equalled the first line and line count of its rows on both sides. Each round ended as one table under <code>@@ -1,200 +1,201 @@</code>, holding the head's file line for line."
+    },
+    {
+     "kind": "verify",
+     "text": "Focus and scrolling. With real <code>Tab</code> and <code>Enter</code> key events, expand all on a gap moved focus to the next header's expand down, and collapse moved it to the file header's toggle. A mouse click on collapse left focus on the body. No click or key press changed <code>scrollY</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "The renderer's new tray, range, and header functions, and the one listener per file that expands, merges, and collapses.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>rangeText</code> writes one side of a range the way Git does. It leaves the count out when the count is 1. For a side with no lines, it writes the line just before the hunk and a count of 0.",
+       "line": 86
+      },
+      {
+       "kind": "context",
+       "text": "<code>collapse</code> is three-valued. <code>undefined</code> means the row is not the file's first header and draws no collapse button. <code>false</code> draws the button hidden, and <code>true</code> shows it.",
+       "line": 247
+      },
+      {
+       "kind": "context",
+       "text": "Expand up inserts directly after the header row. Lines an earlier expand up revealed already sit there, so the new lines land above them and the order holds.",
+       "line": 1004
+      },
+      {
+       "kind": "flag",
+       "text": "Collapsing a file breaks the checkboxes of its line notes. <code>bodyHtml</code> includes each concern note that sits under a line of the diff. <code>wireSummary</code> gives each <code>.note-box</code> its stored state, its row class, and its <code>change</code> listener only at startup. In Chromium, a note checked before a collapse showed unchecked afterward. A note checked after a collapse was not saved, and the file's badge still read <code>1 of 1 open</code>. The fix is to restore each box's stored state after the redraw, and to delegate the <code>change</code> handler to the document.",
+       "line": 1067
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "styles",
+   "title": "Styles and the compiled script",
+   "kicker": "The gutter controls' smaller size, the gaptail row's colours, and the rebuilt site/assets/summary.js.",
+   "intro": [
+    "The stylesheet removes the old expander row's rules. The <code>gaptail</code> row now takes the hunk header's colours, and the buttons shrink to 20 by 18 pixels, so three of them fit in a two-column gutter without making the header row taller than its 24 pixels. <code>.xbtn[hidden]</code> is needed because <code>.xbtn</code> sets <code>display: inline-grid</code>, which would otherwise override the <code>hidden</code> attribute on the collapse button.",
+    "<code>site/assets/summary.js</code> is the TypeScript compiler's output. The test suite fails when it differs from a fresh build."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The compiled script matches its source. In a scratch worktree at this head, <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> passed, and the build left <code>site/assets/summary.js</code> unchanged."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/assets/summary.css",
+     "note": "Header and gaptail colours, smaller gutter buttons, and the failure message's style.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This comment describes a rule for the collapse control, but it sits above <code>.moremenu</code>, the popover menu of file links. The stylesheet has no <code>.xcollapse</code> rule, because the control takes its look from <code>.xbtn</code>. A maintainer who trusts the comment would edit the menu's styles.",
+       "line": 275
+      },
+      {
+       "kind": "verify",
+       "text": "Three controls fit in the gutter. At 1200 and 390 pixels wide in Chromium, the rightmost button ended inside the gutter, and the page did not scroll sideways.",
+       "line": 315
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Renderer tests",
+   "kicker": "ExpanderTests run the compiled renderer under node and check the trays, header text, and collapse markup.",
+   "intro": [
+    "<code>ExpanderTests</code> in <code>tests/test_site.py</code> build a site from a fixture with two hunks and run the compiled page script under node. The fixture's second hunk header gains trailing text, <code>def fifty():</code>, so the tests can check that a rewritten header keeps it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The suite passes at this head. With Python 3.12, <code>python -m unittest discover</code> ran 639 tests with no failures or skips."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This test calls <code>headerText</code> directly with grown ranges: a start moved up, an end moved down, the whole file, and a side with no lines. It does not drive clicks, so the browser check above covers the click handling.",
+       "line": 1626
+      },
+      {
+       "kind": "context",
+       "text": "This test checks that <code>bodyHtml</code> equals the body the page first drew, which is what collapse puts back. The fixture has no line notes, so it cannot catch the checkbox defect flagged on <code>summary.ts</code>.",
+       "line": 1662
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plan and the CLI guide",
+   "kicker": "Section 9 of the summary-diff-context plan, and docs/cli.md's paragraph on what a page can expand.",
+   "intro": [
+    "The <code>summary-diff-context</code> plan is <code>completed</code>, so this change appends a section rather than rewriting its design. Section 9 records the three details that refine how the page expands a gap: controls in the header's gutter, header ranges that follow revealed lines, and collapse. It also records one reversal. The first hunk's header now stays when the gap above it closes, because it holds the collapse button. <code>docs/cli.md</code> describes the controls where they now sit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/summary-diff-context/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 9 changes two statements in § 2.3. Expand up now inserts below the header, not above it, and a closed gap above the first hunk keeps that hunk's header.",
+       "line": 301
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}
