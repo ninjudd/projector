@@ -37,17 +37,29 @@ A pull request with no project, which is most of them, has nothing above its
 stack at all. Of the 22 pull requests whose summaries this repository's site
 builds, 19 link to no project.
 
+A header for a stack also needs to know which pull requests the stack holds,
+and the site works that out from base branches alone. `stack_bases` treats a
+pull request as stacked when the base branch its newest summary records is
+another pull request's head branch. GitHub records stacks itself, and its
+record is more complete. It keeps a stack's pull requests after they merge.
+It also keeps a layer whose base has since moved to the default branch, which
+base branches cannot show. In this repository, the top layer of one stack
+targets `main`, so base branches would list it alone.
+
 ## 2. Solution
 
 Each summary records the one project its stack carries out, or none, and a
-short title for the stack. The site build decides one header per stack from
-its layers' summaries, lowest layer first: the first project the site has a
-page for, else the first title. The Reviews index draws that header above each
-stack's rows, and a summary page's sidebar draws it above its stack list in
-place of the project rows. A project header links to the project's page. A
-title header is plain text. A summary published before the change gets its
-header by a fixed rule from the fields it already has, so nothing needs to be
-published again.
+short title for the stack. The site build takes each stack's pull requests
+and their order from GitHub's stacks. For a pull request that GitHub puts in
+no stack, and for every pull request when GitHub cannot answer, it falls back
+to base branches, as it does today, and never fails. It decides one header per stack from its layers' summaries,
+lowest layer first: the first project the site has a page for, else the first
+title. The Reviews index draws that header above each stack's rows, and a
+summary page's sidebar draws it above its stack list in place of the project
+rows. A project header links to the project's page. A title header is plain
+text. A merged stack stays one stack. A summary published before the change
+gets its header by a fixed rule from the fields it already has, so nothing
+needs to be published again.
 
 ### 2.1 A summary records one project and a title
 
@@ -57,36 +69,31 @@ stack's title:
 | Field | Value | Meaning |
 | --- | --- | --- |
 | `project` | A project's canonical name, such as `"stack-header"` or `"payments/invoices"` | The one project this pull request's stack carries out: the plan the stack adds, specs, implements, or completes. |
-| `project` | `""` | This pull request names no project. When no layer of its stack names one either, the stack has no project. A layer above that names a project gives the stack that project (§ 2.2, step 3). |
-| `project` | `null`, or no `project` key | Not decided yet. `init` writes `null`, and `publish` refuses it. The build reads a summary published before the field existed by the rule in § 2.2, step 2. |
+| `project` | `""` | This pull request names no project. The stack takes the project of its lowest layer that names one (§ 2.3, step 3), and has none when no layer names one. |
+| `project` | `null`, or no `project` key | Not decided yet. `init` writes `null`, and `publish` refuses it. The build reads a summary published before the field existed by the rule in § 2.3, step 2. |
 | `name` | A short title, at most 60 characters | The title of the work the stack does, or the work of the pull request alone. The site shows it as the stack's header when the stack has no project. |
 
-`summarize-pr` fills both fields in step 4 of "Build the summary", in this
-order:
+`summarize-pr` fills both fields in step 4 of "Build the summary". Each
+summary records its own choices, and copies no other layer's:
 
 1. **Choose the project the change is about.** List the candidates with
    `project list --json`, and look at the plan files the diff changes. The
    pull request's body and branch often name the plan. When the change touches
    several plans, choose the plan it adds or the plan whose status it changes.
    A plan touched only in passing, such as by a link fix or a rename across
-   every plan, is not the change's project. When no single plan is the
-   subject, record `""`.
+   every plan, is not the change's project. For a pull request in a stack,
+   choose the stack's project, which this layer may not edit.
+   `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's pull
+   requests on GitHub, and the summaries ref holds what each summarized layer
+   chose. When no single plan is the subject, record `""`.
 2. **Name the whole stack.** Write two to six words in sentence case that name
    the work, such as `Stack header plan` or `Summary publish retry`. Do not
-   write a sentence, and do not copy the pull request's title. When you
-   summarize the bottom layer of a stack that you know will grow, name the
-   work of the whole stack.
-3. **Agree with the layer beneath.** When the pull request is stacked, its
-   summary's `pr.basePr` names the pull request beneath it. Read that pull
-   request's newest summary from the summaries ref. When its `project` is a
-   non-empty string, copy it over your choice from step 1. When its `name` is
-   non-empty, copy it over your choice from step 2. Otherwise keep your own
-   choice: a layer beneath that names no project, such as a refactor the plan
-   never mentions, leaves the project to the layers above it. To change a
-   stack's project or title, publish the summary of the lowest layer that
-   names one again, because the build takes the header from that layer.
+   write a sentence, and do not copy the pull request's title. The site shows
+   the lowest layer's `name`, so on the bottom layer of a stack, name the work
+   of the whole stack as far as you know it. To change a stack's title,
+   publish the bottom layer's summary again.
 
-An update makes the same three choices. `review-pr`, and the skill's "Update
+An update makes the same two choices. `review-pr`, and the skill's "Update
 the page when the pull request moves" section, start from the newest summary
 on the summaries ref. A summary published before this change has no
 `project`, so step 2 of that section sets `project` and checks `name` by the
@@ -101,16 +108,96 @@ request records the plan it adds, and the default branch the site builds from
 lacks that plan until the pull request merges. `project site page` skips
 these checks, so you can preview a summary in progress as often as you like.
 
-### 2.2 The build decides one header per stack
+### 2.2 The build takes each stack from GitHub, and falls back to branches
+
+GitHub records stacked pull requests. The `gh stack` CLI creates them, and the
+repository's stacks API lists each stack with a number and its pull requests
+from the bottom up. A stack keeps its pull requests, and their order, after
+they merge.
+
+Where GitHub has no stack to give, the build reads base branches, as it does
+today: a pull request sits on the pull request whose head branch is its base
+branch. Stacks never fail the build. The build reads the stacks once, and
+works out every stack's members once, for the index, the sidebar, and the
+header:
+
+1. `build_checkout` in `src/projector/cli.py` passes `build_site` a new
+   `stacks_lookup`, beside `lookup` and `status_lookup`. It calls a new
+   `summary.repo_stacks`, which makes one paginated request,
+   `GET repos/{owner}/{repo}/stacks?per_page=100`, with the
+   `X-GitHub-Api-Version: 2026-03-10` header that the REST reference names.
+   Like `pr_status`, the lookup returns None when GitHub cannot answer. That
+   covers a 404, which a host without the endpoint or a token without access
+   gets, a network error, an answer that is not a list, any other failure,
+   and a build with no `gh` or no repository. The listing is one paginated
+   request, so GitHub answers for every pull request in a build or for none.
+   A failure on any page leaves the lookup with None.
+2. A new `find_stacks` in `src/projector/site/__init__.py` builds one map,
+   from each pull request to the one beneath it, and walks it as `stack_rows`
+   does today:
+   - **Within a GitHub stack, GitHub decides.** Each member sits on the
+     member before it in GitHub's order, merged and closed members included.
+     The bottom member sits on nothing, because GitHub roots the stack on its
+     base branch. The base branch a member's summary records does not count,
+     even when it names another pull request.
+   - **Everywhere else, base branches decide.** Every pull request in no
+     GitHub stack, and every pull request when the lookup returns None, sits
+     on the pull request whose head branch is its base branch. `stack_bases`
+     finds it as it does today, with the same `lookup` call for a branch that
+     no summary names. A pull request chained by hand onto a member of a
+     GitHub stack therefore joins that stack. Each pull request sits on one
+     other at most, so no base branch joins two GitHub stacks.
+   - **The walk keeps GitHub's order.** From each pull request, the walk
+     visits its successor in its own GitHub stack first, then its other
+     branches, lowest number first. A GitHub stack's members stay together in
+     GitHub's order, and a pull request joined by branch comes after them.
+   - **A member without a summary stays in the stack**, as a pull request
+     known only as a base does today.
+3. `stack_groups`, which orders the Reviews index, and `stack_rows`, which
+   lists the sidebar's stack, both read the members that `find_stacks`
+   returns, instead of working membership out themselves.
+
+The build depends on as little of the API as it can, because the API is new.
+GitHub's guide to stacked pull requests, at gh.io/stacks, covers the
+`gh stack` CLI. The REST reference, under `pulls/stacks`, documents the
+endpoints, and marks neither as a preview. The build reads only each stack's
+`number` and each member's `number`, in the order `pull_requests` lists them.
+The REST reference says that a stack is created from pull requests listed
+bottom to top, but not how a response orders them. Every stack in this
+repository comes back bottom first.
+
+- **A missing field.** A stack without an integer `number` or a
+  `pull_requests` list is left out, and so is a member without an integer
+  `number`. Their pull requests fall back to base branches.
+- **A pull request in two stacks.** It belongs to the stack with the higher
+  number.
+- **A lookup that fails for one branch.** The `lookup` for a base branch can
+  fail while others answer, as it can today. The pull request it was asked for
+  then sits on nothing, and the rest of the build is unchanged.
+
+**One note per build.** The build prints one plain line about stacks, never
+a `::warning::` annotation and never a line per pull request. A pull request
+in no GitHub stack is the normal case and adds nothing to the line:
+
+```text
+stacks: read 16 GitHub stacks in 1 request
+stacks: read 16 GitHub stacks in 1 request; left out 1 stack with no number, whose pull requests sit on their base branches
+stacks: GitHub's stacks could not be read (HTTP 404), so every pull request sits on its base branch
+```
+
+A GitHub stack's number is its key while the build groups it. The index,
+every sidebar, and the header take their members from the same stack, so a
+merged stack shows as one group under **Closed**, and in each of its pull
+requests' sidebars, in GitHub's order.
+
+### 2.3 The build decides one header per stack
 
 `build_summaries` in `src/projector/site/__init__.py` decides each stack's
 header before it writes any page:
 
-1. It reads each pull request's newest summary, as it does today. It computes
-   `bases` with `stack_bases`, and the stacks with `stack_groups`. Each group
-   lists a stack's pull requests that have summaries in the order of
-   `stack_rows`: the bottom layer first, then each pull request's branches
-   after it, lowest number first.
+1. It reads each pull request's newest summary, as it does today, and takes
+   each stack's members, bottom first, from § 2.2. The members with a summary
+   on the site, in that order, are the stack's group.
 2. It resolves each pull request's own project from its newest summary,
    against the projects the site has a page for:
    - A `project` string names that project when the site has it, and no
@@ -125,7 +212,7 @@ header before it writes any page:
      `{"project": <name>, "title": <the plan's title>, "url": "<base>projects/<name>/"}`.
    - Without one, the first member with a non-empty `name` gives
      `{"title": <name>}`.
-   - Without either, the bottom member's pull request title gives
+   - Without either, the first member's pull request title gives
      `{"title": <pr.title>}`. `validate` requires that title, so every stack
      has a header.
 4. When a member after the header's member records a different project, the
@@ -160,7 +247,7 @@ A page's `data.json` and a row of `site.json` carry the header as one of these:
 | `project` | The stack has a project | The project's canonical name |
 | `url` | The stack has a project | The project's page, under the site's base path |
 
-### 2.3 The index and the sidebar draw the header
+### 2.4 The index and the sidebar draw the header
 
 The site's pages load `summary.js` for the helpers at its top, such as `esc`
 and `statusHtml`. A new helper there, `stackHeaderHtml`, draws the header's
@@ -197,6 +284,17 @@ divider below each stack stays where it is:
  ─────────────────────────────────────────────────────────────────────────────────────
 ```
 
+With **Closed** checked, a merged stack is one group in GitHub's order. This
+is this repository's stack of #196 and #197, whose summaries name no project,
+under the `name` of its lowest layer:
+
+```text
+ Stack List in Summary Sidebar                                                ← plain text
+ #196  List the pull requests in a summary's stack in its sidebar              Merged   …
+ #197  Add a Files changed pane to a summary page and simplify its header …    Merged   …
+ ─────────────────────────────────────────────────────────────────────────────────────
+```
+
 The header row takes the top padding that each stack's first row has today.
 `site.css` gives that padding with
 `table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }`, and the
@@ -224,6 +322,8 @@ The header keeps the look of today's project row: 13.5-pixel text at weight
 600, a row's padding, pulled up toward the box's top edge. A project header
 has the row's hover background. A title header has the same text with no
 hover state. Like a stack row's title, a header shows at most three lines.
+The stack list below it is the stack's members from § 2.2, so a merged pull
+request's sidebar still lists every layer of its stack.
 
 ```text
  ┌──────────────────────────────────┐
@@ -250,7 +350,7 @@ hover state. Like a stack row's title, a header shows at most three lines.
  └──────────────────────────────────┘
 ```
 
-### 2.4 What reads `projects` and `name` after the change
+### 2.5 What reads `projects` and `name` after the change
 
 | Reader | Today | After the change |
 | --- | --- | --- |
@@ -260,27 +360,28 @@ hover state. Like a stack row's title, a header shows at most three lines.
 | Page `<title>` and the summary's `h1` | The pull request's title, falling back to `name` | The pull request's title. `validate` requires it, so the fallback never runs, and the change removes it from `pr_title` and `renderPage`. |
 | A file card's **View project** link | The deepest project whose folder holds the file | Unchanged. It says where the file lives, not what the stack is for. |
 | Search | Indexes the docs and the project files | Unchanged. It reads neither field. |
-| `prepare_page` | Sets an empty `name` to `<repo>#<n> summary` | Passes `name` through as written, so § 2.2, step 3 can tell an empty name from a set one |
+| `prepare_page` | Sets an empty `name` to `<repo>#<n> summary` | Passes `name` through as written, so § 2.3, step 3 can tell an empty name from a set one |
 
 The change removes the page data's `projects` list, the `projects` list that
 `build_summaries` keeps on each entry for `build_site`, the `name` field of a
 `site.json` row, the `projectsList` function, and the `.prblock .stack.projects`
 rules in `site/assets/summary.css`. The build still reads a summary's
-`projects` list, but only in § 2.2, step 2, for a summary with no `project`.
+`projects` list, but only in § 2.3, step 2, for a summary with no `project`.
 
-### 2.5 Files that change
+### 2.6 Files that change
 
 | File | Change |
 | --- | --- |
-| `src/projector/summary.py` | `init` writes `"project": null`. `publish` checks `project` and `name` against `NAME_MAX` and says what to set. `prepare_page` stops setting a default `name`. |
-| `src/projector/site/__init__.py` | `project_linker` returns a summary's own project. A new `stack_header` takes a group's members and returns its header. `build_summaries` computes the groups before it writes pages, writes `header` in place of each entry's `projects`, and prints the warning. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
+| `src/projector/summary.py` | `repo_stacks` lists the repository's stacks. `init` writes `"project": null`. `publish` checks `project` and `name` against `NAME_MAX` and says what to set. `prepare_page` stops setting a default `name`. |
+| `src/projector/cli.py` | `build_checkout` passes `stacks_lookup`, which returns None when `repo_stacks` fails. |
+| `src/projector/site/__init__.py` | `build_site` and `build_summaries` take `stacks_lookup`. `find_stacks` works out each stack's members once, and `stack_groups` and `stack_rows` read them. `project_linker` returns a summary's own project. A new `stack_header` takes a group's members and returns its header. `build_summaries` computes the groups before it writes pages, writes `header` in place of each entry's `projects`, prints the note about stacks, and warns about a stack whose layers disagree. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
 | `site/src/summary.ts` | `stackHeaderHtml`. The sidebar's header replaces `projectsList`. The page title drops its `name` fallback. |
 | `site/src/site.ts` | `reviewsTable` starts each body with its header row. A project page lists its reviews by pull request title. |
 | `site/src/globals.d.ts` | A `StackHeader` type. `header` replaces `projects` in `SummaryData`, and replaces `name` in `SiteReview`. |
 | `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals, takes the body's top padding in place of the `tbody tr:first-child td` rule, and adds no divider. |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
-| `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the three choices in § 2.1, in both "Build the summary" and step 2 of "Update the page when the pull request moves". |
-| `docs/cli.md` | The Reviews index, the sidebar, and the project pages as § 2.3 and § 2.4 describe them. |
+| `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the two choices in § 2.1, in both "Build the summary" and step 2 of "Update the page when the pull request moves". |
+| `docs/cli.md` | Stacks from GitHub and the fallback to base branches, the Reviews index, the sidebar, and the project pages, as § 2.2, § 2.4, and § 2.5 describe them. |
 | `tests/test_summary.py`, `tests/test_site.py` | The tests in § 4. |
 
 ## 3. Why this design
@@ -292,20 +393,49 @@ rules in `site/assets/summary.css`. The build still reads a summary's
   without editing it, and a rename edits plans it is not about. Rejected:
   deriving every pull request's project from its diff, which is today's rule
   and the source of both failures in § 1.
-- **The lowest layer decides, and every layer copies it.** A stack has no file
-  of its own on the summaries ref. Each layer has its own summary. Copying the
-  layer beneath when a summary is written makes the layers agree, and taking
-  the lowest layer when the site builds makes a disagreement harmless and
-  visible in the build log. When the bottom layer merges and the next layer is
-  rebased onto the default branch, that layer holds the copied values, so the
-  stack keeps its header. Rejected:
-  - A record per stack, such as `summaries/stacks/<bottom>.json`. A stack has
-    no stable key, because its bottom changes as layers merge and new layers
-    stack on.
+- **GitHub's stack decides membership, and base branches cover the rest.**
+  GitHub holds the stack the author made, keeps it whole after a merge, keeps
+  a layer whose base has moved to the default branch, and gives each stack a
+  number. Base branches stay for a repository or a host without stacks, and
+  for pull requests stacked by hand. Where the two disagree about a GitHub
+  stack's member, GitHub wins, because its record is the one the author made.
+  A pull request chained by hand onto a GitHub stack joins it, because a
+  reader of the pull request on GitHub sees it on that stack's branch.
+  Rejected:
+  - Base branches alone, which lose a layer once its base moves, and which
+    depend on when each layer was last summarized.
+  - Keeping a pull request chained by hand out of the GitHub stack it builds
+    on. The site would then split what the branches on GitHub join.
+  - One request per pull request with `?pull_request=`. A pull request in no
+    stack needs its own request to learn that, so this repository would make
+    21 requests where the list makes one. A per-pull-request answer can also
+    fail for some pull requests and not others, which one listing cannot.
+  - Failing the build, or warning per pull request, when GitHub cannot
+    answer. The site has to build on every host Projector supports, and a
+    repository without stacks is normal, so one plain note says what
+    happened.
+- **Each layer records its own choice, and the lowest decides.** GitHub's
+  stack keeps every layer, merged ones included, so every build reads every
+  layer's summary. No layer has to copy another to keep the header steady
+  through a merge. Taking the lowest layer that has a project makes the choice
+  predictable, and the warning makes a disagreement visible. Nothing
+  overwrites a layer's project with another layer's `""`, so a refactor at the
+  bottom of a stack never hides the project above it. Rejected:
+  - Copying the layer beneath when a summary is written. It keeps a stack
+    found from base branches steady after its bottom merges, but GitHub's
+    stack already does that, and a stack found from base branches can take
+    its header from the layers it still has. The copy rule also has to except
+    `""`, or a refactor at the bottom erases the project.
+  - A record per stack, such as `summaries/stacks/<number>.json`, keyed by the
+    GitHub stack's number. The number is stable, but the record would be a
+    second file for `publish` to write, and every layer's publish would race
+    to write it. A stack found from base branches has no number, so the
+    record would cover only some stacks. Reading the members' summaries
+    covers both kinds.
   - A majority vote among the layers. A reader cannot predict it, and two
     layers that disagree tie.
-  - The top layer's choice. Two branches stacked on one pull request give a
-    stack two tops.
+  - The top layer's choice. A stack with two branches on one pull request has
+    two tops.
 - **A layer with no project does not hide one above it.** A stack often opens
   with a refactor that the plan's work needs but the plan never names.
   Skipping members with no project gives that stack its project. Skipping a
@@ -320,7 +450,7 @@ rules in `site/assets/summary.css`. The build still reads a summary's
   `""`, an agent that skipped the choice would publish "no project", and
   nothing would show the mistake. Refusing `null` makes every new publish
   state its choice. The build still reads an older summary, which has no
-  `project` key, by the fixed rule in § 2.2.
+  `project` key, by the fixed rule in § 2.3.
 - **The migration rule keeps today's answer where today's answer is one
   project.** A summary with a `projects` list keeps its first known name, and
   one whose diff changes exactly one project's files keeps that project. One
@@ -335,29 +465,58 @@ rules in `site/assets/summary.css`. The build still reads a summary's
   `statusHtml`, which the site's pages already load from `summary.js`. The
   index and the sidebar draw the same header from the same data and escape it
   the same way.
-- **The header reuses the index's grouping.** `stack_groups` already lists
-  each stack's members in order for the Reviews index. The header uses those
-  groups instead of walking `stack_bases` again, so the index's grouping and
-  the header's members cannot drift apart. The sidebar's stack list comes from
-  `stack_rows`, which walks the same tree, so a page's header and its stack
-  list cover the same pull requests.
+- **The index, the sidebar, and the header read one set of stacks.**
+  `find_stacks` works out membership once, and `stack_groups`, `stack_rows`,
+  and the header all read it. The index's grouping, a page's stack list, and
+  the header's members cannot drift apart.
 
 ## 4. Acceptance criteria
 
 Build tests in `tests/test_site.py` give the build summaries in a temporary
-checkout with the projects `alpha` and `alpha/beta`, as the existing tests do:
+checkout with the projects `alpha` and `alpha/beta`, as the existing tests do.
+A test's `stacks_lookup` returns the stacks it lists, or None.
+
+Stacks, where GitHub answers:
+
+| Do | Expect |
+| --- | --- |
+| Build with a GitHub stack of #9 and #10, where #10's summary records `baseRef` `main` | #9 and #10 share one group on the index and one stack list in each sidebar, in GitHub's order |
+| Build with a GitHub stack of #9 and #10, where #10's summary records #14's head branch as its base | GitHub wins: #10 sits on #9, and #14 joins neither |
+| Build with a GitHub stack whose pull requests are all merged | One group in GitHub's order, listed under **Closed**, and each page's sidebar lists every layer |
+| Build with a GitHub stack of #9 and #11, where #11 has no summary | #9's sidebar lists #11, linked to GitHub. The index's group holds #9 alone. |
+| Build with a GitHub stack of #9 and #10, and #15 in no stack, based on #10's branch | #15 joins the stack after #10: #9, #10, #15 |
+| Build with a GitHub stack of #9 and #10, and #15 in no stack, based on #9's branch | #15 joins after the stack's members: #9, #10, #15 |
+| Build with GitHub stacks of #9 and #10, and of #20 and #21, where #20's summary is based on #10's branch | Two stacks: the branch between them is ignored |
+| Build with no GitHub stack for #12, whose summary is based on #13's branch | #12 and #13 share a group by base branches, as today |
+| Build with a stack missing `number`, or a member missing `number` | Those pull requests sit on their base branches, and the note line counts what the build left out |
+| Build with a pull request listed in two stacks | It belongs to the stack with the higher number |
+
+Stacks, where GitHub does not answer:
+
+| Do | Expect |
+| --- | --- |
+| Build with `stacks_lookup` returning None | Every stack comes from base branches, exactly as today |
+| Build where `lookup` answers for #13's branch and fails for #16's | #12 sits on #13, #17 based on #16's branch stands alone, and the rest of the build is unchanged |
+| Call `summary.repo_stacks` with a fake `gh` that answers two pages | Every stack from both pages |
+| Call it with a fake `gh` that answers 404, fails on the second page, fails with a network error, or answers with an object that is not a list | None, through `build_checkout`'s lookup, in each case |
+
+In every row of both tables, the build returns no failure for stacks, prints
+exactly one `stacks:` line, and prints no `::warning::` about stacks.
+
+Headers:
 
 | Do | Expect |
 | --- | --- |
 | Build a stack whose bottom layer records `alpha` and whose upper layer records `""` | Both pages and both `site.json` rows carry alpha's header, with `url` `/projects/alpha/` |
 | Build a stack whose bottom layer records `""` and whose second layer records `alpha` | The header is alpha's |
+| Build a merged GitHub stack whose bottom layer records `alpha` | Every layer's page and row carry alpha's header |
 | Build a stack whose layers record `alpha`, then `alpha/beta` | The header is alpha's, and the build prints one `::warning title=Stack project::` line naming the upper layer |
 | Build a summary that records `no-such-project` | A title header from its `name` |
 | Build a summary that records `""` while its diff changes alpha's plan | A title header, and alpha's `reviews` leaves it out |
 | Build a summary with no `project` whose diff changes one project's files | That project's header |
 | Build a summary with no `project` whose `projects` list is `["no-such-project", "alpha/beta"]` | alpha/beta's header |
 | Build a summary with no `project` whose diff changes files in both projects | A title header |
-| Build a stack with no project whose bottom layer's `name` is empty | The next layer's `name`. With every `name` empty, the bottom pull request's title. |
+| Build a stack with no project whose bottom layer's `name` is empty | The next layer's `name`. With every `name` empty, the first layer's pull request title. |
 | Read `site.json` | Every row has `header`, and none has `name` or `projects` |
 | Read a project's `reviews` in `site.json` | Every review in a stack whose header is that project, newest first, and no other |
 | Build one summary with `project site page` | The page's header is `{"title": <name>}` |
@@ -385,41 +544,54 @@ sidebar and index tests do:
 
 The build tests cover what the site does with the values a stack's layers
 record. Which values each layer records is the skill's job, so the
-implementing pull request's `skills/summarize-pr/SKILL.md` states § 2.1,
-step 3 as written. It copies the layer beneath's `project` only when that
-value is a non-empty string, and its `name` only when that value is not
-empty. A stack that opens with a refactor recording `""` therefore keeps the
-project that a layer above it records.
+implementing pull request's `skills/summarize-pr/SKILL.md` states § 2.1 as
+written: each summary records its own choices and copies no other layer's
+value. A stack that opens with a refactor recording `""` therefore keeps the
+project that a layer above it records, as the second header test proves on
+the site.
 
 The existing tests `test_the_sidebar_lists_each_project_as_a_row_above_the_stack`,
 `test_a_review_links_to_the_projects_its_diff_changes_and_back`, and
 `test_a_summary_can_name_a_project_its_diff_does_not_touch` assert today's
 project lists. The change rewrites them to assert the header. Every new test
 above fails before the change, except the publish of a plan the checkout
-lacks.
+lacks. The rows that expect today's grouping from base branches fail only
+because `build_site` takes no `stacks_lookup` yet. They guard that grouping
+against the change.
 
 In a browser, the implementing pull request checks `project site serve` on
 this repository's summaries ref, in the light and dark themes, at full width
 and at 375 pixels. Each stack on Reviews has a left-aligned header above its
-rows. Each summary's sidebar has one header above its stack. A project header
-opens the project's page, and clicking a title header does nothing. A
-60-character title fits in three lines of the sidebar. The pull request's
-Testing section records these steps.
+rows. The merged stack of #196 and #197 is one group under **Closed**, and
+each of their sidebars lists both. Each summary's sidebar has one header above
+its stack. A project header opens the project's page, and clicking a title
+header does nothing. A 60-character title fits in three lines of the sidebar.
+The pull request's Testing section records these steps.
 
 ## 5. Cost
 
-Cost does not matter here. The build already reads every summary and computes
-`stack_groups`. The header adds one pass over each group's members and one
-dictionary lookup per summary. Each page's data and each `site.json` row gain
-one object of up to three short strings. `publish` adds two field checks. No
-path gains a network call, a file read, or a Git command.
+The new cost is the stacks request, and it is small. The build makes one
+paginated request for the whole repository, at 100 stacks a page: one request
+for this repository's 16 stacks, and ten for a repository with 1,000. It
+saves the `base_pr` lookups for every member of a GitHub stack above its
+bottom, which the build makes today once per base branch that no summary
+resolves. The deploy already makes one `pr_status` query per pull request
+with a summary, 22 in this repository, so one more request does not change
+its time. The note line says how many stacks the build read, in how many
+requests, so the implementing pull request can report both for this
+repository. When GitHub cannot answer, the build costs what it costs today.
+
+The header adds one pass over each stack's members and one dictionary lookup
+per summary. Each page's data and each `site.json` row gain one object of up
+to three short strings. `publish` adds two field checks and no network call.
 
 ## 6. Rollout
 
 The skill and the CLI change in the same pull request, so one release carries
 both. An agent that runs an older skill against the new CLI meets the refusal
 for a `null` `project`, and the message says what to set. An older site build
-ignores `project` and keeps today's project lists.
+ignores `project` and keeps today's project lists, and it finds every stack
+from base branches, as it does today.
 
 ## 7. Background
 
@@ -444,3 +616,21 @@ on 2026-10-10:
   `test_a_summary_can_name_a_project_its_diff_does_not_touch` pins the order:
   named projects first, unknown names dropped, then the ones the diff
   touches.
+
+The GitHub stacks come from `gh api` on the same day:
+
+- **One request lists them all.**
+  `GET repos/ninjudd/projector/stacks?per_page=100` returns this repository's
+  16 stacks in one page, each closed, with every member merged except the two
+  of one stack that closed unmerged. A pull request in no stack, such as #215,
+  gets `[]` from `?pull_request=`.
+- **A merged stack keeps its members and order.** Stack 199 holds #196, then
+  #197, both merged. #197's base is #196's head branch, so GitHub lists the
+  stack bottom first. Stacks 26, 109, and 129 list their members bottom first
+  too, by the same check of each member's base.
+- **GitHub keeps a layer that base branches would drop.** Stack 129's top
+  layer, #134, targets `main`. Its summary would record `main` as its base, so
+  base branches would list it alone.
+- **The endpoint answers 404 for a stack it does not have**, with a
+  `documentation_url` at `docs.github.com/rest/pulls/stacks`. It answers with
+  or without the `X-GitHub-Api-Version: 2026-03-10` header.
