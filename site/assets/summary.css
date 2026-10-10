@@ -258,6 +258,9 @@ table.diff { border-collapse: collapse; width: 100%; font-size: 12.5px; line-hei
 table.diff + table.diff { border-top: 1px solid var(--border); }
 table.diff td { padding: 0 8px; vertical-align: top; }
 table.diff col.lncol { width: 46px; }
+/* A diff with one side has one line-number column, as wide as the two of any other diff, so the code
+   starts at the same place in every file and a note's tag fits beside it. */
+table.diff.oneside col.lncol { width: 92px; }
 table.diff td.ln { text-align: right; color: var(--ctx-ln); user-select: none; font-variant-numeric: tabular-nums; font-size: 11.5px; padding-top: 1px; }
 table.diff td.code { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 table.diff .sign { display: inline-block; width: 1ch; margin-right: .5ch; color: var(--ctx-ln); }
@@ -276,9 +279,6 @@ table.diff td.ngut .chip { margin-top: 0; }
 table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
 table.diff td.nte .nbox { float: right; margin: 2px 0 0 12px; }
 table.diff tr.noterow.checked .chip, table.diff tr.noterow.checked .ntext { opacity: .5; }
-/* A diff with one line-number column has half the room, so its tags shrink to fit it. */
-table.diff.oneside td.ngut { padding-inline: 1px; }
-table.diff.oneside td.ngut .chip { margin-top: 2px; padding-inline: 1px; font-size: 8px; letter-spacing: 0; }
 /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
 .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }

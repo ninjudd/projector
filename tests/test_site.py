@@ -805,7 +805,7 @@ class FileHeaderTests(SiteRepoCase):
         self.assertTrue(rows["flag"].startswith('<td class="ngut" colspan="1"><span class="chip flag">concern</span></td>'
                                                 '<td class="nte"><input type="checkbox" class="nbox note-box"'),
                         "a new file has one line-number column, and a concern's checkbox sits with its text")
-        self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its tags fit its gutter")
+        self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its gutter keeps its width")
 
 
 class SummarySidebarTests(unittest.TestCase):
