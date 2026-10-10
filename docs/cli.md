@@ -820,6 +820,40 @@ again with a current release, as
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
 
+The Projects page also lists each project that an open pull request
+proposes, so a plan in review is on the page where readers look for plans.
+A pull request proposes a project when the diff of its newest summary adds
+the project's lowercase `readme.md` under the projects directory, its head
+branch is in this repository, and the checkout the site is built from has
+neither a project of that name nor a file at that path. A repository's first
+plan counts too, before the checkout has a projects directory. The build
+rebuilds the plan from that diff, loads it as `project list` does, and
+serves it at `projects/<name>/`, the address it keeps once it merges, with
+the other Markdown files the diff adds in the project's folder. It never
+serves a proposed HTML page, image, or data file, because an HTML page runs
+on the site's origin, and a proposal has not been merged. The project sits
+in its status group with a **Proposed** badge that links the pull request's
+review. Each of its pages opens with a banner that names the pull request,
+its title and status, and the head the site shows, and its GitHub links
+point at that head. Typing `proposed` in the filter lists the proposed
+projects, and search marks their pages with the badge. A plan that does not
+load is left out with a `::warning title=Proposed project skipped::` line
+that names the pull request. When two open pull requests propose one name,
+the lower number's plan is shown, and the banner names the other. The build
+reads whether each pull request is open, and whether its head branch is in
+a fork, from the status query it already makes. When `gh` cannot answer, a
+pull request proposes nothing, and the build prints how many it left out.
+`site build` counts the proposed projects in its summary line:
+
+```console
+$ project site build --out _site --summaries summaries-ref/summaries
+…
+wrote _site/index.html: 15 projects, 1 proposed project, 23 reviews, 0 reviews skipped
+```
+
+A proposed project leaves the site with the deploy that runs when its pull
+request merges or closes.
+
 For pages or files the repository generates rather than commits, `site build`
 first runs the shell command `site.prepare` names, in the checkout, through
 the system shell, and says so on stderr. `--prepare` runs a given command in

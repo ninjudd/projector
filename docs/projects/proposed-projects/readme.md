@@ -641,3 +641,44 @@ after the change.
   branch for `pull_request_target`. This repository's `github-pages`
   environment allows deploys only from `main`. A `GITHUB_TOKEN` event starts no
   new run, except `workflow_dispatch` and `repository_dispatch`.
+
+## 8. Implementation status
+
+Two stacked pull requests implement this plan. The first makes a closed pull
+request deploy the site, as § 2.4 describes, and adds the
+`site-workflow-outdated` warning. The second finds, serves, and shows the
+proposed projects, as §§ 2.1 to 2.3 describe. Every test in § 4 is in the
+second, except the workflow tests, which are in the first.
+
+Implementation settled these details:
+
+- **The warning names both fixes.** `project init` leaves the site workflow
+  alone in a repository that sets `site.enabled = false`, so the
+  `site-workflow-outdated` warning names `project site workflow --write`
+  too, as § 2.4's example now shows.
+- **The line for unknown statuses.** When pull requests that add a plan
+  have no known status, the build prints
+  `::warning title=Proposed projects left out::the status of 1 pull request that adds a plan is unknown, because GitHub could not be asked, so its plan is not proposed`.
+- **The filter matches the word anywhere.** Typing `proposed` keeps every
+  row whose name, title, or owner holds the word, as well as every
+  proposed row. This project's own row matches by its name.
+- **The banner names other proposals in one line**: "A plan of this name is
+  also proposed in #12."
+- **A malformed `projects` list in a summary links nothing.** Linking now
+  runs after the summaries are read, so a `projects` value that is not a
+  list of names is ignored, rather than costing the summary its page.
+
+On this repository's summaries ref on 2026-10-10, with #219 and #222 open,
+`project site build` printed `16 projects, 34 reviews, 21 reviews skipped`
+in 16.4 seconds before the change, and
+`16 projects, 2 proposed projects, 34 reviews, 21 reviews skipped` in 15.6
+seconds after it. Both runs made the same status queries, which take most of
+the time. In a browser, `project site serve` showed both plans in their
+status groups with the badge, and each project page showed the banner. Both
+showed in the light and dark themes, at full width and at 375 pixels, with
+no horizontal scroll. The badge opened the review page, and search found the
+plans with the badge.
+
+What remains is the check after the merge in § 4: a throwaway plan's pull
+request, opened and then closed, must leave the deployed Projects page, and
+the close must run the workflow on `pull_request_target`.

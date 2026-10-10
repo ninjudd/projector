@@ -9,6 +9,8 @@
 (function () {
     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
     const PRIORITY_ORDER = ['now', 'next', 'later'];
+    // What the site calls a project whose plan an open pull request adds.
+    const PROPOSED = 'Proposed';
     // Projector's mark, as projector.bot draws it: an orange beam from a lens.
     const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
         '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
@@ -35,8 +37,9 @@
     function errorMessage(error) {
         return error instanceof Error ? error.message : String(error);
     }
-    function repoUrl(kind, path) {
-        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+    // A repository file on GitHub at `ref`: the site's branch, or a proposed project's head.
+    function repoUrl(kind, path, ref = site.branch) {
+        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
     }
     function contentUrl(path) {
         return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
@@ -96,8 +99,8 @@
     }
     // Render Markdown from the repository file at `path`: sanitize it, give headings
     // ids, keep links between copied documents inside the site, and send every
-    // other repository link to GitHub.
-    function renderMarkdown(text, path) {
+    // other repository link to GitHub, at `ref`.
+    function renderMarkdown(text, path, ref = site.branch) {
         const box = document.createElement('div');
         box.className = 'markdown';
         box.innerHTML = window.DOMPurify.sanitize(window.marked.parse(stripFrontmatter(text)));
@@ -117,14 +120,14 @@
             else if (siteFiles.has(target))
                 a.setAttribute('href', contentUrl(target));
             else
-                a.setAttribute('href', repoUrl('blob', target));
+                a.setAttribute('href', repoUrl('blob', target, ref));
         });
         box.querySelectorAll('img[src]').forEach(function (img) {
             const src = img.getAttribute('src') ?? '';
             if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/'))
                 return;
             const target = resolve(path, src);
-            img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target));
+            img.setAttribute('src', siteFiles.has(target) ? contentUrl(target) : repoUrl('raw', target, ref));
         });
         const hljs = window.hljs;
         if (hljs !== undefined)
@@ -133,6 +136,12 @@
     }
     function badge(kind, value) {
         return value != null && value !== '' ? `<span class="badge ${kind}-${esc(value)}">${esc(value)}</span>` : '';
+    }
+    // The badge of a project an open pull request proposes, linking that pull request's review.
+    function proposedBadge(number) {
+        return number !== undefined
+            ? `<a class="badge proposed" href="${esc(`${base}reviews/${String(number)}/`)}">${PROPOSED} #${String(number)}</a>`
+            : '';
     }
     function nav(active) {
         const items = [];
@@ -213,7 +222,8 @@
         });
         function link(item) {
             return `<a href="${esc(routeFor(item.path))}"` +
-                `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>`;
+                `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
+                (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
         }
         function render(node) {
             const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
@@ -266,16 +276,17 @@
             catch { /* a page that navigated elsewhere is no longer ours to read */ }
         });
     }
-    function showPage(active, path, title, before, side) {
+    // `ref` is where a Markdown page's links to repository files the site lacks point on GitHub.
+    function showPage(active, path, title, before, side, ref = site.branch) {
         if (isHtml(path))
             showHtml(active, path, title, before, side);
         else
-            showDocument(active, path, title, before, side);
+            showDocument(active, path, title, before, side, ref);
     }
-    function showDocument(active, path, title, before, side) {
+    function showDocument(active, path, title, before, side, ref) {
         frame(active, title, '<p class="note">Loading…</p>', side);
         loadMarkdown(path).then(function (text) {
-            const main = frame(active, title, renderMarkdown(text, path), side);
+            const main = frame(active, title, renderMarkdown(text, path, ref), side);
             if (before !== null)
                 main.insertBefore(before, main.firstChild);
             const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
@@ -305,6 +316,7 @@
     // the same in every table, so the columns line up from one status to the next.
     function showProjects() {
         const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
+        const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
         const groups = STATUS_ORDER.map(function (status) {
             const rows = site.projects.filter(function (p) { return p.status === status; });
             rows.sort(function (a, b) {
@@ -318,13 +330,16 @@
                 `<colgroup><col><col class="priority">${owners ? '<col class="owner">' : ''}<col class="name"></colgroup>` +
                 `<thead><tr><th>Project</th><th>Priority</th>${owners ? '<th>Owner</th>' : ''}<th class="name">Name</th></tr></thead><tbody>` +
                 rows.map(function (p) {
-                    return `<tr data-search="${esc(`${p.name} ${p.title} ${ownerName(p)}`.toLowerCase())}">` +
-                        `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a></td>` +
+                    const search = `${p.name} ${p.title} ${ownerName(p)}${p.proposed !== undefined ? ` ${PROPOSED}` : ''}`;
+                    return `<tr data-search="${esc(search.toLowerCase())}">` +
+                        `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a>` +
+                        `${p.proposed !== undefined ? ` ${proposedBadge(p.proposed.number)}` : ''}</td>` +
                         `<td>${badge('priority', p.priority)}</td>${owners ? `<td class="owner">${esc(ownerName(p))}</td>` : ''}` +
                         `<td class="mono name">${esc(p.name)}</td></tr>`;
                 }).join('') + '</tbody></table></div></section>';
         }).join('');
-        const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>. ` +
+        const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
+            `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
             'Status says how finished a project is; priority says when it is scheduled.</p>' +
             '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
         const filter = main.querySelector('.filter');
@@ -362,7 +377,7 @@
         site.projects.forEach(function (p) {
             if (p === top || !p.path.startsWith(prefix))
                 return;
-            items.push({ path: p.path, title: p.title });
+            items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
         });
         site.projects.forEach(function (p) {
             if (p.path.startsWith(prefix))
@@ -372,7 +387,7 @@
         // project's readme is Overview, the page the tree starts from: on that page
         // its title would repeat the heading, and on every other page of the
         // project the breadcrumbs already name the project.
-        const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview' }, path) : null;
+        const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview', proposed: top.proposed?.number }, path) : null;
         const isReadme = path === project.path;
         const file = project.files.find(function (f) { return f.path === path; });
         const leaf = path.slice(path.lastIndexOf('/') + 1);
@@ -381,18 +396,37 @@
             const here = isReadme && i === parts.length - 1;
             return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
         }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
+        const ref = project.proposed?.head ?? site.branch;
         const head = document.createElement('div');
         head.className = 'phead';
         head.innerHTML = `<div class="crumbs">${crumbs}</div>` +
+            (project.proposed !== undefined ? proposalBanner(project.proposed) : '') +
             (isReadme ? `<div class="pmeta">${badge('status', project.status)}${badge('priority', project.priority)}` +
                 (project.owner != null && project.owner !== '' ? `<span class="note">Owner ${esc(project.owner)}</span>` : '') +
-                `<a class="note" href="${esc(repoUrl('blob', project.path))}">View on GitHub</a></div>` +
+                `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
                 (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
                     const r = reviewFor(n);
                     return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
                 }).join(' · ') + '</div>' : '')
-                : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path))}">View on GitHub</a></div>`);
-        showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side);
+                : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
+        showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
+    }
+    // The banner atop every page of a proposed project: the pull request that
+    // proposes it, with its title and status as the Reviews index draws them,
+    // the head the site shows, and any other open pull request that proposes a
+    // plan of the same name.
+    function proposalBanner(proposed) {
+        function review(number) {
+            return `<a href="${esc(`${base}reviews/${String(number)}/`)}">#${String(number)}</a>`;
+        }
+        const r = reviewFor(proposed.number);
+        const status = r !== null ? statusHtml(r.state, r.review) : '';
+        const also = proposed.also.length > 0
+            ? `<p class="note">A plan of this name is also proposed in ${proposed.also.map(review).join(', ')}.</p>` : '';
+        return `<div class="proposal"><p><b>${PROPOSED} in</b> ${review(proposed.number)}` +
+            `${r !== null ? ` ${esc(r.title)}` : ''}${status !== '' ? ` · <span class="eyebrow">${status}</span>` : ''}</p>` +
+            `<p class="note">This plan is in an open pull request and is not on <span class="mono">${esc(site.branch)}</span> yet. ` +
+            `It shows head <span class="mono">${esc(proposed.head.slice(0, 7))}</span>, the newest head with a summary.</p>${also}</div>`;
     }
     function reviewFor(number) {
         return site.reviews.find(function (r) { return r.number === number; }) ?? null;
@@ -513,6 +547,7 @@
         });
         return scored.sort(function (a, b) { return b.score - a.score; }).map(function (r) {
             return `<li><a href="${esc(base + r.entry.route)}">${esc(r.entry.title)}</a> <span class="note">${esc(r.entry.kind)}</span>` +
+                (r.entry.proposed !== undefined ? ` ${proposedBadge(r.entry.proposed)}` : '') +
                 `<div class="snippet">${snippet(r.entry.text, words)}</div></li>`;
         });
     }
