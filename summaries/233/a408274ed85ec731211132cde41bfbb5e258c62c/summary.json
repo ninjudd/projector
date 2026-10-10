@@ -1,0 +1,182 @@
+{
+ "version": 1,
+ "name": "Each model's verdict in the header",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 233,
+  "title": "Show each model's verdict in a summary's header",
+  "head": "a408274ed85ec731211132cde41bfbb5e258c62c",
+  "headRef": "multi-model-site",
+  "base": "db3cf8e85aa068eaacf1b35b06f766578972ff17",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site shows each pull request's review status in two places: the header of its summary page, and its row on the Reviews index. A <b>Projector review</b> is a GitHub review whose body carries a hidden marker line naming the verdict (<code>clean</code> or <code>changes-requested</code>), the head commit it reviewed, and the model that wrote it, such as <code>claude-opus-5-5</code> or <code>gpt-5.5</code>.",
+   "Until now the site took a head's status from the newest Projector review of that head, whichever model wrote it. The multi-model-review plan lets several review loops, each running a different model, review one pull request side by side. Under the old rule, a clean verdict from one model posted after another model's change request turned the page green and hid the objection.",
+   "This pull request makes the site read every model's newest verdict on a head:",
+   "<ul><li><b>The status.</b> A head is <b>Changes requested</b> when any model's newest verdict requests changes, and <b>Clean</b> otherwise. The status links the newest review with that verdict. The Reviews index row still shows this one word.</li><li><b>The header.</b> With one model, the header reads as before. With several, it groups the models by verdict, changes requested first, and links each model's name to its own review: <code>#66 · Changes requested (gpt-5.5) · Clean (claude-opus-5-5)</code>.</li><li><b>Which reviews belong to one model.</b> Two model IDs name the same reviewer when they match after lowercasing and dropping a trailing bracketed variant, such as the context window in <code>claude-opus-5-5[1m]</code>. The new <code>review.identity</code> function holds that rule, so the review commands can share it in a later change.</li><li><b>Incremental reviews.</b> An incremental review is a short clean verdict for a small push, building on an earlier full review. Its link now names its own model's full review, because an incremental review never builds on another model's.</li></ul>",
+   "This is the first change of the multi-model-review plan, so the plan moves from <code>ready</code> to <code>in-progress</code>. The review commands still treat every model as one reviewer until later changes in the plan."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Head</b>: the commit a pull request's branch points at.</li><li><b>Verdict</b>: a Projector review's outcome, <code>clean</code> or <code>changes-requested</code>.</li><li><b>Identity</b>: a model ID lowercased, without a trailing <code>[...]</code> variant. Reviews with one identity come from one reviewer.</li><li><b>Incremental review</b>: a short clean review of a small push that builds on an earlier full review of the same model; the header names that full review's head.</li><li><b>Trusted author</b>: only reviews by the repository's owner, members, or collaborators count, because anyone can review a public pull request.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Projector reviewed this head with <code>claude-opus-5-5</code> and found it clean, with no finding threads. The review built the site from test fixtures and opened it in headless Chromium, and ran the full test suite. It listed three suggestions, noted on the files below.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "identity",
+   "title": "Which reviews belong to one model",
+   "kicker": "A shared rule for when two model IDs name the same reviewer",
+   "intro": [
+    "Every Projector review records the model ID it ran under. The same model can appear under slightly different IDs: a different capitalization, or a suffix in brackets that names a variant such as a larger context window. The plan counts those as one reviewer, so <code>review.identity</code> lowercases the ID and drops one trailing bracketed part.",
+    "The function lives in the review module rather than in the site, because the review commands need the same rule later in the plan, to tell a second model's opinion from a duplicate loop of the same model."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>identity()</code> and the <code>VARIANT</code> pattern it strips.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Only one trailing bracketed part is removed, so <code>model[a][b]</code> becomes <code>model[a]</code>. A bracket in the middle of an ID stays. The test file pins both cases.",
+       "line": 107
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Pins the identity rule for case, the context-window suffix, a provider prefix, and two versions of one model."
+    }
+   ]
+  },
+  {
+   "id": "status",
+   "title": "One status from every model's verdict",
+   "kicker": "How the site build turns a head's reviews into a status and a list of models",
+   "intro": [
+    "When the site deploys, it lists each pull request's reviews and calls <code>review_statuses</code> to turn them into one status per head. It keeps only Projector reviews by trusted authors, the repository's owner, members, and collaborators, because anyone can review a public pull request.",
+    "Before, the function kept the newest review of each head. Now it keeps the newest review of each head <em>for each model</em>, keyed by identity, and builds three fields from them:",
+    "<ul><li><b><code>status</code></b>: <code>changes-requested</code> when any model's newest verdict requests changes, and <code>clean</code> otherwise.</li><li><b><code>url</code></b>: the newest review whose verdict matches <code>status</code>, so the link goes to the review that decided it.</li><li><b><code>models</code></b>: one entry per model with its identity, verdict, and review link, changes requested first and then by ID.</li></ul>",
+    "A clean incremental review carries <code>incrementalFrom</code>: the earlier head it builds on, and that model's full review of it. The status itself carries it too when only one model reviewed the head, so a single-model page renders exactly as before."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>review_statuses</code> groups each head's verdicts by model and builds <code>status</code>, <code>url</code>, and <code>models</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The sort key puts changes requested first, so <code>verdicts[0]</code> is always the deciding verdict, and the header's first group is always the one the status names.",
+       "line": 185
+      },
+      {
+       "kind": "verify",
+       "text": "The full review an incremental review links is looked up by both head and model, so another model's full review of the same head is never linked. The test <code>test_an_incremental_review_builds_on_its_own_models_full_review</code> covers it, and it passed.",
+       "line": 191
+      },
+      {
+       "kind": "context",
+       "text": "The docstring of <code>build_summaries</code> further down this file still calls <code>review</code> \"the newest Projector review of its head\". With several models it is the combined status. The review listed this as a suggestion.",
+       "line": 194
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Status tests for several models and incremental reviews, and a node test that renders each header line the plan shows.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The new helper <code>one()</code> builds the single-model status the older tests now expect. No caller passes its <code>model</code> parameter.",
+       "line": 1622
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "header",
+   "title": "The header and the Reviews row",
+   "kicker": "How the page draws the models, and why the index row needs no change",
+   "intro": [
+    "The site's front end is TypeScript compiled to <code>site/assets/summary.js</code>, which the repository commits. <code>statusHtml</code> draws the one-word status, and both the summary header and the Reviews index row call it. Because <code>status</code> and <code>url</code> keep their meaning, the row needs no change.",
+    "The header now reads <code>models</code>. With one model it shows the word, plus the incremental link when there is one, exactly as before. With several, it shows one group per verdict, changes requested first: the verdict word, then the model names in brackets, each linking to that model's review. Only the deciding verdict's word links, to the status's <code>url</code>. A merged or closed pull request shows <b>Merged</b> or <b>Closed</b> alone, as before."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Built sample sites from the test fixtures and opened them in headless Chromium. Two models requesting changes and one clean rendered as <code>Changes requested (codex…, gpt-5.5) · Clean (claude-opus-5-5)</code>, with a model ID containing markup escaped. The Reviews row showed only <b>Changes requested</b>."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> left the committed <code>summary.js</code> unchanged, so it is what <code>summary.ts</code> compiles to."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds the <code>IncrementalFrom</code> and <code>ModelStatus</code> types and puts <code>models</code> on both reviewed shapes of <code>ReviewStatus</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The doc comments on <code>SummaryData.review</code> and on the Reviews row's <code>state</code>, further down, still say \"the newest Projector review\". The review listed this as a suggestion.",
+       "line": 69
+      }
+     ]
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "<code>statusHtml</code> takes its words from <code>VERDICT_WORDS</code>; <code>reviewStatus</code> draws the model groups.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The header's <code>.eyebrow</code> style sets text in capitals, so model names render as <code>GPT-5.5</code> and <code>CLAUDE-OPUS-5-5</code>. Wrapping each name in <code>&lt;code&gt;</code> would keep its own case, as the incremental SHA does. The review listed this as a suggestion.",
+       "line": 361
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>summary.ts</code> by <code>npm run build</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference describes the new header, and the plan records that work has started",
+   "intro": [
+    "<code>docs/cli.md</code> describes what the site shows, so it now explains the combined verdict, how models are told apart, and the grouped header. The plan's data-shape table now says each <code>models</code> entry carries the model's identity, and its status moves to <code>in-progress</code> with priority <code>now</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The site section's paragraph on a summary's status, rewritten for several models."
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "Status <code>in-progress</code>, priority <code>now</code>, and the <code>models</code> row in section 2.4 names the identity.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 2.4 of the plan: each <code>models</code> entry's <code>model</code> is the identity, so the header shows IDs lowercased and without a bracketed variant.",
+       "line": 358
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
