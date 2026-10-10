@@ -70,6 +70,11 @@ GENERATED_PARTS = ("/gen/", "/generated/", "/mocks/", "/__generated__/")
 GENERATED_ATTRIBUTE = "linguist-generated"
 FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
+# A closed pull request deploys too, so the Reviews index shows it merged or
+# closed at once. pull_request_target runs the default branch's workflow on the
+# default branch, which the github-pages environment allows, and never checks
+# out the pull request. A fork's run skips the job and takes a concurrency group
+# of its own, so it never replaces a deploy waiting in `pages`.
 WORKFLOW = """name: Projector site
 on:
   repository_dispatch:
@@ -77,6 +82,8 @@ on:
   push:
     branches: [{branch}]
     paths: [{paths}]
+  pull_request_target:
+    types: [closed]
   workflow_dispatch:
 permissions:
   contents: read
@@ -84,10 +91,11 @@ permissions:
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: ${{{{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && format('fork-{{0}}', github.run_id) || 'pages' }}}}
   cancel-in-progress: false
 jobs:
   publish:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -150,6 +158,33 @@ jobs:
     steps:
       - id: walkthroughs
         uses: ninjudd/projector/actions/walkthroughs@{ref}
+""",
+    # Its step named site, before a closed pull request deployed.
+    """name: Projector site
+on:
+  repository_dispatch:
+    types: [{event}]
+  push:
+    branches: [{branch}]
+    paths: [{paths}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.site.outputs.page_url }}}}
+    steps:
+      - id: site
+        uses: ninjudd/projector/actions/site@{ref}
 """,
 )
 
@@ -1294,9 +1329,10 @@ def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | Non
                            paths=", ".join(watched_paths(projects_dir)))
 
 
-def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
-    """Whether `text` is a workflow Projector wrote for this repository, in its
-    current shape or an earlier one, with any action ref.
+def workflow_shape(text: str, projects_dir: str | None = None) -> str | None:
+    """Which shape of the workflow Projector wrote `text` in for this repository,
+    with any action ref: `current`, the one `workflow_text` writes, `earlier`,
+    one in `PREVIOUS_WORKFLOWS`, or None when it was edited by hand.
 
     Only what Projector itself varies is free: the action ref, one branch, its
     dispatch event, and the watched paths it lists for `projects_dir`, with or
@@ -1311,13 +1347,20 @@ def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
         "branch": ("@@BRANCH@@", r"[^\s,\]]+"),
         "paths": ("@@PATHS@@", "(?:" + "|".join(map(re.escape, sorted(lists))) + ")"),
     }
-    for template in (WORKFLOW, *PREVIOUS_WORKFLOWS):
-        pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
-        for mark, allowed in slots.values():
-            pattern = pattern.replace(re.escape(mark), allowed)
-        if re.fullmatch(pattern, text):
-            return True
-    return False
+    for shape, templates in (("current", (WORKFLOW,)), ("earlier", PREVIOUS_WORKFLOWS)):
+        for template in templates:
+            pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
+            for mark, allowed in slots.values():
+                pattern = pattern.replace(re.escape(mark), allowed)
+            if re.fullmatch(pattern, text):
+                return shape
+    return None
+
+
+def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
+    """Whether `text` is a workflow Projector wrote for this repository, in its
+    current shape or an earlier one, as `workflow_shape` tells them apart."""
+    return workflow_shape(text, projects_dir) is not None
 
 
 def default_branch(remote: str = "origin", root: Path | None = None) -> str:
