@@ -690,6 +690,21 @@ class PrMetadataTests(unittest.TestCase):
         self.assertNotIn("basePr", meta)
 
 
+class PrReviewsTests(unittest.TestCase):
+    def test_reads_every_page_of_reviews_one_row_each(self) -> None:
+        rows = [{"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
+                 "at": "2026-10-01T10:00:00Z"},
+                {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+                 "at": "2026-10-02T10:00:00Z"}]
+        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(r) + "\n" for r in rows)) as gh:
+            reviews = summary.pr_reviews("owner/example", 7)
+
+        self.assertEqual(rows, reviews)
+        args = gh.call_args.args
+        self.assertEqual(("api", "--paginate", "repos/owner/example/pulls/7/reviews"), args[:3])
+        self.assertIn("select(.submitted_at != null)", args[-1], "a pending review has no verdict to show yet")
+
+
 class StatusTests(unittest.TestCase):
     def status(self, answers: dict[str, str | None], *args: str) -> tuple[int, str, str]:
         def lookup(*gh_args: str) -> str | None:

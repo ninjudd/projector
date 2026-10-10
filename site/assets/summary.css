@@ -64,6 +64,11 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 .top .sub { color: var(--muted); font-size: 14px; }
 .top .sub a { color: inherit; }
 .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--muted); font-weight: 600; }
+.rstatus { text-decoration: none; }
+a.rstatus:hover { text-decoration: underline; }
+.rstatus.clean { color: var(--ok); }
+.rstatus.changes-requested { color: var(--accent); }
+.rstatus.unreviewed { color: var(--muted); }
 
 /* sidebar */
 /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */

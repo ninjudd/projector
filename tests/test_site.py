@@ -43,6 +43,11 @@ class SiteRepoCase(unittest.TestCase):
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
+        # A build that knows its repository asks GitHub for each pull request's
+        # reviews. No test reaches GitHub; one that needs reviews supplies them.
+        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
+        offline.start()
+        self.addCleanup(offline.stop)
 
 
 class SiteBuildTests(SiteRepoCase):
@@ -321,6 +326,55 @@ class SiteContentTests(SiteRepoCase):
         self.publish(9, "c" * 40, baseRef="trunk")
 
         self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+
+    def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
+        asked: list[tuple[str, int]] = []
+
+        def pr_reviews(repo: str, number: int) -> list[dict]:
+            asked.append((repo, number))
+            if reviews is None:
+                raise summary.SummaryError("gh api failed: offline")
+            return reviews
+
+        self.publish(9, "c" * 40)
+        self.publish(9, "d" * 40)
+        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
+            self.build()
+        self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
+        return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
+                for head in ("c" * 40, "d" * 40)}
+
+    def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:
+        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                  projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+
+    def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
+        marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
+        statuses = self.statuses([
+            projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
+            {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z"},
+            {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
+             "at": "2026-10-03T10:00:00Z"},
+            {"body": None, "url": review_url(4), "at": "2026-10-04T10:00:00Z"},
+        ])
+
+        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
+
+    def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
+        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
+                                  projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                  projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 3),
+                                  projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4)])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
+                          "d": {"status": "clean", "url": review_url(4)}}, statuses)
+
+    def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
+        self.assertEqual({"c": None, "d": None}, self.statuses(None))
 
     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
@@ -607,6 +661,18 @@ class SummarySidebarTests(unittest.TestCase):
         current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
         self.assertNotIn("font-weight", current.group(1))
+
+
+def review_url(review_id: int) -> str:
+    return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
+
+
+def projector_review(verdict: str, head: str, at: str, review_id: int) -> dict:
+    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`."""
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
+              f"sha={head} findings=0 seconds=60 covered=2/2 -->")
+    return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
+            "url": review_url(review_id), "at": at}
 
 
 def served_summary(number: int, head: str) -> dict:

@@ -252,6 +252,17 @@
                 return `<a href="${esc(p.url)}">${esc(p.title)}</a>`;
             }).join(' · ') + '</div>';
         }
+        // Nothing when the build could not ask GitHub, so a status it does not know
+        // never reads as unreviewed.
+        function reviewStatus() {
+            const review = data.review;
+            if (review === undefined)
+                return '';
+            if (review.status === 'unreviewed')
+                return ' · <span class="rstatus unreviewed">Unreviewed</span>';
+            const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+            return ` · ${ext(review.url, word, `rstatus ${review.status}`)}`;
+        }
         function renderPage() {
             const nav = data.groups.map(function (g, i) {
                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
@@ -260,7 +271,7 @@
             const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
             return '<div class="wrap">' +
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
-                `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+                `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
                 `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
                 `<div class="prblock">${stackList()}${projectsList()}</div>` +

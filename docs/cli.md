@@ -668,7 +668,11 @@ that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
 one row each with its title, and highlights the current one; its older
-versions follow the sections. **Docs** renders `README.md`
+versions follow the sections. A summary's header shows the verdict of the
+newest Projector review of its head, **Clean** or **Changes requested**,
+linked to that review on GitHub, or **Unreviewed** when no Projector review
+names the head. The build asks `gh` for each pull request's reviews; when
+`gh` cannot answer, the header shows no status. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and

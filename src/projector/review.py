@@ -556,7 +556,7 @@ SIGNATURE = re.compile(
 )
 MARKER = re.compile(
     r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=\S+ model=\S+ (?:effort=\S+ )?"
-    r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+    r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
