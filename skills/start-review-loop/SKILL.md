@@ -127,7 +127,9 @@ reads the new head against that history instead of rediscovering it.
   false` in `.projector.toml`, which the user sets. A brief that
   forbids editing the pull request body names the summary's link block as
   an exception, because `project summary publish` writes that block at the
-  end of every description on purpose.
+  end of every description on purpose. Where the repository's own
+  instructions forbid description edits, a subagent skips the summary and
+  asks the user, as `review-pr` describes.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
   to finish: delete any start comment it still holds and remove its scratch
   worktrees. Then close the subagent and delete the pull request's line from

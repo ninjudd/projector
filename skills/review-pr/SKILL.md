@@ -606,9 +606,16 @@ The description edit is intended, on every pull request. `publish` appends
 its link block after everything else in the description, below a trailer
 such as a `Ticket:` line too. It removes the block an earlier publish left
 and changes nothing else. It does not count as editing the pull request
-body, so a brief or a repository rule that forbids body edits does not
-cover it. Never hold the publish for it, and never move or delete the block
-by hand. The next publish puts it back at the end.
+body, so a brief that forbids body edits does not cover it. Never hold the
+publish for such a brief, and never move or delete the block by hand. The
+next publish puts it back at the end.
+
+A repository's own instructions outrank this skill. Where its `AGENTS.md`,
+`CLAUDE.md`, or other instructions forbid agents to edit pull request
+descriptions, skip the summary, because `publish` always edits the
+description. Say in your report that you skipped it and why, and ask the
+user either to set `review.summarize = false` or to waive the rule for the
+link block.
 
 A summary that fails to build or publish never changes the review's
 verdict: say in your report that the summary failed and why, and leave the
