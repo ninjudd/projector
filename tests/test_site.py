@@ -356,13 +356,35 @@ class SiteContentTests(SiteRepoCase):
         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
         statuses = self.statuses([
             projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
-            {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z"},
+            {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z", "association": "OWNER"},
             {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
-             "at": "2026-10-03T10:00:00Z"},
-            {"body": None, "url": review_url(4), "at": "2026-10-04T10:00:00Z"},
+             "at": "2026-10-03T10:00:00Z", "association": "OWNER"},
+            {"body": None, "url": review_url(4), "at": "2026-10-04T10:00:00Z", "association": "OWNER"},
         ])
 
         self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
+
+    def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
+        # Anyone can review a public repository's pull request, and GitHub
+        # shows a marker line as nothing, so a forged one must not count.
+        statuses = self.statuses([
+            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+            projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2, association="NONE"),
+            projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 3, association="CONTRIBUTOR"),
+            projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
+        ])
+
+        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
+                         statuses)
+
+    def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
+        statuses = self.statuses([
+            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, association="MEMBER"),
+            projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 2, association="COLLABORATOR"),
+        ])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
 
     def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
@@ -667,12 +689,16 @@ def review_url(review_id: int) -> str:
     return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
 
 
-def projector_review(verdict: str, head: str, at: str, review_id: int) -> dict:
-    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`."""
+def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
+    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
+
+    `association` is the author's relation to the repository, as GitHub's
+    `author_association` gives it.
+    """
     marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
-            "url": review_url(review_id), "at": at}
+            "url": review_url(review_id), "at": at, "association": association}
 
 
 def served_summary(number: int, head: str) -> dict:

@@ -133,14 +133,24 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
+# Anyone can review a public repository's pull request, and GitHub shows a
+# marker line as nothing, so only a review by someone the repository let in
+# can set a status.
+REVIEWER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
 def review_statuses(reviews: list[dict]) -> dict[str, dict]:
     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
 
     A review is Projector's when a line of its body is the marker a Projector
-    review carries, which names the verdict and the head it reviewed.
+    review carries, which names the verdict and the head it reviewed, and its
+    author owns the repository, belongs to its organization, or collaborates
+    on it.
     """
     newest: dict[str, dict] = {}
     for review in reviews:
+        if review.get("association") not in REVIEWER_ASSOCIATIONS:
+            continue
         for line in (review.get("body") or "").splitlines():
             marker = MARKER.match(line.strip())
             if marker is None:
