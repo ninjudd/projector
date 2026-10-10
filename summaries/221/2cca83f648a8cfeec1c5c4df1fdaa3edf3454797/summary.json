@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "name": "Projects page column widths",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 221,
+  "title": "Give the Projects page's columns the same widths in every status",
+  "head": "2cca83f648a8cfeec1c5c4df1fdaa3edf3454797",
+  "headRef": "projects-column-widths",
+  "base": "daccae94ed181bc92331a3564c0359e801e62968",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projects page on a repository's Projector site lists every project plan, grouped by status: <code>in-progress</code>, <code>ready</code>, <code>draft</code> and <code>completed</code>. Each status is its own HTML table with the columns Project (the plan's title), Priority, Owner and Name (the project's path under <code>docs/projects/</code>). Owner shows only when some plan names an owner.",
+   "Each table sized its columns to its own rows, so a status whose titles were shorter, or whose names were longer, put Priority, Owner and Name at different horizontal positions from the status above it. The page read as four unrelated tables rather than one list.",
+   "This change gives every status's table the same fixed column widths, the approach the site's Reviews index already uses. The title column takes the remaining width and wraps. On a screen 640px wide or narrower, the Name column is hidden, because the title already links to the project."
+  ],
+  "cards": [
+   {
+    "id": "widths",
+    "title": "Column widths",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Column</th><th>Wide screen</th><th>640px or narrower</th><th>Sized to fit</th></tr></thead><tbody><tr><td>Project</td><td>The rest</td><td>The rest</td><td>Wraps</td></tr><tr><td>Priority</td><td>6.5em (91px)</td><td>6.5em</td><td>The <code>LATER</code> badge and the heading</td></tr><tr><td>Owner</td><td>8em (112px)</td><td>6em (84px)</td><td>A 13-character login</td></tr><tr><td>Name</td><td>14em (196px)</td><td>Hidden</td><td>A 20-character slug</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Fixed table layout</b>: with CSS <code>table-layout: fixed</code>, the browser takes column widths from the <code>&lt;col&gt;</code> elements and the first row only, never from the content of later rows.</li><li><b><code>&lt;colgroup&gt;</code></b>: an element at the top of a table that holds one <code>&lt;col&gt;</code> per column, which CSS can give a width.</li><li><b>Nested project</b>: a plan inside another plan's directory, such as <code>alpha/beta</code>. Its title cell is indented by depth.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "markup",
+   "title": "Every status table gets the same columns",
+   "kicker": "The Projects view writes a colgroup and marks the Name column",
+   "intro": [
+    "<code>showProjects</code> in <code>site/src/site.ts</code> draws the Projects view: one table for each status, in the order <code>STATUS_ORDER</code> gives. Each table now opens with a <code>&lt;colgroup&gt;</code> whose <code>&lt;col&gt;</code> elements carry the classes <code>priority</code>, <code>owner</code> and <code>name</code>, and the header row moves into a <code>&lt;thead&gt;</code> with the project rows in a <code>&lt;tbody&gt;</code>.",
+    "The Name header and cells also get the class <code>name</code>, so one CSS rule can hide the column on a phone. The same <code>owners</code> flag adds both the Owner <code>&lt;col&gt;</code> and the Owner header and cells, so the colgroup always has one <code>&lt;col&gt;</code> per column.",
+    "<code>site/assets/site.js</code> is the compiled output of <code>site.ts</code>, which the repository commits."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "The Projects view's table markup gains a colgroup, a thead and tbody, and a <code>name</code> class on the Name column.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 316,
+       "text": "Every status's table gets the same colgroup. A site built from this head and rendered in headless Chromium at 1200, 700, 641, 640 and 375px puts each heading at the same left offset and width in every status's table."
+      },
+      {
+       "kind": "context",
+       "line": 320,
+       "text": "The nested-project indent stays as inline <code>padding-left</code> on the title cell. Under a fixed layout it shrinks the title's text area, not the column, so nesting never moves the other columns."
+      },
+      {
+       "kind": "verify",
+       "text": "The filter box still works: it selects <code>tr[data-search]</code>, and the rows inside the new <code>&lt;tbody&gt;</code> keep that attribute. A fixed layout also keeps the column widths steady while the filter hides rows."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.js",
+     "note": "Compiled from <code>site.ts</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>npm ci</code>, <code>npm run check</code> and <code>npm run build</code> in <code>site/</code> pass, and the build leaves this file byte for byte as committed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "styles",
+   "title": "The stylesheet fixes the widths",
+   "kicker": "A fixed layout, three column widths, and a phone breakpoint",
+   "intro": [
+    "<code>site/assets/site.css</code> sets <code>table-layout: fixed</code> on the projects table and gives each <code>&lt;col&gt;</code> its width in <code>em</code>, which the table's 14px font turns into pixels. Because a fixed layout ignores cell content, a long owner or name can no longer widen its column. <code>overflow-wrap: anywhere</code> on every cell makes such a value wrap instead of overflowing, at a hyphen where it has one and anywhere when it has none.",
+    "The owner cell loses <code>white-space: nowrap</code>, which would otherwise keep a long login from wrapping.",
+    "At 640px or narrower, a media query hides every element with the class <code>name</code> (the <code>&lt;col&gt;</code>, the header, and the cells) and narrows the Owner column to 6em. The Reviews table uses the same breakpoint and the same pattern for its time column."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/assets/site.css",
+     "note": "The projects table's fixed widths, wrapping, and phone rule.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 134,
+       "text": "At 640px and 375px, the Name header and cells render as <code>display: none</code>, Owner measures 84px, and neither the page nor any table wrapper scrolls sideways. That held with a 30-character hyphenated login, a 39-character slug with no hyphens, and projects nested three deep."
+      },
+      {
+       "kind": "context",
+       "line": 133,
+       "text": "With the Owner column showing, the fixed columns take 399px. Between 641px and about 700px that leaves the title 195 to 254px, no wider than Name, so most titles wrap to three lines. At 640px the title jumps to 418px. The review lists a higher breakpoint as an optional suggestion."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The markup tests follow the new header, and one test covers alignment",
+   "intro": [
+    "<code>ProjectsViewTests</code> renders the Projects view in Node and asserts on the HTML. The two existing tests now expect the colgroup and thead. A new test, <code>test_every_status_table_sets_the_same_column_widths</code>, renders three statuses and checks that their colgroups are identical, that a nested row keeps all four cells with its indent in the first, and that <code>site.css</code> carries the fixed layout, the three widths and the 640px rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passes at this head under Python 3.12: 531 tests."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
