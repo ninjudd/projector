@@ -66,6 +66,31 @@ GOOD_GROUPS = [
 ]
 
 
+class NewFileTextTests(unittest.TestCase):
+    HEAD = "diff --git a/notes.md b/notes.md\nnew file mode 100644\nindex 0000000..1111111\n"
+
+    def text(self, diff: str) -> str | None:
+        return summary.new_file_text(summary.parse_diff(diff)[0])
+
+    def test_a_new_files_text_is_its_added_lines(self) -> None:
+        diff = self.HEAD + "--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,3 @@\n+# Notes\n+\n+Text.\n"
+
+        self.assertEqual("# Notes\n\nText.\n", self.text(diff))
+
+    def test_a_new_file_without_a_final_newline_keeps_it_out(self) -> None:
+        diff = self.HEAD + "--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,2 @@\n+# Notes\n+Text.\n\\ No newline at end of file\n"
+
+        self.assertEqual("# Notes\nText.", self.text(diff))
+
+    def test_a_modified_empty_or_binary_file_has_no_text(self) -> None:
+        modified = ("diff --git a/notes.md b/notes.md\nindex 1111111..2222222 100644\n--- a/notes.md\n+++ b/notes.md\n"
+                    "@@ -1,1 +1,2 @@\n # Notes\n+Text.\n")
+        binary = self.HEAD + "Binary files /dev/null and b/notes.md differ\n"
+        for name, diff in (("modified", modified), ("empty", self.HEAD), ("binary", binary)):
+            with self.subTest(name):
+                self.assertIsNone(self.text(diff))
+
+
 class ParseDiffTests(unittest.TestCase):
     def test_parses_files_counts_line_numbers_and_kinds(self) -> None:
         files = {f["path"]: f for f in summary.parse_diff(DIFF)}
@@ -317,9 +342,9 @@ class RepoStacksTests(unittest.TestCase):
         """The stacks lookup `build_checkout` hands the site build for owner/repo."""
         handed: dict = {}
 
-        def build_site(out: Path, **kwargs: object) -> tuple[list, list]:
+        def build_site(out: Path, **kwargs: object) -> tuple[list, list, list]:
             handed.update(kwargs)
-            return [], []
+            return [], [], []
 
         with mock.patch.object(site, "build_site", side_effect=build_site):
             cli.build_checkout(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), None, "/", "owner/repo")
@@ -382,7 +407,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "summary_time", side_effect=lambda p: times[p]), \
              redirect_stdout(io.StringIO()):
-            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            _, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual([], failures)
         built_site = tmp / "site"
@@ -414,7 +439,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(summary, "fetch_diff", side_effect=offline), \
              mock.patch.object(summary, "merge_base", side_effect=offline), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual(([], 1), (failures, len(entries)))
         data = json.loads((tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
@@ -428,7 +453,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
              mock.patch.object(summary, "merge_base", side_effect=AssertionError("must not fetch")), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual(1, entries[0]["heads"])
         self.assertEqual(1, len(failures))
@@ -440,7 +465,7 @@ class SiteTests(unittest.TestCase):
         old = path.rename(path.with_name("spec.json"))
         out = io.StringIO()
         with redirect_stdout(out):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
 
         self.assertEqual([], entries)
         self.assertEqual(1, len(failures))
@@ -450,7 +475,7 @@ class SiteTests(unittest.TestCase):
 
         path.write_text(old.read_text())
         with redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "republished", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "republished", summaries=tmp / "summaries")
 
         self.assertEqual(([], 1), (failures, len(entries)), "a republished summary sits beside the old file")
 
@@ -477,7 +502,7 @@ class SiteTests(unittest.TestCase):
         wrong.write_text(json.dumps(make_summary(GOOD_GROUPS)))
         out = io.StringIO()
         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(out):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual([7], [e["number"] for e in entries])
         self.assertEqual(1, len(failures))
         self.assertIn("must sit at <pr.number>/<pr.head>/summary.json", failures[0])
@@ -494,7 +519,7 @@ class SiteTests(unittest.TestCase):
         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.object(site, "summary_time", side_effect=lambda p: {good: 100, bad: 200}[p]), \
              redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual(1, len(failures))
         self.assertIn("gen/api.pb.go is in no group", failures[0])
         self.assertFalse((tmp / "site" / "reviews" / "7" / ("c" * 40)).exists())
@@ -507,7 +532,7 @@ class SiteTests(unittest.TestCase):
         self.write_summary(tmp / "summaries", "a" * 40, "Theirs")
         with mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
              mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "someone/else"}), redirect_stdout(io.StringIO()):
-            entries, failures = site.build_site(tmp / "site", summaries=tmp / "summaries")
+            entries, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries")
         self.assertEqual([], entries)
         self.assertIn("it is for owner/repo, not this repository", failures[0])
         self.assertTrue((tmp / "site" / "index.html").is_file(), "the rest of the site still deploys")
@@ -1203,7 +1228,7 @@ class GeneratedAttributeTests(unittest.TestCase):
         if attributes is not None:
             (folder / "attributes.json").write_text(attributes)
         with redirect_stdout(io.StringIO()):
-            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
+            _, failures, _ = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
         data = tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json"
         files = json.loads(data.read_text())["files"] if data.is_file() else []
         return {f["path"]: f["kind"] for f in files}, failures
@@ -1291,11 +1316,12 @@ class PrStatusTests(unittest.TestCase):
                  "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
         second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
                   "at": "2026-10-02T10:00:00Z", "association": "NONE"}
-        pages = [{"state": "MERGED", "base": "main", "reviews": [first]}, {"state": "MERGED", "base": "main", "reviews": [second]}]
+        pages = [{"state": "MERGED", "base": "main", "fork": False, "reviews": [first]},
+                 {"state": "MERGED", "base": "main", "fork": False, "reviews": [second]}]
         with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
             status = summary.pr_status("owner/example", 7)
 
-        self.assertEqual({"state": "merged", "base": "main", "reviews": [first, second]}, status)
+        self.assertEqual({"state": "merged", "base": "main", "fork": False, "reviews": [first, second]}, status)
         args = gh.call_args.args
         self.assertEqual(("api", "graphql", "--paginate"), args[:3])
         self.assertIn("owner=owner", args)
@@ -1306,9 +1332,21 @@ class PrStatusTests(unittest.TestCase):
         self.assertIn("baseRef { name }", " ".join(args), "the same query asks whether the base branch still exists")
 
     def test_a_deleted_base_branch_reads_as_none(self) -> None:
-        page = {"state": "MERGED", "base": None, "reviews": []}
+        page = {"state": "MERGED", "base": None, "fork": False, "reviews": []}
         with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n"):
-            self.assertEqual({"state": "merged", "base": None, "reviews": []}, summary.pr_status("owner/example", 7))
+            self.assertEqual({"state": "merged", "base": None, "fork": False, "reviews": []},
+                             summary.pr_status("owner/example", 7))
+
+    def test_the_same_query_says_whether_the_head_branch_is_in_a_fork(self) -> None:
+        for cross, fork in ((True, True), (False, False)):
+            with self.subTest(isCrossRepository=cross):
+                page = {"state": "OPEN", "base": "main", "fork": cross, "reviews": []}
+                with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n") as gh:
+                    status = summary.pr_status("owner/example", 7)
+
+                self.assertIs(fork, status["fork"])
+                self.assertIn("isCrossRepository", " ".join(gh.call_args.args))
+                self.assertIn("fork: .isCrossRepository", gh.call_args.args[-1])
 
     def test_an_answer_without_a_state_is_an_error(self) -> None:
         with mock.patch.object(summary, "gh", return_value=""):

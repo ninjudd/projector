@@ -173,6 +173,20 @@ class SiteBuildTests(SiteRepoCase):
         self.assertEqual(("README.md", [], [], None), (manifest["readme"], manifest["docs"], manifest["projects"],
                                                        manifest["projectsDir"]))
 
+    def test_a_projects_directory_in_a_hidden_folder_still_builds_the_site(self) -> None:
+        # The site copies nothing under a hidden folder, so search has no copy of such a plan to read.
+        (self.repo / ".projector.toml").write_text('[projects]\ndir = ".plans"\n')
+        (self.repo / ".plans/alpha").mkdir(parents=True)
+        (self.repo / ".plans/alpha/readme.md").write_text(plan("Plan alpha", "draft", "later"))
+
+        code, manifest, err = self.build()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["alpha"], [p["name"] for p in manifest["projects"]])
+        routes = [e["route"] for e in json.loads((self.out / "search.json").read_text())]
+        self.assertIn("docs/guide/", routes)
+        self.assertNotIn("projects/alpha/", routes, "search lists no page the site cannot load")
+
 
 class VisibilityTests(SiteRepoCase):
     def build_checked(self, answers: dict[str, str | None]) -> tuple[int, str]:
@@ -470,6 +484,22 @@ class SiteContentTests(SiteRepoCase):
 
     def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
         self.assertEqual({"c": None, "d": None}, self.statuses(None))
+
+    def test_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
+        statuses = self.statuses([projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                  projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
+                                  incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
+                          "d": {"status": "clean", "url": review_url(3),
+                                "incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}}, statuses)
+
+    def test_an_incremental_line_without_a_review_marker_sets_no_status(self) -> None:
+        line = incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)["body"].splitlines()[3]
+        statuses = self.statuses([{"body": f"Quoting:\n{line}\n", "url": review_url(3), "at": "2026-10-03T10:00:00Z",
+                                   "association": "OWNER"}])
+
+        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
 
     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
@@ -879,6 +909,237 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
 
 
+def new_file_diff(path: str, content: str | bytes) -> str:
+    """The diff that adds `path` with `content`: its lines, or a binary file's one line."""
+    head = f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n"
+    if isinstance(content, bytes):
+        return head + f"Binary files /dev/null and b/{path} differ\n"
+    lines = content.split("\n")
+    ends = content.endswith("\n")
+    if ends:
+        lines.pop()
+    body = "".join(f"+{line}\n" for line in lines) + ("" if ends else "\\ No newline at end of file\n")
+    return head + f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n" + body
+
+
+GAMMA = plan("Ship gamma", "ready", "next")
+
+
+class ProposedProjectTests(SiteRepoCase):
+    """The projects that open pull requests propose, read from their newest summaries' diffs."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
+        self.out_text = ""
+
+    def publish(self, number: int, files: dict[str, str | bytes], head: str | None = None, when: int = 1_700_000_000) -> str:
+        """Publish pull request `number`'s summary at `head`, whose diff adds `files` under docs/projects/."""
+        head = head or f"{number:02d}" * 20
+        paths = {f"docs/projects/{name}": content for name, content in files.items()}
+        data = {"version": 1, "name": f"Summary {number}",
+                "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                       "base": "b" * 40, "baseRef": "main", "headRef": f"change-{number}"},
+                "overview": {"summary": [], "cards": []},
+                "groups": [{"id": "all", "title": "All", "files": [{"path": path} for path in paths]}]}
+        folder = self.summaries / str(number) / head
+        folder.mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps(data))
+        (folder / "diff.patch").write_text("".join(new_file_diff(path, content) for path, content in paths.items()))
+        os.utime(folder / "summary.json", (when, when))
+        return head
+
+    def build(self, states: dict[int, str] | None = None, forks: tuple[int, ...] = (), offline: bool = False) -> dict:
+        """Build the site, with each pull request open unless `states` says otherwise and in this repository
+        unless `forks` names it, and return site.json. GitHub is asked once for each pull request."""
+        asked: list[int] = []
+
+        def pr_status(repo: str, number: int) -> dict:
+            asked.append(number)
+            if offline:
+                raise summary.SummaryError("gh api failed: offline")
+            return {"state": (states or {}).get(number, "open"), "base": "main", "fork": number in forks,
+                    "reviews": []}
+
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+             mock.patch.object(summary, "pr_status", side_effect=pr_status), \
+             redirect_stdout(out), redirect_stderr(out):
+            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+                             "--summaries", str(self.summaries)])
+        self.out_text = out.getvalue()
+        self.assertEqual(0, code, self.out_text)
+        self.assertEqual(sorted(asked), sorted(int(p.name) for p in self.summaries.iterdir()),
+                         "the build asks once for each pull request")
+        return json.loads((self.out / "site.json").read_text())
+
+    @staticmethod
+    def project(manifest: dict, name: str) -> dict | None:
+        return next((p for p in manifest["projects"] if p["name"] == name), None)
+
+    def warnings(self, title: str) -> list[str]:
+        return [line for line in self.out_text.splitlines() if line.startswith(f"::warning title={title}::")]
+
+    def test_an_open_pull_request_proposes_the_plan_its_diff_adds_at_the_address_it_keeps(self) -> None:
+        head = self.publish(9, {"gamma/readme.md": GAMMA})
+
+        manifest = self.build()
+
+        gamma = self.project(manifest, "gamma")
+        self.assertEqual({"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
+                          "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
+                          "proposed": {"number": 9, "head": head, "also": []}}, gamma)
+        self.assertNotIn("proposed", self.project(manifest, "alpha"))
+        self.assertEqual(GAMMA.encode(), (self.out / "content/docs/projects/gamma/readme.md").read_bytes())
+        self.assertTrue((self.out / "projects/gamma/index.html").is_file())
+        index = {e["route"]: e for e in json.loads((self.out / "search.json").read_text())}
+        self.assertEqual(9, index["projects/gamma/"]["proposed"])
+        self.assertIn("Ship gamma", index["projects/gamma/"]["text"])
+        self.assertNotIn("proposed", index["projects/alpha/"])
+        data = json.loads((self.out / "reviews" / "9" / head / "data.json").read_text())
+        self.assertEqual({"name": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"},
+                         data["files"][0]["project"])
+        self.assertIn("2 projects, 1 proposed project, 1 reviews, 0 reviews skipped", self.out_text)
+
+    def test_a_stack_segment_that_carries_out_a_proposed_project_is_headed_by_its_proposed_page(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+        upper = self.publish(10, {"alpha/more.md": "# More\n"})
+        path = self.summaries / "10" / upper / "summary.json"
+        data = json.loads(path.read_text())
+        data["project"] = "gamma"
+        data["pr"]["baseRef"] = "change-9"
+        path.write_text(json.dumps(data))
+
+        manifest = self.build()
+
+        gamma = {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"}
+        self.assertEqual([(9, gamma), (10, gamma)], [(r["number"], r["header"]) for r in manifest["reviews"]],
+                         "the bottom layer's diff proposes gamma, and the upper layer records it")
+        self.assertEqual([10, 9], self.project(manifest, "gamma")["reviews"])
+        self.assertEqual([], self.project(manifest, "alpha")["reviews"])
+
+    def test_a_merged_or_closed_pull_request_proposes_nothing(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+        for state in ("merged", "closed"):
+            with self.subTest(state):
+                self.assertIsNone(self.project(self.build({9: state}), "gamma"))
+
+    def test_a_forks_pull_request_proposes_nothing_and_keeps_its_review(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+
+        manifest = self.build(forks=(9,))
+
+        self.assertIsNone(self.project(manifest, "gamma"))
+        self.assertEqual([9], [r["number"] for r in manifest["reviews"]])
+
+    def test_a_pull_request_whose_status_is_unknown_proposes_nothing_and_the_build_says_so(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+        self.publish(10, {"alpha/notes-2.md": "# More notes\n"})
+
+        manifest = self.build(offline=True)
+
+        self.assertIsNone(self.project(manifest, "gamma"))
+        self.assertEqual(["::warning title=Proposed projects left out::the status of 1 pull request that adds a plan "
+                          "is unknown, because GitHub could not be asked, so its plan is not proposed"],
+                         self.warnings("Proposed projects left out"))
+
+    def test_only_the_newest_summary_proposes(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA}, head="a" * 40, when=1_700_000_000)
+        self.publish(9, {"alpha/notes-2.md": "# More notes\n"}, head="b" * 40, when=1_700_000_100)
+
+        self.assertIsNone(self.project(self.build(), "gamma"))
+
+    def test_a_plan_without_a_final_newline_keeps_it_out(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA.rstrip("\n")})
+
+        self.build()
+
+        self.assertEqual(GAMMA.rstrip("\n").encode(), (self.out / "content/docs/projects/gamma/readme.md").read_bytes())
+
+    def test_a_plan_that_does_not_load_is_skipped_with_a_warning(self) -> None:
+        self.publish(9, {"gamma/readme.md": plan("Ship gamma", "maybe", "next")})
+
+        manifest = self.build()
+
+        self.assertIsNone(self.project(manifest, "gamma"))
+        self.assertEqual(["::warning title=Proposed project skipped::#9 docs/projects/gamma/readme.md: status must be "
+                          "one of draft|ready|in-progress|completed"], self.warnings("Proposed project skipped"))
+        self.assertFalse((self.out / "content/docs/projects/gamma").exists())
+
+    def test_the_checkout_wins_over_a_proposal_of_the_same_name(self) -> None:
+        checkout = (self.repo / "docs/projects/alpha/readme.md").read_bytes()
+        self.publish(9, {"alpha/readme.md": plan("Rewrite alpha", "draft", "later")})
+
+        alpha = self.project(self.build(), "alpha")
+
+        self.assertEqual("Build alpha", alpha["title"])
+        self.assertNotIn("proposed", alpha)
+        self.assertEqual(checkout, (self.out / "content/docs/projects/alpha/readme.md").read_bytes())
+
+    def test_a_repositorys_first_plan_can_be_proposed(self) -> None:
+        shutil.rmtree(self.repo / "docs/projects")
+        self.publish(9, {"gamma/readme.md": GAMMA})
+
+        manifest = self.build()
+
+        self.assertEqual(["gamma"], [p["name"] for p in manifest["projects"]])
+        self.assertEqual(9, manifest["projects"][0]["proposed"]["number"])
+        self.assertEqual("docs/projects", manifest["projectsDir"])
+
+    def test_the_lowest_pull_request_takes_a_name_and_the_others_are_named_beside_it(self) -> None:
+        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
+        self.publish(9, {"gamma/readme.md": GAMMA})
+
+        gamma = self.project(self.build(), "gamma")
+
+        self.assertEqual(("Ship gamma", 9, [12]), (gamma["title"], gamma["proposed"]["number"], gamma["proposed"]["also"]))
+
+    def test_a_plan_that_does_not_load_takes_no_name(self) -> None:
+        self.publish(9, {"gamma/readme.md": plan("Ship gamma", "maybe", "next")})
+        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
+
+        gamma = self.project(self.build(), "gamma")
+
+        self.assertEqual(("Ship gamma later", 12, []), (gamma["title"], gamma["proposed"]["number"], gamma["proposed"]["also"]))
+        self.assertEqual(1, len(self.warnings("Proposed project skipped")))
+        self.assertIn("#9 ", self.warnings("Proposed project skipped")[0])
+
+    def test_a_forks_proposal_of_the_same_name_is_not_named_beside_it(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+        self.publish(12, {"gamma/readme.md": plan("Ship gamma later", "draft", "later")})
+
+        gamma = self.project(self.build(forks=(12,)), "gamma")
+
+        self.assertEqual(("Ship gamma", []), (gamma["title"], gamma["proposed"]["also"]))
+
+    def test_a_nested_plan_can_be_proposed_under_a_checkout_project(self) -> None:
+        self.publish(9, {"alpha/delta/readme.md": plan("Add delta", "draft", "later")})
+
+        delta = self.project(self.build(), "alpha/delta")
+
+        self.assertEqual(9, delta["proposed"]["number"])
+        self.assertEqual("projects/alpha/delta/", next(
+            e["route"] for e in json.loads((self.out / "search.json").read_text()) if e["title"] == "Add delta"))
+
+    def test_a_nested_plan_loads_without_a_plan_above_it_as_in_the_checkout(self) -> None:
+        self.publish(9, {"omega/x/readme.md": plan("Explore x", "draft", "later")})
+
+        self.assertEqual(9, self.project(self.build(), "omega/x")["proposed"]["number"])
+
+    def test_only_markdown_outside_hidden_folders_comes_with_a_proposed_plan(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA, "gamma/design.md": "# Gamma design\n",
+                         "gamma/.notes/x.md": "# Hidden\n", "gamma/page.html": "<title>Page</title>",
+                         "gamma/data.json": "{}\n", "gamma/logo.png": b"\x89PNG"})
+
+        gamma = self.project(self.build(), "gamma")
+
+        self.assertEqual([{"path": "docs/projects/gamma/design.md", "title": "Gamma design",
+                           "route": "projects/gamma/design/"}], gamma["files"])
+        self.assertEqual(["design.md", "readme.md"],
+                         sorted(p.name for p in (self.out / "content/docs/projects/gamma").rglob("*") if p.is_file()))
+        self.assertTrue((self.out / "projects/gamma/design/index.html").is_file())
+
+
 SITE_JS = Path(__file__).parents[1] / "site" / "assets" / "site.js"
 SUMMARY_JS = SITE_JS.with_name("summary.js")
 
@@ -887,6 +1148,16 @@ def shared_js() -> str:
     """The helpers at the top of the compiled summary.js, which every page loads before site.js."""
     text = SUMMARY_JS.read_text()
     return text[:text.index("\n(function () {")]
+
+
+def js_const(name: str) -> str:
+    """One constant of the compiled site.js, as it declares it."""
+    return next(line.strip() for line in SITE_JS.read_text().splitlines() if line.startswith(f"    const {name} = "))
+
+
+def page_constants() -> str:
+    """The constants of the compiled site.js that the projects views draw with."""
+    return "\n".join(js_const(name) for name in ("STATUS_ORDER", "PRIORITY_ORDER", "PROPOSED"))
 
 
 def js_function(name: str) -> str:
@@ -1015,7 +1286,7 @@ class ContextBuildTests(unittest.TestCase):
     def build(self) -> str:
         printed = io.StringIO()
         with redirect_stdout(printed):
-            _, failures = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
+            _, failures, _ = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
         self.assertEqual([], failures)
         return printed.getvalue()
 
@@ -1113,16 +1384,14 @@ class ProjectsViewTests(unittest.TestCase):
     def projects_html(self, projects: list[dict]) -> str:
         """The projects view's markup for `projects`, drawn by the compiled showProjects."""
         stub = (
-            "const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];\n"
-            "const PRIORITY_ORDER = ['now', 'next', 'later'];\n"
             "const base = '/';\n"
             f"const site = {{projects: {json.dumps(projects)}, projectsDir: 'docs/projects', projectsReadme: null}};\n"
             "let drawn = '';\n"
             "function frame(active, title, body) { drawn = body; return {querySelector: function () {"
             " return {addEventListener: function () {}}; }}; }\n"
         )
-        program = stub + shared_js() + "\n" + \
-            "\n".join(js_function(n) for n in ("badge", "depth", "ownerName", "showProjects")) + \
+        program = stub + shared_js() + "\n" + page_constants() + "\n" + \
+            "\n".join(js_function(n) for n in ("badge", "proposedBadge", "depth", "ownerName", "showProjects")) + \
             "\nshowProjects(); process.stdout.write(drawn);"
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -1180,6 +1449,131 @@ class ProjectsViewTests(unittest.TestCase):
             self.assertEqual(0, cli.main(["site", "build", "--out", str(out), "--repo-root", str(repo)]))
 
         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
+
+
+@unittest.skipUnless(shutil.which("node"), "the proposed project views need node")
+class ProposedViewTests(unittest.TestCase):
+    HEAD = "15cb40d18e911face2cd2393af143b526d6392e9"
+
+    def gamma(self, also: list[int] | None = None) -> dict:
+        return {"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
+                "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
+                "proposed": {"number": 9, "head": self.HEAD, "also": also or []}}
+
+    @staticmethod
+    def alpha() -> dict:
+        return {"name": "alpha", "title": "Build alpha", "status": "ready", "priority": "now", "owner": None,
+                "path": "docs/projects/alpha/readme.md", "files": [], "reviews": []}
+
+    @staticmethod
+    def site(projects: list[dict], title: str = "Plan gamma") -> dict:
+        return {"repo": "owner/example", "branch": "main", "content": "content", "readme": None, "docs": [],
+                "projectsDir": "docs/projects", "projectsReadme": None, "projects": projects, "files": [],
+                "reviews": [{"number": 9, "name": "Summary 9", "title": title, "heads": 1, "stack": None,
+                             "state": "open", "updated": "2026-10-10T12:00:00Z",
+                             "review": {"status": "changes-requested",
+                                        "url": "https://github.com/owner/example/pull/9#pullrequestreview-1"}}]}
+
+    def run_js(self, site: dict, functions: tuple[str, ...], main: str) -> dict:
+        """Run `main` under node beside the compiled `functions`, with `site` as site.json, and return what it writes as JSON."""
+        stub = (
+            "const base = '/';\n"
+            f"const site = {json.dumps(site)};\n"
+            "const pageFiles = new Set(), siteFiles = new Set();\n"
+            "let shown = null, drawn = '', filtered = null, rows = [];\n"
+            "function showPage(active, path, title, before, side, ref) {"
+            " shown = {banner: before.innerHTML, side: side, ref: ref}; }\n"
+            "const window = {DOMPurify: {sanitize: function (h) { return h; }}, marked: {parse: function (t) { return t; }}};\n"
+            "const links = [];\n"
+            "const document = {createElement: function () { return {querySelectorAll: function (selector) {"
+            " return selector === 'a[href]' ? links : []; }}; }};\n"
+            "function frame(active, title, body) { drawn = body;"
+            " rows = Array.from(body.matchAll(/<tr data-search=\"([^\"]*)\">/g),"
+            " function (m) { return {dataset: {search: m[1]}, hidden: false}; });"
+            " return {querySelector: function () { return {addEventListener: function (type, f) { filtered = f; }}; },"
+            " querySelectorAll: function () { return rows; }}; }\n"
+        )
+        program = stub + shared_js() + "\n" + page_constants() + "\n" + \
+            "\n".join(js_function(n) for n in functions) + "\n" + main
+        return json.loads(node(program))
+
+    def test_the_projects_page_lists_a_proposed_project_in_its_status_group_with_its_badge(self) -> None:
+        drawn = self.run_js(self.site([self.alpha(), self.gamma()]),
+                            ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
+                            "showProjects(); process.stdout.write(JSON.stringify({html: drawn}));")["html"]
+
+        self.assertIn('<p class="note">2 projects under <span class="mono">docs/projects</span>, '
+                      '1 of them proposed in open pull requests. ', drawn)
+        ready = drawn.split("<h2>ready ")[1].split("</section>")[0]
+        self.assertIn('<a href="/projects/gamma/">Ship gamma</a> <a class="badge proposed" href="/reviews/9/">'
+                      'Proposed #9</a></td>', ready)
+        self.assertNotIn("Proposed", ready.split("Ship gamma")[0], "only the proposed row carries the badge")
+
+    def test_the_filter_word_proposed_keeps_only_the_proposed_rows(self) -> None:
+        kept = self.run_js(self.site([self.alpha(), self.gamma()]),
+                           ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
+                           "showProjects(); filtered({target: {value: 'Proposed'}}); process.stdout.write(JSON.stringify("
+                           "rows.filter(function (r) { return !r.hidden; }).map(function (r) { return r.dataset.search; })));")
+
+        self.assertEqual(["gamma ship gamma  proposed"], kept)
+
+    def project_page(self, site: dict, path: str = "docs/projects/gamma/readme.md") -> dict:
+        functions = ("folderOf", "projectNamed", "ownerOf", "repoUrl", "contentUrl", "routeFor", "badge",
+                     "proposedBadge", "tree", "reviewFor", "showProjectFile", "proposalBanner")
+        return self.run_js(site, functions, f"showProjectFile({json.dumps(path)}); process.stdout.write(JSON.stringify(shown));")
+
+    def test_a_proposed_projects_page_has_the_banner_and_links_github_at_its_head(self) -> None:
+        shown = self.project_page(self.site([self.alpha(), self.gamma(also=[12])]))
+
+        banner = shown["banner"]
+        self.assertIn('<div class="proposal"><p><b>Proposed in</b> <a href="/reviews/9/">#9</a> Plan gamma · '
+                      '<span class="eyebrow"><a class="rstatus changes-requested" '
+                      'href="https://github.com/owner/example/pull/9#pullrequestreview-1" target="_blank" '
+                      'rel="noopener">Changes requested</a></span></p>', banner)
+        self.assertIn('is not on <span class="mono">main</span> yet. It shows head <span class="mono">15cb40d</span>', banner)
+        self.assertIn('A plan of this name is also proposed in <a href="/reviews/12/">#12</a>.', banner)
+        self.assertLess(banner.index('class="proposal"'), banner.index("badge status-ready"),
+                        "the banner sits above the status badges")
+        self.assertIn(f'<a class="note" href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
+                      'readme.md">View on GitHub</a>', banner)
+        self.assertEqual(self.HEAD, shown["ref"], "the page renders its links at the proposal's head")
+
+    def test_a_relative_link_to_a_file_the_site_lacks_points_at_the_given_ref(self) -> None:
+        functions = ("repoUrl", "contentUrl", "routeFor", "resolve", "stripFrontmatter", "slug", "renderMarkdown")
+        links = self.run_js(self.site([self.gamma()]), functions,
+                            "links.push({attrs: {href: '../../../src/app.py'}, getAttribute: function (n) {"
+                            " return this.attrs[n]; }, setAttribute: function (n, v) { this.attrs[n] = v; }});"
+                            f" renderMarkdown('text', 'docs/projects/gamma/readme.md', {json.dumps(self.HEAD)});"
+                            " process.stdout.write(JSON.stringify(links.map(function (a) { return a.attrs.href; })));")
+
+        self.assertEqual([f"https://github.com/owner/example/blob/{self.HEAD}/src/app.py"], links)
+
+    def test_a_checkout_projects_page_has_no_banner_and_its_sidebar_badges_a_proposed_nested_project(self) -> None:
+        delta = dict(self.gamma(), name="alpha/delta", title="Add delta", path="docs/projects/alpha/delta/readme.md")
+
+        shown = self.project_page(self.site([self.alpha(), delta]), "docs/projects/alpha/readme.md")
+
+        self.assertNotIn("proposal", shown["banner"])
+        self.assertIn("/blob/main/docs/projects/alpha/readme.md", shown["banner"])
+        self.assertEqual("main", shown["ref"])
+        self.assertIn('>Add delta</a> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>', shown["side"])
+
+    def test_a_pull_request_title_shows_as_text(self) -> None:
+        shown = self.project_page(self.site([self.gamma()], title="<script>alert(1)</script>"))
+
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", shown["banner"])
+        self.assertNotIn("<script>", shown["banner"])
+
+    def test_a_search_result_for_a_proposed_page_carries_the_badge(self) -> None:
+        index = [{"route": "projects/gamma/", "title": "Ship gamma", "kind": "project", "text": "Gamma text",
+                  "proposed": 9},
+                 {"route": "projects/alpha/", "title": "Build alpha", "kind": "project", "text": "Gamma too"}]
+        results = self.run_js(self.site([]), ("proposedBadge", "snippet", "highlight", "search"),
+                              f"process.stdout.write(JSON.stringify(search('gamma', {json.dumps(index)})));")
+
+        self.assertIn('<span class="note">project</span> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>'
+                      '<div class="snippet">', results[0])
+        self.assertNotIn("badge", results[1])
 
 
 @unittest.skipUnless(shutil.which("node"), "the header test needs node")
@@ -1539,28 +1933,121 @@ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/s
                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
 
 
-def rendered_summary(data: dict, popovers: bool = True) -> str:
-    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers."""
+def rendered_summary(data: dict, popovers: bool = True, then: str = "process.stdout.write(root.innerHTML);") -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers.
+
+    The script `then` runs after it, with the context views renderSummary returns as `views`, and writes the output.
+    """
     lines = SUMMARY_JS.read_text().splitlines()
-    start = lines.index("    function renderSummary(data) {")
-    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
+    # The renderer and the declarations above it in the page's function.
+    start = lines.index("(function () {") + 1
+    end = next(i for i in range(lines.index("    function renderSummary(data) {"), len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
                "const window = {};\n"
                f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
                shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
-               f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
+               f"\nconst views = renderSummary({json.dumps(data)});\n{then}")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+
+EXPANDER_DIFF = """diff --git a/lines.txt b/lines.txt
+index 1111111..2222222 100644
+--- a/lines.txt
++++ b/lines.txt
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++LINE 11
+ line 12
+@@ -50,3 +50,3 @@
+ line 50
+-line 51
++LINE 51
+ line 52
+diff --git a/plain.txt b/plain.txt
+index 1111111..2222222 100644
+--- a/plain.txt
++++ b/plain.txt
+@@ -1 +1 @@
+-old
++new
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "the expander test needs node")
+class ExpanderTests(unittest.TestCase):
+    """A file the build gave `context` draws an expander in each gap; the page reveals its lines escaped."""
+
+    def setUp(self) -> None:
+        summaries = Path(tempfile.mkdtemp()) / "summaries"
+        folder = summaries / "7" / ("c" * 40)
+        (folder / "head").mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({
+            "version": 1, "pr": {"repo": "owner/example", "number": 7, "title": "Seven", "head": "c" * 40},
+            "groups": [{"id": "all", "title": "All", "files": [{"path": "lines.txt"}, {"path": "plain.txt"}]}]}))
+        (folder / "diff.patch").write_text(EXPANDER_DIFF)
+        lines = [f"LINE {n}" if n in (11, 51) else f"line {n}" for n in range(1, 101)]
+        (folder / "head" / "lines.txt").write_text("".join(f"{line}\n" for line in lines))
+        out = Path(tempfile.mkdtemp()) / "site"
+        with redirect_stdout(io.StringIO()):
+            site_build.build_site(out, summaries=summaries, base="/projector/")
+        self.data = json.loads((out / "reviews" / "7" / ("c" * 40) / "data.json").read_text())
+        self.fid = {f["path"]: f["id"] for f in self.data["files"]}
+
+    def card(self, html: str, path: str) -> str:
+        start = re.search(f'<article class="file[^"]*" id="{self.fid[path]}"', html).start()
+        return html[start:html.index("</article>", start)]
+
+    def test_each_gap_draws_an_expander_with_the_controls_its_place_allows(self) -> None:
+        html = rendered_summary(self.data)
+        card = self.card(html, "lines.txt")
+
+        order = [gap or hunk for gap, hunk in re.findall(r'<table class="diff (gap)"|<tr class="(hunk)"', card)]
+        self.assertEqual(["gap", "hunk", "gap", "hunk", "gap"], order, "an expander above, between, and below the hunks")
+        expanders = re.findall(r'<tr class="expander" data-gap="(\d)">(.*?)</tr>', card)
+        self.assertEqual(["0", "1", "2"], [gap for gap, _ in expanders])
+        controls = [re.findall(r'data-expand="(\w+)" aria-label="([^"]+)"', cells) for _, cells in expanders]
+        self.assertEqual([[("all", "Expand all")],
+                          [("down", "Expand down"), ("up", "Expand up"), ("all", "Expand all")],
+                          [("down", "Expand down"), ("all", "Expand all")]], controls,
+                         "no expand up below the last hunk, and only expand all for 20 lines or fewer")
+        self.assertEqual(["9 hidden lines", "37 hidden lines", "48 hidden lines"],
+                         [re.search(r'<td class="code xinfo">([^<]*)</td>', cells).group(1) for _, cells in expanders])
+        self.assertNotIn("expander", self.card(html, "plain.txt"), "a file without context draws no expander")
+
+    def test_revealed_lines_are_escaped_context_rows_numbered_on_both_sides(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['<script>alert(1)</script>', 'b &amp; c'], null, 1, 2, 5));"))
+
+        self.assertEqual('<tr class="ctx"><td class="ln">5</td><td class="ln">1</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">&lt;script&gt;alert(1)&lt;/script&gt;</span></td></tr>'
+                         '<tr class="ctx"><td class="ln">6</td><td class="ln">2</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">b &amp;amp; c</span></td></tr>', rows)
+        self.assertNotIn("<script>", rows)
+
+    def test_a_highlighted_line_is_drawn_from_the_highlighters_markup(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['x'], ['<span class=\"hljs-keyword\">x</span>'], 1, 1, 1));"))
+
+        self.assertIn('<span class="src"><span class="hljs-keyword">x</span></span>', rows)
+
+    def test_only_a_file_with_context_has_a_view(self) -> None:
+        self.assertEqual([self.fid["lines.txt"]], json.loads(rendered_summary(
+            self.data, then="process.stdout.write(JSON.stringify(Object.keys(views)));")))
 
 
 class FileHeaderTests(SiteRepoCase):
     """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
 
-    def build(self, state: str | None = None, reported_base: object = ..., **pr: str) -> dict:
+    def build(self, state: str | None = None, reported_base: object = ..., reviews: list[dict] | None = None,
+              **pr: str) -> dict:
         """The data the site build writes for pull request 9, which changes HEADER_FILES.
 
-        GitHub reports the pull request as `state`, or cannot be asked when it is None, and
-        reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
+        GitHub reports the pull request as `state` with `reviews`, or cannot be asked when it is
+        None, and reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
         """
         summaries = Path(tempfile.mkdtemp()) / "summaries"
         folder = summaries / "9" / ("c" * 40)
@@ -1579,7 +2066,8 @@ class FileHeaderTests(SiteRepoCase):
                 for p in HEADER_FILES]}],
         }))
         (folder / "diff.patch").write_text(HEADER_DIFF)
-        reported = {"state": state, "reviews": [], **({} if reported_base is ... else {"base": reported_base})}
+        reported = {"state": state, "reviews": reviews or [],
+                    **({} if reported_base is ... else {"base": reported_base})}
         status = mock.patch.object(summary, "pr_status", return_value=reported) \
             if state is not None else nullcontext()
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
@@ -1709,6 +2197,22 @@ class FileHeaderTests(SiteRepoCase):
                 self.assertIn('<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>', html)
                 shutil.rmtree(self.out)
         self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
+
+    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
+    def test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
+        full = "a8cf3d5" + "0" * 33
+        reviews = [projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
+                   incremental_review("c" * 40, full, "2026-10-02T10:00:00Z", 2)]
+
+        open_html = rendered_summary(self.build(state="open", reviews=reviews))
+        shutil.rmtree(self.out)
+        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
+
+        self.assertIn(f' · <a class="rstatus clean" href="{review_url(2)}" target="_blank" rel="noopener">Clean</a>'
+                      f' · <a class="rstatus incremental" href="{review_url(1)}" target="_blank" rel="noopener">'
+                      'incremental from <code>a8cf3d5</code></a></div><h1>', open_html)
+        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
+                      "a merged pull request shows Merged alone")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
@@ -1927,6 +2431,15 @@ def projector_review(verdict: str, head: str, at: str, review_id: int, associati
               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
             "url": review_url(review_id), "at": at, "association": association}
+
+
+def incremental_review(head: str, full: str, at: str, review_id: int) -> dict:
+    """A clean incremental review of `head`, building on the full review of `full`, as `projector_review` gives one."""
+    review = projector_review("clean", head, at, review_id)
+    marker = review["body"].splitlines()[2]
+    line = (f"<!-- projector-incremental v=1 from={full} kind=push insertions=2 deletions=2 files=1 "
+            "conflicts=0 -->")
+    return dict(review, body=f"**Projector review** · `0.6.13`\n\n{marker}\n{line}\n\nIncremental review.")
 
 
 def served_summary(number: int, head: str) -> dict:

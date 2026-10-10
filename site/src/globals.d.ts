@@ -16,6 +16,34 @@ interface Window {
 /** A diff line: its kind (a, d, c, or m for a meta line), old and new numbers, and text. */
 type SummaryLine = [string, number | null, number | null, string];
 
+/** A hunk: its header line, the start and line count of each side the header names, and its lines. */
+interface SummaryHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: SummaryLine[];
+}
+
+/**
+ * A run of head lines a file's hunks leave hidden: new-side lines `start` to `end`, above hunk `before`, or
+ * below the last hunk when `before` is the number of hunks. New line `start` is old line `oldStart`.
+ */
+interface SummaryGap {
+  before: number;
+  start: number;
+  end: number;
+  oldStart: number;
+}
+
+/** The head's copy of a file, served at `url` with `lines` lines, and the gaps its hunks leave. */
+interface SummaryContext {
+  url: string;
+  lines: number;
+  gaps: SummaryGap[];
+}
+
 interface SummaryFile {
   path: string;
   id: string;
@@ -26,9 +54,11 @@ interface SummaryFile {
   deleted?: boolean;
   adds: number;
   dels: number;
-  hunks: { header: string; lines: SummaryLine[] }[];
+  hunks: SummaryHunk[];
   /** The deepest project on the site whose folder holds the file; absent outside every project the site has. */
   project?: { name: string; title: string; url: string };
+  /** What lets the page reveal the lines around the hunks; absent where the summary stored no copy of the file. */
+  context?: SummaryContext;
 }
 
 /** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
@@ -53,9 +83,13 @@ type PullState = 'open' | 'merged' | 'closed';
 
 /**
  * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
- * Projector review names the head.
+ * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
+ * head of the full review it builds on, and that review's page, or null when the build found none.
  */
-type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+type ReviewStatus =
+  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
+  | { status: 'changes-requested'; url: string }
+  | { status: 'unreviewed' };
 
 /** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
 interface StackHeader {
@@ -111,6 +145,16 @@ interface SitePage {
   route: string;
 }
 
+/**
+ * The open pull request whose newest summary adds a proposed project's plan, the full SHA of that summary's head,
+ * and the other open pull requests whose newest summaries add a plan of the same name, lowest first.
+ */
+interface Proposal {
+  number: number;
+  head: string;
+  also: number[];
+}
+
 interface SiteProject {
   name: string;
   path: string;
@@ -120,6 +164,8 @@ interface SiteProject {
   owner?: string | null;
   files: SitePage[];
   reviews: number[];
+  /** Present only on a project an open pull request proposes, which is not in the checkout the site was built from. */
+  proposed?: Proposal;
 }
 
 /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
@@ -153,10 +199,11 @@ interface SiteData {
   reviews: SiteReview[];
 }
 
-/** One entry of search.json. */
+/** One entry of search.json; `proposed` is the pull request that proposes the page's project, if one does. */
 interface SearchEntry {
   route: string;
   title: string;
   kind: string;
   text: string;
+  proposed?: number;
 }

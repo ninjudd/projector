@@ -77,6 +77,8 @@ a.rstatus:hover { text-decoration: underline; }
 .rstatus.unreviewed { color: var(--muted); }
 .rstatus.merged { color: var(--merged); }
 .rstatus.closed { color: var(--closed); }
+.rstatus.incremental { color: var(--muted); }
+.eyebrow code { text-transform: none; letter-spacing: normal; }
 
 /* sidebar */
 /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
@@ -312,6 +314,12 @@ table.diff tr.del td { background: var(--del-bg); } table.diff tr.del td.ln { ba
 table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff tr.del .sign { color: var(--del-text); font-weight: 600; }
 table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
 table.diff tr.meta td { color: var(--muted); font-style: italic; }
+/* A gap's expander, in a hunk header's colours: its controls in the line-number gutter, and how many lines it hides where the code starts. */
+table.diff tr.expander td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 2px; font-size: 11.5px; vertical-align: middle; }
+table.diff td.xctl { white-space: nowrap; padding-inline: 2px 6px; }
+.xbtn { display: inline-grid; place-items: center; width: 22px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: inherit; cursor: pointer; vertical-align: middle; }
+.xbtn:hover { background: var(--surface); border-color: var(--border); color: var(--accent); }
+.xbtn svg { width: 14px; height: 14px; }
 /* A note under a line: one band of the note's background, its tag in the line-number gutter and its text where the code starts. */
 table.diff tr.noterow td { background: var(--surface-2); padding-block: 13px; }
 table.diff tr.noterow.flag td { background: var(--accent-soft); }

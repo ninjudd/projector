@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -137,9 +137,12 @@ two files with the same content share one request, and highlights the whole
 text once with the page's `hl` and `splitLines`. Revealed lines are context
 rows built by the same `numbers` function as the diff's own rows, so they show
 both line numbers in the file's column layout. Expand down appends rows to the
-preceding hunk's table; expand up inserts them into the following hunk's table
-above its `tr.hunk` header row. After each insertion the page runs
-`markTokens` on the file, so a marked name is marked in the new lines too.
+preceding hunk's table; expand up inserts them at the start of the following
+hunk's table, above its `tr.hunk` header row and the lines an earlier expand
+up revealed, so repeated expands keep the lines in order. Expand all adds the
+rest to the preceding table, or to the following one for the gap above the
+first hunk. After each insertion the page runs `markTokens` on the file, so a
+marked name is marked in the new lines too.
 
 When a gap closes, the page removes its expander. What else it removes depends
 on where the gap sat:
@@ -269,9 +272,28 @@ them.
 - **Pruning the summaries ref.** Every published head keeps its entries, as its
   summary and diff do today.
 
-## 8. Implementation state
+## 8. Outcome
 
-Rollout step 1, the data, is built. Criterion 1 holds in `PublishTests` in
-`tests/test_summary.py`, and criteria 2 and 3 in `HunkGapTests` and
-`ContextBuildTests` in `tests/test_site.py`. Step 2, the page, remains, with
-criteria 4 to 6 and the browser checks of criterion 5.
+Shipped in the two steps § 6 planned: the data, then the page. Each
+criterion has its evidence:
+
+- **Criterion 1.** `PublishTests` in `tests/test_summary.py`.
+- **Criteria 2 and 3.** `HunkGapTests` and `ContextBuildTests` in
+  `tests/test_site.py`.
+- **Criteria 4 and 6.** `ExpanderTests` in `tests/test_site.py`, which run the
+  compiled renderer under node.
+- **Criterion 5.** Checked in Chrome on this repository's summaries, served by
+  `project site serve --base /projector/`, as the page's pull request records.
+  Expanding every gap of each file, in random order, left one table holding
+  the head's file line for line.
+- **Cost.** For this repository's 102 summaries, publish would store 576
+  `head/` entries, and the build would serve 289 distinct files, 11,324,652
+  bytes in all. In Chrome on a laptop, the first expand all on a 5,000-line
+  Python file took 181 to 199 ms with layout: it fetches the file,
+  highlights all of it in about 80 ms, and reveals 2,497 lines. Expand all
+  on the file's other gap, 2,496 lines, took about 80 ms.
+
+The design held, with three details settled in the build and the page. A
+file whose hunks leave no gap gets no `context`. The build refuses a stored
+path that leads out of `head/` (§ 2.2). Expand up inserts above the lines an
+earlier expand up revealed, as well as above the header (§ 2.3).

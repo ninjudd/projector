@@ -176,6 +176,19 @@ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
 .sitemain .badge.priority-now { color: var(--text); font-weight: 600; }
 .sitemain .badge.status-ready { background: var(--ok-bg); color: var(--ok); }
 .sitemain .badge.status-draft, .sitemain .badge.priority-next { background: var(--warn-bg); color: var(--warn); }
+/* A project an open pull request proposes: its badge links that pull request's
+   review, and a banner tops each of its pages. Both take the info colours,
+   which summary.css sets for the light and dark themes, apart from the
+   status and priority badges beside them. */
+.sitemain a.badge.proposed { background: var(--info-bg); color: var(--info); text-decoration: none; }
+.sitemain a.badge.proposed:hover { text-decoration: underline; }
+.proposal {
+  margin: 0 0 12px; padding: 10px 14px; font-size: 14px;
+  background: var(--info-bg); border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 8px;
+}
+.proposal p { margin: 0; }
+.proposal p + p { margin-top: 4px; }
+.proposal b { color: var(--info); }
 
 .phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }

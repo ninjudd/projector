@@ -1,6 +1,6 @@
 // Projector PR summary renderer: builds the page from summary data, embedded in
 // #summary-data or fetched from data.json beside the page, then wires collapsing,
-// reviewed state, highlighting, and sticky headers.
+// reviewed state, highlighting, sticky headers, and expanding the lines between hunks.
 
 // What a summary page and the site's own pages draw alike. The site's pages load
 // this script for these, as they load summary.css for its colours, and on a page
@@ -57,7 +57,21 @@ function stackSegmentsHtml(segments: StackSegment[], rows: NonNullable<SummaryDa
 }
 
 (function (): void {
-function renderSummary(data: SummaryData): void {
+// How many hidden lines one expand up or expand down reveals.
+const STEP = 20;
+
+// What wireSummary needs to reveal a file's hidden lines: where its copy is,
+// its language, and the renderer's own expander cells and rows, so revealed
+// lines take the file's column layout.
+interface ContextView {
+  context: SummaryContext;
+  lang: string;
+  expanderCells(gap: SummaryGap, left: number, failed: boolean): string;
+  contextRows(lines: string[], html: string[] | null, from: number, to: number, oldFrom: number): string;
+}
+
+// Draws the page, and returns the context view of each file that has one, by file id.
+function renderSummary(data: SummaryData): Record<string, ContextView> {
   const pr = data.pr;
   const repoUrl = `https://github.com/${pr.repo}`;
   const prUrl = `${repoUrl}/pull/${String(pr.number)}`;
@@ -65,6 +79,7 @@ function renderSummary(data: SummaryData): void {
   const baseRef = pr.baseRef !== undefined && pr.baseRef !== '' ? pr.baseRef : null;
   const filesByPath: Record<string, SummaryFile> = {};
   data.files.forEach(function (f) { filesByPath[f.path] = f; });
+  const views: Record<string, ContextView> = {};
 
   function num(n: number): string { return n.toLocaleString('en-US'); }
   // A paragraph of prose is wrapped in <p>; a list, table, heading or code
@@ -116,6 +131,13 @@ function renderSummary(data: SummaryData): void {
     '<path d="M10 6.75V10l2.25 1.5"/></svg>';
   const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
     '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+  // An expander's controls: down from the hunk above, up from the hunk below, and the whole gap.
+  const EXPAND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">';
+  const EXPANDS: [string, string, string][] = [
+    ['down', 'Expand down', `${EXPAND_ICON}<path d="M4 6l4 4 4-4"/></svg>`],
+    ['up', 'Expand up', `${EXPAND_ICON}<path d="M4 10l4-4 4 4"/></svg>`],
+    ['all', 'Expand all', `${EXPAND_ICON}<path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10"/></svg>`],
+  ];
   // A "…" button and the menu of links it opens, which wireSummary makes work.
   // A link to GitHub opens in a new tab; a link within the site does not. A
   // browser without popovers, such as Safari before 17, would draw every menu
@@ -196,6 +218,10 @@ function renderSummary(data: SummaryData): void {
     function numbers(l: SummaryLine): string {
       return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
     }
+    // `src` is the line's markup, already escaped or highlighted.
+    function codeRow(cls: string, sign: string, l: SummaryLine, src: string): string {
+      return `<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${src}</span></td></tr>`;
+    }
     const tableClass = `diff${sides === 1 ? ' oneside' : ''}`;
     // Each note is a row: its tag in the line-number gutter, its text where the code starts.
     function noteRow(c: SummaryCheck): string {
@@ -212,18 +238,49 @@ function renderSummary(data: SummaryData): void {
     if (f.new === true) badges += '<span class="badge new">new</span>';
     if (f.deleted === true) badges += '<span class="badge deleted">deleted</span>';
     if (f.kind !== '') badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
-    const hunks = f.hunks.map(function (h) {
+    const hunkTables = f.hunks.map(function (h) {
       const rows = [`<tr class="hunk">${gutter}<td class="code">${esc(h.header)}</td></tr>`];
       h.lines.forEach(function (l) {
         const t = l[0];
         if (t === 'm') { rows.push(`<tr class="meta">${gutter}<td class="code">${esc(l[3])}</td></tr>`); return; }
         const cls = t === 'a' ? 'add' : t === 'd' ? 'del' : 'ctx';
         const sign = t === 'a' ? '+' : t === 'd' ? '-' : ' ';
-        rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+        rows.push(codeRow(cls, sign, l, esc(l[3])));
         rows.push(notesAt(l));
       });
       return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
-    }).join('') || '<p class="fnote">No content changes.</p>';
+    });
+    // A gap's expander: its controls in the gutter, and how many lines it
+    // hides or that the file could not load. Expand down and expand up each
+    // reveal STEP lines beside the hunk above or below; once STEP or fewer are
+    // left, expand all is the only control.
+    function expanderCells(gap: SummaryGap, left: number, failed: boolean): string {
+      const buttons = EXPANDS.filter(function ([how]) {
+        if (how === 'all') return true;
+        return left > STEP && (how === 'down' ? gap.before > 0 : gap.before < f.hunks.length);
+      }).map(function ([how, label, icon]) {
+        return `<button class="xbtn" type="button" data-expand="${how}" aria-label="${label}" title="${label}">${icon}</button>`;
+      }).join('');
+      const info = failed ? 'This file could not be loaded. Try again.' : `${num(left)} hidden line${left === 1 ? '' : 's'}`;
+      return `<td class="ln xctl" colspan="${String(sides)}">${buttons}</td><td class="code xinfo">${info}</td>`;
+    }
+    // Revealed lines are context rows, each line passed through the
+    // highlighter's markup or escaped.
+    function contextRows(lines: string[], html: string[] | null, from: number, to: number, oldFrom: number): string {
+      const rows: string[] = [];
+      for (let n = from; n <= to; n++) rows.push(codeRow('ctx', ' ', ['c', oldFrom + n - from, n, ''], html?.[n - 1] ?? esc(lines[n - 1])));
+      return rows.join('');
+    }
+    const gaps = f.context?.gaps ?? [];
+    function expanderAt(before: number): string {
+      const at = gaps.findIndex(function (g) { return g.before === before; });
+      const gap = gaps[at];
+      return gap === undefined ? '' : `<table class="${tableClass} gap">${columns}<tr class="expander" data-gap="${String(at)}">` +
+        `${expanderCells(gap, gap.end - gap.start + 1, false)}</tr></table>`;
+    }
+    if (f.context !== undefined) views[f.id] = { context: f.context, lang: f.lang, expanderCells: expanderCells, contextRows: contextRows };
+    const hunks = hunkTables.length === 0 ? '<p class="fnote">No content changes.</p>'
+      : hunkTables.map(function (table, i) { return expanderAt(i) + table; }).join('') + expanderAt(hunkTables.length);
     return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
       '<div class="fsentinel" aria-hidden="true"></div>' +
       '<header class="fhead">' +
@@ -343,9 +400,17 @@ function renderSummary(data: SummaryData): void {
     return stackSegmentsHtml(data.segments, listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }]);
   }
 
+  // The header, as the page's statement of how well the head was checked,
+  // also links the full review a clean incremental review builds on.
   function reviewStatus(): string {
     const status = statusHtml(pr.state, data.review);
-    return status !== '' ? ` · ${status}` : '';
+    if (status === '') return '';
+    const review = data.review;
+    const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
+    if (from === undefined) return ` · ${status}`;
+    const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+    const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+    return ` · ${status} · ${link}`;
   }
 
   function renderPage(): string {
@@ -374,9 +439,10 @@ function renderSummary(data: SummaryData): void {
   const root = document.getElementById('summary') ?? document.body;
   root.innerHTML = renderPage();
   window.__SUMMARY_KEY__ = `summary:${pr.repo}#${String(pr.number)}:`;
+  return views;
 }
 
-function wireSummary(): void {
+function wireSummary(views: Record<string, ContextView>): void {
   const storedKey = window.__SUMMARY_KEY__;
   const KEY = storedKey !== undefined && storedKey !== '' ? storedKey : 'summary:';
   function get(k: string): string | null { try { return localStorage.getItem(KEY + k); } catch { return null; } }
@@ -802,6 +868,114 @@ function wireSummary(): void {
   }
   if (window.hljs !== undefined) setTimeout(pump, 0);
 
+  // A file's hidden lines come from the head's copy of it, fetched the first
+  // time one of its gaps expands and highlighted whole once, so a token that
+  // spans lines colours every line it covers. Files with the same content
+  // share the fetch, and a failed fetch is forgotten so the next expand tries
+  // again.
+  const fetched = new Map<string, Promise<string[]>>();
+  const highlighted = new Map<string, string[] | null>();
+  function headLines(url: string): Promise<string[]> {
+    const known = fetched.get(url);
+    if (known !== undefined) return known;
+    const loading = fetch(url).then(function (response) {
+      if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
+      return response.text();
+    }).then(function (text) { return text.split('\n'); });
+    fetched.set(url, loading);
+    void loading.catch(function () { fetched.delete(url); });
+    return loading;
+  }
+  function headHtml(view: ContextView, lines: string[]): string[] | null {
+    const key = `${view.lang}\u0000${view.context.url}`;
+    let html = highlighted.get(key);
+    if (html === undefined) {
+      html = view.lang !== '' && window.hljs?.getLanguage(view.lang) !== undefined ? hl(lines.join('\n'), view.lang) : null;
+      highlighted.set(key, html);
+    }
+    return html?.length === lines.length ? html : null;
+  }
+  // Whether the browser shows `el`'s focus, as it does for focus from the
+  // keyboard and not from a mouse click. A browser without :focus-visible,
+  // such as Safari before 15.4, throws on the selector.
+  function focusVisible(el: Element | null): boolean {
+    try { return el?.matches(':focus-visible') ?? false; } catch { return false; }
+  }
+  function hunkTable(el: Element | null): HTMLTableElement {
+    if (!(el instanceof HTMLTableElement)) throw new Error('An expander has no hunk beside it');
+    return el;
+  }
+  function tableBody(table: HTMLTableElement): HTMLTableSectionElement {
+    const body = table.tBodies[0];
+    if (body === undefined) throw new Error('A hunk table has no rows');
+    return body;
+  }
+  // A closed gap leaves no seam. Between two hunks, the lower one's header
+  // goes and its rows join the upper table, so the two read as one; above the
+  // first hunk, its header goes, since the table then starts at line 1.
+  function closeGap(gapTable: HTMLTableElement): void {
+    const upper = gapTable.previousElementSibling, lower = gapTable.nextElementSibling;
+    gapTable.remove();
+    if (!(lower instanceof HTMLTableElement)) return;
+    lower.querySelector('tr.hunk')?.remove();
+    if (!(upper instanceof HTMLTableElement)) return;
+    tableBody(upper).append(...Array.from(lower.rows));
+    lower.remove();
+  }
+  // Expand down adds lines to the end of the hunk above. Expand up adds them
+  // to the start of the hunk below, above its header and the lines an earlier
+  // expand up added. Expand all adds the rest of the gap to the hunk above, or
+  // below for the gap above the first hunk.
+  document.querySelectorAll<HTMLTableRowElement>('tr.expander').forEach(function (row) {
+    const file = row.closest<HTMLElement>('.file');
+    const gapTable = row.closest('table');
+    const view = file !== null ? views[file.dataset.fid ?? ''] : undefined;
+    const gap = view?.context.gaps[Number(row.dataset.gap)];
+    if (file === null || gapTable === null || view === undefined || gap === undefined) throw new Error('An expander sits outside its file');
+    let start = gap.start, end = gap.end;
+    // Redrawing replaces the controls, so focus stays on the control the
+    // reader used, or on expand all once it is the only one. No focus move
+    // scrolls, so the page stays on the lines just revealed.
+    const redraw = function (how: string, failed: boolean): void {
+      const refocus = row.contains(document.activeElement);
+      row.innerHTML = view.expanderCells(gap, end - start + 1, failed);
+      if (refocus) (row.querySelector<HTMLElement>(`[data-expand="${how}"]`) ?? row.querySelector<HTMLElement>('[data-expand="all"]'))?.focus({ preventScroll: true });
+    };
+    // Closing the gap removes its controls. A reader on the keyboard moves on
+    // to the file's next expander, or to its header after the last; a mouse
+    // click, which focuses the button too, leaves focus where the browser puts it.
+    const close = function (): void {
+      const refocus = row.contains(document.activeElement) && focusVisible(document.activeElement);
+      const expanders = Array.from(file.querySelectorAll('tr.expander'));
+      const next = expanders[expanders.indexOf(row) + 1];
+      closeGap(gapTable);
+      if (refocus) (next?.querySelector<HTMLElement>('[data-expand]') ?? file.querySelector<HTMLElement>('.ftoggle'))?.focus({ preventScroll: true });
+    };
+    row.addEventListener('click', function (ev) {
+      const how = ev.target instanceof Element ? ev.target.closest<HTMLElement>('[data-expand]')?.dataset.expand : undefined;
+      if (how === undefined) return;
+      void headLines(view.context.url).then(function (lines) {
+        // An earlier click may have revealed the rest while this one waited.
+        if (start > end) return;
+        const from = how === 'up' ? Math.max(start, end - STEP + 1) : start;
+        const to = how === 'down' ? Math.min(end, start + STEP - 1) : end;
+        const rows = view.contextRows(lines, headHtml(view, lines), from, to, gap.oldStart + from - gap.start);
+        if (how === 'up' || (how === 'all' && gap.before === 0)) {
+          tableBody(hunkTable(gapTable.nextElementSibling)).insertAdjacentHTML('afterbegin', rows);
+          end = from - 1;
+        } else {
+          tableBody(hunkTable(gapTable.previousElementSibling)).insertAdjacentHTML('beforeend', rows);
+          start = to + 1;
+        }
+        if (start > end) close();
+        else redraw(how, false);
+        markTokens(file);
+      }, function () {
+        redraw(how, true);
+      });
+    });
+  });
+
   // Showing an element unfolds the section around it and opens it when it is a
   // collapsed file. The browser scrolls to a hash itself, so it is scrolled to
   // here only when `scroll` asks or a section had to unfold first.
@@ -841,8 +1015,7 @@ const host = document.getElementById('summary');
 if (host === null) return;
 const node = document.getElementById('summary-data');
 if (node !== null) {
-  renderSummary(JSON.parse(node.textContent !== '' ? node.textContent : '{}') as SummaryData);
-  wireSummary();
+  wireSummary(renderSummary(JSON.parse(node.textContent !== '' ? node.textContent : '{}') as SummaryData));
 } else {
   const src = host.dataset.src;
   fetch(src !== undefined && src !== '' ? src : 'data.json')
@@ -851,8 +1024,7 @@ if (node !== null) {
       return response.json() as Promise<SummaryData>;
     })
     .then(function (data) {
-      renderSummary(data);
-      wireSummary();
+      wireSummary(renderSummary(data));
     }, function (error: unknown) {
       host.textContent = `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
     });

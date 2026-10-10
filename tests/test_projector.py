@@ -20,7 +20,7 @@ import importlib.metadata as metadata
 
 from projector import cli, instructions, permissions
 from projector.cli import distribution_version, main
-from projector.core import AmbiguousProject, ProjectStore
+from projector.core import AmbiguousProject, ProjectorError, ProjectStore, project_from_text
 
 
 PLAN = """---
@@ -1643,6 +1643,40 @@ class StoreTests(RepositoryTestCase):
         store = ProjectStore(deep)
         self.assertEqual(self.root.resolve(), store.root)
         self.assertEqual("alpha", store.resolve("alpha").name)
+
+
+    def test_project_from_text_loads_a_plan_exactly_as_the_store_does(self) -> None:
+        plans = {
+            "alpha": PLAN.format(status="ready", priority=priority_line("next"), title="Alpha", body="Text.",
+                                 extra="owner: someone\n"),
+            "no-frontmatter": "# No frontmatter\n",
+            "malformed": "---\nstatus ready\n---\n",
+            "unclosed": "---\nstatus: ready\n",
+            "bad-status": "---\nstatus: maybe\npriority: next\n---\n",
+            "no-priority": "---\nstatus: ready\n---\n",
+            "bad-priority": "---\nstatus: ready\npriority: soon\n---\n",
+            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
+            "block-owner": "---\nstatus: ready\npriority: next\nowner: |\n---\n",
+            "Bad_Name": PLAN.format(status="draft", priority=priority_line("later"), title="Bad", body="Text.", extra=""),
+        }
+        store = ProjectStore(self.root, self.root)
+        failures = 0
+        for name, text in plans.items():
+            with self.subTest(name):
+                path = self.projects / name / "readme.md"
+                path.parent.mkdir(parents=True)
+                path.write_text(text, encoding="utf-8")
+                display = Path(f"docs/projects/{name}/readme.md")
+                try:
+                    expected = store.resolve(name)
+                except ProjectorError as error:
+                    failures += 1
+                    with self.assertRaises(ProjectorError) as raised:
+                        project_from_text(text, name, store.projects_dir / name / "readme.md", display)
+                    self.assertEqual(str(error), str(raised.exception))
+                else:
+                    self.assertEqual(expected, project_from_text(text, name, expected.path, display))
+        self.assertEqual(len(plans) - 1, failures, "every plan but alpha is a kind of bad plan")
 
 
 class SelfReportingTests(unittest.TestCase):
