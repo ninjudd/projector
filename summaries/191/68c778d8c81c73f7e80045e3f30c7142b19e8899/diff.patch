@@ -1,0 +1,177 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 80bc037..6a0dfc7 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -645,7 +645,9 @@ does not, because readers of the conversation do not see it.
+ `summary publish` also puts the same link at the very bottom of the pull
+ request's description, after a blank line, and removes the link an earlier
+ publish left there. Where the account cannot edit the description, it prints
+-why and leaves the description as it was.
++why and leaves the description as it was. Pass `--no-describe` to post
++the comment and leave the description alone, for a repository whose
++instructions forbid agents to edit descriptions.
+ It sends two `repository_dispatch` events, `projector-summaries` and
+ `projector-walkthroughs`, because a site workflow written before summaries
+ were renamed listens only for the second; a later release stops sending it.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 23bbfe1..b090d4b 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -575,13 +575,22 @@ to summarize is too small to send for review. Summarize when both hold.
+    a Projector site there is nowhere to publish unattended, so skip the
+    summary rather than publishing an Artifact nobody asked for.
+ 
++While both hold, the summary is not optional. Summarize every pull request
++you review, whoever opened it. A summary matters most on another author's
++pull request, because that is how its reviewers read the change. Neither
++the author, a brief, nor your own judgment is a reason to skip or hold one.
++The one off switch is `review.summarize = false` in `.projector.toml`,
++and the user sets it.
++
+ Then follow `summarize-pr` for this head, with two differences from a
+ summary a person asks for:
+ 
+ - **Update rather than start over.** When the summaries ref already holds a
+-  summary for an earlier head of this pull request, start from that summary and
+-  update it as the skill's "Update the page when the pull request moves"
+-  section describes, so a fix-cycle head costs a revision, not a rewrite.
++  summary of this pull request, start from its newest version and update it
++  as the skill's "Update the page when the pull request moves" section
++  describes, so a fix-cycle head costs a revision, not a rewrite. The newest
++  version can come from another session or account, and can be at this very
++  head. Build on it all the same.
+ - **Carry the review into it.** Every finding thread still open after this
+   review, from the query in § Verify earlier findings, becomes a `flag` check on its
+   file at its `line`, saying what the finding says, so a reader sees what
+@@ -592,9 +601,24 @@ Publish it with `project summary publish`, after the review. It then
+ links the summary from the pull request, so a reader on GitHub finds it:
+ one comment per pull request, which a later head's summary reposts at the
+ end, deleting the old one, and one line at the very bottom of the
+-description. Do not post the link yourself. A summary that fails to build
+-or publish never changes the review's verdict: say in your report that the
+-summary failed and why, and leave the review as it was.
++description. Do not post the link yourself.
++
++The description edit is intended, on every pull request. `publish` appends
++its link block after everything else in the description, below a trailer
++such as a `Ticket:` line too. It removes the block an earlier publish left
++and changes nothing else. It does not count as editing the pull request
++body, so a brief that forbids body edits does not cover it. Never hold the
++publish for such a brief, and never move or delete the block by hand. The
++next publish puts it back at the end.
++
++A repository's own instructions outrank this skill. Where its `AGENTS.md`,
++`CLAUDE.md`, or other instructions forbid agents to edit pull request
++descriptions, publish with `--no-describe`. The summary still publishes,
++and the comment alone links it.
++
++A summary that fails to build or publish never changes the review's
++verdict: say in your report that the summary failed and why, and leave the
++review as it was.
+ 
+ ## Gate readiness claims in plans
+ 
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 877d7e4..9ecd5a7 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -132,6 +132,16 @@ reads the new head against that history instead of rediscovering it.
+   review id, and how many threads it opened; `publish` has already added the
+   id to the loop's record. A question for the user comes back to the main
+   loop to ask.
++- Each subagent summarizes every pull request it reviews, as `review-pr`
++  describes, another author's included. The loop never pauses or holds
++  summaries on its own judgment. The one off switch is `review.summarize =
++  false` in `.projector.toml`, which the user sets. A brief that
++  forbids editing the pull request body names the summary's link block as
++  an exception, because `project summary publish` writes that block at the
++  end of every description on purpose. Where the repository's own
++  instructions forbid description edits, a subagent publishes with
++  `--no-describe`, so the comment alone links the summary, as `review-pr`
++  describes.
+ - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+   to finish: delete any start comment it still holds and remove its scratch
+   worktrees. Then close the subagent and delete the pull request's line from
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 11dcb57..30693d2 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -296,7 +296,9 @@ timeline item. A later review, comment, push, or ready-for-review event
+ makes it post the link again. `publish` also puts the same link at the
+ very bottom of the pull request's description, replacing the one an
+ earlier publish left there. Where the account cannot edit the
+-description, `publish` says so and keeps the comment.
++description, `publish` says so and keeps the comment. Pass
++`--no-describe` to post the comment and leave the description alone,
++where the repository's instructions forbid agents to edit descriptions.
+ 
+ Setting a repository up is once, with admin rights, and only when the user
+ asks for it. From a checkout whose `origin` is the repository, run:
+@@ -319,6 +321,21 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+ 
+ ## Update the page when the pull request moves
+ 
++Start from the newest version of the summary on the summaries ref, whoever
++published it. Another session or account can have summarized the pull
++request already, at an earlier head or at this one. To get that version,
++fetch the ref, find the folder most recently written for the pull request,
++and copy its summary. `HEAD_SHA` is the head that folder names:
++
++```sh
++git fetch origin refs/projector/summaries
++git log -1 --name-only --format= FETCH_HEAD -- summaries/NUMBER/
++git show FETCH_HEAD:summaries/NUMBER/HEAD_SHA/summary.json > WORKDIR/summary.json
++```
++
++When that folder is already this head, revise its summary in place of
++starting a new one, and skip step 1.
++
+ 1. List what changed since the summary's head:
+    `git log --oneline OLD_HEAD..NEW_HEAD` and
+    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index eb221a7..126751e 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -432,6 +432,10 @@ def parser() -> argparse.ArgumentParser:
+     summary_publish.add_argument(
+         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
+     )
++    summary_publish.add_argument(
++        "--no-describe", action="store_true",
++        help="publish and comment the link as usual, but leave the pull request's description alone",
++    )
+     summary_publish.add_argument(
+         "--local", action="store_true",
+         help="commit the summary to this checkout's summaries ref for `site serve` to preview, and push nothing "
+@@ -915,7 +919,10 @@ def run_summary(arguments: argparse.Namespace) -> int:
+         # A summary kept in this checkout has no page on GitHub to link.
+         if site is not None:
+             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
+-            print(summary.describe_summary(pr["repo"], pr["number"], pr["head"], site))
++            if arguments.no_describe:
++                print("left the description alone, as --no-describe asked")
++            else:
++                print(summary.describe_summary(pr["repo"], pr["number"], pr["head"], site))
+     return 0
+ 
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index d796f9f..b46f13a 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1451,6 +1451,14 @@ def test_summary_publish_comments_the_link_for_the_summary_head(self) -> None:
+         self.assertIn("done", out)
+         self.assertIn("described", out)
+ 
++    def test_summary_publish_no_describe_comments_and_leaves_the_description_alone(self) -> None:
++        published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""), "--no-describe")
++
++        self.assertTrue(published[0]["push"])
++        self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented)
++        self.assertEqual([], self.described, "--no-describe never edits the description")
++        self.assertIn("left the description alone", out)
++
+     def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(self) -> None:
+         published, commented, _ = self.cli_publish(("", ""))
+ 
