@@ -26,6 +26,14 @@
         function ext(href, text, cls) {
             return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
         }
+        // A file on the pull request's head branch, which always shows its current
+        // version. A merged or closed pull request's branch is usually deleted, so its
+        // files, and those of a summary that did not record its branch, link the head.
+        function blobUrl(path) {
+            const live = pr.state !== 'merged' && pr.state !== 'closed';
+            const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
+            return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
+        }
         // The build checks every file a group names against the diff.
         function fileAt(path) {
             const f = filesByPath[path];
@@ -46,15 +54,22 @@
                 h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
             return h.toString(16).padStart(8, '0');
         }
+        // A concern note's checkbox; other notes have none.
+        function noteBox(c, scope) {
+            return kindOf(c) === 'flag'
+                ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
+                : '';
+        }
+        function chip(c) {
+            const k = kindOf(c);
+            return `<span class="chip ${k}">${CHIPS[k] ?? k}</span>`;
+        }
         function notesList(checks, cls, scope) {
             if (checks.length === 0)
                 return '';
             return `<ul class="notes ${cls}">` + checks.map(function (c) {
-                const k = kindOf(c);
-                const box = k === 'flag'
-                    ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
-                    : '<span class="nbox"></span>';
-                return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
+                const box = noteBox(c, scope);
+                return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
             }).join('') + '</ul>';
         }
         // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
@@ -97,7 +112,11 @@
             function notesAt(l) {
                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
                 const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-                return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
+                // Each note is a row: its tag in the line-number gutter, its text where the code starts.
+                return found.map(function (c) {
+                    return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
+                        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
+                }).join('');
             }
             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
             if (f.new === true)
@@ -119,7 +138,7 @@
                     rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
                     rows.push(notesAt(l));
                 });
-                return `<table class="diff">${columns}${rows.join('')}</table>`;
+                return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
             }).join('') || '<p class="fnote">No content changes.</p>';
             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
                 '<div class="fsentinel" aria-hidden="true"></div>' +
@@ -131,8 +150,9 @@
                 `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
                 `<span class="fmeta">${badges}` +
                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
-                ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
-                ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
+                ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
+                ext(blobUrl(f.path), 'File', 'flink') +
+                (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
                 '</span>' +
                 '</header>' +
@@ -448,7 +468,7 @@
         }
         document.querySelectorAll('.note-box').forEach(function (box) {
             const nid = box.dataset.nid ?? '';
-            const item = box.closest('li');
+            const item = box.closest('li, tr');
             box.checked = get('n:' + nid) === '1';
             if (item !== null)
                 item.classList.toggle('checked', box.checked);

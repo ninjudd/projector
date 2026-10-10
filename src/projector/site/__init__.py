@@ -165,17 +165,18 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
 
 
 def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
-                    lookup=None, repo_root: Path | None = None, review_lookup=None) -> tuple[list[dict], list[str]]:
+                    lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest.
 
     Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
     `lookup`, and each page lists the pull requests in its stack. A file is
     generated as the `attributes.json` that `publish` stored beside a summary
     says, or, for a summary without one, as the checkout at `repo_root` reads
-    its .gitattributes. Each page also carries `review`, the newest Projector
-    review of its head, from the reviews `review_lookup` returns for its pull
-    request: `unreviewed` when none names the head, and no `review` at all
-    when `review_lookup` is missing or returns None because it could not ask.
+    its .gitattributes. `status_lookup` returns a pull request's state and
+    reviews, as `summary.pr_status` does, or None when it cannot ask. From
+    them each page carries `pr.state`, and `review`, the newest Projector
+    review of its head: `unreviewed` when none names the head. A page has
+    neither when the lookup is missing or cannot ask.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
@@ -225,12 +226,13 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
         # The review skill publishes its review before the summary, and publishing
         # the summary starts this build, so the reviews include the verdict on the
         # head the summary describes.
-        reviews = review_lookup(int(number)) if review_lookup is not None else None
-        statuses = review_statuses(reviews) if reviews is not None else None
+        status = status_lookup(int(number)) if status_lookup is not None else None
+        statuses = review_statuses(status["reviews"]) if status is not None else None
         for _, payload in versions:
             head = payload["pr"]["head"]
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack)
-            if statuses is not None:
+            if status is not None:
+                payload["pr"]["state"] = status["state"]
                 payload["review"] = statuses.get(head, {"status": "unreviewed"})
             folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
@@ -397,17 +399,28 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
 
 
 def project_linker(described: list[dict], base: str):
-    """Link a review to every project whose files its diff changes, or that its summary names."""
+    """Link a review to every project whose files its diff changes, or that its summary names.
+
+    Each changed file in a project's folder also gets that project as its
+    `project`: the deepest one, so a nested project owns its own files. Only
+    a project in `described` has a page on the site, so a file in any other
+    project's folder, such as one the pull request adds, gets none.
+    """
     by_name = {p["name"]: p for p in described}
     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+
+    def page_of(name: str) -> dict:
+        return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
 
     def link(summary: dict, payload: dict) -> list[dict]:
         names = [n for n in summary.get("projects") or [] if n in by_name]
         for f in payload["files"]:
             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
-            if owner and owner not in names:
-                names.append(owner)
-        return [{"name": n, "title": by_name[n]["title"], "url": f"{base}projects/{n}/"} for n in names]
+            if owner:
+                f["project"] = page_of(owner)
+                if owner not in names:
+                    names.append(owner)
+        return [page_of(n) for n in names]
 
     return link
 
@@ -532,15 +545,15 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
-               trunk: str | None = None, lookup=None, review_lookup=None) -> tuple[list[dict], list[str]]:
+               trunk: str | None = None, lookup=None, status_lookup=None) -> tuple[list[dict], list[str]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
     `trunk` the default branch a pull request that is not stacked is based on.
     `lookup` finds the pull request whose head is a branch, for a summary that
-    did not record the one it is stacked on. `review_lookup` returns a pull
-    request's reviews, or None when it cannot ask, for each summary's review
-    status.
+    did not record the one it is stacked on. `status_lookup` returns a pull
+    request's state and reviews, or None when it cannot ask, for each
+    summary's file links and review status.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -555,7 +568,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     assign_routes(docs, described)
     link = project_linker(described, base)
     built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
-                            review_lookup=review_lookup) if summaries and summaries.is_dir() else ([], [])
+                            status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
     entries, failures = built
     for project in described:
         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]

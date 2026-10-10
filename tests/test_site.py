@@ -14,7 +14,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -44,8 +44,8 @@ class SiteRepoCase(unittest.TestCase):
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
         # A build that knows its repository asks GitHub for each pull request's
-        # reviews. No test reaches GitHub; one that needs reviews supplies them.
-        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
+        # state and reviews. No test reaches GitHub; one that needs them supplies them.
+        offline = mock.patch.object(summary, "pr_status", side_effect=summary.SummaryError("gh api failed: offline"))
         offline.start()
         self.addCleanup(offline.stop)
 
@@ -336,15 +336,15 @@ class SiteContentTests(SiteRepoCase):
         """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
         asked: list[tuple[str, int]] = []
 
-        def pr_reviews(repo: str, number: int) -> list[dict]:
+        def pr_status(repo: str, number: int) -> dict:
             asked.append((repo, number))
             if reviews is None:
                 raise summary.SummaryError("gh api failed: offline")
-            return reviews
+            return {"state": "open", "reviews": reviews}
 
         self.publish(9, "c" * 40)
         self.publish(9, "d" * 40)
-        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
+        with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             self.build()
         self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
         return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
@@ -649,6 +649,165 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
 
 
+HEADER_DIFF = """diff --git a/docs/projects/alpha/readme.md b/docs/projects/alpha/readme.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/readme.md
++++ b/docs/projects/alpha/readme.md
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git a/docs/projects/alpha/research/survey.md b/docs/projects/alpha/research/survey.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/research/survey.md
++++ b/docs/projects/alpha/research/survey.md
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git a/docs/projects/alpha/beta/readme.md b/docs/projects/alpha/beta/readme.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/beta/readme.md
++++ b/docs/projects/alpha/beta/readme.md
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git a/docs/projects/gamma/readme.md b/docs/projects/gamma/readme.md
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/docs/projects/gamma/readme.md
+@@ -0,0 +1,1 @@
++new
+diff --git a/src/app#1.py b/src/app#1.py
+index 1111111..2222222 100644
+--- a/src/app#1.py
++++ b/src/app#1.py
+@@ -1,1 +1,1 @@
+-old = 1
++new = 2
+"""
+HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/survey.md",
+                "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
+SUMMARY_JS = SITE_JS.with_name("summary.js")
+
+
+def rendered_summary(data: dict) -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node."""
+    lines = SUMMARY_JS.read_text().splitlines()
+    start = lines.index("    function renderSummary(data) {")
+    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
+    program = ("const root = {innerHTML: ''};\n"
+               "const document = {getElementById: function () { return root; }, body: root};\n"
+               "const window = {};\n" + "\n".join(lines[start:end + 1]) +
+               f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
+    return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+
+class FileHeaderTests(SiteRepoCase):
+    """Each file card's header links to its diff, to the file on the head branch, and to its project."""
+
+    def build(self, state: str | None = None, **pr: str) -> dict:
+        """The data the site build writes for pull request 9, which changes HEADER_FILES.
+
+        GitHub reports the pull request as `state`, or cannot be asked when it is None.
+        """
+        summaries = Path(tempfile.mkdtemp()) / "summaries"
+        folder = summaries / "9" / ("c" * 40)
+        folder.mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({
+            "version": 1, "name": "Summary 9",
+            "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": "c" * 40, "base": "b" * 40,
+                   "baseRef": "main", **pr},
+            "overview": {"summary": [], "cards": []},
+            "groups": [{"id": "all", "title": "All", "files": [
+                {"path": p, "collapsed": False,
+                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
+                    {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
+                    else {})}
+                for p in HEADER_FILES]}],
+        }))
+        (folder / "diff.patch").write_text(HEADER_DIFF)
+        status = mock.patch.object(summary, "pr_status", return_value={"state": state, "reviews": []}) \
+            if state is not None else nullcontext()
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+                             "--summaries", str(summaries)])
+        self.assertEqual(0, code)
+        return json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+
+    def test_a_file_belongs_to_the_deepest_project_the_site_has(self) -> None:
+        files = {f["path"]: f.get("project") for f in self.build()["files"]}
+
+        alpha = {"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+        self.assertEqual({
+            "docs/projects/alpha/readme.md": alpha,
+            "docs/projects/alpha/research/survey.md": alpha,
+            "docs/projects/alpha/beta/readme.md": {"name": "alpha/beta", "title": "Finish beta",
+                                                   "url": "/projects/alpha/beta/"},
+            "docs/projects/gamma/readme.md": None,
+            "src/app#1.py": None,
+        }, files, "a supplemental file belongs to its project, a nested project owns its files, and a project "
+                  "the site has no page for, such as one the pull request adds, owns nothing")
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_the_header_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
+        data = self.build(headRef="feature/header-links")
+        html = rendered_summary(data)
+
+        def header(path: str) -> str:
+            fid = next(f["id"] for f in data["files"] if f["path"] == path)
+            start = re.search(f'<article class="file[^"]*" id="{fid}"', html).start()
+            return html[start:html.index("</header>", start)]
+
+        survey = header("docs/projects/alpha/research/survey.md")
+        anchor = next(f["anchor"] for f in data["files"] if f["path"] == "docs/projects/alpha/research/survey.md")
+        self.assertIn(f'href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" rel="noopener">Diff</a>',
+                      survey)
+        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/research/'
+                      'survey.md" target="_blank" rel="noopener">File</a>', survey)
+        self.assertIn('<a class="flink" href="/projects/alpha/" title="Build alpha">Project</a>', survey)
+        self.assertIn('<a class="flink" href="/projects/alpha/beta/" title="Finish beta">Project</a>',
+                      header("docs/projects/alpha/beta/readme.md"))
+        for outside in ("docs/projects/gamma/readme.md", "src/app#1.py"):
+            self.assertNotIn(">Project</a>", header(outside))
+        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/src/app%231.py"',
+                      header("src/app#1.py"), "each path segment is encoded and the branch keeps its slash")
+        self.assertNotIn(">PR</a>", html)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes(self) -> None:
+        # GitHub usually deletes a merged or closed pull request's branch, and
+        # its head commit stays reachable, so those link the head.
+        branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
+        at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
+        for state, expected in (("open", branch), ("merged", at_head), ("closed", at_head), (None, branch)):
+            with self.subTest(state=state):
+                data = self.build(state=state, headRef="feature/header-links")
+                self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
+                self.assertIn(f'href="{expected}"', rendered_summary(data))
+                shutil.rmtree(self.out)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
+        data = self.build()
+        self.assertNotIn("headRef", data["pr"])
+
+        self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
+    def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
+        html = rendered_summary(self.build())
+
+        rows = dict(re.findall(r'<tr class="noterow (\w+)">(.*?)</tr>', html))
+        self.assertEqual('<td class="ngut" colspan="2"><span class="chip context">context</span></td>'
+                         '<td class="nte"><span class="ntext">The new value.</span></td>', rows["context"],
+                         "a file with both sides has two line-number columns for the tag")
+        self.assertTrue(rows["flag"].startswith('<td class="ngut" colspan="1"><span class="chip flag">concern</span></td>'
+                                                '<td class="nte"><input type="checkbox" class="nbox note-box"'),
+                        "a new file has one line-number column, and a concern's checkbox sits with its text")
+        self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its tags fit its gutter")
+
+
 class SummarySidebarTests(unittest.TestCase):
     def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
         # The sidebar is sticky on a wide screen, so a list taller than the
@@ -711,7 +870,7 @@ def review_url(review_id: int) -> str:
 
 
 def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
-    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
+    """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
 
     `association` is the author's relation to the repository, as GitHub's
     `author_association` gives it.

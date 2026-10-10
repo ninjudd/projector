@@ -58,6 +58,10 @@ it. The summary is JSON:
 - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
   request's head, are what the site's review list uses to mark a stacked pull
   request. `init` records both; keep them when you edit a summary by hand.
+  Each file's **File** link opens the file on `pr.headRef`, so it shows the
+  current version. It opens the file at `pr.head` instead when a summary has
+  no `headRef`, and when the site's last build found the pull request merged
+  or closed, because its branch is usually deleted then.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and the list of files itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a
