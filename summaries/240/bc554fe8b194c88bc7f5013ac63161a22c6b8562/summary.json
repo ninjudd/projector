@@ -1,0 +1,178 @@
+{
+ "version": 1,
+ "name": "Stack mergeable as a unit",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 240,
+  "title": "Keep a stack mergeable as a unit by carrying every fix up right away",
+  "head": "bc554fe8b194c88bc7f5013ac63161a22c6b8562",
+  "headRef": "skills-stack-merge-unit",
+  "base": "b70745e32c611ae585c46daf48d0aad68a39d7cc",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills open dependent work as a <b>stack</b>: a chain of pull requests, each based on the branch of the one below it, which GitHub records as one stack through the <code>gh stack</code> CLI extension. The user merges a stack from GitHub in one step, either the whole stack or any number of layers from the bottom up. GitHub allows that only while every layer contains the current head of the layer below it. A layer that falls behind shows as needing a rebase, and the stack can no longer merge as a unit.",
+   "Before this change, the skills treated a stack one layer at a time. An agent could fix a lower layer and leave the layers above it on the old head, or plan to merge the bottom pull request and retarget the next one to the default branch. This change states one rule, in <code>implement</code>'s \"Stack dependent work\" section, and points the other skills at it:",
+   "<ul><li><b>Keep the stack in sync.</b> Every open layer contains the current head of the open layer below it.</li><li><b>Carry every new commit up right away.</b> Run <code>gh stack rebase --upstack</code>, run the full gate on each rewritten layer, then run <code>gh stack push</code>. Without <code>gh stack</code>, merge each layer into the one above it, from the bottom up.</li><li><b>Never merge one layer at a time.</b> Never retarget a layer while a layer below it is open.</li></ul>",
+   "<code>fix-pr</code> counts a stacked run as done only once every layer above is pushed and in sync, and adds being in sync to its clean conditions. <code>start-fix-loop</code> reports readiness for the whole stack. The <code>project init</code> template carries the same rule, so its block version moves from 2 to 3."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Layer</b>: one pull request in a stack.</li><li><b>In sync</b>: every open layer contains the current head of the open layer below it.</li><li><b><code>needsRebase</code></b>: the field <code>gh stack view --json</code> sets on a branch whose parent's tip is not an ancestor of it.</li><li><b><code>behind_by</code></b>: from GitHub's compare API, the number of base commits the head lacks. <code>0</code> means in sync.</li><li><b>Gate</b>: the repository's full test and validation run.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The review of head <code>bc554fe</code> was clean, with no finding threads. It left one suggestion: the local <code>gh stack view --json</code> check reads the checkout's own branches, so the readiness report could use the compare API, which reads the branches GitHub holds.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rule",
+   "title": "The rule: keep the stack in sync",
+   "kicker": "implement's \"Stack dependent work\" section defines what in sync means and how to stay there",
+   "intro": [
+    "Every other skill cites this section, so it holds the whole rule. A new bullet among the rules that override the upstream <code>gh-stack</code> skill says why a stack must stay in sync and forbids merging one layer at a time.",
+    "The update steps say when to act. When a layer with layers above it gets a new commit, the agent runs <code>gh stack rebase --upstack</code> at once. The <code>--no-trunk</code> flag skips the fetch and the trunk rebase, which keeps the rebase from updating a default-branch checkout the user is working in. A new step, \"Check that it is in sync\", gives two ways to verify the result: <code>gh stack view --json</code> in a checkout that tracks the stack, and GitHub's compare API anywhere else."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Adds the in-sync rule, the immediate upstack rebase with optional <code>--no-trunk</code>, and the check that a stack is in sync.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The rule names two things never to do: merge one layer at a time, and retarget a layer while a layer below it is open. <code>fix-pr</code> still retargets a child, but only after its parent has merged, so the two agree.",
+       "line": 190
+      },
+      {
+       "kind": "verify",
+       "text": "The gate still comes before the push. The rebase may run before or after the fixed layer's own push, and every layer it rewrote passes the gate before <code>gh stack push</code>. Checked by reading this bullet against <code>fix-pr</code>'s conflict and push steps.",
+       "line": 216
+      },
+      {
+       "kind": "verify",
+       "text": "<code>--no-trunk</code> matches <code>gh stack rebase --help</code> in v0.2.1: it skips fetching and rebasing with the trunk and rebases only the stack branches onto each other.",
+       "line": 218
+      },
+      {
+       "kind": "verify",
+       "text": "<code>GET repos/&lt;owner&gt;/&lt;repo&gt;/stacks/&lt;number&gt;</code> returns each layer's <code>base.ref</code> and <code>head.ref</code>. Checked against stack 238 in this repository. With <code>compare/&lt;base&gt;...&lt;head&gt;</code>, <code>behind_by</code> counts base commits the head lacks.",
+       "line": 240
+      },
+      {
+       "kind": "context",
+       "text": "<code>needsRebase</code> comes from the checkout's own branches. <code>view</code> refreshes only pull request state from GitHub. A commit pushed to a lower layer from another machine can leave this check passing while GitHub shows a layer needing a rebase. The compare API reads what GitHub holds.",
+       "line": 241
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "fix-pr and start-fix-loop follow the rule",
+   "kicker": "The fixing skills finish a stacked run only when the stack is in sync, and report readiness for the whole stack",
+   "intro": [
+    "<code>fix-pr</code> fixes one pull request's review findings. On a layer with layers above it, a push of that layer alone now leaves the run unfinished: the fix has to reach every layer above, and each of those layers has to be pushed. Its clean conditions gain one more: a stacked pull request and every layer below it are in sync.",
+    "<code>start-fix-loop</code> watches pull requests and runs <code>fix-pr</code> through one subagent per pull request, or one per stack. It now reports a stack's readiness as one unit, such as \"stack #14 is ready to merge as a whole\", or names the bottom layers that are ready. When only the bottom layers merge, the stack's subagent keeps working on the layers left open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Step 3 of the push order carries a fix up, a new paragraph defines when a stacked run is done, and the clean conditions add being in sync.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The thread is still resolved only after the push succeeds (step 4), so a fix on a lower layer is pushed before its thread closes.",
+       "line": 168
+      },
+      {
+       "kind": "context",
+       "text": "\"Checked as implement describes\" points at both checks in \"Check that it is in sync\". This is the clean condition <code>start-fix-loop</code> uses for its readiness report.",
+       "line": 235
+      }
+     ]
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "Reports each layer's new head, keeps the stack subagent after a partial merge, and reports a stack's readiness as one unit.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A stack is named by the number GitHub's stacks API gives it, while its subagent is named <code>fix-stack-&lt;number&gt;</code> after the bottom pull request. The two numbers differ for a stack GitHub records.",
+       "line": 157
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "template",
+   "title": "The generated instructions block",
+   "kicker": "project init's AGENTS.md section carries the same rule, at block version 3",
+   "intro": [
+    "<code>project init</code> writes a Projector section into a repository's <code>AGENTS.md</code> from a template. Its stack sentence now says to carry a fix up right away so the stack can merge as a unit. Any change to the template's text bumps its block version. <code>project check</code> then warns, in every repository whose section is older, until <code>project init</code> runs again. This repository's own section is refreshed in the same change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Rewrites the stack sentence and bumps the block to version 3.",
+     "collapsed": false
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's section, refreshed from the template.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The section matches the template except for the <code>{projects_dir}</code> placeholder, which renders as <code>docs/projects</code>. Checked by extracting both and diffing them.",
+       "line": 121
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the hash of the version 3 template."
+    }
+   ]
+  },
+  {
+   "id": "docs-tests",
+   "title": "Documentation and the citation test",
+   "kicker": "User docs describe the new behavior, and a test keeps cross-skill section citations valid",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/plugins.md</code> describe what <code>project init</code> writes and what the stack skills do. A new packaging test finds every citation of the form <code>`../&lt;skill&gt;/SKILL.md` describes under \"&lt;heading&gt;\"</code> in <code>skills/</code> and checks that the named skill has that <code>##</code> heading. It covers the new citation of <code>fix-pr</code>'s \"Preserve stacked ownership\"."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the new sentence in the generated section and updates the outdated-section warning example to versions 2 and 3."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says that every layer stays on the current head of the one below and that <code>start-fix-loop</code> reports which layers can merge together."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Adds the cross-skill citation test.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passes on this head: 682 tests, <code>OK (skipped=1)</code>, run with Python 3.12 in a scratch worktree.",
+       "line": 135
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
