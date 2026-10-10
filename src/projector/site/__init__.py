@@ -314,11 +314,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
     GitHub reports, or None once that branch is deleted, and `review`, its
     head's status across the models that reviewed it, as `review_statuses`
-    gives it: `unreviewed` when no Projector review names the head. A page has none of them when the lookup is missing or cannot ask,
-    and each entry carries its newest head's `pr.state` and `review` the
-    same way. Each page also carries `defaultBranch`, `trunk`, where a
-    merged pull request's files now are when the branch it merged into is
-    gone.
+    gives it: `unreviewed` when no Projector review names the head. A page
+    has none of them when the lookup is missing or cannot ask, and each
+    entry carries its newest head's `pr.state` and `review` the same way.
+    Each page also carries `defaultBranch`, `trunk`, where a merged pull
+    request's files now are when the branch it merged into is gone.
 
     It asks `status_lookup` about each pull request before it links any
     summary, finds the projects that open pull requests propose under
