@@ -695,11 +695,15 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
         self.assertIn("-webkit-line-clamp: 3;", title.group(1))
-        # Bold text is wider, so a bold current row could wrap onto more lines
-        # than the same title in a plain row.
+        # Every title has the same weight, because bold text is wider, and a
+        # current row in a different weight could wrap onto more lines than
+        # the same title in another row.
+        self.assertIn("font-weight: 600;", title.group(1))
         current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
         self.assertNotIn("font-weight", current.group(1))
+        current_title = re.search(r"^\.prblock \.stack li\.current \.stitle \{", css, re.M)
+        self.assertIsNone(current_title, "the current row's title is styled like every other title")
 
 
 def review_url(review_id: int) -> str:
