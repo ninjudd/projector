@@ -268,13 +268,18 @@ table.diff tr.del td { background: var(--del-bg); } table.diff tr.del td.ln { ba
 table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff tr.del .sign { color: var(--del-text); font-weight: 600; }
 table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
 table.diff tr.meta td { color: var(--muted); font-style: italic; }
-table.diff tr.noterow td { background: var(--surface); padding-block: 6px 8px; }
+/* A note under a line: its tag in the line-number gutter, and its text, on the note's own background, where the code starts. */
+table.diff tr.noterow td { background: var(--surface); padding-block: 5px; }
+table.diff tr.noterow td.nte { background: var(--surface-2); }
+table.diff tr.noterow.flag td.nte { background: var(--accent-soft); }
+table.diff td.ngut { padding-inline: 2px 6px; text-align: right; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; }
+table.diff td.ngut .chip { margin-top: 0; }
 table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
-.inotes { gap: 6px; }
-.inotes li { padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 6px 6px 0; }
-.inotes li.context { border-left-color: var(--info); }
-.inotes li.verify { border-left-color: var(--ok); }
-.inotes li.flag { border-left-color: var(--accent); background: var(--accent-soft); }
+table.diff td.nte .nbox { float: right; margin: 2px 0 0 12px; }
+table.diff tr.noterow.checked .chip, table.diff tr.noterow.checked .ntext { opacity: .5; }
+/* A diff with one line-number column has half the room, so its tags shrink to fit it. */
+table.diff.oneside td.ngut { padding-inline: 1px; }
+table.diff.oneside td.ngut .chip { margin-top: 2px; padding-inline: 1px; font-size: 8px; letter-spacing: 0; }
 /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
 .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }

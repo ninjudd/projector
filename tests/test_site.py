@@ -717,7 +717,9 @@ class FileHeaderTests(SiteRepoCase):
             "overview": {"summary": [], "cards": []},
             "groups": [{"id": "all", "title": "All", "files": [
                 {"path": p, "collapsed": False,
-                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else {})}
+                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
+                    {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
+                    else {})}
                 for p in HEADER_FILES]}],
         }))
         (folder / "diff.patch").write_text(HEADER_DIFF)
@@ -775,13 +777,17 @@ class FileHeaderTests(SiteRepoCase):
         self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
 
     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
-    def test_a_note_under_a_line_starts_left_of_the_code(self) -> None:
+    def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
         html = rendered_summary(self.build())
 
-        row = re.search(r'<tr class="noterow">(.*?)</tr>', html).group(1)
-        self.assertTrue(row.startswith('<td class="nte" colspan="3">'),
-                        "the note spans both line-number columns and the code, so it starts at the gutter")
-        self.assertIn("The new value.", row)
+        rows = dict(re.findall(r'<tr class="noterow (\w+)">(.*?)</tr>', html))
+        self.assertEqual('<td class="ngut" colspan="2"><span class="chip context">context</span></td>'
+                         '<td class="nte"><span class="ntext">The new value.</span></td>', rows["context"],
+                         "a file with both sides has two line-number columns for the tag")
+        self.assertTrue(rows["flag"].startswith('<td class="ngut" colspan="1"><span class="chip flag">concern</span></td>'
+                                                '<td class="nte"><input type="checkbox" class="nbox note-box"'),
+                        "a new file has one line-number column, and a concern's checkbox sits with its text")
+        self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its tags fit its gutter")
 
 
 class SummarySidebarTests(unittest.TestCase):
