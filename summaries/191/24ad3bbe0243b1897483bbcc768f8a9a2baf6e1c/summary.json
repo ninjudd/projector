@@ -1,0 +1,102 @@
+{
+ "version": 1,
+ "name": "Summarize every reviewed pull request",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 191,
+  "title": "State that every reviewed pull request gets a summary",
+  "head": "24ad3bbe0243b1897483bbcc768f8a9a2baf6e1c",
+  "headRef": "summary-rules-in-skills",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop reviews each pull request head with the <code>review-pr</code> skill. After it publishes a review, it writes a <em>summary</em>: a guided page on the repository's Projector site that walks a human reviewer through the diff. <code>project summary publish</code> posts that page, then links it from a comment on the pull request and from a <em>link block</em>, two lines it appends to the end of the pull request's description.",
+   "<code>review-pr</code> already said to summarize after every review. Agents still doubted that rule once the description edit appeared. One subagent brief said never to edit the pull request body, so subagents stalled at the publish. One subagent deleted the link block by hand. A loop lead held summaries on other authors' pull requests, which are the ones whose reviewers need a summary most.",
+   "This change states the rule in each place an agent would doubt it. It changes only skill text. The CLI behaves as before."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the JSON a review writes, which the Projector site renders as a guided page.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden Git ref that stores each summary at <code>summaries/&lt;number&gt;/&lt;head&gt;/summary.json</code>.</li><li><b>Link block</b>: the marker comment and link line that <code>publish</code> appends to the description.</li><li><b>Brief</b>: the instructions a loop lead writes for each reviewing subagent.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review state at this head",
+    "html": "<p>The review at <code>24ad3bb</code> requested changes with one open finding. The finding says that the new text overrides a repository's own rule against description edits. See the flag in <code>skills/review-pr/SKILL.md</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rule",
+   "title": "Every reviewed pull request gets a summary",
+   "kicker": "Where a review subagent and the loop lead learn that the summary is not optional",
+   "intro": [
+    "A review summarizes when two conditions hold: <code>review.summarize</code> is not <code>false</code>, and the repository hosts a Projector site. The new text in <code>review-pr</code> says that, while both hold, nothing else skips the summary. That includes the pull request's author, a brief, and the agent's own judgment. The one off switch is <code>review.summarize = false</code> in <code>.projector.toml</code>.",
+    "It also says that the description edit is deliberate. <code>publish</code> removes any earlier link block and appends a new one at the very end, below a trailer such as <code>Ticket:</code>. <code>start-review-loop</code> repeats the rule for the loop lead, and says that a brief which bans body edits names the link block as an exception."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The \"Summarize the pull request\" section gains the no-skip rule and a paragraph on the description edit.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 605,
+       "text": "The paragraph matches <code>describe_summary</code> in <code>src/projector/summary.py</code>. That function removes every earlier link block with <code>SUMMARY_BLOCK.sub</code>, trims trailing whitespace, and appends the new block after a blank line. So the block ends the description, and a block moved or deleted by hand returns to the end on the next publish."
+      },
+      {
+       "kind": "flag",
+       "line": 609,
+       "text": "The open review finding: this sentence says that a repository rule forbidding body edits does not cover the link block. So a review loop edits the description in a repository whose own instructions forbid it. <code>CLAUDE.md</code> says skills take repository policy from the repository's instructions, and Projector's guides let a repository's rules outrank their own. The fix the review proposes is to keep the exception for a brief only. Where a repository's rule forbids description edits, the agent skips the summary and asks the user to set <code>review.summarize = false</code> or waive the rule."
+      },
+      {
+       "kind": "context",
+       "line": 587,
+       "text": "The \"Update rather than start over\" bullet now starts from the newest summary of the pull request, even one at this same head or one another account published. <code>summarize-pr</code> gives the commands that find it."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "The subagent section tells the loop lead never to hold summaries on its own judgment.",
+     "collapsed": false
+    }
+   ]
+  },
+  {
+   "id": "update",
+   "title": "Updating starts from the newest published summary",
+   "kicker": "How an update finds the summary another session already wrote",
+   "intro": [
+    "Another session, or another account, can already have summarized the pull request, at an earlier head or at this one. The new opening of \"Update the page when the pull request moves\" says to start from that summary, and gives three commands. The first fetches the summaries ref. The second finds the folder that the newest commit on the ref wrote for the pull request. The third copies that folder's <code>summary.json</code>.",
+    "Each <code>publish</code> commits one folder, so the newest commit that touches <code>summaries/NUMBER/</code> names one head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "A new opening paragraph and recipe for finding the newest summary before step 1.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 318,
+       "text": "The fetch reads the ref on <code>origin</code>. In a repository that does not host its site, <code>publish</code> pushes nothing and keeps summaries in the checkout's own <code>refs/projector/summaries</code>, so this fetch fails there. The review lists that as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 319,
+       "text": "<code>summary_tree</code> and <code>publish</code> in <code>src/projector/summary.py</code> write one folder per commit on a linear history. The legacy carry-over replays the old commits one by one. So <code>git log -1</code> limited to the pull request's folder names a single head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
