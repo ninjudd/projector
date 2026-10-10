@@ -76,8 +76,9 @@ and the site shows the result with each model's verdict.
 A reviewer's identity is the model ID that `--model` gives
 `project review setup`, which the start comment, the review marker, and the
 finding marker record. Two IDs name the same reviewer when they are equal
-after one normalization: a trailing bracketed variant, such as the context
-window in `claude-opus-5-5[1m]`, is removed. The reasoning effort and the
+after one normalization: the ID is lowercased, and a trailing bracketed
+variant, such as the context window in `claude-opus-5-5[1m]`, is removed.
+The reasoning effort and the
 Projector version are not part of the identity, so one model at two efforts
 is the same reviewer run twice.
 
@@ -231,6 +232,10 @@ start comment on it, which holds the sign-off for up to a day, as its lock
 does today. Restarting that model's loop resumes the review, and deleting the
 comment releases the hold.
 
+The rule always reads the head this review published on. When the pull
+request's head moves during the wait, publish stops waiting and leaves the
+draft state alone, because the reviews of the new head decide it.
+
 #### Cross-author reviews
 
 On another author's pull request, publish leaves the draft state alone, as
@@ -265,12 +270,14 @@ Local state moves under the model, in the review state directory:
 | `worktrees/<owner>/<repo>/<pr>/<short-sha>` | `worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>` |
 | `loops/<id>/published.json`, entries of `repo`, `number`, `sha`, `review_id`, `verdict`, `published_at` | The same file, and each entry adds `model`. |
 
-`<model-key>` is the identity in lowercase, with every character other than a
-letter, a digit, `.`, `_`, or `-` replaced by `-`. For example,
+`<model-key>` is the identity, already lowercase, with every character other
+than a letter, a digit, `.`, `_`, or `-` replaced by `-`. For example,
 `anthropic/claude-opus-5-5` becomes `anthropic-claude-opus-5-5`. Setup
 refuses a model ID that is empty, contains whitespace, or has a key that
-starts with `.`. The state file adds `head_started_at`, when the review began
-on its current head.
+starts with `.`. Two identities can share a key, such as `a/b` and `a-b`, so
+the state file records its identity, and setup refuses when the key's state
+names a different one. The state file also adds `head_started_at`, when the
+review began on its current head.
 
 Every command after setup finds its state by pull request and model. `--model`
 names the model. Without it, a command uses the one model with state for that
@@ -363,7 +370,7 @@ The site reads no start comments or threads, so it never shows `waiting`.
 | `start-review-loop`'s watcher | No change to the script. It reports an answer on any model's finding thread to every model's loop. Each loop's subagent decides from `project review census --wait` whether the answer is its to act on, as § 2.2 says. |
 | Summary page header | Built from `models`, as below. |
 | Reviews index | Each row shows its newest head's status through `statusHtml` in `site/src/summary.ts`, the function the header uses. The row keeps the one word, `status`, linked to `url`, because a row has room for one word. `status` keeps its meaning, so the row needs no change. |
-| Summaries | No change. There is one summary per head. Each model's review updates the newest summary, as `review-pr` already does when the newest version comes from another session, and its flags come from every open finding thread. |
+| Summaries | No change. There is one summary per head. Each model's review updates the newest summary, as `review-pr` already does when the newest version comes from another session, and its flags come from every open finding thread. When two models update one head's summary at once, the one that publishes last keeps the flags its own census read, so a finding the other model opened in between has no flag until the next summary of that pull request. The finding itself stays on GitHub and in the fix loop's view. |
 
 A merged or closed pull request shows **Merged** or **Closed** in both
 places, as it does on `main`. Otherwise the summary page's header shows the
@@ -742,8 +749,10 @@ pull request with one stopped peer and one running peer.
 
 1. Release the change.
 2. Upgrade every machine that runs a review loop with `project upgrade`, then
-   restart each loop's watcher, because a running watcher keeps the script it
-   started with.
+   restart each loop, because a running watcher keeps the script it started
+   with. Restart it under a loop id of its own model, such as
+   `<repo>-review-<model-key>`, since loops started from the same suggestion
+   share `<repo>-review-loop`.
 3. Start a second model's loop only after that. An earlier release still
    reads another model's verdict as a collision, and it settles every model's
    findings.
