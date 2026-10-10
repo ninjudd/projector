@@ -1,0 +1,1059 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 473408d..7d7edd3 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -519,6 +519,7 @@ These are the keys Projector reads today:
+ | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
++| `review.peer_wait` | non-negative integer | `180` | `project review publish`, as the seconds after a review began on a head that it waits for a model that reviewed an earlier head to start on this one before it signs the head off; `0` turns the wait off |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ 
+@@ -526,7 +527,10 @@ These are the keys Projector reads today:
+ `false` rather than a question to ask. It never applies to a review of your own
+ pull request, where GitHub refuses the verdict regardless. `review.incremental`
+ is on unless it is `false`, and a value that is neither `true` nor `false`
+-makes both commands that read it refuse and name the key.
++makes both commands that read it refuse and name the key. `review.peer_wait`
++is read from the review's checkout, and a value that is not a non-negative
++integer, such as a string, a negative number, or `true`, makes `publish`
++refuse and name the key.
+ 
+ The operator -- the account whose branches carry fixes and whose token pushes
+ them -- is deliberately not a key. It follows whichever token is authenticated,
+@@ -1064,6 +1068,7 @@ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+ project review release 66
+ project review gate 66
++project review status 66
+ project review rules
+ ```
+ 
+@@ -1127,14 +1132,63 @@ count, or when the reviewer already has a verdict by this model on the head
+ that this loop's record does not account for. A verdict by another model is a
+ second opinion and never collides, and one whose marker names no model
+ collides with every model. Outside a loop, `--second-verdict <review-id>`
+-publishes beside an earlier verdict the body names. On a self-review it
+-submits a `COMMENT` and then marks the pull request ready or returns it to
+-draft; on another author's pull request it posts `REQUEST_CHANGES` or a
+-`COMMENT`, or an `APPROVE` where `review.allow_approve` is `true`, and leaves
+-draft state alone. It then re-reads the review and the draft state, adds the
+-review id to the loop's record, deletes the start comment, and releases the
+-lock. A run that fails after submitting exits non-zero, and running it again
+-finishes that review rather than posting another.
++publishes beside an earlier verdict the body names.
++
++On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
++rule to the head it published on. The rule reads the reviewer's verdicts and
++start comments and every Projector finding thread. A start comment is live
++until its model posts a verdict on its head, or until a day passes since its
++last edit, and a model is reviewing the head while its start comment there is
++live. With each model's newest verdict on the head counting, the head is
++`changes-requested` when any of those requests changes, `waiting` when none
++does and a model is reviewing it or a finding thread is open, `clean` when
++every one is clean, and `unreviewed` when there is none. `changes-requested`
++returns the pull request to draft, `clean` marks it ready, and `waiting`
++leaves it as it is, so the last model to finish sets the draft state. Before
++it marks a draft ready, `publish` waits for each peer: another model with a
++verdict on an earlier head, or a live start comment on another head, and
++nothing on this one. It re-reads the start comments and verdicts every 15
++seconds until `review.peer_wait` seconds after this review began on the head.
++A peer's start comment makes the head `waiting`, a peer's verdict joins the
++rule, and a head that moves ends the wait and leaves the draft state alone. A
++review that already took longer does not wait. On another author's pull
++request `publish` posts `REQUEST_CHANGES` or a `COMMENT`, and leaves draft
++state alone. Where `review.allow_approve` is `true` it posts an `APPROVE` for
++a clean verdict only when the rule, counting that verdict as posted, signs
++the head off after the same wait, because one account's newest approval
++would replace another model's change request. `publish` then re-reads the
++review and the draft state, adds the review id to the loop's record, deletes
++the start comment, and releases the lock. It prints the sign-off, how long it
++waited and for which models, and the draft state it set; `--json` gives them
++as `signoff`, `waited`, `pending`, `moved`, and `draft`. A run that fails
++after submitting exits non-zero, and running it again finishes that review
++rather than posting another.
++
++`status` prints the sign-off of the pull request's current head, by the same
++rule, with each model's part in it and the open finding threads:
++
++```
++$ project review status 66
++#66 at 4f2a9c1: waiting
++  claude-opus-5-5   clean               review 3301
++  gpt-5.5           reviewing           start comment 2290, since 14:02 UTC
++  1 open finding thread: src/projector/review.py:648 (gpt-5.5)
++```
++
++A model with a verdict or a start comment only on an earlier head is
++`pending`, and does not change the sign-off. It reads the pull request, its
++reviews, its issue comments, and its threads, finds the reviewer as `setup`
++does, from `--reviewer`, then `review.username`, then the authenticated user,
++and runs from any directory. It exits 0 whatever the sign-off, and 1 only
++when it cannot read the pull request. With `--json` it prints one object:
++
++| Field | Value |
++| --- | --- |
++| `repo`, `number`, `head` | The pull request and its current head SHA. |
++| `draft` | Whether the pull request is a draft. |
++| `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
++| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
++| `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
+ 
+ `interdiff` decides whether the head may have an incremental review: a short
+ clean verdict on a head that changed little since this loop's last full review
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index 1171f59..89bd50e 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -330,7 +330,7 @@ does: `--reviewer`, then `review.username`, then the authenticated user.
+ | `repo`, `number`, `head` | The pull request and its current head SHA. |
+ | `draft` | Whether the pull request is a draft. |
+ | `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`, by the rule in § 2.3. |
+-| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict adds `review`, `url`, and `at`. A start comment adds `comment` and `since`. A stopped model adds `adopted_by`. |
++| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict, on the head or else the newest on an earlier head, adds `review`, `url`, `at`, and its `sha`. A live start comment adds `comment`, `since`, and its `comment_sha`. A stopped model adds `adopted_by`. |
+ | `open_threads` | Each open Projector finding thread's `path`, `line`, `model`, or `null` when the thread names none, and `verifier`. |
+ 
+ `pending` is a model whose only verdicts or start comments are on earlier
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 2ed5561..47f6244 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -223,13 +223,21 @@ user's checkpoint.
+ A pull request is clean only when:
+ 
+ - it merges into its base without a conflict,
+-- a clean verdict names its current head,
++- `project review status <number>` reports `clean` for its current head,
+ - no unresolved threads remain,
+ - the current head is the one actually reviewed, and
+ - the reviewer's own sign-off signal is clear: `reviewDecision` is not
+   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
+   request is no longer a draft, which is how that loop signs off.
+ 
++`project review status <number>` applies the review loop's sign-off rule to
++the current head: `clean` when every model reviewing it gave a clean verdict
++and no Projector finding thread is open. When nothing is outstanding and it
++reports anything else, report what it names, such as `gpt-5.5` still
++reviewing, or a model whose verdict on the head requests changes, and treat
++the head as waiting on that review, not on a code change. A Projector review
++loop that runs on Codex is one of those models.
++
+ An external reviewer is not one of those conditions. A pending or absent
+ re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
+ report on the review loop's verdict and let theirs arrive whenever it does. A
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index b123076..16357e9 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -111,15 +111,19 @@ refuses the verdict anyway. Because the setting is layered, a repository can
+ grant it without granting it everywhere, and `~/.projector.toml` can grant it
+ everywhere you work; read it per repository rather than once per machine.
+ 
+-### Draft means changes are needed
+-
+-On your own pull request draft state *is* the verdict: draft means changes
+-are needed, ready means the head is clean. **A review with findings marks it
+-draft; a clean review marks it ready.** Publish the review, then `gh pr ready
+-<number>` or `gh pr ready <number> --undo` to match the verdict you just
+-gave. Nothing else enters into it — not when a review first saw the pull
+-request, not who last changed the state, not whether it was ever a draft.
+-Setting a state it already holds is a no-op, so there is no case to analyse.
++### Draft means the head is not signed off
++
++On your own pull request draft state *is* the sign-off: draft means the head
++is not signed off, ready means every model reviewing it found it clean.
++`project review publish` sets it after it submits, by the sign-off rule in
++[Review as one model among several](#review-as-one-model-among-several): it
++returns the pull request to draft when any model's verdict on the head
++requests changes, marks it ready when every one is clean, and leaves it as it
++is while a model is still reviewing the head or a finding thread is open.
++With one model reviewing, that is the old rule: a review with findings marks
++it draft, a clean review marks it ready. Nothing else enters into it — not
++when a review first saw the pull request, not who last changed the state, not
++whether it was ever a draft. Never set it yourself with `gh pr ready`.
+ 
+ Draft carries the outcome there because GitHub refuses `APPROVE` and
+ `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
+@@ -151,6 +155,40 @@ it.
+ - **A model upgraded in the middle of a pull request**, such as a loop
+   restarted on a newer version, is a new reviewer.
+ 
++One rule over GitHub's state decides the sign-off, and every `publish`
++applies it after it submits, so the last model to finish sets the draft
++state. It reads the reviewer account's verdicts and start comments and every
++Projector finding thread, from any account. A start comment is live until
++its model posts a verdict on its head, or until a day has passed since it was
++last edited, and a model is reviewing the head while its start comment on the
++head is live. Each model's newest verdict on the head counts, and the head is:
++
++- **`changes-requested`** when any model's newest verdict on it requests
++  changes. A self-review returns to draft.
++- **`waiting`** when none does, and a model is reviewing the head or a
++  Projector finding thread is open. The draft state stays as it is.
++- **`clean`** when at least one model has a verdict on the head, every
++  model's newest verdict on it is clean, no model is reviewing it, and no
++  finding thread is open. A self-review is marked ready.
++- **`unreviewed`** when no model has a verdict on the head.
++
++A loop that has not noticed a push yet has posted nothing for the new head.
++So before `publish` marks a draft ready, it waits for each peer: another
++model with a verdict on an earlier head, or a live start comment on another
++head, and nothing on this one. It waits until `review.peer_wait` seconds,
++180 by default, after this review began on the head, re-reading every 15
++seconds. A peer's start comment makes the head `waiting`, a peer's verdict
++joins the rule, and a peer that posts nothing by then is absent. A review
++that already took longer does not wait, and neither does one that leaves a
++pull request already ready, or one on a head that moves meanwhile. Run
++`publish`, and on another author's pull request any `publish` that may
++approve, with a timeout of at least `review.peer_wait` plus two minutes.
++
++`project review status <number>` prints the rule's result for the current
++head, each model's part in it, and the open finding threads, as
++`docs/cli.md` describes; `fix-pr` reads it to tell whether a head is signed
++off.
++
+ ## Review an exact head
+ 
+ For the head under review, steps 1 to 4 are one command, run from a checkout
+@@ -445,7 +483,7 @@ the size of the change, how the head moved, and any conflict the author
+ resolved, so none of them is typed. It posts a `COMMENT`, even where
+ `review.allow_approve` is `true`, because an incremental review vouches only
+ that the change since a reviewed head needed nothing more. On a self-review it
+-then marks the pull request ready, as any clean verdict does, and on another
++then applies the sign-off rule, as any clean verdict does, and on another
+ author's pull request it ends the body with "A human approval is what
+ remains." It refuses, exiting 1 and keeping the lock so you can run the full
+ review on the same setup, when:
+@@ -715,7 +753,9 @@ author who fixes a finding without resolving it is not held up. Under
+ the author answers: `RESPONDED` fires when every thread is resolved, or when
+ the newest comment on an open finding thread is the author's.
+ 
+-`publish` chooses the review state and draft transition from the mode:
++`publish` chooses the review state from the mode, and the draft transition
++from the sign-off rule in
++[Review as one model among several](#review-as-one-model-among-several):
+ 
+ **Threads open, self-review:** a `COMMENT` review, verdict
+ `changes-requested`, then the pull request returns to draft with `gh pr ready
+@@ -725,13 +765,19 @@ the newest comment on an open finding thread is the author's.
+ `changes-requested`. Draft state is left alone.
+ 
+ **Clean head, self-review:** a `COMMENT` review, verdict `clean`, then the
+-pull request is marked ready with `gh pr ready <number>`. That transition is
+-the sign-off a reader sees in the pull-request list.
++rule decides: the pull request is marked ready with `gh pr ready <number>`
++once every model reviewing the head is clean, after the peer wait, and is
++left as it is while another model is still reviewing it or a finding thread
++is open. That transition is the sign-off a reader sees in the pull-request
++list.
+ 
+ **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
+ plainly in the body that the head looks clean and that a human approval is
+ what remains. It posts a real `APPROVE` only where `review.allow_approve` is
+-`true`.
++`true`, and only when the rule, counting this verdict as posted, signs the
++head off after the peer wait: one account's newest approval or change
++request sets `reviewDecision`, so an approval would erase another model's
++standing change request. Otherwise it posts a `COMMENT`.
+ 
+ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
+ around a permission failure, and never read GitHub's refusal of a self-review
+@@ -748,18 +794,20 @@ terminal, which adds the rules to their own settings, or to run the publish
+ command themselves. `init` adds the rules only for a person at a terminal, so
+ do not run it to add them yourself.
+ 
+-After submitting, `publish` sets draft state for a self-review, re-reads the
+-review it posted and the pull request's `isDraft`, adds the review id to the
+-loop's record, deletes the start comment, and releases the lock, in that
+-order, so the pull request is never left with neither a start comment nor its
+-verdict's draft state. It records the review as submitted before any of those
++After submitting, `publish` applies the sign-off rule and sets draft state
++for a self-review, re-reads the review it posted and the pull request's
++`isDraft`, adds the review id to the loop's record, deletes the start
++comment, and releases the lock, in that order, so the pull request is never
++left with neither a start comment nor its sign-off's draft state. It prints
++the sign-off, how long it waited and for which models, and whether it marked
++the pull request draft or ready. It records the review as submitted before any of those
+ steps, so a run that fails partway exits non-zero and running it again
+ finishes that review instead of posting a second one.
+ 
+ Report the review as done only after `publish` exits 0. Report the SHA, the
+-verdict, the review id, how many threads it opened, the head of the full
+-review an incremental review builds on, and the summary's URL when the next
+-section publishes one. Before a `clean` verdict, settle every
++verdict, the sign-off, the review id, how many threads it opened, the head of
++the full review an incremental review builds on, and the summary's URL when
++the next section publishes one. Before a `clean` verdict, settle every
+ earlier finding first; `publish` refuses one while a finding is open. Never
+ resolve another reviewer's thread, resolve a finding you have not verified at
+ this head, claim a newer SHA was reviewed, or merge.
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-fix-loop/SKILL.md
+index 6312455..04b07a8 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-fix-loop/SKILL.md
+@@ -89,8 +89,8 @@ The watcher is level-triggered:
+ - `REVIEW` reports a review body that has no inline thread, the shape every
+   `COMMENT` review posts.
+ - `DRAFT` reports a pull request a review loop has not signed off. It clears
+-  when the review loop marks the pull request ready, which is that loop's
+-  sign-off on the current head.
++  when the pull request is marked ready, which a review loop's `publish`
++  does once every model reviewing the current head has signed it off.
+ - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
+ 
+ A `DRAFT` line alone is not work. It says the head has not been signed off,
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 333361d..e95ee9d 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -468,6 +468,17 @@ def parser() -> argparse.ArgumentParser:
+     add_output(review_commands.add_parser(
+         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+     ))
++    review_status = review_commands.add_parser(
++        "status", help="report the sign-off of a pull request's current head and each model's part in it"
++    )
++    review_status.add_argument("pr", type=int, help="the pull request number")
++    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
++                                              "this checkout's origin)")
++    review_status.add_argument("--reviewer", help="the GitHub login whose reviews count (default: review.username, "
++                                                  "then you)")
++    review_status.add_argument("--state-dir", type=Path,
++                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
++    add_output(review_status)
+     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
+                     review_interdiff):
+         command.add_argument("pr", type=int, help="the pull request number")
+@@ -856,10 +867,27 @@ def incremental_enabled(checkout: Path) -> bool:
+     return value
+ 
+ 
++def review_status(root: Path, arguments: argparse.Namespace) -> int:
++    """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
++    request cannot be read. The reviewer is found as `setup` finds it."""
++    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++    try:
++        configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
++    except ProjectorError:
++        configured = None
++    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
++        or review.authenticated_login()
++    result = review.status(repo, arguments.pr, reviewer)
++    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
++    return 0
++
++
+ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "rules":
+         return review_rules(arguments.json_output)
+     root = review.state_dir(arguments.state_dir)
++    if arguments.review_command == "status":
++        return review_status(root, arguments)
+     loop = review.valid_loop(arguments.loop)
+     command = arguments.review_command
+     if command == "setup":
+@@ -909,15 +937,20 @@ def run_review(arguments: argparse.Namespace) -> int:
+             except ProjectorError:
+                 allow = False
+             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
++            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
+             result = review.publish(paths, loop, arguments.verdict, arguments.body,
+                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
+-                                    arguments.incremental, enabled)
++                                    arguments.incremental, enabled, wait)
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+                 print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
+                       f"{result['repo']}#{result['number']} at {result['sha']}"
+                       + (f", incremental from {result['from'][:7]}" if result["from"] else ""))
++                print(f"sign-off: {result['signoff']}"
++                      + (f", after waiting {result['waited']}s" if result["waited"] else "")
++                      + (f"; no review yet from {', '.join(result['pending'])}" if result["pending"] else "")
++                      + ("; the head moved, so its reviews decide the draft state" if result["moved"] else ""))
+                 if result["draft"] is not None:
+                     print("marked draft" if result["draft"] else "marked ready")
+             return 0
+diff --git a/src/projector/review.py b/src/projector/review.py
+index a4d27dd..378ea2a 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -26,6 +26,7 @@
+ import re
+ import socket
+ import subprocess
++import time
+ from dataclasses import dataclass
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+@@ -1110,9 +1111,152 @@ def same_model(body: str) -> bool:
+             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
+ 
+ 
+-def self_review(repo: str, number: int, reviewer: str) -> bool:
+-    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+-    return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
++# The sign-off
++
++PEER_WAIT = 180
++PEER_POLL = 15
++sleep = time.sleep
++
++
++def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) -> dict[str, dict]:
++    """Each model with a Projector verdict or a start comment among the reviewer's, keyed by identity.
++
++    `verdict` is its newest verdict on `head`, and `earlier` its newest on
++    another head, each with the review's `id`, `url`, `at`, `sha`, and
++    `verdict`, or None. `reviewing` is its live start comment on `head`, and
++    `elsewhere` one on another head, each None when there is none."""
++    models: dict[str, dict] = {}
++
++    def entry(model: str) -> dict:
++        return models.setdefault(identity(model), {"model": identity(model), "verdict": None, "earlier": None,
++                                                   "reviewing": None, "elsewhere": None})
++
++    for review in reviews:
++        marker = verdict_marker(review.get("body") or "")
++        if marker is None or not review.get("at"):
++            continue
++        found = entry(marker.model)
++        key = "verdict" if marker.sha == head else "earlier"
++        if found[key] is None or parse_time(review["at"]) >= parse_time(found[key]["at"]):
++            found[key] = {"id": review.get("id"), "url": review.get("url"), "at": review["at"], "sha": marker.sha,
++                          "verdict": marker.verdict}
++    for comment in starts:
++        if is_live(comment, reviews, at):
++            entry(comment["model"])["reviewing" if comment["sha"] == head else "elsewhere"] = comment
++    return models
++
++
++def signoff(models: dict[str, dict], open_threads: int) -> str:
++    """The rule review-pr § Review as one model among several states: `changes-requested` when any
++    model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
++    or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
++    and `unreviewed` when no model has one."""
++    verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
++    if "changes-requested" in verdicts:
++        return "changes-requested"
++    if open_threads or any(m["reviewing"] for m in models.values()):
++        return "waiting"
++    return "clean" if verdicts else "unreviewed"
++
++
++def pending_peers(models: dict[str, dict], me: str) -> list[str]:
++    """The other models that reviewed an earlier head, or are reviewing another one, and have neither a
++    verdict nor a live start comment on this one: a loop that has not noticed the push yet."""
++    return sorted(key for key, m in models.items()
++                  if key != me and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
++
++
++def peer_wait(value: object) -> int:
++    """`review.peer_wait`: unset is the default, and anything but a non-negative integer is refused."""
++    if value is None:
++        return PEER_WAIT
++    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++        raise ReviewError(f"review.peer_wait must be a non-negative number of seconds, not {value!r}")
++    return value
++
++
++def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
++         posted: Optional[dict] = None) -> dict:
++    """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
++    says `clean`.
++
++    The rule reads the reviewer's verdicts and start comments; `posted` stands
++    in for this review's verdict before it is submitted. While the rule says
++    `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
++    until `deadline`: a peer's start comment makes it `waiting`, a peer's
++    verdict joins the rule, and a peer that posts nothing by the deadline is
++    absent. A head that moves ends the wait, because the reviews of the new
++    head decide it. Returns `signoff`, the `models` it read, how many whole
++    seconds it `waited`, the peers still `pending`, and whether the head
++    `moved`."""
++    started = now()
++    while True:
++        reviews = reviewer_reviews(repo, number, reviewer) + ([posted] if posted else [])
++        models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
++        result = signoff(models, open_threads)
++        pending = pending_peers(models, me) if result == "clean" else []
++        waited = int((now() - started).total_seconds())
++        if not pending or now() >= deadline:
++            return {"signoff": result, "models": models, "waited": waited, "pending": pending, "moved": False}
++        sleep(max(0.0, min(PEER_POLL, (deadline - now()).total_seconds())))
++        if pull_request(repo, number)["head"]["sha"] != head:
++            return {"signoff": result, "models": models, "waited": int((now() - started).total_seconds()),
++                    "pending": pending, "moved": True}
++
++
++FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
++
++
++def thread_model(thread: dict) -> Optional[str]:
++    """The model a finding thread's marker names, or None for one an earlier release opened."""
++    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
++    return found.group(1) if found else None
++
++
++def status(repo: str, number: int, reviewer: str) -> dict:
++    """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
++    part in it and every open Projector finding thread."""
++    try:
++        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
++    except NotFound as exc:
++        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++    head = pr["head"]["sha"]
++    models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
++    threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
++    rows = []
++    for key in sorted(models):
++        m = models[key]
++        row = {"model": m["model"],
++               "state": "reviewing" if m["reviewing"] else m["verdict"]["verdict"] if m["verdict"] else "pending"}
++        verdict = m["verdict"] or m["earlier"]
++        if verdict:
++            row.update(review=verdict["id"], url=verdict["url"], at=verdict["at"], sha=verdict["sha"])
++        comment = m["reviewing"] or m["elsewhere"]
++        if comment:
++            row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
++        rows.append(row)
++    return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
++            "signoff": signoff(models, len(threads)), "models": rows,
++            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
++
++
++def status_lines(result: dict) -> list[str]:
++    """`review status` without --json: the sign-off, a line for each model, and the open threads."""
++    lines = [f"#{result['number']} at {result['head'][:7]}: {result['signoff']}"]
++    width = max((len(row["model"]) for row in result["models"]), default=0) + 3
++    for row in result["models"]:
++        if row["state"] == "reviewing" or row["state"] == "pending" and "comment" in row:
++            since = parse_time(row["since"]).strftime("%H:%M UTC")
++            where = "" if row["state"] == "reviewing" else f" on {row['comment_sha'][:7]}"
++            detail = f"start comment {row['comment']}{where}, since {since}"
++        else:
++            detail = f"review {row['review']}" + (f" on {row['sha'][:7]}" if row["sha"] != result["head"] else "")
++        lines.append(f"  {row['model']:<{width}}{row['state']:<20}{detail}")
++    threads = result["open_threads"]
++    if threads:
++        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
++        lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
++    return lines
+ 
+ 
+ def check_body(body: str) -> None:
+@@ -1219,17 +1363,21 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
+ 
+ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
+             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
+-            incremental: bool = False, enabled: bool = True) -> dict:
+-    """Submit the review, then set draft state, re-read, record, delete the start comment, and
+-    release the lock, in that order. Every refusal leaves the lock held for this review to retry.
++            incremental: bool = False, enabled: bool = True, wait: int = PEER_WAIT) -> dict:
++    """Submit the review, then apply the sign-off rule and set draft state, re-read, record, delete the
++    start comment, and release the lock, in that order. Every refusal leaves the lock held for this
++    review to retry.
+ 
+     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
+     review, published only while `incremental_rules` passes, with `enabled` from
+-    `review.incremental`."""
++    `review.incremental`. `wait` is `review.peer_wait`: how long after this review began on the
++    head the rule waits for a model that reviewed an earlier head before it signs off."""
+     root, number = paths.root, paths.number
+     state = read_state(paths)
+     loop = loop if loop is not None else state.get("loop")
+-    repo, sha = state["repo"], state["sha"]
++    repo, sha, reviewer = state["repo"], state["sha"], state["reviewer"]
++    me = identity(state["model"])
++    deadline = parse_time(state["head_started_at"]) + timedelta(seconds=wait)
+     if incremental:
+         for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
+             if given is not None:
+@@ -1250,7 +1398,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     published = state.get("published")
+     if published and published.get("sha") == sha and state.get("start_comment"):
+         # A publish that submitted and then stopped: finish it rather than post a second review.
+-        review_id, draft_wanted = published["id"], published["draft"]
++        review_id = published["id"]
+     else:
+         if not body_path.is_file():
+             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
+@@ -1260,43 +1408,48 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         if pr["head"]["sha"] != sha:
+             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
+                               f"run `project review move {number}` and review the new head")
+-        reviews = reviewer_reviews(repo, number, state["reviewer"])
++        reviews = reviewer_reviews(repo, number, reviewer)
+         check_collision(root, state, loop, second, body, reviews)
+         incremental_from = None
++        mine = ((pr.get("user") or {}).get("login") or "").lower() == reviewer.lower()
+         if incremental:
+             rules = incremental_rules(root, state, loop, enabled, reviews)
+             if not rules["incremental"]:
+                 raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
+                                   "on this setup")
+             incremental_from = rules["from"]
+-            mine = self_review(repo, number, state["reviewer"])
+             text = compose_incremental(state, body, rules, not mine, now())
+-            event = "COMMENT"
++            event, open_after = "COMMENT", 0
+         else:
+             check_threads(threads, diff_lines(repo, number) if threads else {})
+             tally = census(repo, number)
+-            open_now = tally["open"] + len(threads)
+-            if verdict == "clean" and open_now:
++            open_after = tally["open"] + len(threads)
++            if verdict == "clean" and open_after:
+                 raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
+                                   f"{len(threads)} are being posted; settle them or request changes")
+-            if verdict == "changes-requested" and not open_now:
++            if verdict == "changes-requested" and not open_after:
+                 raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
+                                   "is clean")
+             total = tally["total"] + len(threads)
+             noun = "thread" if total == 1 else "threads"
+-            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
++            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_after} open"
+             text = compose(state, verdict, body, covered, len(threads), census_line, now())
+-            mine = self_review(repo, number, state["reviewer"])
+-            if mine or (verdict == "clean" and not allow_approve):
++            if mine or verdict == "clean" and not allow_approve:
+                 event = "COMMENT"
++            elif verdict == "changes-requested":
++                event = "REQUEST_CHANGES"
+             else:
+-                event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
+-        draft_wanted = (verdict == "changes-requested") if mine else None
++                # One account's newest approval or change request sets reviewDecision, so an approval would
++                # replace another model's standing change request: approve only when the rule, counting
++                # this verdict as posted, signs the head off.
++                posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
++                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
++                event = "APPROVE" if ahead["signoff"] == "clean" and not ahead["moved"] else "COMMENT"
+         payload = {"commit_id": sha, "event": event, "body": text,
+                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
+                                  "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
+                                          f"model={state['model']} -->\n{t['body'].strip()}\n"} for t in threads]}
+-        token = reviewer_token(state["reviewer"])
++        token = reviewer_token(reviewer)
+         paths.folder.mkdir(parents=True, exist_ok=True)
+         paths.request.write_text(json.dumps(payload), encoding="utf-8")
+         posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input",
+@@ -1306,10 +1459,18 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         # Recorded before anything else can fail, so a retry finishes this review rather than
+         # posting a second one.
+         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
+-                              "draft": draft_wanted, "from": incremental_from}
++                              "from": incremental_from, "self": mine, "open": open_after}
+         write_state(paths, state)
+-    token = reviewer_token(state["reviewer"])
+-    if draft_wanted is not None:
++    published = state["published"]
++    token = reviewer_token(reviewer)
++    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
++    # Only a draft is about to be signed off, so only a draft waits for its peers.
++    signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
++                  deadline if published.get("self") and draft else now())
++    draft_wanted = None
++    if published.get("self") and not signed["moved"]:
++        draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
++    if draft_wanted is not None and draft_wanted != draft:
+         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
+     posted = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"])
+     if f"sha={sha}" not in (posted or {}).get("body", ""):
+@@ -1317,16 +1478,16 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     if draft_wanted is not None:
+         draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+         if draft != draft_wanted:
+-            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the "
+-                              f"{state['published']['verdict']} verdict; set it with `gh pr ready` and retry")
++            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the sign-off "
++                              f"{signed['signoff']}; set it with `gh pr ready` and retry")
+     if loop is not None:
+         record = read_record(root, loop)
+         if not any(r.get("review_id") == review_id for r in record):
+             # `base` is the merge base a later incremental review measures from; `from` marks an
+             # incremental review, which a later one never builds on.
+             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+-                           "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
+-                           "base": state["base"], "from": state["published"].get("from"), "model": state["model"]})
++                           "verdict": published["verdict"], "published_at": now().isoformat(),
++                           "base": state["base"], "from": published.get("from"), "model": state["model"]})
+             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
+             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+     comment = (state.get("start_comment") or {}).get("id")
+@@ -1335,6 +1496,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         state["start_comment"] = None
+     write_state(paths, state)
+     paths.lock(sha).unlink(missing_ok=True)
+-    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+-            "verdict": state["published"]["verdict"], "event": state["published"]["event"],
+-            "draft": draft_wanted, "from": state["published"].get("from")}
++    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
++            "event": published["event"], "draft": draft_wanted, "from": published.get("from"),
++            "signoff": signed["signoff"], "waited": signed["waited"], "pending": signed["pending"],
++            "moved": signed["moved"]}
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 061965c..ce4f762 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -70,6 +70,8 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.files = [("src/x.py", "@@ -1,2 +1,6 @@\n a\n+b\n+c\n+d\n+e\n f"),
+                       ("src/z.py", "@@ -10,0 +11,2 @@\n+x\n+y")]
+         self.fail: str | None = None
++        # Runs once, right after the next review is submitted, as another session acting at that moment.
++        self.after_post = None
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
+@@ -89,6 +91,9 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+                                  "body": payload["body"], "event": payload["event"],
+                                  "commit_id": payload["commit_id"], "comments": payload["comments"],
+                                  "at": review.now().strftime("%Y-%m-%dT%H:%M:%SZ")})
++            if self.after_post:
++                hook, self.after_post = self.after_post, None
++                hook()
+             return json.dumps({"id": review_id})
+         if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/1/reviews/"):
+             review_id = int(args[1].rsplit("/", 1)[1])
+@@ -628,6 +633,18 @@ def open_finding(self) -> None:
+     def posted(self) -> dict:
+         return self.github.reviews[-1]
+ 
++    def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
++                    verdict: str = "clean", login: str = "operator") -> int:
++        review_id = 800 + len(self.github.reviews)
++        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
++                                    "commit_id": sha or self.head, "at": at,
++                                    "body": verdict_body(sha or self.head, model, verdict)})
++        return review_id
++
++    def as_model(self, model: str, *extra: str) -> tuple[int, str, str]:
++        self.model = model
++        return self.setup_review(*extra)
++
+ 
+ class PublishTests(PublishCase):
+     def test_publishes_a_clean_self_review_marks_it_ready_and_cleans_up_in_order(self) -> None:
+@@ -982,18 +999,6 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
+ class ModelTests(PublishCase):
+     """Each model is a reviewer of its own: its own state, lock, worktree, and collision check."""
+ 
+-    def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
+-                    verdict: str = "clean", login: str = "operator") -> int:
+-        review_id = 800 + len(self.github.reviews)
+-        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
+-                                    "commit_id": sha or self.head, "at": at,
+-                                    "body": verdict_body(sha or self.head, model, verdict)})
+-        return review_id
+-
+-    def as_model(self, model: str, *extra: str) -> tuple[int, str, str]:
+-        self.model = model
+-        return self.setup_review(*extra)
+-
+     def test_two_models_set_up_one_head_side_by_side_and_publishing_one_leaves_the_other(self) -> None:
+         self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+         code, _, err = self.as_model("gpt-5.5", "--loop", "gpt")
+@@ -1155,6 +1160,301 @@ def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
+         self.assertIn(" model=claude-opus-5-5 -->", self.github.comments[101])
+ 
+ 
++def iso(at: datetime) -> str:
++    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++class SignoffCase(PublishCase):
++    """Publishing as claude-opus-5-5 on head H beside gpt-5.5, on a clock the peer wait's sleeps advance."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.earlier = self.base
++        self.slept: list[float] = []
++        self.hooks: dict[int, object] = {}
++
++        def sleep(seconds: float) -> None:
++            self.slept.append(seconds)
++            self.clock += timedelta(seconds=seconds)
++            hook = self.hooks.pop(len(self.slept), None)
++            if hook:
++                hook()
++
++        patcher = mock.patch.object(review, "sleep", sleep)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def begin_now(self) -> None:
++        """Start the review at the clock's time, so the peer wait's deadline is still ahead."""
++        self.github.created_at = iso(self.clock)
++
++    def start(self, model: str, sha: str | None = None, at: str | None = None) -> int:
++        return self.github.comment(review.start_comment(model, sha or self.head), created_at=at)
++
++    def configure(self, text: str) -> None:
++        (self.checkout / ".projector.toml").write_text(f"[review]\n{text}\n")
++
++    def json_publish(self, verdict: str, *extra: str) -> dict:
++        code, out, err = self.publish(verdict, "--json", *extra)
++        self.assertEqual(0, code, err)
++        return json.loads(out)
++
++
++class SignoffTests(SignoffCase):
++    def test_any_models_change_request_on_the_head_returns_it_to_draft(self) -> None:
++        self.github.pr["draft"] = False
++        self.add_verdict("gpt-5.5", verdict="changes-requested")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual(("changes-requested", True), (result["signoff"], result["draft"]))
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_another_model_reviewing_the_head_leaves_the_draft_state_as_it_is(self) -> None:
++        for draft in (True, False):
++            with self.subTest(draft=draft):
++                self.setUp()
++                self.github.pr["draft"] = draft
++                self.start("gpt-5.5")
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertEqual(("waiting", None), (result["signoff"], result["draft"]))
++                self.assertEqual(draft, self.github.pr["draft"])
++                self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
++
++    def test_every_model_clean_on_the_head_marks_it_ready(self) -> None:
++        self.add_verdict("gpt-5.5")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
++        self.assertFalse(self.github.pr["draft"])
++
++    def test_a_start_comment_its_model_has_answered_or_on_an_older_head_does_not_hold_the_rule(self) -> None:
++        cases = {"answered": lambda: (self.start("gpt-5.5", at="2026-09-27T01:05:00Z"),
++                                      self.add_verdict("gpt-5.5", at="2026-09-27T01:06:00Z")),
++                 "older head": lambda: self.start("gpt-5.5", sha=self.earlier)}
++        for name, arrange in cases.items():
++            with self.subTest(name):
++                self.setUp()
++                arrange()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertEqual("clean", result["signoff"])
++                self.assertFalse(self.github.pr["draft"])
++
++    def test_a_verdict_from_another_account_does_not_count(self) -> None:
++        self.add_verdict("gpt-5.5", verdict="changes-requested", login="someone-else")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual("clean", self.json_publish("clean")["signoff"])
++
++    def test_two_models_that_publish_together_sign_off_whichever_order_they_apply_the_rule_in(self) -> None:
++        for gpt_verdict, signed in (("clean", "clean"), ("changes-requested", "changes-requested")):
++            for first in ("claude-opus-5-5", "gpt-5.5"):
++                with self.subTest(gpt=gpt_verdict, submits_first=first):
++                    self.setUp()
++                    self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
++                    self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++                    opus = ("clean", "--model", "claude-opus-5-5")
++                    gpt = (gpt_verdict, "--model", "gpt-5.5",
++                           *(["--threads", str(self.threads(finding()))] if gpt_verdict == "changes-requested" else []))
++                    if first == "gpt-5.5":
++                        # gpt-5.5 submits while claude-opus-5-5 is between its own submit and its rule.
++                        self.github.after_post = lambda: self.assertEqual(0, self.publish(*gpt, loop="gpt")[0])
++                        result = self.json_publish(*opus[:1], *opus[1:], "--loop", "claude")
++                    else:
++                        result = self.json_publish(*opus[:1], *opus[1:], "--loop", "claude")
++                        self.assertEqual("waiting", result["signoff"], "gpt-5.5 is still reviewing")
++                        result = self.json_publish(*gpt[:1], *gpt[1:], "--loop", "gpt")
++
++                    self.assertEqual(signed, result["signoff"])
++                    self.assertEqual(signed == "changes-requested", self.github.pr["draft"])
++
++
++class PeerWaitTests(SignoffCase):
++    """gpt-5.5 reviewed an earlier head and has posted nothing on H."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.add_verdict("gpt-5.5", sha=self.earlier)
++
++    def test_waits_until_the_deadline_for_a_peer_that_posts_nothing_then_marks_it_ready(self) -> None:
++        self.begin_now()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, out, err = self.publish("clean")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(180, sum(self.slept))
++        self.assertTrue(all(seconds <= 15 for seconds in self.slept))
++        self.assertFalse(self.github.pr["draft"])
++        self.assertIn("sign-off: clean, after waiting 180s; no review yet from gpt-5.5", out)
++
++    def test_a_start_comment_posted_during_the_wait_leaves_the_draft(self) -> None:
++        self.begin_now()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.hooks[2] = lambda: self.start("gpt-5.5")
++
++        result = self.json_publish("clean")
++
++        self.assertEqual(("waiting", None, 30), (result["signoff"], result["draft"], result["waited"]))
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_a_verdict_posted_during_the_wait_joins_the_rule(self) -> None:
++        for verdict, draft in (("clean", False), ("changes-requested", True)):
++            with self.subTest(verdict):
++                self.setUp()
++                self.begin_now()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                self.hooks[1] = lambda: self.add_verdict("gpt-5.5", at=iso(self.clock), verdict=verdict)
++
++                result = self.json_publish("clean")
++
++                self.assertEqual((verdict, 15), (result["signoff"], result["waited"]))
++                self.assertEqual(draft, self.github.pr["draft"])
++
++    def test_no_wait_past_the_deadline_with_peer_wait_zero_or_on_a_pull_request_already_ready(self) -> None:
++        cases = {"review older than the deadline": lambda: None,
++                 "peer_wait = 0": lambda: (self.begin_now(), self.configure("peer_wait = 0")),
++                 "already ready": lambda: (self.begin_now(), self.github.pr.update(draft=False))}
++        for name, arrange in cases.items():
++            with self.subTest(name):
++                self.setUp()
++                arrange()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertEqual(([], "clean"), (self.slept, result["signoff"]))
++                self.assertFalse(self.github.pr["draft"])
++
++    def test_a_head_that_moves_during_the_wait_ends_it_and_leaves_the_draft(self) -> None:
++        self.begin_now()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.hooks[1] = lambda: self.github.pr["head"].update(sha="f" * 40)
++
++        result = self.json_publish("clean")
++
++        self.assertEqual((True, None, [15]), (result["moved"], result["draft"], self.slept))
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_a_peer_wait_that_is_not_a_non_negative_integer_refuses_and_names_the_key(self) -> None:
++        for value in ('"180"', "-1", "true", "1.5"):
++            with self.subTest(value=value):
++                self.setUp()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                self.configure(f"peer_wait = {value}")
++
++                code, _, err = self.publish("clean")
++
++                self.assertEqual(1, code)
++                self.assertIn("review.peer_wait must be a non-negative number of seconds", err)
++                self.assertEqual(1, len(self.github.reviews), "nothing was posted")
++                self.assertTrue(self.lock(self.head).exists())
++
++
++class CrossAuthorSignoffTests(SignoffCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.permissions = {"teammate": "write"}
++        self.github.commit_authors = ["teammate"]
++        self.configure("allow_approve = true")
++
++    def test_a_clean_verdict_approves_only_when_every_model_on_the_head_is_clean(self) -> None:
++        cases = {"changes requested": (lambda: self.add_verdict("gpt-5.5", verdict="changes-requested"), "COMMENT"),
++                 "reviewing": (lambda: self.start("gpt-5.5"), "COMMENT"),
++                 "clean": (lambda: self.add_verdict("gpt-5.5"), "APPROVE"),
++                 "alone": (lambda: None, "APPROVE")}
++        for name, (arrange, event) in cases.items():
++            with self.subTest(name):
++                self.setUp()
++                arrange()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertEqual(event, self.posted()["event"])
++                self.assertEqual(event, result["event"])
++                self.assertIsNone(result["draft"])
++                self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
++                self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
++
++    def test_an_approval_waits_for_a_peer_that_reviewed_an_earlier_head(self) -> None:
++        self.add_verdict("gpt-5.5", sha=self.earlier)
++        self.begin_now()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.hooks[1] = lambda: self.start("gpt-5.5")
++
++        self.assertEqual("COMMENT", self.json_publish("clean")["event"])
++        self.assertEqual([15], self.slept)
++
++
++class StatusTests(SignoffCase):
++    def status(self, *extra: str) -> tuple[int, str, str]:
++        return self.project("status", "1", "--repo", REPO, *extra)
++
++    def test_reports_each_model_and_the_open_threads_and_exits_zero_whatever_the_sign_off(self) -> None:
++        clean = self.add_verdict("claude-opus-5-5", at="2026-09-27T01:10:00Z")
++        older = self.add_verdict("codex-mini", sha=self.earlier)
++        started = self.start("gpt-5.5", at="2026-09-27T14:02:00Z")
++        self.github.pages = [page([thread("T1", FINDING % self.head + " model=gpt-5.5 -->", path="src/x.py", line=4),
++                                   thread("T2", FINDING % self.head, resolved=True)], None)]
++        self.github.pages[0]["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"][0][
++            "body"] = f"<!-- projector-finding v=1 priority=P2 sha={self.head} model=gpt-5.5 -->\n**P2 · A nil deref**"
++        self.clock = datetime(2026, 9, 27, 14, 30, tzinfo=timezone.utc)
++
++        code, out, err = self.status()
++        as_json = json.loads(self.status("--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"#1 at {self.head[:7]}: waiting",
++                          f"  claude-opus-5-5   clean               review {clean}",
++                          f"  codex-mini        pending             review {older} on {self.earlier[:7]}",
++                          f"  gpt-5.5           reviewing           start comment {started}, since 14:02 UTC",
++                          "  1 open finding thread: src/x.py:4 (gpt-5.5)"], out.splitlines())
++        self.assertEqual((REPO, 1, self.head, True, "waiting"),
++                         (as_json["repo"], as_json["number"], as_json["head"], as_json["draft"], as_json["signoff"]))
++        self.assertEqual([("claude-opus-5-5", "clean", clean), ("codex-mini", "pending", older),
++                          ("gpt-5.5", "reviewing", None)],
++                         [(m["model"], m["state"], m.get("review")) for m in as_json["models"]])
++        self.assertEqual(started, as_json["models"][2]["comment"])
++        self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5"}], as_json["open_threads"])
++
++    def test_a_model_with_only_earlier_activity_is_pending_and_leaves_the_sign_off_alone(self) -> None:
++        self.add_verdict("claude-opus-5-5")
++        self.add_verdict("gpt-5.5", sha=self.earlier, verdict="changes-requested")
++
++        result = json.loads(self.status("--json")[1])
++
++        self.assertEqual("clean", result["signoff"])
++        self.assertEqual(["clean", "pending"], [m["state"] for m in result["models"]])
++
++    def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
++        self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")
++
++        mine = json.loads(self.status("--json")[1])
++        bot = json.loads(self.status("--json", "--reviewer", "review-bot")[1])
++
++        self.assertEqual(("unreviewed", []), (mine["signoff"], mine["models"]))
++        self.assertEqual("changes-requested", bot["signoff"])
++
++    def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
++        self.github.missing = True
++
++        code, _, err = self.status()
++
++        self.assertEqual(1, code)
++        self.assertIn("does not exist", err)
++
++
+ def css(**padding: int) -> str:
+     """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
+     return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
