@@ -44,13 +44,23 @@ the README`. The core workflows use the local CLI and do not require MCP.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
-GitHub CLI extension as the `gh-stack` skill describes, and `fix-pr` carries
-a fix on a lower layer up through the layers above it. The extension is
-optional. Without it, or in a repository that does not have stacks enabled,
-`implement` chains the pull requests by base branch and tells you once, and
-`fix-pr` and `start-fix-loop` find a stack's layers from those base
-branches. Install it with `gh extension install github/gh-stack` to get
-real stacks.
+GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
+the layers above it. The extension is optional. Without it, or in a
+repository that does not have stacks enabled, `implement` chains the pull
+requests by base branch and tells you once, and `fix-pr` and
+`start-fix-loop` find a stack's layers from those base branches. Install it
+with `gh extension install github/gh-stack` to get real stacks.
+
+GitHub's own `gh-stack` skill teaches an agent the extension's commands.
+Projector does not copy it. In Claude Code, the `projector` plugin depends on
+a `gh-stack` plugin that the Projector marketplace serves from
+[`github/gh-stack`](https://github.com/github/gh-stack) unmodified, so
+installing `projector` installs it too, and you can invoke it as
+`/gh-stack:gh-stack`. Where upstream's skill and Projector's workflow
+differ, `implement` says which rules win, such as drafting every layer and
+never merging. The marketplace entry in `.claude-plugin/marketplace.json`
+pins upstream to a tag and its commit, so a newer upstream skill reaches you
+only when a Projector release moves that `ref` and `sha`.
 
 ## Install with one command
 
@@ -124,6 +134,13 @@ $spec a safer deploy workflow
 
 The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
 install-surface metadata; it does not wrap or rewrite skill instructions.
+
+Codex has no plugin dependencies, so installing Projector for Codex does not
+install GitHub's `gh-stack` skill. Projector's skills work without it: they
+name the `gh stack` commands they run, and `gh stack <command> --help`
+covers the flags. To give Codex upstream's skill as well, add the
+`skills/gh-stack` directory of
+[`github/gh-stack`](https://github.com/github/gh-stack) to Codex as a skill.
 
 ## Reach every session through the repository
 

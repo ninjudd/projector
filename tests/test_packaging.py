@@ -15,7 +15,6 @@ PUBLISHED_SKILLS = {
     "fix-pr",
     "start-review-loop",
     "start-fix-loop",
-    "gh-stack",
     "summarize-pr",
     "write",
 }
@@ -67,6 +66,28 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("projector", claude["plugins"][0]["name"])
         self.assertEqual("projector", codex["plugins"][0]["name"])
         self.assertTrue((ROOT / ".claude-plugin" / "plugin.json").exists())
+
+    def test_claude_code_installs_upstreams_gh_stack_skill_pinned_beside_projector(self) -> None:
+        marketplace = json.loads(
+            (ROOT / ".claude-plugin" / "marketplace.json").read_text()
+        )
+        served = {entry["name"]: entry for entry in marketplace["plugins"]}
+
+        self.assertEqual(["gh-stack"], self.manifest("claude")["dependencies"])
+        source = served["gh-stack"]["source"]
+        self.assertEqual("git-subdir", source["source"])
+        self.assertEqual("https://github.com/github/gh-stack.git", source["url"])
+        self.assertEqual("skills/gh-stack", source["path"])
+        self.assertRegex(source["ref"], r"^v\d+\.\d+\.\d+$")
+        self.assertRegex(source["sha"], r"^[0-9a-f]{40}$")
+
+    def test_codex_packages_projector_without_dependencies(self) -> None:
+        codex = json.loads(
+            (ROOT / ".agents" / "plugins" / "marketplace.json").read_text()
+        )
+
+        self.assertNotIn("dependencies", self.manifest("codex"))
+        self.assertEqual(["projector"], [entry["name"] for entry in codex["plugins"]])
         self.assertTrue((ROOT / ".codex-plugin" / "plugin.json").exists())
 
     def test_every_python_package_is_listed_for_the_wheel(self) -> None:

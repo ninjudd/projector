@@ -10,6 +10,19 @@
       "source": ".",
       "category": "Productivity",
       "tags": ["planning", "git", "agents", "review"]
+    },
+    {
+      "name": "gh-stack",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/github/gh-stack.git",
+        "path": "skills/gh-stack",
+        "ref": "v0.2.1",
+        "sha": "29a36d314be664583705f18e41cebdf2b61ad514"
+      },
+      "description": "GitHub's gh-stack skill for stacked pull requests, unmodified, which Projector depends on",
+      "category": "Productivity",
+      "tags": ["git", "github", "stacks"]
     }
   ]
 }
