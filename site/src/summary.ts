@@ -297,7 +297,7 @@ function renderSummary(data: SummaryData): void {
     return '<div class="wrap">' +
       `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
       `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
-        `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+        `<div class="sub">${ext(prUrl, 'Conversation')}${ext(`${prUrl}/files`, 'Files')}${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
         `<div class="prblock">${projectsList()}${stackList()}</div>` +
         `<div class="extra">${extra}</div>` +
