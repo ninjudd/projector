@@ -85,7 +85,9 @@ summary records its own choices, and copies no other layer's:
    choose the stack's project, which this layer may not edit.
    `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's pull
    requests on GitHub, and the summaries ref holds what each summarized layer
-   chose. When no single plan is the subject, record `""`.
+   chose. When that request answers 404 or fails, follow the summary's
+   `pr.basePr` down the stack instead, as the build falls back to base
+   branches. When no single plan is the subject, record `""`.
 2. **Name the whole stack.** Write two to six words in sentence case that name
    the work, such as `Stack header plan` or `Summary publish retry`. Do not
    write a sentence, and do not copy the pull request's title. The site shows
@@ -170,7 +172,9 @@ repository comes back bottom first.
   `pull_requests` list is left out, and so is a member without an integer
   `number`. Their pull requests fall back to base branches.
 - **A pull request in two stacks.** It belongs to the stack with the higher
-  number.
+  number. The lower stack drops it and closes the gap: the member after it
+  sits on the member before it, or on nothing when it was the bottom. The two
+  stacks stay separate.
 - **A lookup that fails for one branch.** The `lookup` for a base branch can
   fail while others answer, as it can today. The pull request it was asked for
   then sits on nothing, and the rest of the build is unchanged.
@@ -489,7 +493,7 @@ Stacks, where GitHub answers:
 | Build with GitHub stacks of #9 and #10, and of #20 and #21, where #20's summary is based on #10's branch | Two stacks: the branch between them is ignored |
 | Build with no GitHub stack for #12, whose summary is based on #13's branch | #12 and #13 share a group by base branches, as today |
 | Build with a stack missing `number`, or a member missing `number` | Those pull requests sit on their base branches, and the note line counts what the build left out |
-| Build with a pull request listed in two stacks | It belongs to the stack with the higher number |
+| Build with #10 listed in stack 30 as #9, #10, #11 and in stack 40 as #10, #12 | Stack 40 holds #10 and #12. Stack 30 holds #9 and #11, with #11 sitting on #9. |
 
 Stacks, where GitHub does not answer:
 
