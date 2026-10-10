@@ -164,7 +164,9 @@ and thread reply. For every accepted finding, preserve this order:
    with `<!-- projector-reply v=1 -->` so a loop sharing this login never reads
    it back as a new finding. Name the commit and state what was reproduced and
    changed.
-3. Push the pull request branch, never its base branch.
+3. Push the pull request branch, never its base branch. On a layer with
+   layers above it, carry the fix up and push those layers too, as
+   [Preserve stacked ownership](#preserve-stacked-ownership) describes.
 4. Resolve the thread only after the push succeeds.
 5. Re-fetch `reviewThreads` and confirm `isResolved: true`.
 
@@ -209,6 +211,12 @@ works, and by merging each layer into the one above it where it does not.
 Either way, run each affected layer's full gate before you push it. Do not
 patch parent code inside a child merely to avoid updating the layers above.
 
+The user can merge the whole stack, or its bottom layers, from GitHub at any
+moment, so a run that changes a layer with layers above it is not done when
+that layer is pushed. It is done once the change is carried up, every layer
+above is pushed, and GitHub's comparison shows the stack in sync again, as
+that section describes.
+
 After a parent merges, update the layers above it the same way: the rebase
 replays them onto the new base and drops a squash-merged parent's commits
 from them. Then verify each child points at the intended base and remains
@@ -227,6 +235,10 @@ A pull request is clean only when:
   its current head, for each login that posted a Projector review on the
   pull request,
 - no unresolved threads remain,
+- in a stack, it and every layer below it are in sync on GitHub, so the
+  stack shows none of them needing a rebase: GitHub's comparison, which
+  `../implement/SKILL.md` describes under "Stack dependent work", prints
+  `0` for each, whatever a local `gh stack view` reads,
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
@@ -252,10 +264,11 @@ report on the review loop's verdict and let theirs arrive whenever it does. A
 standing `CHANGES_REQUESTED` from one is a real verdict and does block, exactly
 as any other cross-author verdict would.
 
-Report the head SHA, the merge commit if you made one, the fix commits, the
-declined findings, the Suggestions you took and left, and the validation
-results. A stale `CHANGES_REQUESTED`, or a pull request still in draft after
-all fixes, is a wait for re-review rather than another code change. Do not
+Report the head SHA, each layer's new head when you carried a change up a
+stack, the merge commit if you made one, the fix commits, the declined
+findings, the Suggestions you took and left, and the validation results. A
+stale `CHANGES_REQUESTED`, or a pull request still in draft after all
+fixes, is a wait for re-review rather than another code change. Do not
 manufacture an empty commit to trigger it.
 
 Never mark a draft pull request ready yourself. A clean review is what clears

@@ -41,10 +41,11 @@ what it did to each:
   markers: where plans live, how to use `project`, the writing style for
   documentation and GitHub prose, and how to open dependent work as a stack
   with `gh stack`, or as pull requests chained by base branch where
-  `gh stack` is unavailable. `init` appends the section to an existing
-  file or creates the file with only that section, and refreshes the section
-  when it falls behind the template this command ships. Everything outside the
-  markers is yours and is never changed.
+  `gh stack` is unavailable, and keep every layer on the current head of the
+  one below so the stack can merge as a unit. `init` appends the section to
+  an existing file or creates the file with only that section, and refreshes
+  the section when it falls behind the template this command ships.
+  Everything outside the markers is yours and is never changed.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
@@ -388,7 +389,7 @@ collaborator on an older CLI is told what to do without a failing gate.
 
 ```console
 $ project check
-warning: AGENTS.md: Projector section is version 1; this command ships version 2 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+warning: AGENTS.md: Projector section is version 2; this command ships version 3 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
 Project plans are valid.
 ```
 
