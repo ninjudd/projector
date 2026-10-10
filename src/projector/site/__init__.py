@@ -397,17 +397,28 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
 
 
 def project_linker(described: list[dict], base: str):
-    """Link a review to every project whose files its diff changes, or that its summary names."""
+    """Link a review to every project whose files its diff changes, or that its summary names.
+
+    Each changed file in a project's folder also gets that project as its
+    `project`: the deepest one, so a nested project owns its own files. Only
+    a project in `described` has a page on the site, so a file in any other
+    project's folder, such as one the pull request adds, gets none.
+    """
     by_name = {p["name"]: p for p in described}
     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+
+    def page_of(name: str) -> dict:
+        return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
 
     def link(summary: dict, payload: dict) -> list[dict]:
         names = [n for n in summary.get("projects") or [] if n in by_name]
         for f in payload["files"]:
             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
-            if owner and owner not in names:
-                names.append(owner)
-        return [{"name": n, "title": by_name[n]["title"], "url": f"{base}projects/{n}/"} for n in names]
+            if owner:
+                f["project"] = page_of(owner)
+                if owner not in names:
+                    names.append(owner)
+        return [page_of(n) for n in names]
 
     return link
 

@@ -27,6 +27,8 @@ interface SummaryFile {
   adds: number;
   dels: number;
   hunks: { header: string; lines: SummaryLine[] }[];
+  /** The deepest project on the site whose folder holds the file; absent outside every project the site has. */
+  project?: { name: string; title: string; url: string };
 }
 
 /** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
@@ -49,7 +51,7 @@ interface SummaryGroup {
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
-  pr: { repo: string; number: number; title: string; head: string; baseRef?: string };
+  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string };
   files: SummaryFile[];
   groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };

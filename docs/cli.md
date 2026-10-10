@@ -724,7 +724,11 @@ Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
 assets under `assets/`; it defaults to `/`. A review links to the projects
 its diff changes, and to any its summary names in a `projects` list, and each
-project page lists its reviews. `search/` searches every document the site
+project page lists its reviews. Each file card's header links to the file's
+**Diff** on GitHub, to the **File** on the pull request's head branch, and, for
+a file in a project's folder, to that **Project** on the site. That is the
+deepest project the site has a page for, so a nested project owns its own
+files, not the project around it. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.

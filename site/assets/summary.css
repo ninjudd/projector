@@ -245,7 +245,7 @@ input.nbox { cursor: pointer; }
 .stat { font-variant-numeric: tabular-nums; }
 .flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
 .flink:hover { color: var(--accent); border-color: var(--accent); }
-.freviewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
 .freviewed input { accent-color: var(--ok); margin: 0; }
 .fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
 .fnotes { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13.5px; }

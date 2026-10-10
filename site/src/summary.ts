@@ -26,6 +26,12 @@ function renderSummary(data: SummaryData): void {
   function ext(href: string, text: string, cls?: string): string {
     return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
   }
+  // A file on the pull request's head branch, which always shows its current
+  // version; a summary that did not record the branch links the head it describes.
+  function blobUrl(path: string): string {
+    const ref = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
+    return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
+  }
   // The build checks every file a group names against the diff.
   function fileAt(path: string): SummaryFile {
     const f = filesByPath[path];
@@ -95,7 +101,10 @@ function renderSummary(data: SummaryData): void {
     function notesAt(l: SummaryLine): string {
       const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
       const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-      return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
+      // A note spans the line-number columns too, so it starts left of the code it is about.
+      return found.length > 0
+        ? `<tr class="noterow"><td class="nte" colspan="${String(sides + 1)}">${notesList(found, 'inotes', f.path)}</td></tr>`
+        : '';
     }
     let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
     if (f.new === true) badges += '<span class="badge new">new</span>';
@@ -123,8 +132,9 @@ function renderSummary(data: SummaryData): void {
         `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
         `<span class="fmeta">${badges}` +
           `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
-          ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
-          ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
+          ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
+          ext(blobUrl(f.path), 'File', 'flink') +
+          (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
           `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
         '</span>' +
       '</header>' +
