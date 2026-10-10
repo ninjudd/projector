@@ -686,10 +686,10 @@ newest Projector review of its head, **Clean** or **Changes requested**,
 linked to that review on GitHub, or **Unreviewed** when no Projector review
 names the head. A review counts only when its author owns the repository,
 belongs to its organization, or collaborates on it, because anyone can review
-a public repository's pull request. The build asks `gh` for each pull
-request's reviews; when `gh` cannot answer, the header shows no status.
-**Docs** renders `README.md` beside a sidebar of every other document under
-`docs/`, leaving out the projects directory, which Projects covers. Each sidebar lists its readme as
+a public repository's pull request. The build reads the reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
+beside a sidebar of every other document under `docs/`, leaving out the
+projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
 the menu button at the start of the header shows and hides it. A repository
 with no projects opens on Docs instead. A document, in Docs or in a project, is
