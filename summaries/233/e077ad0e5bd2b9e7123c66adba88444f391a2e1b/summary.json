@@ -1,0 +1,203 @@
+{
+ "version": 1,
+ "name": "Each model's verdict in the header",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 233,
+  "title": "Show each model's verdict in a summary's header",
+  "head": "e077ad0e5bd2b9e7123c66adba88444f391a2e1b",
+  "headRef": "multi-model-site",
+  "base": "b70745e32c611ae585c46daf48d0aad68a39d7cc",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site shows each pull request's review status in two places: the header of its summary page, and its row on the Reviews index. A <b>Projector review</b> is a GitHub review whose body carries a hidden marker line naming the verdict (<code>clean</code> or <code>changes-requested</code>), the head commit it reviewed, and the model that wrote it, such as <code>claude-opus-5-5</code> or <code>gpt-5.5</code>.",
+   "Until now the site took a head's status from the newest Projector review of that head, whichever model wrote it. The multi-model-review plan lets several review loops, each running a different model, review one pull request side by side. Under the old rule, a clean verdict from one model posted after another model's change request turned the page green and hid the objection.",
+   "This pull request makes the site read every model's newest verdict on a head:",
+   "<ul><li><b>The status.</b> A head is <b>Changes requested</b> when any model's newest verdict requests changes, and <b>Clean</b> otherwise. The status links the newest review with that verdict. The Reviews index row and the summary header both show this one word.</li><li><b>The model card.</b> With one model, the header reads as before: the status is a link to the review that decides it. With several, the status is a button drawn the same way and ending in an asterisk, as in <b>Changes requested*</b>. It is a button because no one review speaks for several models, and a tap on a link would open a review instead of showing the models. Hovering over it, focusing it, or clicking or tapping it shows a card with one row per model, changes requested first: the model's ID, its verdict linked to its review, and for an incremental review the full review it builds on. Escape hides the card.</li><li><b>Which reviews belong to one model.</b> Two model IDs name the same reviewer when they match after lowercasing and dropping a trailing bracketed variant, such as the context window in <code>claude-opus-5-5[1m]</code>. The new <code>review.identity</code> function holds that rule, so the review commands can share it in a later change.</li><li><b>Incremental reviews.</b> An incremental review is a short clean verdict for a small push, building on an earlier full review. Its link now names its own model's full review, because an incremental review never builds on another model's.</li></ul>",
+   "This is the first change of the multi-model-review plan, so the plan moves from <code>ready</code> to <code>in-progress</code>. The review commands still treat every model as one reviewer until later changes in the plan."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Head</b>: the commit a pull request's branch points at.</li><li><b>Verdict</b>: a Projector review's outcome, <code>clean</code> or <code>changes-requested</code>.</li><li><b>Identity</b>: a model ID lowercased, without a trailing <code>[...]</code> variant. Reviews with one identity come from one reviewer.</li><li><b>Incremental review</b>: a short clean review of a small push that builds on an earlier full review of the same model; the header names that full review's head.</li><li><b>Trusted author</b>: only reviews by the repository's owner, members, or collaborators count, because anyone can review a public pull request.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Projector reviews each head with <code>claude-opus-5-5</code>.</p><ul class=\"tight\"><li><b>a408274</b>: clean. That head listed every model's verdict in the header itself.</li><li><b>952641a</b>: one finding. The models moved into a list shown on hover or focus. After Escape hid it, tabbing on put keyboard focus on links nobody could see.</li><li><b>d7a9960</b>: clean. A hidden list became <code>visibility: hidden</code>, so Tab skips its links.</li><li><b>7bb951b</b>: one finding. An asterisk on the status link replaced the model count, so on a touch screen a tap that showed the card also opened the review on GitHub.</li><li><b>692ede6</b>: clean. With several models the status is a button, so a tap only shows the card, and a click or tap keeps it open until a click or focus goes elsewhere.</li><li><b>e077ad0</b>: clean. A merge of <code>main</code>, bringing #235's expand controls and #236's stack headers. It also updated the doc comments on <code>review</code> and dropped an unused test parameter.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "identity",
+   "title": "Which reviews belong to one model",
+   "kicker": "A shared rule for when two model IDs name the same reviewer",
+   "intro": [
+    "Every Projector review records the model ID it ran under. The same model can appear under slightly different IDs: a different capitalization, or a suffix in brackets that names a variant such as a larger context window. The plan counts those as one reviewer, so <code>review.identity</code> lowercases the ID and drops one trailing bracketed part.",
+    "The function lives in the review module rather than in the site, because the review commands need the same rule later in the plan, to tell a second model's opinion from a duplicate loop of the same model."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>identity()</code> and the <code>VARIANT</code> pattern it strips.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Only one trailing bracketed part is removed, so <code>model[a][b]</code> becomes <code>model[a]</code>. A bracket in the middle of an ID stays. The test file pins both cases.",
+       "line": 107
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Pins the identity rule for case, the context-window suffix, a provider prefix, and two versions of one model."
+    }
+   ]
+  },
+  {
+   "id": "status",
+   "title": "One status from every model's verdict",
+   "kicker": "How the site build turns a head's reviews into a status and a list of models",
+   "intro": [
+    "When the site deploys, it lists each pull request's reviews and calls <code>review_statuses</code> to turn them into one status per head. It keeps only Projector reviews by trusted authors, the repository's owner, members, and collaborators, because anyone can review a public pull request.",
+    "Before, the function kept the newest review of each head. Now it keeps the newest review of each head <em>for each model</em>, keyed by identity, and builds three fields from them:",
+    "<ul><li><b><code>status</code></b>: <code>changes-requested</code> when any model's newest verdict requests changes, and <code>clean</code> otherwise.</li><li><b><code>url</code></b>: the newest review whose verdict matches <code>status</code>, so the link goes to the review that decided it.</li><li><b><code>models</code></b>: one entry per model with its identity, verdict, and review link, changes requested first and then by ID.</li></ul>",
+    "A clean incremental review carries <code>incrementalFrom</code>: the earlier head it builds on, and that model's full review of it. The status itself carries it too when only one model reviewed the head, so a single-model page renders exactly as before."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>review_statuses</code> groups each head's verdicts by model and builds <code>status</code>, <code>url</code>, and <code>models</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The sort key puts changes requested first, so <code>verdicts[0]</code> is always the deciding verdict, and the header's first group is always the one the status names.",
+       "line": 189
+      },
+      {
+       "kind": "verify",
+       "text": "The full review an incremental review links is looked up by both head and model, so another model's full review of the same head is never linked. The test <code>test_an_incremental_review_builds_on_its_own_models_full_review</code> covers it, and it passed.",
+       "line": 195
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Status tests for several models and incremental reviews, and a node test that renders each header: one status link, and with several models the button, its asterisk, and the card."
+    }
+   ]
+  },
+  {
+   "id": "header",
+   "title": "The header and the Reviews row",
+   "kicker": "One status in the header; with several models, a button that shows each model's verdict",
+   "intro": [
+    "The site's front end is TypeScript compiled to <code>site/assets/summary.js</code>, which the repository commits. <code>statusHtml</code> draws the one-word status, and both the summary header and the Reviews index row call it. Because <code>status</code> and <code>url</code> keep their meaning, the row needs no change and stays a link to the deciding review.",
+    "With one model, the header shows the status link, plus the incremental link when there is one, exactly as before. With several, <code>statusHtml</code> gets a <code>several</code> argument and draws a <code>&lt;button&gt;</code> instead, styled like the link and ending in an asterisk. A visually hidden note, such as \", reviewed by 2 models\", tells screen readers what the asterisk means. The button names the card with <code>aria-controls</code> and <code>aria-describedby</code>. <code>reviewStatus</code> puts the card after it, one row per model: the model's ID, then its verdict drawn by the same <code>statusHtml</code> and linked to that model's review.",
+    "The card is <code>visibility: hidden</code> until something shows it, so its links stay out of the tab order while hidden. Hovering over the box or focusing inside it shows the card. So does a click or tap on the button, which adds an <code>open</code> class, because a click does not focus a button in every browser. A click outside, or focus leaving the box, removes <code>open</code>. Escape adds a <code>dismissed</code> class that hides the card, and first moves focus back to the button if it was on a card link. <code>wireSummary</code> keeps <code>aria-expanded</code> in step with whether the card shows. A merged or closed pull request shows <b>Merged</b> or <b>Closed</b> alone, with no card."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Drove headless Chromium over the DevTools protocol with real key presses. Focusing the button showed the card with <code>aria-expanded=\"true\"</code>, Tab moved through the verdict links, and Escape returned focus to the button, hid the card, and set <code>aria-expanded=\"false\"</code>. The next Tab skipped the hidden links."
+    },
+    {
+     "kind": "verify",
+     "text": "With touch emulation at 390 pixels wide, a tap on the button showed the card and opened no tab. A tap outside closed it, and a second tap on the button opened it again. With a mouse, a click kept the card open after the pointer left, and a click elsewhere closed it."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> left the committed <code>summary.js</code> unchanged, so it is what <code>summary.ts</code> compiles to."
+    },
+    {
+     "kind": "verify",
+     "text": "After the merge with <code>main</code>, the same keyboard, mouse, and touch checks behaved as before, and none of main's new handlers in <code>wireSummary</code> attaches to <code>.rmodels</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds <code>IncrementalFrom</code>, <code>ModelStatus</code>, and <code>Verdict</code>, the shape <code>statusHtml</code> draws from, and puts <code>models</code> on both reviewed shapes of <code>ReviewStatus</code>. The doc comments on a page's and a row's <code>review</code> now point at <code>ReviewStatus</code>."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "<code>statusHtml</code> draws a button when given <code>several</code>; <code>reviewStatus</code> draws the card; <code>wireSummary</code> handles click, tap, Escape, and <code>aria-expanded</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "With several models the status is a button with no <code>href</code>, so a tap or click only shows the card. The Reviews row never passes <code>several</code>, so it stays a link.",
+       "line": 40
+      },
+      {
+       "kind": "context",
+       "text": "<code>several</code> is the model list only for an open, reviewed head with more than one model. Everything else falls through to the one-model header.",
+       "line": 481
+      },
+      {
+       "kind": "context",
+       "text": "The click toggles <code>open</code>, which keeps the card visible even where a click does not focus the button, as in Safari.",
+       "line": 729
+      },
+      {
+       "kind": "context",
+       "text": "A click anywhere outside the box closes a card that a click or tap opened.",
+       "line": 748
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles for the button, the card, the 24-pixel targets, and <code>.visually-hidden</code> for the screen-reader note. Hiding uses <code>visibility</code> so the hidden links leave the tab order.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The button inherits the eyebrow's font, capitals, and spacing so it looks like the status link. Padding with an equal negative margin makes it a 27-pixel target while the header's line stays 17 pixels tall.",
+       "line": 84
+      },
+      {
+       "kind": "context",
+       "text": "The <code>open</code> class is the third way to show the card, after hover and focus.",
+       "line": 87
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>summary.ts</code> by <code>npm run build</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference describes the new header, and the plan records that work has started",
+   "intro": [
+    "<code>docs/cli.md</code> describes what the site shows, so it now explains the combined verdict, how models are told apart, the button with its asterisk, and the card. The plan records the same design in sections 2.5 and 2.6, explains in section 3 why a list in the header and a model count were rejected, and moves to <code>in-progress</code> with priority <code>now</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The site section's paragraph on a summary's status, rewritten for several models, the button, and the card."
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "Status <code>in-progress</code>, priority <code>now</code>, the button and card design in sections 2.5 and 2.6, and acceptance criterion 14 updated to match.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 2.4 of the plan: each <code>models</code> entry's <code>model</code> is the identity, so the card shows IDs lowercased and without a bracketed variant.",
+       "line": 358
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
