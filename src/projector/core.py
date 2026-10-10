@@ -238,6 +238,46 @@ def title_from_text(text: str, fallback: str) -> str:
     return fallback.rsplit("/", 1)[-1].replace("-", " ").title()
 
 
+def project_from_text(text: str, name: str, path: Path, display_path: Path) -> Project:
+    """The project named `name` whose plan at `path` holds `text`.
+
+    `name` is the plan's folder inside the projects directory. Every error
+    names the plan as `display_path`: an invalid name, bad frontmatter, or a
+    status, priority, or owner that `check` rejects.
+    """
+    if name == "." or not valid_name(name):
+        raise ProjectorError(f"{display_path}: invalid project name {name!r}")
+    metadata, _ = parse_frontmatter(text, display_path)
+    status = metadata.get("status")
+    if status not in STATUSES:
+        choices = "|".join(STATUSES)
+        raise ProjectorError(f"{display_path}: status must be one of {choices}")
+    priority = metadata.get("priority")
+    choices = "|".join(PRIORITIES)
+    if priority is None:
+        if status != "completed":
+            raise ProjectorError(
+                f"{display_path}: priority must be one of {choices}"
+                " unless status is completed"
+            )
+    elif priority not in PRIORITIES:
+        raise ProjectorError(f"{display_path}: priority must be one of {choices}")
+    owner = metadata.get("owner")
+    if owner is not None:
+        if not owner:
+            raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
+        if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
+            raise ProjectorError(f"{display_path}: owner must be a single line")
+    return Project(
+        name=name,
+        title=title_from_text(text, name),
+        status=status,
+        priority=priority,
+        owner=owner,
+        path=path,
+    )
+
+
 class ProjectStore:
     def __init__(
         self,
@@ -255,39 +295,7 @@ class ProjectStore:
 
     def _project_from_path(self, path: Path) -> Project:
         relative = path.parent.relative_to(self.projects_dir).as_posix()
-        display_path = Path(self._relative(path))
-        if relative == "." or not valid_name(relative):
-            raise ProjectorError(f"{display_path}: invalid project name {relative!r}")
-        text = self._read_text(path)
-        metadata, _ = parse_frontmatter(text, display_path)
-        status = metadata.get("status")
-        if status not in STATUSES:
-            choices = "|".join(STATUSES)
-            raise ProjectorError(f"{display_path}: status must be one of {choices}")
-        priority = metadata.get("priority")
-        choices = "|".join(PRIORITIES)
-        if priority is None:
-            if status != "completed":
-                raise ProjectorError(
-                    f"{display_path}: priority must be one of {choices}"
-                    " unless status is completed"
-                )
-        elif priority not in PRIORITIES:
-            raise ProjectorError(f"{display_path}: priority must be one of {choices}")
-        owner = metadata.get("owner")
-        if owner is not None:
-            if not owner:
-                raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
-            if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
-                raise ProjectorError(f"{display_path}: owner must be a single line")
-        return Project(
-            name=relative,
-            title=title_from_text(text, relative),
-            status=status,
-            priority=priority,
-            owner=owner,
-            path=path,
-        )
+        return project_from_text(self._read_text(path), relative, path, Path(self._relative(path)))
 
     def _require_projects_dir(self) -> None:
         if not self.projects_dir.is_dir():
