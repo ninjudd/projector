@@ -463,6 +463,21 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual([31, 30, 18, 16, 15, 14, 13, 12, 11, 10, 9], projects["alpha"],
                          "a project still lists its reviews newest first")
 
+    def test_a_stack_numbered_out_of_order_is_listed_by_what_sits_on_what(self) -> None:
+        # 35 was opened before 40 but rebased onto it, and 50 sits on 35.
+        self.publish(40, "a" * 40, headRef="feature-40")
+        self.publish(35, "b" * 40, headRef="feature-35", baseRef="feature-40")
+        self.publish(50, "c" * 40, headRef="feature-50", baseRef="feature-35")
+        self.publish(41, "d" * 40, headRef="alone-41")
+        self.publish(38, "e" * 40, headRef="alone-38")
+        self.stacks()
+
+        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
+
+        self.assertEqual([(40, 40), (35, 40), (50, 40), (41, None), (38, None)],
+                         [(r["number"], r["stack"]) for r in reviews],
+                         "the stack runs from its bottom up, not by number, and sits where its highest number would")
+
     def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
         self.publish(9, "d" * 40)
         self.publish(10, "e" * 40)
@@ -478,6 +493,14 @@ class SiteContentTests(SiteRepoCase):
                          [(r["number"], r["state"], r["review"]) for r in reviews],
                          "each row carries what its newest head's page does")
 
+    def test_the_reviews_index_titles_each_review_as_its_page_does(self) -> None:
+        self.publish(9, "c" * 40)
+
+        reviews = self.build()["reviews"]
+
+        self.assertEqual([(9, "Change 9", "Summary 9")], [(r["number"], r["title"], r["name"]) for r in reviews],
+                         "the pull request's title, not the summary's name")
+
     def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
         self.publish(9, "c" * 40)
 
@@ -491,7 +514,6 @@ class SiteContentTests(SiteRepoCase):
 
         manifest = self.build()
 
-        self.assertEqual([["alpha"]], [r["projects"] for r in manifest["reviews"]])
         reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
         self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
         data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
@@ -515,8 +537,10 @@ class SiteContentTests(SiteRepoCase):
 
         manifest = self.build()
 
-        self.assertEqual(["alpha/beta", "alpha"], manifest["reviews"][0]["projects"],
+        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+        self.assertEqual(["alpha/beta", "alpha"], [p["name"] for p in data["projects"]],
                          "named projects first, unknown names dropped, then the ones the diff touches")
+        self.assertEqual({"alpha": [9], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]})
 
     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
         manifest = self.build()
@@ -712,85 +736,140 @@ def node(program: str) -> str:
 
 @unittest.skipUnless(shutil.which("node"), "the reviews view test needs node")
 class ReviewsViewTests(unittest.TestCase):
-    def draw(self, reviews: list[dict]) -> dict[str, str]:
-        """The Reviews index for `reviews`, drawn by the compiled showReviews.
+    STUB = r"""
+const base = '/';
+const location = {pathname: '/reviews/', search: SEARCH, hash: '#top'};
+let address = location.pathname + location.search + location.hash, page = '';
+const history = {replaceState: function (state, title, url) { address = url; }};
+const list = {innerHTML: ''}, boxes = [];
+function frame(active, title, body) {
+  page = body;
+  return {
+    querySelector: function () { return list; },
+    querySelectorAll: function () {
+      for (const m of body.matchAll(/<input type="checkbox" value="(\w+)"( checked)?>/g)) {
+        boxes.push({value: m[1], checked: m[2] !== undefined, addEventListener: function (type, f) { this.changed = f; }});
+      }
+      return boxes;
+    },
+  };
+}
+"""
 
-        `page` is the view around the list, `first` the list as it opens, and
-        `all` the list once the reader checks the box that shows merged and
-        closed pull requests.
+    def draw(self, reviews: list[dict], search: str = "", toggles: tuple[tuple[str, bool], ...] = ()) -> dict:
+        """The Reviews index for `reviews`, drawn by the compiled showReviews at an address whose query is `search`.
+
+        `page` is the view around the list, and `boxes` each box's value and
+        whether it starts checked. `steps` holds the list and the address as
+        the page opens and after each of `toggles`: a box's value, and
+        whether the reader checks or unchecks it.
         """
-        stub = (
-            "const base = '/';\n"
+        stub = self.STUB.replace("SEARCH", json.dumps(search)) + \
             f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
-            "const list = {innerHTML: ''};\n"
-            "const box = {checked: false, addEventListener: function (type, listener) { this.changed = listener; }};\n"
-            "let page = '';\n"
-            "function frame(active, title, body) { page = body; return {querySelector: function (selector) {"
-            " return selector === '.reviewlist' ? list : page.includes('showdone') ? box : null; }}; }\n"
-        )
-        functions = ("projectNamed", "projectLinks", "isDone", "reviewRow", "reviewsTable", "showReviews")
+        functions = ("stateOf", "listedStates", "reviewRow", "reviewsTable", "showReviews")
         program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
-            "\nshowReviews(); const first = list.innerHTML;"
-            " box.checked = true; if (box.changed) box.changed();"
-            " process.stdout.write(JSON.stringify({page: page, first: first, all: list.innerHTML}));")
+            "\nshowReviews();"
+            "\nconst opened = boxes.map(function (b) { return [b.value, b.checked]; });"
+            "\nconst steps = [{list: list.innerHTML, address: address}];"
+            f"\nfor (const [value, on] of {json.dumps(toggles)}) {{"
+            "\n  const b = boxes.find(function (x) { return x.value === value; }); b.checked = on; b.changed();"
+            "\n  steps.push({list: list.innerHTML, address: address});"
+            "\n}"
+            "\nprocess.stdout.write(JSON.stringify({page: page, boxes: opened, steps: steps}));")
         return json.loads(node(program))
 
     @staticmethod
     def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
         """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
-        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1, "projects": [],
+        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1,
                "stack": stack, "updated": "2023-11-14T22:21:40Z"}
         if state is not None:
             row["state"] = state
             row["review"] = review or {"status": "unreviewed"}
         return row
 
-    @staticmethod
-    def bodies(html: str) -> list[tuple[bool, list[int]]]:
-        """Each table body of the list: whether it is a stack's, and the pull requests in its rows."""
-        return [(stack != "", [int(n) for n in re.findall(r'<tr><td><a href="/reviews/(\d+)/">', rows)])
-                for stack, rows in re.findall(r'<tbody( class="stack")?>(.*?)</tbody>', html)]
+    def bodies(self, html: str) -> list[list[int]]:
+        """The pull requests in each table body of the list, one body for each stack and for each review alone.
 
-    def test_a_stack_shares_one_table_body_and_a_merged_or_closed_review_waits_to_be_shown(self) -> None:
-        drawn = self.draw([self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
-                           self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open")])
+        Each row is its pull request's number and title, drawn as a stack's
+        row in a summary's sidebar is.
+        """
+        found = []
+        for rows in re.findall(r'<tbody>(.*?)</tbody>', html):
+            numbers = [int(n) for n in re.findall(
+                r'<tr><td class="pr"><a class="srow" href="/reviews/(\d+)/"><span class="snum">#\1</span>'
+                r'<span class="stitle">Change \1</span></a></td>', rows)]
+            self.assertEqual(rows.count("<tr>"), len(numbers), rows)
+            found.append(numbers)
+        return found
 
-        self.assertIn('<label class="showdone"><input type="checkbox"> Show merged and closed '
-                      '<span class="count">2</span></label>', drawn["page"])
-        self.assertEqual([(True, [30, 31]), (True, [10, 11])], self.bodies(drawn["first"]),
+    def test_open_reviews_are_listed_first_and_each_box_changes_the_list_and_the_address(self) -> None:
+        reviews = [self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
+                   self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open"), self.review(8)]
+
+        drawn = self.draw(reviews, toggles=(("closed", True), ("open", False), ("closed", False), ("open", True)))
+
+        self.assertIn('<div class="reviewstates" role="group" aria-label="Pull request states">'
+                      '<label><input type="checkbox" value="open" checked> Open <span class="count">5</span></label>'
+                      '<label><input type="checkbox" value="closed"> Closed <span class="count">2</span></label></div>',
+                      drawn["page"], "merged counts as closed, and a state GitHub could not tell as open")
+        self.assertEqual([["open", True], ["closed", False]], drawn["boxes"])
+        steps = [(step["address"], step["list"]) for step in drawn["steps"]]
+        self.assertEqual(["/reviews/#top", "/reviews/?state=open,closed#top", "/reviews/?state=closed#top",
+                          "/reviews/?state=#top", "/reviews/#top"], [address for address, _ in steps])
+        self.assertEqual([[30, 31], [10, 11], [8]], self.bodies(steps[0][1]),
                          "a stack keeps its open reviews together when a merged one is left out")
-        self.assertEqual([(True, [30, 31]), (False, [16]), (True, [9, 10, 11])], self.bodies(drawn["all"]))
+        self.assertEqual([[30, 31], [16], [9, 10, 11], [8]], self.bodies(steps[1][1]))
+        self.assertEqual([[16], [9]], self.bodies(steps[2][1]), "a stack's last review drawn stands alone")
+        self.assertEqual('<p class="note">Check Open or Closed to list their reviews.</p>', steps[3][1])
+        self.assertEqual(steps[0][1], steps[4][1])
+
+    def test_a_stack_keeps_site_jsons_order_not_its_numbers(self) -> None:
+        drawn = self.draw([self.review(40, 40, "open"), self.review(35, 40, "open"), self.review(50, 40, "open")])
+
+        self.assertEqual([[40, 35, 50]], self.bodies(drawn["steps"][0]["list"]))
+
+    def test_the_address_says_which_boxes_start_checked(self) -> None:
+        reviews = [self.review(9, None, "open"), self.review(8, None, "merged")]
+        for search, boxes, listed in (("", [True, False], [9]), ("?state=closed", [False, True], [8]),
+                                      ("?state=open,closed", [True, True], [9, 8]), ("?state=", [False, False], []),
+                                      ("?state=closed,bogus", [False, True], [8]), ("?other=1", [True, False], [9])):
+            with self.subTest(search=search):
+                drawn = self.draw(reviews, search)
+
+                self.assertEqual([["open", boxes[0]], ["closed", boxes[1]]], drawn["boxes"])
+                self.assertEqual(listed, [n for numbers in self.bodies(drawn["steps"][0]["list"]) for n in numbers])
+
+    def test_a_state_no_review_is_in_says_so(self) -> None:
+        drawn = self.draw([self.review(9, None, "merged")])
+
+        self.assertEqual('<p class="note">No open pull request has a review here.</p>', drawn["steps"][0]["list"])
 
     def test_each_row_shows_its_status_and_when_it_was_updated_in_the_readers_time_zone(self) -> None:
         clean = {"status": "clean", "url": review_url(1)}
-        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)])
+        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)],
+                          "?state=open,closed")
+        html = drawn["steps"][0]["list"]
 
-        self.assertIn("<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>",
-                      drawn["all"])
-        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', drawn["all"])
+        self.assertIn('<colgroup><col><col class="status"><col class="date"></colgroup>'
+                      '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>', html)
+        self.assertNotIn("Summary 12", html, "a row names its pull request by its title alone")
+        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', html)
         self.assertEqual([f'<a class="rstatus clean" href="{review_url(1)}" target="_blank" rel="noopener">Clean</a>',
                           "", '<span class="rstatus merged">Merged</span>'], statuses,
                          "a status GitHub could not tell is left blank, and a merged pull request's verdict gives way")
-        self.assertRegex(drawn["all"], r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
-        for gone in ("Head", "Stacked on", "summarize-pr"):
-            self.assertNotIn(gone, drawn["page"] + drawn["all"])
+        self.assertRegex(html, r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
+        for gone in ("Head", "Projects", "Stacked on", "summarize-pr", "Show merged"):
+            self.assertNotIn(gone, drawn["page"] + html)
 
-    def test_a_list_of_only_merged_or_closed_reviews_says_so(self) -> None:
-        drawn = self.draw([self.review(9, None, "merged")])
-
-        self.assertEqual('<p class="note">Every review here is of a merged or closed pull request.</p>', drawn["first"])
-        self.assertEqual([(False, [9])], self.bodies(drawn["all"]))
-
-    def test_no_box_to_check_when_nothing_is_merged_or_closed(self) -> None:
-        drawn = self.draw([self.review(9, None, "open"), self.review(8)])
-
-        self.assertNotIn("showdone", drawn["page"])
-        self.assertEqual([(False, [9]), (False, [8])], self.bodies(drawn["first"]))
-
-    def test_a_stack_draws_no_divider_between_its_rows(self) -> None:
+    def test_a_stack_draws_no_divider_between_its_rows_and_no_link_is_underlined(self) -> None:
         css = (SITE_JS.parent / "site.css").read_text()
 
-        self.assertIn("table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }", css)
+        self.assertIn("table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }", css)
+        self.assertIn("table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid "
+                      "var(--border); }", css, "a divider only below each stack, or each review alone")
+        self.assertIn("table.tbl.reviews { table-layout: fixed; }", css, "checking a box never moves a column")
+        self.assertIn("table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }", css)
 
 
 @unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
@@ -1109,7 +1188,7 @@ class FileHeaderTests(SiteRepoCase):
         data = self.build()
         self.assertEqual([], data["stack"])
 
-        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page">'
+        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="srow current" aria-current="page">'
                       '<span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
                       rendered_summary(data))
 
@@ -1139,8 +1218,8 @@ class FileHeaderTests(SiteRepoCase):
 
         projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
         self.assertIsNotNone(projects, "the projects list is missing")
-        self.assertEqual('<li><a href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
-                         '<li><a href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
+        self.assertEqual('<li><a class="srow" href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
+                         '<li><a class="srow" href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
                          projects.group(1), "each project's title fills its row, with nothing before it")
         self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
                         "the projects come first in the sidebar")
@@ -1191,9 +1270,10 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
 
     def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
-        # The home page loads summary.css as well, and its Reviews table draws
-        # each stack's rows in a `tbody.stack`, so a rule written for the
-        # sidebar's stack list names the sidebar block the list sits in.
+        # The site's own pages load summary.css as well, so a rule written for
+        # the sidebar's stack list names the sidebar block the list sits in.
+        # What the Reviews index draws the same way, a pull request's row, is
+        # in the shared .srow, .snum, and .stitle rules instead.
         css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
         stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
                  for selector in rule.split(",") if re.search(r"\.stack\b", selector)]
@@ -1202,8 +1282,8 @@ class SummarySidebarTests(unittest.TestCase):
 
     def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()
-        title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
+        title = re.search(r"^\.stitle \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(title, "summary.css has no .stitle rule")
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
         self.assertIn("-webkit-line-clamp: 3;", title.group(1))
         # Every title has the same weight, because bold text is wider, and a

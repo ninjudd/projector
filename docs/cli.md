@@ -676,15 +676,21 @@ when GitHub cannot serve a diff that large.
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
-project. **Reviews** lists the summaries, newest pull request first, with
-each one's status and when its newest version was published, in your time
-zone. A pull request is stacked when its base branch is another open pull
+project. **Reviews** lists the summaries, newest pull request first, each as
+its pull request's number and title, the way a summary's sidebar lists its
+stack, with its status and when its newest version was published, in your
+time zone. A pull request is stacked when its base branch is another pull
 request's head, and the pull requests of a stack are listed together where
-the newest of them would be, from the one on the default branch up, with no
-divider between them. A summary that did not record the pull request beneath
-it has it looked up with `gh` at build time; when `gh` cannot answer, the
-review shows no stack. The list leaves out merged and closed pull requests
-until you check **Show merged and closed** above it. A summary's sidebar lists
+the newest of them would be, from the one on the default branch up, close
+together with a divider only below the stack. A summary that
+did not record the pull request beneath it has it looked up with `gh` at
+build time; when `gh` cannot answer, the review shows no stack. Two boxes
+above the list, **Open** and **Closed**, each with its count, choose which
+pull requests it shows. A merged pull request counts as closed, and one whose
+state `gh` could not tell counts as open. Only **Open** starts checked, and
+the address records any other choice, as `?state=closed`,
+`?state=open,closed`, or `?state=` for neither, so a copied link opens the
+same list. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
 one row each with its title, and highlights the current one; a pull request
 with no stack is a stack of one, with its own row highlighted. Its older

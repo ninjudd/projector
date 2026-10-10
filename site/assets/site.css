@@ -118,13 +118,31 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
 table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
 table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
-/* Every cell of a review's row sits on the first line's baseline, so the small
-   status lines up with the title beside it. A stack's rows share one table body
-   and draw no divider between them. */
-table.tbl.reviews td { vertical-align: baseline; }
+/* The reviews table sets every column's width but the pull request's, which
+   takes the rest and wraps its title, so checking Open or Closed never moves a
+   column. The status fits CHANGES REQUESTED, and the time one such as "Oct 10,
+   2026, 12:30 AM". Each pull request is a row as a summary's sidebar draws its
+   stack, an .srow, and a stack's rows sit as close together as the sidebar's,
+   with a divider only below the stack. Every cell sits on its row's first
+   baseline, so the status and the time line up with the title. No link in the
+   table is underlined. On a phone the time is left out and the status may
+   wrap, so the title keeps room. */
+table.tbl.reviews { table-layout: fixed; }
+table.tbl.reviews col.status { width: 11.5em; }
+table.tbl.reviews col.date { width: 13em; }
+table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }
+table.tbl.reviews td.pr { padding: 1px 1px 0; }
+table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }
+table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
-table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }
-.showdone { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 12px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
+@media (max-width: 640px) {
+  table.tbl.reviews .date { display: none; }
+  table.tbl.reviews col.status { width: 7.5em; }
+  table.tbl.reviews td.status { white-space: normal; }
+}
+.reviewstates { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 12px; }
+.reviewstates label { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
 
 .sitemain .badge {
   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
