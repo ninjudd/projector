@@ -468,6 +468,17 @@ def parser() -> argparse.ArgumentParser:
     add_output(review_commands.add_parser(
         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
     ))
+    review_status = review_commands.add_parser(
+        "status", help="report the sign-off of a pull request's current head and each model's part in it"
+    )
+    review_status.add_argument("pr", type=int, help="the pull request number")
+    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                              "this checkout's origin)")
+    review_status.add_argument("--reviewer", help="the GitHub login whose reviews count (default: review.username, "
+                                                  "then you)")
+    review_status.add_argument("--state-dir", type=Path,
+                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+    add_output(review_status)
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
                     review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -856,10 +867,27 @@ def incremental_enabled(checkout: Path) -> bool:
     return value
 
 
+def review_status(root: Path, arguments: argparse.Namespace) -> int:
+    """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
+    request cannot be read. The reviewer is found as `setup` finds it."""
+    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+    try:
+        configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
+    except ProjectorError:
+        configured = None
+    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
+        or review.authenticated_login()
+    result = review.status(repo, arguments.pr, reviewer)
+    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
+    return 0
+
+
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
     root = review.state_dir(arguments.state_dir)
+    if arguments.review_command == "status":
+        return review_status(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "setup":
@@ -909,15 +937,20 @@ def run_review(arguments: argparse.Namespace) -> int:
             except ProjectorError:
                 allow = False
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
+            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
             result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
-                                    arguments.incremental, enabled)
+                                    arguments.incremental, enabled, wait)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
                 print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
                       f"{result['repo']}#{result['number']} at {result['sha']}"
                       + (f", incremental from {result['from'][:7]}" if result["from"] else ""))
+                print(f"sign-off: {result['signoff']}"
+                      + (f", after waiting {result['waited']}s" if result["waited"] else "")
+                      + (f"; no review yet from {', '.join(result['pending'])}" if result["pending"] else "")
+                      + ("; the head moved, so its reviews decide the draft state" if result["moved"] else ""))
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0

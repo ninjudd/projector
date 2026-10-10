@@ -330,7 +330,7 @@ does: `--reviewer`, then `review.username`, then the authenticated user.
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`, by the rule in § 2.3. |
-| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict adds `review`, `url`, and `at`. A start comment adds `comment` and `since`. A stopped model adds `adopted_by`. |
+| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict, on the head or else the newest on an earlier head, adds `review`, `url`, `at`, and its `sha`. A live start comment adds `comment`, `since`, and its `comment_sha`. A stopped model adds `adopted_by`. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, `model`, or `null` when the thread names none, and `verifier`. |
 
 `pending` is a model whose only verdicts or start comments are on earlier
