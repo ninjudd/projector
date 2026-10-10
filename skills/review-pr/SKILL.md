@@ -131,6 +131,26 @@ So **open your own pull requests as drafts by default**, every layer of a
 stack included. The draft says the head has not been signed off; the ready
 transition is the sign-off a reader sees in the pull-request list.
 
+### Review as one model among several
+
+Review loops can run on several models at once, such as one in Claude Code and
+one in Codex, each posting as the same reviewer account, to give a pull
+request separate opinions. Projector tells them apart by the model, not the
+account. A reviewer is the model ID you pass as `--model`, compared
+lowercased and without a trailing bracketed variant such as `[1m]`, within
+the reviewer's account. The effort and the Projector version are not part of
+it.
+
+- **The same model twice**, on one machine or two, is one reviewer running
+  twice, which is usually an accident such as a session left running.
+  `setup` refuses on the lock, or on the other session's live start comment,
+  and `publish` refuses on a verdict that model already posted on the head.
+- **Another model** is a second opinion. Its review keeps its own state, lock,
+  and scratch worktree, its start comment never stops your `setup`, and its
+  verdict never trips your collision check.
+- **A model upgraded in the middle of a pull request**, such as a loop
+  restarted on a newer version, is a new reviewer.
+
 ## Review an exact head
 
 For the head under review, steps 1 to 4 are one command, run from a checkout
@@ -159,7 +179,7 @@ takes every SHA from GitHub, never from an argument:
    ```
    📽️ **Projector review started** · `<version>` · model `<model-id>` · effort `<effort>` · reviewing `<short-sha>`
 
-   <!-- projector-start v=1 sha=<full-sha> -->
+   <!-- projector-start v=1 sha=<full-sha> model=<model-id> -->
    ```
 
 It prints the SHA, the merge base, the worktree, whether the head is trusted by
@@ -172,11 +192,26 @@ user input. `start-review-loop` passes its loop id as `--loop` to every
 command, and `--rereview` marks a re-review of a head the loop already
 published a verdict on, the case `RESPONDED` asks for.
 
-The review holds a lock for the pull request and head from `setup` until it is
-published, so a second instance for the same head exits without posting. A
-refused `setup` releases it. A lock older than a day is stale and cleared;
-`project review release <number>` clears one left by a session that stopped,
-and only when no review of that pull request is running.
+`--model` is the model ID the host reports for this session, never a default
+copied from this file. It names the start comment and keys the review's
+state, so each model reviewing the pull request keeps its own state, lock,
+and scratch worktree, as
+[Review as one model among several](#review-as-one-model-among-several)
+describes. Each later command, `move`, `census`, `interdiff`, `gate`,
+`publish`, and `release`, takes `--model` too. Every one but `census` finds
+the review by the pull request and the model, and refuses, naming the models,
+when more than one model has a review of the pull request set up on this
+machine and `--model` does not pick one.
+
+The review holds a lock for the pull request, head, and model from `setup`
+until it is published, so a second instance of the same model for the same
+head exits without posting. A refused `setup` releases it. A lock older than
+a day is stale and cleared; `project review release <number>` clears one left
+by a session that stopped, and only when no review of that pull request by
+that model is running. `setup` also refuses while a live start comment shows
+the same model reviewing the pull request in another session, on this
+machine or another, and names the comment; delete it only once you know that
+session has stopped.
 
 Under `start-review-loop`, run `project review interdiff <number>` next. A head
 that changed little since the loop's last full review can get an incremental
@@ -278,11 +313,17 @@ A start comment on a pull request therefore means a review in progress. A
 session resuming mid-review looks for one on GitHub rather than in memory and
 edits it instead of posting a second one. The exception is a leftover from a
 session that stopped between publishing and deleting: a comment whose
-`created_at` is earlier than the `submitted_at` of a Projector review on its
-`sha=`. Delete that one. Compare the timestamps rather than testing for the
-review's presence, because a re-review of an unmoved head, such as the one
-`start-review-loop` runs on `RESPONDED`, has a live start comment that shares
-its `sha=` with the verdict that preceded it.
+`created_at` is earlier than the `submitted_at` of a Projector review by the
+same model on its `sha=`. Delete that one. Compare the timestamps rather than
+testing for the review's presence, because a re-review of an unmoved head,
+such as the one `start-review-loop` runs on `RESPONDED`, has a live start
+comment that shares its `sha=` with the verdict that preceded it. Compare the
+model too: another model's start comment belongs to that model's review,
+which is still running. The marker's `model=` names the model, and a start
+comment from an earlier release, whose marker names none, is read by the
+model its first line names. `setup` deletes a start comment this machine's
+state recorded for the model and never published, because the new review
+replaces it.
 
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
@@ -508,8 +549,11 @@ describes. `publish --incremental` writes all of it except that body.
 **Every inline finding opens with a marker:**
 
 ```
-<!-- projector-finding v=1 priority=<P1|P2> sha=<full-sha> -->
+<!-- projector-finding v=1 priority=<P1|P2> sha=<full-sha> model=<model-id> -->
 ```
+
+`model=` names the model that opened the finding. `publish` writes the whole
+marker, so the threads file leaves it out.
 
 Priority says what happens if nobody acts, and only the first two are
 threads:
@@ -561,8 +605,9 @@ addressed, so verify it like any other.
 
 Read each thread's replies with the finding, verify by `method.md` § 5 against
 this head, and settle it in one of these ways. Every reply you post opens with
-`<!-- projector-verify v=1 result=<result> sha=<full-sha> -->`, so neither loop
-reads it back as a new finding or as the author answering:
+`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
+naming the model running this review, so neither loop reads it back as a new
+finding or as the author answering:
 
 - **Fixed:** the head addresses the finding. Resolve an open thread with
   `resolveReviewThread`, replying `result=fixed` with what at this head
@@ -608,7 +653,7 @@ Publish with `project review publish`, from any directory:
 
 ```sh
 project review publish <number> --verdict <clean|changes-requested> \
-  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>]
+  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>] [--model <model-id>]
 ```
 
 The body file is the review below its signature line: the intent paragraph,
@@ -635,12 +680,15 @@ and run it again, when:
 - the collision check below trips.
 
 The collision check lists every verdict the reviewer has already posted on
-this exact SHA, reading every page, since each fix-loop thread reply adds a
-review object of its own. A verdict this run did not publish means the same
-account already reviewed this commit, whether an earlier run or another agent
-reviewing it now. Hold the review and ask the user whether to submit, rather
-than either submitting or standing down. Two verdicts from one account on one
-commit read as a single thorough review, so the overlap goes unnoticed unless
+this exact SHA by this model, reading every page, since each fix-loop thread
+reply adds a review object of its own. A verdict by another model is a second
+opinion and never collides; one whose marker names no model, from an earlier
+release, collides with every model. A verdict this run did not publish means
+the same model under the same account already reviewed this commit, whether
+an earlier run or another agent reviewing it now. Hold the review and ask the
+user whether to submit, rather than either submitting or standing down. Two
+verdicts from one model on one commit read as a single thorough review, so
+the overlap goes unnoticed unless
 this check catches it. Standing down silently is no better: a second review is
 sometimes requested deliberately, and a head both reviews walk away from gets
 no verdict at all. If the user says to submit, run `publish` again with
@@ -649,9 +697,9 @@ reader sees the second verdict was deliberate.
 
 When `start-review-loop` runs this skill, it passes `--loop <id>`, and the
 loop's record of the reviews it published decides instead, as that skill
-describes: a verdict another loop posted trips the check, and a second verdict
-on a head this loop already published needs `setup --rereview`, the re-review
-`RESPONDED` asks for.
+describes: a verdict by this model that another loop posted trips the check,
+and a second verdict on a head this loop already published needs
+`setup --rereview`, the re-review `RESPONDED` asks for.
 
 A head is *clean* only when, after you have settled every earlier finding as
 above, no Projector finding thread is open **and this review posts no P1 or P2

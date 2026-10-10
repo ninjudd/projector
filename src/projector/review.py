@@ -9,12 +9,14 @@ posted as the reviewer with a token for that call alone, never by switching
 the account the rest of the session uses; and every refusal raises
 `ReviewError`, which exits non-zero with what to do about it.
 
-Layout of the state directory:
+Each model reviewing a pull request is a reviewer of its own, so its state lives
+under its model key. Layout of the state directory:
 
-    prs/<owner>/<repo>/<pr>.json         the review's state
-    prs/<owner>/<repo>/<pr>-<sha>.lock   the lock a review holds from setup until publish
-    worktrees/<owner>/<repo>/<pr>/<sha>  scratch worktrees, never inside the checkout
-    loops/<id>/published.json            a loop's record of the review ids it published
+    prs/<owner>/<repo>/<pr>/<model-key>/state.json         the review's state
+    prs/<owner>/<repo>/<pr>/<model-key>/<sha>.lock         the lock a review holds from setup until publish
+    prs/<owner>/<repo>/<pr>/<model-key>/review.json        the review publish is submitting
+    worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>  scratch worktrees, never inside the checkout
+    loops/<id>/published.json                              a loop's record of the review ids it published
 """
 
 from __future__ import annotations
@@ -110,6 +112,16 @@ def identity(model: str) -> str:
     return VARIANT.sub("", model.lower())
 
 
+def model_key(model: str) -> str:
+    """The folder a model's review state lives in: its identity, with every character but a letter, a
+    digit, `.`, `_`, and `-` made `-`. Refuses an ID no folder can safely be made from."""
+    key = re.sub(r"[^a-z0-9._-]", "-", identity(model))
+    if not model or any(c.isspace() for c in model) or not key or key.startswith("."):
+        raise ReviewError(f"--model {model!r} is not a usable model ID; pass the ID the host reports for this "
+                          "session, such as claude-opus-5-5")
+    return key
+
+
 def authenticated_login() -> str:
     login = run_gh(["api", "user", "--jq", ".login"]).strip()
     if not login:
@@ -189,26 +201,37 @@ def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -
 
 @dataclass
 class Paths:
+    """Where one model's review of one pull request keeps its state, locks, and worktrees."""
+
     root: Path
     repo: str
     number: int
+    model: str
+
+    @property
+    def key(self) -> str:
+        return model_key(self.model)
 
     @property
     def folder(self) -> Path:
-        return self.root / "prs" / self.repo
+        return self.root / "prs" / self.repo / str(self.number) / self.key
 
     @property
     def state(self) -> Path:
-        return self.folder / f"{self.number}.json"
+        return self.folder / "state.json"
+
+    @property
+    def request(self) -> Path:
+        return self.folder / "review.json"
 
     def lock(self, sha: str) -> Path:
-        return self.folder / f"{self.number}-{sha}.lock"
+        return self.folder / f"{sha}.lock"
 
     def locks(self) -> list[Path]:
-        return sorted(self.folder.glob(f"{self.number}-*.lock")) if self.folder.is_dir() else []
+        return sorted(self.folder.glob("*.lock")) if self.folder.is_dir() else []
 
     def worktree(self, sha: str) -> Path:
-        return self.root / "worktrees" / self.repo / str(self.number) / sha[:SHORT]
+        return self.root / "worktrees" / self.repo / str(self.number) / self.key / sha[:SHORT]
 
 
 def loop_record(root: Path, loop: str) -> Path:
@@ -224,11 +247,23 @@ def ensure_loop(root: Path, loop: Optional[str]) -> None:
         record.write_text("[]\n", encoding="utf-8")
 
 
-def read_state(paths: Paths) -> dict:
+def stored_state(paths: Paths) -> Optional[dict]:
+    """The state in the model's folder, refused when it is another model's that shares the folder."""
     if not paths.state.is_file():
-        raise ReviewError(f"no review of {paths.repo}#{paths.number} is set up here; "
-                          f"run `project review setup {paths.number}`")
-    return json.loads(paths.state.read_text(encoding="utf-8"))
+        return None
+    state = json.loads(paths.state.read_text(encoding="utf-8"))
+    if state.get("identity") != identity(paths.model):
+        raise ReviewError(f"the review state in {paths.folder} is model {state.get('model')}'s, and model "
+                          f"{paths.model} shares its folder; finish that review and remove the folder first")
+    return state
+
+
+def read_state(paths: Paths) -> dict:
+    state = stored_state(paths)
+    if state is None:
+        raise ReviewError(f"no review of {paths.repo}#{paths.number} by model {paths.model} is set up here; "
+                          f"run `project review setup {paths.number} --model {paths.model}`")
+    return state
 
 
 def write_state(paths: Paths, state: dict) -> None:
@@ -240,6 +275,12 @@ def write_state(paths: Paths, state: dict) -> None:
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def parse_time(text: str) -> datetime:
+    """A time as GitHub gives it, such as `2026-09-27T01:02:03Z`, in UTC."""
+    at = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
 
 
 def lock_age(lock: Path) -> timedelta:
@@ -268,8 +309,9 @@ def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
         except (OSError, ValueError):
             pass
         raise ReviewError(
-            f"another review of {paths.repo}#{paths.number} at {sha[:7]} holds its lock{holder}; let it finish, "
-            f"or run `project review release {paths.number}` if no review is running"
+            f"another review of {paths.repo}#{paths.number} at {sha[:7]} by model {paths.model} holds its "
+            f"lock{holder}; let it finish, or run `project review release {paths.number} --model {paths.model}` "
+            "if no review is running"
         ) from exc
     with os.fdopen(fd, "w") as handle:
         json.dump({"sha": sha, "host": socket.gethostname(), "loop": loop, "pid": os.getpid(),
@@ -279,14 +321,14 @@ def take_lock(paths: Paths, sha: str, loop: Optional[str]) -> Path:
 
 
 def release(paths: Paths) -> list[Path]:
-    """Clear every lock this pull request's reviews hold; returns what was cleared."""
+    """Clear every lock this model's reviews of the pull request hold; returns what was cleared."""
     released = paths.locks()
     for lock in released:
         lock.unlink(missing_ok=True)
     return released
 
 
-def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_stderr: bool = False) -> dict:
+def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -> dict:
     """Run the repository's `review.gate` command in the review's scratch worktree.
 
     The command runs the head's code, so it runs only on a head the state file
@@ -299,10 +341,9 @@ def gate(root: Path, number: int, repo: str, command: Optional[str], output_to_s
     JSON keeps standard output for that alone. Its exit status, with the
     command and when it ran, is recorded in the state file and returned.
     """
-    paths = Paths(root, repo, number)
     state = read_state(paths)
     if not state.get("trusted"):
-        raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{number} is untrusted "
+        raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
                           "run; review it by reading")
     if not command:
@@ -384,8 +425,49 @@ def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str
     if moved_from:
         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
                   "for the new changes.", ""]
-    lines.append(f"<!-- projector-start v=1 sha={sha} -->")
+    lines.append(f"<!-- projector-start v=1 sha={sha} model={model} -->")
     return "\n".join(lines) + "\n"
+
+
+START_MARKER = re.compile(r"^<!-- projector-start v=1 sha=([0-9a-f]{40})(?: model=(\S+))? -->$", re.M)
+# The model a start comment's first line names, for a comment whose marker names none.
+START_MODEL = re.compile(r"· model `([^`\n]+)` ·")
+
+
+def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
+    """The reviewer's start comments on the pull request, from every page, each with its `id`, `url`, the
+    `sha` and `model` it names, and when it was created and last edited."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
+                   "--jq", '.[] | select(.body // "" | contains("projector-start")) '
+                           '| {id, url: .html_url, login: .user.login, body, created_at, updated_at} '
+                           '| @json']).splitlines()
+    comments = []
+    for row in filter(str.strip, rows):
+        comment = json.loads(row)
+        marker = START_MARKER.search(comment.get("body") or "")
+        named = START_MODEL.search(comment.get("body") or "")
+        model = (marker and marker.group(2)) or (named and named.group(1))
+        if (comment.get("login") or "").lower() != reviewer.lower() or not marker or not model:
+            continue
+        comments.append({"id": comment["id"], "url": comment.get("url"), "sha": marker.group(1), "model": model,
+                         "created_at": comment["created_at"],
+                         "updated_at": comment.get("updated_at") or comment["created_at"]})
+    return comments
+
+
+def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
+    """Whether a start comment still means a review in progress at `at`: not once its model has a verdict
+    among `reviews` on the comment's head submitted since the comment was created, nor once a day has
+    passed since it was last edited, the age at which a lock is stale."""
+    if at - parse_time(comment["updated_at"]) > STALE_AFTER:
+        return False
+    created, model = parse_time(comment["created_at"]), identity(comment["model"])
+    for review in reviews:
+        marker = verdict_marker(review.get("body") or "")
+        if (marker is not None and marker.sha == comment["sha"] and identity(marker.model) == model
+                and review.get("at") and parse_time(review["at"]) >= created):
+            return False
+    return True
 
 
 # Resolving which review a command means
@@ -397,20 +479,44 @@ def valid_loop(loop: Optional[str]) -> Optional[str]:
 
 
 def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
-    """The repository a command after setup means: --repo, else the review set up here for
-    this pull request, else the origin of the checkout the command runs in."""
+    """The repository a command after setup means: --repo, else the one with a review of this pull
+    request set up here, else the origin of the checkout the command runs in."""
     if repo:
         return repo
-    found = sorted((root / "prs").glob(f"*/*/{number}.json")) if (root / "prs").is_dir() else []
+    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
+    found = sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
     if len(found) == 1:
-        return f"{found[0].parent.parent.name}/{found[0].parent.name}"
+        return found[0]
     if len(found) > 1:
-        names = ", ".join(f"{p.parent.parent.name}/{p.parent.name}" for p in found)
-        raise ReviewError(f"reviews of #{number} are set up in {names}; pass --repo to pick one")
+        raise ReviewError(f"reviews of #{number} are set up in {', '.join(found)}; pass --repo to pick one")
     try:
         return origin_repo(checkout_root(cwd))
     except ReviewError as exc:
         raise ReviewError(f"no review of #{number} is set up here; pass --repo owner/name") from exc
+
+
+def find_model(root: Path, repo: str, number: int, model: Optional[str]) -> Optional[str]:
+    """The model a command after setup means: --model, else the one model with a review of this pull
+    request set up here, or None when none is."""
+    if model is not None:
+        model_key(model)
+        return model
+    folder = root / "prs" / repo / str(number)
+    states = sorted(folder.glob("*/state.json")) if folder.is_dir() else []
+    models = [json.loads(p.read_text(encoding="utf-8")).get("model") or p.parent.name for p in states]
+    if len(models) > 1:
+        raise ReviewError(f"reviews of {repo}#{number} by {', '.join(models)} are set up here; pass --model to "
+                          "pick one")
+    return models[0] if models else None
+
+
+def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Paths:
+    """The paths of the review a command after setup means, refused when no review is set up here."""
+    found = find_model(root, repo, number, model)
+    if found is None:
+        raise ReviewError(f"no review of {repo}#{number} is set up here; run "
+                          f"`project review setup {number} --model <model-id>`")
+    return Paths(root, repo, number, found)
 
 
 # Commands
@@ -423,13 +529,16 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     if repo and repo.lower() != origin.lower():
         raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
     repo = origin
-    paths = Paths(root, repo, number)
+    paths = Paths(root, repo, number, model)
+    recorded = ((stored_state(paths) or {}).get("start_comment") or {}).get("id")
     pr = pull_request(repo, number)
     sha = pr["head"]["sha"]
     lock = take_lock(paths, sha, loop)
     try:
         operator = authenticated_login()
         reviewer = reviewer_login(reviewer, configured_reviewer, operator)
+        starts = start_comments(repo, number, reviewer)
+        check_duplicate(starts, reviewer_reviews(repo, number, reviewer), model, recorded)
         merge_base = fetch_head(checkout, repo, pr)
         worktree = paths.worktree(sha)
         add_worktree(checkout, worktree, sha)
@@ -440,6 +549,9 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
+    if any(comment["id"] == recorded for comment in starts):
+        # The review this machine set up before and never published is replaced by this one.
+        delete_comment(repo, recorded, token)
     ensure_loop(root, loop)
     state = {
         "repo": repo,
@@ -456,17 +568,39 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "operator": operator,
         "reviewer": reviewer,
         "model": model,
+        "identity": identity(model),
         "loop": loop,
         "rereview": rereview,
         "start_comment": {"id": posted["id"], "created_at": posted["created_at"]},
+        "head_started_at": posted["created_at"],
         "heads": 1,
     }
     write_state(paths, state)
     return state
 
 
-def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
-    paths = Paths(root, repo, number)
+def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int]) -> None:
+    """Refuse a review while a live start comment shows the same model reviewing the pull request in
+    another session: one this machine's state for the model does not record."""
+    at = now()
+    for comment in starts:
+        if identity(comment["model"]) == identity(model) and comment["id"] != recorded \
+                and is_live(comment, reviews, at):
+            raise ReviewError(
+                f"model {comment['model']} is already reviewing this pull request in another session: start comment "
+                f"{comment['id']} ({comment.get('url') or 'no URL'}) names {comment['sha'][:7]}, posted "
+                f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
+
+
+def delete_comment(repo: str, comment: int, token: str) -> None:
+    try:
+        run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
+    except NotFound:
+        pass
+
+
+def move(paths: Paths, loop: Optional[str]) -> dict:
+    number = paths.number
     state = read_state(paths)
     checkout = Path(state["checkout"])
     pr = pull_request(state["repo"], number)
@@ -495,7 +629,8 @@ def move(root: Path, number: int, repo: str, loop: Optional[str]) -> dict:
     state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
                  trusted=trusted, untrusted_because=why or None,
                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
-                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
+                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)],
+                 head_started_at=now().isoformat())
     write_state(paths, state)
     return state
 
@@ -856,10 +991,7 @@ def duration(seconds: int, heads: int) -> str:
 
 def elapsed(created_at: str, at: datetime) -> int:
     """Whole seconds from the start comment's `created_at` to `at`, both in UTC."""
-    start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    return max(0, int((at - start).total_seconds()))
+    return max(0, int((at - parse_time(created_at)).total_seconds()))
 
 
 def diff_lines(repo: str, number: int) -> dict[str, list[tuple[int, int]]]:
@@ -942,19 +1074,27 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
                     reviews: list[dict]) -> None:
     """The collision check review-pr § Publish one review describes, read from the loop's record.
 
-    `reviews` is the reviewer's listing from `reviewer_reviews`; a verdict on the head is any whose
-    marker names it, in this loose form so a marker in an older shape still collides."""
-    on_head = re.compile(f"projector-review .* sha={state['sha']}")
-    earlier = [r["id"] for r in reviews if on_head.search(r.get("body") or "")]
+    `reviews` is the reviewer's listing from `reviewer_reviews`. A verdict on the head is any whose
+    marker names it, in this loose form so a marker in an older shape still collides. Only a verdict by
+    this model collides, or one whose marker names no model, since another model is a second opinion."""
+    on_head = re.compile(f"projector-review .* sha={state['sha']}.*")
+    model = identity(state["model"])
+
+    def same_model(body: str) -> bool:
+        marker = on_head.search(body)
+        named = marker and re.search(r"\bmodel=(\S+)", marker.group(0))
+        return bool(marker) and (not named or identity(named.group(1)) == model)
+
+    earlier = [r["id"] for r in reviews if same_model(r.get("body") or "")]
     if loop is not None:
         mine = {r["review_id"] for r in read_record(root, loop)
                 if r.get("repo") == state["repo"] and r.get("number") == state["number"]}
         others = [i for i in earlier if i not in mine]
         if others:
             raise ReviewError(
-                f"the reviewer already has a verdict on {state['sha'][:7]} that loop {loop} did not publish "
-                f"(review {', '.join(map(str, others))}); another loop is reviewing this pull request, so ask "
-                "the user which one continues")
+                f"the reviewer already has a verdict by model {state['model']} on {state['sha'][:7]} that loop "
+                f"{loop} did not publish (review {', '.join(map(str, others))}); another loop of the same model is "
+                "reviewing this pull request, so ask the user which one continues")
         if any(i in mine for i in earlier) and not state.get("rereview"):
             raise ReviewError(
                 f"loop {loop} already published a verdict on {state['sha'][:7]}; a re-review of this head "
@@ -963,8 +1103,9 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
     if earlier:
         if second not in earlier:
             raise ReviewError(
-                f"the reviewer already has a verdict on {state['sha'][:7]} (review {', '.join(map(str, earlier))}); "
-                "ask the user, and if they want a second one pass --second-verdict with that review's id")
+                f"the reviewer already has a verdict by model {state['model']} on {state['sha'][:7]} "
+                f"(review {', '.join(map(str, earlier))}); ask the user, and if they want a second one pass "
+                "--second-verdict with that review's id")
         if str(second) not in body:
             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
 
@@ -1076,7 +1217,7 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
             f"{filled}{closing}\n")
 
 
-def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Optional[str], body_path: Path,
+def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
             incremental: bool = False, enabled: bool = True) -> dict:
     """Submit the review, then set draft state, re-read, record, delete the start comment, and
@@ -1085,7 +1226,7 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
     `review.incremental`."""
-    paths = Paths(root, repo, number)
+    root, number = paths.root, paths.number
     state = read_state(paths)
     loop = loop if loop is not None else state.get("loop")
     repo, sha = state["repo"], state["sha"]
@@ -1153,15 +1294,14 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
         draft_wanted = (verdict == "changes-requested") if mine else None
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
-                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} -->\n"
-                                         f"{t['body'].strip()}\n"} for t in threads]}
+                                 "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
+                                         f"model={state['model']} -->\n{t['body'].strip()}\n"} for t in threads]}
         token = reviewer_token(state["reviewer"])
         paths.folder.mkdir(parents=True, exist_ok=True)
-        request = paths.folder / f"{number}-review.json"
-        request.write_text(json.dumps(payload), encoding="utf-8")
-        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", str(request)],
-                         token)
-        request.unlink(missing_ok=True)
+        paths.request.write_text(json.dumps(payload), encoding="utf-8")
+        posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input",
+                          str(paths.request)], token)
+        paths.request.unlink(missing_ok=True)
         review_id = posted["id"]
         # Recorded before anything else can fail, so a retry finishes this review rather than
         # posting a second one.
@@ -1186,15 +1326,12 @@ def publish(root: Path, number: int, repo: str, loop: Optional[str], verdict: Op
             # incremental review, which a later one never builds on.
             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
                            "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
-                           "base": state["base"], "from": state["published"].get("from")})
+                           "base": state["base"], "from": state["published"].get("from"), "model": state["model"]})
             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     comment = (state.get("start_comment") or {}).get("id")
     if comment:
-        try:
-            run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
-        except NotFound:
-            pass
+        delete_comment(repo, comment, token)
         state["start_comment"] = None
     write_state(paths, state)
     paths.lock(sha).unlink(missing_ok=True)
