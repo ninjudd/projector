@@ -37,16 +37,29 @@ class InstallTests(unittest.TestCase):
         # answers from state files a test writes; no file means nothing yet.
         self.state = self.user_root / "host-state"
         self.state.mkdir()
+        # A command line written to `<command>-fails` makes that host fail it.
         for command, executable in (("claude", "host-a"), ("codex", "host-b")):
             (self.fake_bin / executable).write_text(
                 "#!/bin/sh\n"
                 f"printf '%s %s\\n' '{command}' \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+                f'[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/{command}-fails" 2>/dev/null)" ] && exit 1\n'
                 'case "$*" in\n'
                 f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
                 f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
                 "esac\n"
                 "exit 0\n"
             )
+        # gh lists its extensions from a state file; no file means none.
+        (self.fake_bin / "host-c").write_text(
+            "#!/bin/sh\n"
+            "printf '%s %s\\n' gh \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+            '[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/gh-fails" 2>/dev/null)" ] && exit 1\n'
+            'case "$*" in\n'
+            '  "extension list") cat "$PROJECTOR_TEST_STATE/gh-extensions.txt" 2>/dev/null ;;\n'
+            "esac\n"
+            "exit 0\n"
+        )
+        (self.fake_bin / "host-c").chmod(0o755)
         # pipx is asked where its venvs live and is handed an interpreter when
         # one of them already holds this package; the fake reports both.
         (self.fake_bin / "pipx").write_text(
@@ -68,6 +81,7 @@ class InstallTests(unittest.TestCase):
             "PROJECTOR_TEST_STATE": str(self.state),
             "PROJECTOR_CLAUDE_COMMAND": str(self.fake_bin / "host-a"),
             "PROJECTOR_CODEX_COMMAND": str(self.fake_bin / "host-b"),
+            "PROJECTOR_GH_COMMAND": str(self.fake_bin / "host-c"),
             # The installer fetches the checkout's upstream before it says
             # whether the checkout is behind; this repository's upstream is
             # GitHub, which a unit test must not reach for.
@@ -419,9 +433,119 @@ class InstallTests(unittest.TestCase):
         self.assertIn("claude plugin marketplace update projector\n", log)
         self.assertIn("claude plugin update projector@projector\n", log)
         self.assertNotIn("marketplace add", log)
-        self.assertNotIn("plugin install", log)
+        self.assertNotIn("plugin install projector", log)
         self.assertIn("codex plugin marketplace upgrade projector\n", log)
         self.assertIn("codex plugin add projector@projector\n", log)
+
+    def test_an_update_installs_the_gh_stack_dependency_it_never_had(self) -> None:
+        # `claude plugin update` installs no dependency a plugin newly
+        # declares, and Projector fails to load without it.
+        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
+
+        result = self.install("claude")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text()
+        self.assertLess(log.index("claude plugin update projector@projector\n"),
+                        log.index("claude plugin install gh-stack@projector --scope user\n"))
+
+    def test_an_update_moves_an_installed_gh_stack_to_the_marketplaces_pin(self) -> None:
+        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
+        plugins = json.loads((self.state / "claude-plugins.json").read_text())
+        plugins.append({"id": "gh-stack@projector", "version": "0.1.0"})
+        (self.state / "claude-plugins.json").write_text(json.dumps(plugins))
+
+        result = self.install("claude")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text()
+        self.assertIn("claude plugin update gh-stack@projector\n", log)
+        self.assertNotIn("plugin install", log)
+
+    def test_codex_installs_gh_stack_as_a_plugin_of_its_own(self) -> None:
+        result = self.install("codex")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text()
+        self.assertLess(log.index("codex plugin add projector@projector\n"),
+                        log.index("codex plugin add gh-stack@projector\n"))
+
+    def test_a_marketplace_without_gh_stack_leaves_projector_installed(self) -> None:
+        (self.state / "claude-fails").write_text("plugin install gh-stack@projector --scope user")
+        (self.state / "codex-fails").write_text("plugin add gh-stack@projector")
+
+        claude = self.install("claude")
+        codex = self.install("codex")
+
+        self.assertEqual(0, claude.returncode, claude.stderr)
+        self.assertEqual(0, codex.returncode, codex.stderr)
+        self.assertIn("gh-stack       ⚠️  claude could not install gh-stack@projector", claude.stdout)
+        self.assertIn("gh-stack       ⚠️  codex could not install gh-stack@projector", codex.stdout)
+
+    def test_all_installs_the_gh_stack_extension_when_it_is_absent(self) -> None:
+        result = self.install("all")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("gh extension install github/gh-stack\n", self.log.read_text())
+        self.assertIn("installed      gh stack (github/gh-stack)", result.stdout)
+
+    def test_all_upgrades_a_gh_stack_older_than_the_pin_and_keeps_a_current_one(self) -> None:
+        pinned = self.pinned_gh_stack()
+        for installed, upgraded in (("0.0.1", True), (pinned, False), ("99.0.0", False)):
+            with self.subTest(installed=installed):
+                self.log.unlink(missing_ok=True)
+                (self.state / "gh-extensions.txt").write_text(f"gh stack\tgithub/gh-stack\tv{installed}\n")
+
+                result = self.install("all")
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                gh = [line for line in self.log.read_text().splitlines() if line.startswith("gh ")]
+                self.assertEqual(["gh extension list"] + ["gh extension upgrade stack"] * upgraded, gh)
+
+    def test_all_leaves_a_gh_stack_from_another_owner_alone(self) -> None:
+        (self.state / "gh-extensions.txt").write_text("gh stack\tsomeone/gh-stack\tv0.0.1\n")
+
+        result = self.install("all")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn("gh extension install", self.log.read_text())
+        self.assertNotIn("gh extension upgrade", self.log.read_text())
+        self.assertIn("skipped        gh stack comes from someone/gh-stack", result.stdout)
+
+    def test_all_skips_gh_stack_without_gh_and_survives_a_failed_install(self) -> None:
+        missing = {**self.environment, "PROJECTOR_GH_COMMAND": str(self.user_root / "no-gh")}
+        result = subprocess.run([str(ROOT / "install.sh"), "all"], cwd=ROOT, env=missing,
+                                check=False, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("skipped        gh is not installed, so neither is gh stack", result.stdout)
+
+        (self.state / "gh-fails").write_text("extension install github/gh-stack")
+        result = self.install("all")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("could not install gh stack -- run gh extension install github/gh-stack", result.stdout)
+
+    def test_status_reports_the_gh_stack_extension_against_the_pin(self) -> None:
+        pinned = self.pinned_gh_stack()
+        for listed, row in (
+            ("", "stack-absent   gh stack -- run ./install.sh all"),
+            (f"gh stack\tgithub/gh-stack\tv{pinned}\n", f"stack-current  gh stack {pinned}"),
+            ("gh stack\tgithub/gh-stack\tv0.0.1\n", f"stack-stale    gh stack 0.0.1, pinned {pinned} -- run ./install.sh all"),
+            ("gh stack\tsomeone/gh-stack\tv9.9.9\n", "stack-other    gh stack comes from someone/gh-stack"),
+        ):
+            with self.subTest(listed=listed):
+                (self.state / "gh-extensions.txt").write_text(listed)
+
+                result = self.install("status")
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(row, result.stdout)
+
+    def pinned_gh_stack(self) -> str:
+        """The gh-stack release the checkout's marketplace pins, as the installer reads it."""
+
+        marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+        entry = next(entry for entry in marketplace["plugins"] if entry["name"] == "gh-stack")
+        return entry["source"]["ref"].removeprefix("v")
 
     def test_status_compares_installed_plugins_with_the_checkout(self) -> None:
         expected = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]

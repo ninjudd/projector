@@ -154,17 +154,43 @@ directory you name; what the reader should see; the signal that would show
 the change is wrong; and what needs building first and what state the
 commands leave behind. Where a change cannot be exercised by hand, say so
 and point at the test that covers it. `gh stack submit` writes each layer's
-body too, and it is the wrong body; replace it as rule 3 of
-`../gh-stack/SKILL.md` describes.
+body too, and it is the wrong body; replace it as
+[Stack dependent work](#stack-dependent-work) describes.
 
 ## Stack dependent work
 
 A stack is a chain of pull requests, each based on the branch of the one
 below it, that GitHub records as one stack. Make and keep one with
-`gh stack`, the GitHub CLI extension that `../gh-stack/SKILL.md` describes;
-that file is the reference for every `gh stack` command named here. `fix-pr`
-and `start-fix-loop` find and update a stack's layers, and fall back when
-`gh stack` cannot help, as this section describes.
+`gh stack`, the GitHub CLI extension. GitHub's own `gh-stack` skill is the
+reference for its commands; Projector's marketplace serves it as the
+`gh-stack` plugin, which Claude Code installs with Projector and Projector's
+installer adds for Codex. Where the skill is not installed,
+`gh stack <command> --help` covers the flags. `fix-pr` and `start-fix-loop`
+find and update a stack's layers, and fall back when `gh stack` cannot help,
+as this section describes.
+
+The `gh-stack` skill is upstream's, unmodified. Where it and Projector
+differ, these rules win:
+
+- **Split only at the reviewability ceiling.** Stack work only where the
+  hand-over above says to split it, never because a layer is large. A
+  change's tests and documentation ride the layer whose code they verify,
+  never a layer of their own. Order the layers by dependency, as the skill
+  describes.
+- **Open every layer as a draft.** `gh stack submit --auto` opens new pull
+  requests as drafts. Never pass `--open` to `submit` or `link`: it marks
+  every layer ready for review, the existing ones included, and only a
+  review loop's clean verdict marks a layer ready.
+- **Replace the title and body `submit` writes.** The body is a "Stack
+  created with GitHub Stacks CLI" footer, after the hard-wrapped commit body
+  when the layer has one commit, with no `## Testing` section, and a squash
+  merge would keep it. A layer of several commits gets its branch name as its
+  title. Write each layer's title and body as the hand-over above describes
+  and set them with `gh pr edit <number> --title <title> --body-file <file>`.
+- **Never merge.** Never run `gh stack merge` or `gh pr merge`, whatever the
+  skill says about merging. The merge is the user's checkpoint.
+
+Within those rules, work a stack this way:
 
 - **Create it.** Plan the layers from the bottom up, make them with
   `gh stack init` and `gh stack add`, and open them all as drafts with
@@ -180,8 +206,8 @@ and `start-fix-loop` find and update a stack's layers, and fall back when
   `gh stack rebase --upstack` from a layer you fixed, or `gh stack rebase`
   when a layer falls behind or conflicts with its base or a layer below it
   merges; the rebase drops a squash-merged layer's commits from the layers
-  above it. Resolve a conflict the rebase stops on as `../gh-stack/SKILL.md`
-  describes under "Handle rebase conflicts". Then run the full gate on every
+  above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
+  describes under "Exit 3 recovery". Then run the full gate on every
   layer the rebase rewrote, and only once each passes, run `gh stack push`,
   which pushes each branch with `--force-with-lease`. Never merge a base into
   a layer of a stack `gh stack` works on. In a checkout that does not track

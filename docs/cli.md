@@ -410,6 +410,22 @@ A path that resolves outside the repository reports only
 `instructions-external`; `init` never writes there, so it is the one warning
 `init` cannot clear.
 
+`check` also warns while the site workflow,
+`.github/workflows/projector-site.yml`, is an earlier shape that Projector
+wrote. That workflow does not deploy when a pull request closes, as
+[Build the Projector site](#build-the-projector-site) describes. A workflow
+edited by hand gets no warning.
+
+```console
+$ project check
+warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' or 'project site workflow --write' to refresh it) [site-workflow-outdated]
+Project plans are valid.
+```
+
+| Code | Condition | Fix |
+| --- | --- | --- |
+| `site-workflow-outdated` | the site workflow is an earlier shape Projector wrote | `project init`, or `project site workflow --write` |
+
 ## Read configuration
 
 Projector reads settings from `.projector.toml` files. Put a value in the file
@@ -610,7 +626,12 @@ unassigned group. `summary publish` fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
 workflow. It commits the head's `linguist-generated` attributes beside them
-as `attributes.json`, as [Generated files](#generated-files) describes.
+as `attributes.json`, as [Generated files](#generated-files) describes. It
+also commits, under `head/` beside them, the head's version of each changed
+file whose diff hides some of its lines: a file that is neither new nor
+deleted, whose diff has a hunk, and whose entry in the head is a regular file
+of at most 1 MiB that is not a `.gitattributes` file. Each is a tree entry
+naming the blob the head already has, so the ref gains no file content.
 Publishes that run at the same time, as a review loop's subagents run them,
 each land. A publish whose push loses the race for the ref fetches the ref
 again, rebuilds its commit on the new tip, keeping every other publisher's
@@ -777,6 +798,14 @@ whether it is. For summaries it builds every
 for no diff, and skips and reports any summary that fails or has no stored diff.
 It marks generated files by the `attributes.json` beside a summary, or by the
 checkout's `.gitattributes` for a summary stored without one.
+It checks each file stored under `head/` against every context and added
+line of the file's diff, and drops one that disagrees with a
+`::warning title=Context dropped::` line. It serves each file that passes
+once, at `reviews/blobs/<id>.txt` under the site's base, where `<id>` is the
+file's Git blob id, with each CRLF line ending turned into LF. The file's
+entry in the page's `data.json` gets a `context` naming that address, the
+file's line count, and each run of lines its hunks leave hidden. The build
+prints how many files it served this way and their total size.
 It reads only `summary.json`, so it also reports each summary stored only as
 `spec.json`, the name older releases wrote. To show such a summary, publish it
 again with a current release, as
@@ -854,8 +883,24 @@ writes it with `--write`. `--write` refuses, exiting 1, to overwrite a
 workflow edited by hand, and `--force` replaces it anyway. The workflow runs
 when a summary is published, when a push to the default branch changes
 `README.md`, `docs/`, a configured `projects.dir` outside `docs/`,
-`.projector.toml`, or the workflow itself, and on demand; `--branch` names the
+`.projector.toml`, or the workflow itself, when a pull request in the
+repository closes, merged or not, and on demand; `--branch` names the
 default branch when `origin` does not record it.
+
+A closed pull request deploys so that Reviews shows it as **Merged** or
+**Closed** right away, rather than as open until some later deploy. The
+workflow listens for `pull_request_target`, which GitHub runs from the
+default branch's workflow file, on the default branch. So the
+`github-pages` environment allows the deploy, and the action checks out the
+default branch, never the pull request's code. A pull request from a fork
+skips the deploy, and its run takes a concurrency group of its own, so it
+cannot replace a deploy waiting in the `pages` group. `project check` warns
+while the workflow is an earlier shape that Projector wrote, which does not
+deploy when a pull request closes. Run `project init` to rewrite it, or
+`project site workflow --write` where `site.enabled = false` keeps `init`
+away from the site. A workflow edited by hand gets no warning, because
+Projector cannot tell what its owner meant; compare it with
+`project site workflow` and add the trigger yourself.
 
 ### Generated files
 
@@ -906,7 +951,7 @@ place of its checkout's. When the checkout lacks the head, `publish` first
 fetches it from the remote it publishes to. The fetch adds the commit's
 objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
 remote cannot serve the head either, `publish` says so and stores no
-attributes. A summary stored without them, as every summary an earlier
+attributes and no files under `head/`. A summary stored without them, as every summary an earlier
 release published was, takes its attributes from the default branch when the
 site builds.
 
