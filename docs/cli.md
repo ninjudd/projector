@@ -847,6 +847,10 @@ file, its path decides: a name such as `package-lock.json`, `yarn.lock`,
 `api.pb.go`, or `client_pb2.py`, or a path through a `gen/`, `generated/`,
 `mocks/`, or `__generated__/` directory, makes it generated.
 
+A Markdown, MDX, reStructuredText, or AsciiDoc file is documentation, except a
+skill's `SKILL.md`. A skill is instructions an agent follows, so its
+`SKILL.md` counts as hand-written and starts expanded.
+
 `summary init` and `site page` read the attributes with `git check-attr` in
 the checkout they run in. `site build` and `site serve` read them in the
 checkout `--repo-root` names, for each summary stored without them:

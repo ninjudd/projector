@@ -211,7 +211,8 @@ def kind_of(path: str, generated: bool | None = None) -> str:
         or "/__tests__/" in lower
     ):
         return "test"
-    if lower.endswith((".md", ".mdx", ".rst", ".adoc")):
+    # A skill's SKILL.md is instructions an agent follows, so it is read as code, not as documentation.
+    if lower.endswith((".md", ".mdx", ".rst", ".adoc")) and path.rsplit("/", 1)[-1] != "SKILL.md":
         return "docs"
     return ""
 
