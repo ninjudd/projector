@@ -676,21 +676,27 @@ when GitHub cannot serve a diff that large.
 when there are any. Its menu has three sections. **Projects**, the home page,
 groups the projects by status, and opens each one beside a sidebar of its
 top-level project's folder: every supplemental file, subdirectory, and nested
-project. **Reviews** lists the summaries, and marks a pull request whose base
-branch is another open pull request's head with that pull request's number,
-linked to its review when the site has one and to GitHub otherwise. A summary
-that did not record the number has it looked up with `gh` at build time;
-when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
+project. **Reviews** lists the summaries, newest pull request first, with
+each one's status and when its newest version was published, in your time
+zone. A pull request is stacked when its base branch is another open pull
+request's head, and the pull requests of a stack are listed together where
+the newest of them would be, from the one on the default branch up, with no
+divider between them. A summary that did not record the pull request beneath
+it has it looked up with `gh` at build time; when `gh` cannot answer, the
+review shows no stack. The list leaves out merged and closed pull requests
+until you check **Show merged and closed** above it. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
 one row each with its title, and highlights the current one; a pull request
 with no stack is a stack of one, with its own row highlighted. Its older
-versions follow the sections. A summary's header shows the verdict of the
-newest Projector review of its head, **Clean** or **Changes requested**,
-linked to that review on GitHub, or **Unreviewed** when no Projector review
-names the head. A review counts only when its author owns the repository,
-belongs to its organization, or collaborates on it, because anyone can review
-a public repository's pull request. The build reads the reviews through `gh`
-and shows no status when `gh` cannot answer. **Docs** renders `README.md`
+versions follow the sections. A summary's header shows the same status as its
+row on Reviews: **Merged** or **Closed** once the pull request is, and until
+then the verdict of the newest Projector review of its head, **Clean** or
+**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
+no Projector review names the head. A review counts only when its author owns
+the repository, belongs to its organization, or collaborates on it, because
+anyone can review a public repository's pull request. The build reads the
+pull request's state and reviews through `gh` and shows no status when `gh`
+cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and

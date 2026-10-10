@@ -4,7 +4,8 @@
 // pull request summaries; Docs renders the README and everything else under
 // docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
 // shown as it is in a frame. Every view has a real path under the site's base;
-// links between views update the address without a page load.
+// links between views update the address without a page load. Every page loads
+// summary.js first, for the helpers a summary page draws with too.
 (function () {
     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
     const PRIORITY_ORDER = ['now', 'next', 'later'];
@@ -31,14 +32,11 @@
         return;
     const baseAttr = host.dataset.base;
     const base = baseAttr !== undefined && baseAttr !== '' ? baseAttr : '/';
-    function esc(s) {
-        return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
     function errorMessage(error) {
         return error instanceof Error ? error.message : String(error);
     }
-    function repoUrl(kind = '', path = '') {
-        return `https://github.com/${site.repo}${path !== '' ? `/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}` : ''}`;
+    function repoUrl(kind, path) {
+        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
     }
     function contentUrl(path) {
         return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
@@ -187,8 +185,7 @@
                 `<main class="${classes}">` +
                 (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
                 '<div class="sidebody" id="sidebody"></div></main>' +
-                (isWide ? '' : '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
-                    `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`);
+                (isWide ? '' : `<footer class="sitefoot">${creditHtml()}</footer>`);
         const main = document.getElementById('sidebody');
         if (main === null)
             throw new Error('The page lost the #sidebody element it just drew');
@@ -403,26 +400,54 @@
             return `<a href="${esc(`${base}projects/${name}/`)}">${esc(project !== null ? project.title : name)}</a>`;
         }).join('<br>');
     }
-    // The pull request a stacked one sits on: its review here when the site has one, else the pull request on GitHub.
-    function stackNote(r) {
-        const beneath = r.stackedOn;
-        if (beneath == null)
-            return '';
-        const reviewed = site.reviews.some(function (other) { return other.number === beneath; });
-        const href = reviewed ? `${base}reviews/${String(beneath)}/` : `${repoUrl()}/pull/${String(beneath)}`;
-        return `<div class="stack">Stacked on <a href="${esc(href)}">#${String(beneath)}</a></div>`;
+    function isDone(r) { return r.state === 'merged' || r.state === 'closed'; }
+    function reviewRow(r) {
+        const url = esc(`${base}reviews/${String(r.number)}/`);
+        return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
+            `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+            `<td>${projectLinks(r.projects)}</td>` +
+            `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
     }
+    // The reviews in site.json's order, each stack's rows in one table body, which
+    // draws no divider between them.
+    function reviewsTable(reviews) {
+        const bodies = [];
+        reviews.forEach(function (r) {
+            const last = bodies[bodies.length - 1];
+            if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack)
+                last.push(r);
+            else
+                bodies.push([r]);
+        });
+        return '<div class="tblwrap"><table class="tbl reviews">' +
+            '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
+            bodies.map(function (rows) {
+                return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
+            }).join('') + '</table></div>';
+    }
+    // A merged or closed pull request's review is left out until the reader asks
+    // for it. A stack keeps its other reviews together.
     function showReviews() {
-        frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
-            '<div class="tblwrap"><table class="tbl reviews"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Updated</th></tr>' +
-            site.reviews.map(function (r) {
-                const url = esc(`${base}reviews/${String(r.number)}/`);
-                return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
-                    `<div class="note">${esc(r.title)}</div>${stackNote(r)}</td><td>${projectLinks(r.projects)}</td>` +
-                    `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
-                    `<td class="date">${esc(r.updated)}</td></tr>`;
-            }).join('') + '</table></div>' +
-            '<p class="note">Built by Projector\'s <span class="mono">summarize-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
+        const done = site.reviews.filter(isDone).length;
+        const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
+            (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
+                `<span class="count">${String(done)}</span></label>` : '') +
+            '<div class="reviewlist"></div>');
+        const list = main.querySelector('.reviewlist');
+        if (list === null)
+            throw new Error('The reviews view lost the list it just drew');
+        const box = main.querySelector('.showdone input');
+        function draw() {
+            if (list === null)
+                return;
+            const all = box?.checked === true;
+            const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
+            list.innerHTML = shown.length > 0 ? reviewsTable(shown)
+                : '<p class="note">Every review here is of a merged or closed pull request.</p>';
+        }
+        if (box !== null)
+            box.addEventListener('change', draw);
+        draw();
     }
     // Centered on the whole query where the text holds it, else on the earliest word.
     function snippet(text, words) {

@@ -118,9 +118,13 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
 table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
 table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
-table.tbl.reviews td.date { white-space: nowrap; }
-table.tbl.reviews .stack { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
-table.tbl.reviews .stack::before { content: "↳ "; }
+/* Every cell of a review's row sits on the first line's baseline, so the small
+   status lines up with the title beside it. A stack's rows share one table body
+   and draw no divider between them. */
+table.tbl.reviews td { vertical-align: baseline; }
+table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
+table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }
+.showdone { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 12px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
 
 .sitemain .badge {
   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
