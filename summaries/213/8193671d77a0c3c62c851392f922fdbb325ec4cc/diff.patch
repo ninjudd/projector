@@ -1,0 +1,1233 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 28265bb..4a6ae46 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -676,21 +676,27 @@ when GitHub cannot serve a diff that large.
+ when there are any. Its menu has three sections. **Projects**, the home page,
+ groups the projects by status, and opens each one beside a sidebar of its
+ top-level project's folder: every supplemental file, subdirectory, and nested
+-project. **Reviews** lists the summaries, and marks a pull request whose base
+-branch is another open pull request's head with that pull request's number,
+-linked to its review when the site has one and to GitHub otherwise. A summary
+-that did not record the number has it looked up with `gh` at build time;
+-when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
++project. **Reviews** lists the summaries, newest pull request first, with
++each one's status and when its newest version was published, in your time
++zone. A pull request is stacked when its base branch is another open pull
++request's head, and the pull requests of a stack are listed together where
++the newest of them would be, from the one on the default branch up, with no
++divider between them. A summary that did not record the pull request beneath
++it has it looked up with `gh` at build time; when `gh` cannot answer, the
++review shows no stack. The list leaves out merged and closed pull requests
++until you check **Show merged and closed** above it. A summary's sidebar lists
+ every pull request in its stack, the ones beneath it and the ones above it,
+ one row each with its title, and highlights the current one; a pull request
+ with no stack is a stack of one, with its own row highlighted. Its older
+-versions follow the sections. A summary's header shows the verdict of the
+-newest Projector review of its head, **Clean** or **Changes requested**,
+-linked to that review on GitHub, or **Unreviewed** when no Projector review
+-names the head. A review counts only when its author owns the repository,
+-belongs to its organization, or collaborates on it, because anyone can review
+-a public repository's pull request. The build reads the reviews through `gh`
+-and shows no status when `gh` cannot answer. **Docs** renders `README.md`
++versions follow the sections. A summary's header shows the same status as its
++row on Reviews: **Merged** or **Closed** once the pull request is, and until
++then the verdict of the newest Projector review of its head, **Clean** or
++**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
++no Projector review names the head. A review counts only when its author owns
++the repository, belongs to its organization, or collaborates on it, because
++anyone can review a public repository's pull request. The build reads the
++pull request's state and reviews through `gh` and shows no status when `gh`
++cannot answer. **Docs** renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+ projects directory, which Projects covers. Each sidebar lists its readme as
+ **Overview** and appears only when there is more than that readme to list, and
+diff --git a/site/assets/site.css b/site/assets/site.css
+index 904bb5c..4f952f3 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -118,9 +118,13 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
+ .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
+ table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
+ table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
+-table.tbl.reviews td.date { white-space: nowrap; }
+-table.tbl.reviews .stack { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+-table.tbl.reviews .stack::before { content: "↳ "; }
++/* Every cell of a review's row sits on the first line's baseline, so the small
++   status lines up with the title beside it. A stack's rows share one table body
++   and draw no divider between them. */
++table.tbl.reviews td { vertical-align: baseline; }
++table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
++table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }
++.showdone { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 12px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+ 
+ .sitemain .badge {
+   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+diff --git a/site/assets/site.js b/site/assets/site.js
+index 95c7019..b50e365 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -4,7 +4,8 @@
+ // pull request summaries; Docs renders the README and everything else under
+ // docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
+ // shown as it is in a frame. Every view has a real path under the site's base;
+-// links between views update the address without a page load.
++// links between views update the address without a page load. Every page loads
++// summary.js first, for the helpers a summary page draws with too.
+ (function () {
+     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
+     const PRIORITY_ORDER = ['now', 'next', 'later'];
+@@ -31,14 +32,11 @@
+         return;
+     const baseAttr = host.dataset.base;
+     const base = baseAttr !== undefined && baseAttr !== '' ? baseAttr : '/';
+-    function esc(s) {
+-        return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+-    }
+     function errorMessage(error) {
+         return error instanceof Error ? error.message : String(error);
+     }
+-    function repoUrl(kind = '', path = '') {
+-        return `https://github.com/${site.repo}${path !== '' ? `/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}` : ''}`;
++    function repoUrl(kind, path) {
++        return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+     }
+     function contentUrl(path) {
+         return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
+@@ -187,8 +185,7 @@
+                 `<main class="${classes}">` +
+                 (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
+                 '<div class="sidebody" id="sidebody"></div></main>' +
+-                (isWide ? '' : '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
+-                    `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`);
++                (isWide ? '' : `<footer class="sitefoot">${creditHtml()}</footer>`);
+         const main = document.getElementById('sidebody');
+         if (main === null)
+             throw new Error('The page lost the #sidebody element it just drew');
+@@ -403,26 +400,54 @@
+             return `<a href="${esc(`${base}projects/${name}/`)}">${esc(project !== null ? project.title : name)}</a>`;
+         }).join('<br>');
+     }
+-    // The pull request a stacked one sits on: its review here when the site has one, else the pull request on GitHub.
+-    function stackNote(r) {
+-        const beneath = r.stackedOn;
+-        if (beneath == null)
+-            return '';
+-        const reviewed = site.reviews.some(function (other) { return other.number === beneath; });
+-        const href = reviewed ? `${base}reviews/${String(beneath)}/` : `${repoUrl()}/pull/${String(beneath)}`;
+-        return `<div class="stack">Stacked on <a href="${esc(href)}">#${String(beneath)}</a></div>`;
+-    }
++    function isDone(r) { return r.state === 'merged' || r.state === 'closed'; }
++    function reviewRow(r) {
++        const url = esc(`${base}reviews/${String(r.number)}/`);
++        return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
++            `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
++            `<td>${projectLinks(r.projects)}</td>` +
++            `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
++    }
++    // The reviews in site.json's order, each stack's rows in one table body, which
++    // draws no divider between them.
++    function reviewsTable(reviews) {
++        const bodies = [];
++        reviews.forEach(function (r) {
++            const last = bodies[bodies.length - 1];
++            if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack)
++                last.push(r);
++            else
++                bodies.push([r]);
++        });
++        return '<div class="tblwrap"><table class="tbl reviews">' +
++            '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
++            bodies.map(function (rows) {
++                return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
++            }).join('') + '</table></div>';
++    }
++    // A merged or closed pull request's review is left out until the reader asks
++    // for it. A stack keeps its other reviews together.
+     function showReviews() {
+-        frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
+-            '<div class="tblwrap"><table class="tbl reviews"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Updated</th></tr>' +
+-            site.reviews.map(function (r) {
+-                const url = esc(`${base}reviews/${String(r.number)}/`);
+-                return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
+-                    `<div class="note">${esc(r.title)}</div>${stackNote(r)}</td><td>${projectLinks(r.projects)}</td>` +
+-                    `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
+-                    `<td class="date">${esc(r.updated)}</td></tr>`;
+-            }).join('') + '</table></div>' +
+-            '<p class="note">Built by Projector\'s <span class="mono">summarize-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
++        const done = site.reviews.filter(isDone).length;
++        const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
++            (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
++                `<span class="count">${String(done)}</span></label>` : '') +
++            '<div class="reviewlist"></div>');
++        const list = main.querySelector('.reviewlist');
++        if (list === null)
++            throw new Error('The reviews view lost the list it just drew');
++        const box = main.querySelector('.showdone input');
++        function draw() {
++            if (list === null)
++                return;
++            const all = box?.checked === true;
++            const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
++            list.innerHTML = shown.length > 0 ? reviewsTable(shown)
++                : '<p class="note">Every review here is of a merged or closed pull request.</p>';
++        }
++        if (box !== null)
++            box.addEventListener('change', draw);
++        draw();
+     }
+     // Centered on the whole query where the text holds it, else on the earliest word.
+     function snippet(text, words) {
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 03c1263..7a69108 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -9,6 +9,7 @@
+   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
+   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
+   --warn: #946300; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA; --info: #0550AE; --info-bg: #E3EDFA;
++  --merged: #7C3AED; --closed: #B42318;
+   --code-bg: #EFECE3; --tok-bg: #FCE8A4; --tok-ring: #C99A1E;
+   --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
+   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
+@@ -23,6 +24,7 @@
+     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+     --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
++    --merged: #C4A7FF; --closed: #F0A19B;
+     --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
+     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+     --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+@@ -36,6 +38,7 @@
+   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+   --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
++  --merged: #C4A7FF; --closed: #F0A19B;
+   --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
+   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+   --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+@@ -72,6 +75,8 @@ a.rstatus:hover { text-decoration: underline; }
+ .rstatus.clean { color: var(--ok); }
+ .rstatus.changes-requested { color: var(--accent); }
+ .rstatus.unreviewed { color: var(--muted); }
++.rstatus.merged { color: var(--merged); }
++.rstatus.closed { color: var(--closed); }
+ 
+ /* sidebar */
+ /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 006da8b..762fa4b 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -2,6 +2,37 @@
+ // Projector PR summary renderer: builds the page from summary data, embedded in
+ // #summary-data or fetched from data.json beside the page, then wires collapsing,
+ // reviewed state, highlighting, and sticky headers.
++// What a summary page and the site's own pages draw alike. The site's pages load
++// this script for these, as they load summary.css for its colours, and on a page
++// with no summary the script draws nothing and listens for nothing.
++function esc(s) {
++    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
++}
++// Projector's credit, at the foot of every page.
++function creditHtml() {
++    return 'Generated by <a href="https://projector.bot">Projector</a>';
++}
++// A moment in the reader's own time zone, to the minute.
++function localTime(when) {
++    return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
++}
++// A pull request's status: Merged or Closed once it is, and until then the
++// verdict of the newest Projector review of its head, linked to that review,
++// or Unreviewed when no Projector review names the head. Nothing when the
++// build could not ask GitHub, so a status it does not know never reads as
++// unreviewed.
++function statusHtml(state, review) {
++    if (state === 'merged')
++        return '<span class="rstatus merged">Merged</span>';
++    if (state === 'closed')
++        return '<span class="rstatus closed">Closed</span>';
++    if (review === undefined)
++        return '';
++    if (review.status === 'unreviewed')
++        return '<span class="rstatus unreviewed">Unreviewed</span>';
++    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
++    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++}
+ (function () {
+     function renderSummary(data) {
+         const pr = data.pr;
+@@ -11,9 +42,6 @@
+         const baseRef = pr.baseRef !== undefined && pr.baseRef !== '' ? pr.baseRef : null;
+         const filesByPath = {};
+         data.files.forEach(function (f) { filesByPath[f.path] = f; });
+-        function esc(s) {
+-            return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+-        }
+         function num(n) { return n.toLocaleString('en-US'); }
+         // A paragraph of prose is wrapped in <p>; a list, table, heading or code
+         // block the summary wrote as an item of its own is placed as it is, since a
+@@ -283,9 +311,7 @@
+             if (heads.length < 2)
+                 return '';
+             const rows = heads.map(function (h) {
+-                const when = h.at !== undefined
+-                    ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
+-                    : '';
++                const when = h.at !== undefined ? `<span class="vwhen">${esc(localTime(new Date(h.at * 1000)))}</span>` : '';
+                 const row = `<span class="mono">${short(h.head)}</span>${when}`;
+                 return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
+             }).join('');
+@@ -316,16 +342,9 @@
+                 return `<li><a href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+             }).join('') + '</ul>';
+         }
+-        // Nothing when the build could not ask GitHub, so a status it does not know
+-        // never reads as unreviewed.
+         function reviewStatus() {
+-            const review = data.review;
+-            if (review === undefined)
+-                return '';
+-            if (review.status === 'unreviewed')
+-                return ' · <span class="rstatus unreviewed">Unreviewed</span>';
+-            const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-            return ` · ${ext(review.url, word, `rstatus ${review.status}`)}`;
++            const status = statusHtml(pr.state, data.review);
++            return status !== '' ? ` · ${status}` : '';
+         }
+         function renderPage() {
+             const nav = data.groups.map(function (g, i) {
+@@ -344,7 +363,7 @@
+                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+                 `<div class="prblock">${projectsList()}${stackList()}</div>` +
+                 `<div class="extra">${extra}</div>` +
+-                `<ol>${nav}</ol><div class="navfoot"><div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>` +
++                `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
+                 `${headsList()}</div></nav></aside>` +
+                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+@@ -897,13 +916,18 @@
+         openHashTarget(true);
+         refreshProgress();
+     }
++    // Every summary page has a #summary to draw into. A site page loads this script
++    // only for the helpers above, and has none.
++    const host = document.getElementById('summary');
++    if (host === null)
++        return;
+     const node = document.getElementById('summary-data');
+     if (node !== null) {
+         renderSummary(JSON.parse(node.textContent !== '' ? node.textContent : '{}'));
+         wireSummary();
+     }
+     else {
+-        const src = document.getElementById('summary')?.dataset.src;
++        const src = host.dataset.src;
+         fetch(src !== undefined && src !== '' ? src : 'data.json')
+             .then(function (response) {
+             if (!response.ok)
+@@ -914,8 +938,7 @@
+             renderSummary(data);
+             wireSummary();
+         }, function (error) {
+-            (document.getElementById('summary') ?? document.body).textContent =
+-                `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
++            host.textContent = `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
+         });
+     }
+ })();
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index d0c01a0..d5da573 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -48,17 +48,26 @@ interface SummaryGroup {
+   files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
+ }
+ 
++/** A pull request's state when the site was built. */
++type PullState = 'open' | 'merged' | 'closed';
++
++/**
++ * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
++ * Projector review names the head.
++ */
++type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
++
+ /** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+   name?: string;
+   /**
+-   * `base` is the merge base the diff is taken from. `state` is the pull request's state when the site was
+-   * built, and `currentBaseRef` the base branch GitHub reported then, or null once that branch was deleted;
+-   * both are absent when the build could not ask GitHub.
++   * `base` is the merge base the diff is taken from. `currentBaseRef` is the base branch GitHub reported when
++   * the site was built, or null once that branch was deleted; it and `state` are absent when the build could
++   * not ask GitHub.
+    */
+   pr: {
+     repo: string; number: number; title: string; head: string; base?: string; headRef?: string; baseRef?: string;
+-    state?: 'open' | 'merged' | 'closed'; currentBaseRef?: string | null;
++    state?: PullState; currentBaseRef?: string | null;
+   };
+   /** The repository's default branch when the site was built, where a merged pull request's files now are once the branch it merged into is gone. */
+   defaultBranch?: string;
+@@ -71,11 +80,8 @@ interface SummaryData {
+   /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
+   stack?: { number: number; title: string; url: string; current: boolean }[];
+   projects?: { name: string; title: string; url: string }[];
+-  /**
+-   * The newest Projector review of this head, with its page on GitHub, or `unreviewed` when no
+-   * Projector review names the head; absent when the build could not ask GitHub.
+-   */
+-  review?: { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
++  /** The newest Projector review of this head; absent when the build could not ask GitHub. */
++  review?: ReviewStatus;
+   generatedAt?: string;
+ }
+ 
+@@ -97,15 +103,19 @@ interface SiteProject {
+   reviews: number[];
+ }
+ 
++/** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
+ interface SiteReview {
+   number: number;
+   name: string;
+   title: string;
+-  head: string;
+   heads: number;
+   projects: string[];
+-  /** The number of the pull request this one is stacked on, whether or not the site has its review. */
+-  stackedOn?: number | null;
++  /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
++  stack: number | null;
++  /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */
++  state?: PullState;
++  review?: ReviewStatus;
++  /** When the newest head was published, as an ISO 8601 time in UTC. */
+   updated: string;
+ }
+ 
+diff --git a/site/src/site.ts b/site/src/site.ts
+index e8a4151..949698a 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -3,7 +3,8 @@
+ // pull request summaries; Docs renders the README and everything else under
+ // docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
+ // shown as it is in a frame. Every view has a real path under the site's base;
+-// links between views update the address without a page load.
++// links between views update the address without a page load. Every page loads
++// summary.js first, for the helpers a summary page draws with too.
+ (function (): void {
+   type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
+   type Body = string | Node;
+@@ -45,14 +46,11 @@
+   const baseAttr = host.dataset.base;
+   const base = baseAttr !== undefined && baseAttr !== '' ? baseAttr : '/';
+ 
+-  function esc(s: string | number | null | undefined): string {
+-    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+-  }
+   function errorMessage(error: unknown): string {
+     return error instanceof Error ? error.message : String(error);
+   }
+-  function repoUrl(kind = '', path = ''): string {
+-    return `https://github.com/${site.repo}${path !== '' ? `/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}` : ''}`;
++  function repoUrl(kind: string, path: string): string {
++    return `https://github.com/${site.repo}/${kind}/${encodeURIComponent(site.branch)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+   }
+   function contentUrl(path: string): string {
+     return `${base}${site.content}/${path.split('/').map(encodeURIComponent).join('/')}`;
+@@ -192,8 +190,7 @@
+       `<main class="${classes}">` +
+       (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
+       '<div class="sidebody" id="sidebody"></div></main>' +
+-      (isWide ? '' : '<footer class="sitefoot">Built by <a href="https://projector.bot">Projector</a> from ' +
+-        `<a href="${esc(repoUrl())}">${esc(site.repo)}</a>.</footer>`);
++      (isWide ? '' : `<footer class="sitefoot">${creditHtml()}</footer>`);
+     const main = document.getElementById('sidebody');
+     if (main === null) throw new Error('The page lost the #sidebody element it just drew');
+     if (typeof body === 'string') main.innerHTML = body;
+@@ -404,27 +401,52 @@
+     }).join('<br>');
+   }
+ 
+-  // The pull request a stacked one sits on: its review here when the site has one, else the pull request on GitHub.
+-  function stackNote(r: SiteReview): string {
+-    const beneath = r.stackedOn;
+-    if (beneath == null) return '';
+-    const reviewed = site.reviews.some(function (other) { return other.number === beneath; });
+-    const href = reviewed ? `${base}reviews/${String(beneath)}/` : `${repoUrl()}/pull/${String(beneath)}`;
+-    return `<div class="stack">Stacked on <a href="${esc(href)}">#${String(beneath)}</a></div>`;
++  function isDone(r: SiteReview): boolean { return r.state === 'merged' || r.state === 'closed'; }
++
++  function reviewRow(r: SiteReview): string {
++    const url = esc(`${base}reviews/${String(r.number)}/`);
++    return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
++      `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
++      `<td>${projectLinks(r.projects)}</td>` +
++      `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
++  }
++
++  // The reviews in site.json's order, each stack's rows in one table body, which
++  // draws no divider between them.
++  function reviewsTable(reviews: SiteReview[]): string {
++    const bodies: SiteReview[][] = [];
++    reviews.forEach(function (r) {
++      const last = bodies[bodies.length - 1];
++      if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack) last.push(r);
++      else bodies.push([r]);
++    });
++    return '<div class="tblwrap"><table class="tbl reviews">' +
++      '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
++      bodies.map(function (rows) {
++        return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
++      }).join('') + '</table></div>';
+   }
+ 
++  // A merged or closed pull request's review is left out until the reader asks
++  // for it. A stack keeps its other reviews together.
+   function showReviews(): void {
+-    frame('reviews', 'Reviews',
+-      '<h1>Reviews</h1>' +
+-      '<div class="tblwrap"><table class="tbl reviews"><tr><th>#</th><th>Review</th><th>Projects</th><th>Head</th><th>Updated</th></tr>' +
+-      site.reviews.map(function (r) {
+-        const url = esc(`${base}reviews/${String(r.number)}/`);
+-        return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
+-          `<div class="note">${esc(r.title)}</div>${stackNote(r)}</td><td>${projectLinks(r.projects)}</td>` +
+-          `<td class="mono">${esc(r.head.slice(0, 9))}</td>` +
+-          `<td class="date">${esc(r.updated)}</td></tr>`;
+-      }).join('') + '</table></div>' +
+-      '<p class="note">Built by Projector\'s <span class="mono">summarize-pr</span> skill. Each link opens the newest version; older heads are listed in its sidebar.</p>');
++    const done = site.reviews.filter(isDone).length;
++    const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
++      (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
++        `<span class="count">${String(done)}</span></label>` : '') +
++      '<div class="reviewlist"></div>');
++    const list = main.querySelector('.reviewlist');
++    if (list === null) throw new Error('The reviews view lost the list it just drew');
++    const box = main.querySelector<HTMLInputElement>('.showdone input');
++    function draw(): void {
++      if (list === null) return;
++      const all = box?.checked === true;
++      const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
++      list.innerHTML = shown.length > 0 ? reviewsTable(shown)
++        : '<p class="note">Every review here is of a merged or closed pull request.</p>';
++    }
++    if (box !== null) box.addEventListener('change', draw);
++    draw();
+   }
+ 
+   // Centered on the whole query where the text holds it, else on the earliest word.
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 36d65a1..e194dc2 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -1,6 +1,38 @@
+ // Projector PR summary renderer: builds the page from summary data, embedded in
+ // #summary-data or fetched from data.json beside the page, then wires collapsing,
+ // reviewed state, highlighting, and sticky headers.
++
++// What a summary page and the site's own pages draw alike. The site's pages load
++// this script for these, as they load summary.css for its colours, and on a page
++// with no summary the script draws nothing and listens for nothing.
++function esc(s: string | number | null | undefined): string {
++  return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
++}
++
++// Projector's credit, at the foot of every page.
++function creditHtml(): string {
++  return 'Generated by <a href="https://projector.bot">Projector</a>';
++}
++
++// A moment in the reader's own time zone, to the minute.
++function localTime(when: Date): string {
++  return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
++}
++
++// A pull request's status: Merged or Closed once it is, and until then the
++// verdict of the newest Projector review of its head, linked to that review,
++// or Unreviewed when no Projector review names the head. Nothing when the
++// build could not ask GitHub, so a status it does not know never reads as
++// unreviewed.
++function statusHtml(state: PullState | undefined, review: ReviewStatus | undefined): string {
++  if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
++  if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
++  if (review === undefined) return '';
++  if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
++  const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
++  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++}
++
+ (function (): void {
+ function renderSummary(data: SummaryData): void {
+   const pr = data.pr;
+@@ -11,9 +43,6 @@ function renderSummary(data: SummaryData): void {
+   const filesByPath: Record<string, SummaryFile> = {};
+   data.files.forEach(function (f) { filesByPath[f.path] = f; });
+ 
+-  function esc(s: string | number | null | undefined): string {
+-    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+-  }
+   function num(n: number): string { return n.toLocaleString('en-US'); }
+   // A paragraph of prose is wrapped in <p>; a list, table, heading or code
+   // block the summary wrote as an item of its own is placed as it is, since a
+@@ -276,9 +305,7 @@ function renderSummary(data: SummaryData): void {
+     const heads = data.heads ?? [];
+     if (heads.length < 2) return '';
+     const rows = heads.map(function (h) {
+-      const when = h.at !== undefined
+-        ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
+-        : '';
++      const when = h.at !== undefined ? `<span class="vwhen">${esc(localTime(new Date(h.at * 1000)))}</span>` : '';
+       const row = `<span class="mono">${short(h.head)}</span>${when}`;
+       return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
+     }).join('');
+@@ -310,14 +337,9 @@ function renderSummary(data: SummaryData): void {
+     }).join('') + '</ul>';
+   }
+ 
+-  // Nothing when the build could not ask GitHub, so a status it does not know
+-  // never reads as unreviewed.
+   function reviewStatus(): string {
+-    const review = data.review;
+-    if (review === undefined) return '';
+-    if (review.status === 'unreviewed') return ' · <span class="rstatus unreviewed">Unreviewed</span>';
+-    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-    return ` · ${ext(review.url, word, `rstatus ${review.status}`)}`;
++    const status = statusHtml(pr.state, data.review);
++    return status !== '' ? ` · ${status}` : '';
+   }
+ 
+   function renderPage(): string {
+@@ -337,7 +359,7 @@ function renderSummary(data: SummaryData): void {
+       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+         `<div class="prblock">${projectsList()}${stackList()}</div>` +
+         `<div class="extra">${extra}</div>` +
+-        `<ol>${nav}</ol><div class="navfoot"><div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>` +
++        `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
+         `${headsList()}</div></nav></aside>` +
+       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+         `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+@@ -807,12 +829,16 @@ function wireSummary(): void {
+   refreshProgress();
+ }
+ 
++// Every summary page has a #summary to draw into. A site page loads this script
++// only for the helpers above, and has none.
++const host = document.getElementById('summary');
++if (host === null) return;
+ const node = document.getElementById('summary-data');
+ if (node !== null) {
+   renderSummary(JSON.parse(node.textContent !== '' ? node.textContent : '{}') as SummaryData);
+   wireSummary();
+ } else {
+-  const src = document.getElementById('summary')?.dataset.src;
++  const src = host.dataset.src;
+   fetch(src !== undefined && src !== '' ? src : 'data.json')
+     .then(function (response) {
+       if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
+@@ -822,8 +848,7 @@ if (node !== null) {
+       renderSummary(data);
+       wireSummary();
+     }, function (error: unknown) {
+-      (document.getElementById('summary') ?? document.body).textContent =
+-        `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
++      host.textContent = `This summary could not load its data: ${error instanceof Error ? error.message : String(error)}`;
+     });
+ }
+ })();
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 08ba950..c5652b3 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -168,8 +168,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
+                     lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+-    Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
+-    `lookup`, and each page lists the pull requests in its stack. A file is
++    The entries come in the order the Reviews index lists them, as
++    `stack_groups` puts them, from `stack_bases` with `trunk` and `lookup`.
++    Each carries `stack`, the number of the first review in its stack, or
++    None when no other review is in it, and each page lists the pull
++    requests in its stack. A file is
+     generated as the `attributes.json` that `publish` stored beside a summary
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+     its .gitattributes. `status_lookup` returns a pull request's state and
+@@ -177,9 +180,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
+     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
+     GitHub reports, or None once that branch is deleted, and `review`, the
+     newest Projector review of its head: `unreviewed` when none names the
+-    head. A page has none of them when the lookup is missing or cannot ask.
+-    Each page also carries `defaultBranch`, `trunk`, where a merged pull
+-    request's files now are when the branch it merged into is gone.
++    head. A page has none of them when the lookup is missing or cannot ask,
++    and each entry carries its newest head's `pr.state` and `review` the
++    same way. Each page also carries `defaultBranch`, `trunk`, where a
++    merged pull request's files now are when the branch it merged into is
++    gone.
+     """
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+@@ -253,9 +258,35 @@ def skip(path: Path, reason: object) -> None:
+             page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
+                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
+         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
+-                        "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),
++                        "review": latest.get("review"), "heads": len(versions), "updated": versions[0][0],
+                         "projects": [p["name"] for p in latest["projects"]]})
+-    return entries, failures
++    by_number = {e["number"]: e for e in entries}
++    ordered = []
++    for group in stack_groups(bases, prs):
++        for number in group:
++            ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
++    return ordered, failures
++
++
++def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
++    """The pull requests in `prs`, which have reviews, in the order the Reviews index lists them, one list per stack.
++
++    The index lists the newest pull request first, and a stack sits where its
++    newest pull request would, its pull requests together in `stack_rows`
++    order, from the one on the default branch up. A pull request in a stack
++    without a review here, known only as a base, is left out, and one alone
++    is a stack of its own.
++    """
++    placed: set[int] = set()
++    groups = []
++    for number in sorted(prs, reverse=True):
++        if number in placed:
++            continue
++        rows = [row["number"] for row in stack_rows(number, bases, prs)] or [number]
++        group = [n for n in rows if n in prs and n not in placed]
++        placed.update(group)
++        groups.append(group)
++    return groups
+ 
+ 
+ def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
+@@ -533,6 +564,7 @@ def home_page(repo: str, base: str) -> str:
+ <script src="{MARKED}"></script>
+ <script src="{PURIFY}"></script>
+ <script src="{HLJS}/highlight.min.js"></script>
++<script src="{assets}summary.js"></script>
+ <script src="{assets}site.js"></script>
+ """
+ 
+@@ -547,6 +579,24 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+     return sorted(routes)
+ 
+ 
++def review_row(entry: dict) -> dict:
++    """A review's row on the Reviews index, in site.json.
++
++    `updated` is when its newest head was published, in UTC. `state` and
++    `review` are its pull request's and its newest head's, as its page
++    carries them, and are left out when the build could not ask GitHub.
++    """
++    row = {"number": entry["number"], "name": entry["name"], "title": entry["pr"]["title"],
++           "heads": entry["heads"], "projects": entry["projects"], "stack": entry["stack"],
++           "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
++           .strftime("%Y-%m-%dT%H:%M:%SZ")}
++    if entry["pr"].get("state") is not None:
++        row["state"] = entry["pr"]["state"]
++    if entry["review"] is not None:
++        row["review"] = entry["review"]
++    return row
++
++
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+@@ -576,7 +626,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+                             status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
+     entries, failures = built
+     for project in described:
+-        project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
++        project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
+     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
+     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
+@@ -591,13 +641,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+         "projects": described,
+         "projectsReadme": projects_readme,
+         "files": files,
+-        "reviews": [
+-            {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
+-             "heads": e["heads"], "projects": e["projects"],
+-             "stackedOn": e["stackedOn"],
+-             "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
+-            for e in entries
+-        ],
++        "reviews": [review_row(e) for e in entries],
+     }
+     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+     index = search_index(repo_root, readme, docs, described, projects_readme) if repo_root else []
+diff --git a/tests/test_site.py b/tests/test_site.py
+index c5b9fd5..6f19aad 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -89,6 +89,8 @@ def test_the_home_page_loads_the_site_script_and_its_libraries(self) -> None:
+         for needed in ('src="/assets/site.js"', "marked", "purify.min.js", 'href="/assets/site.css"', 'rel="icon"',
+                        'data-base="/"'):
+             self.assertIn(needed, home)
++        self.assertLess(home.index('src="/assets/summary.js"'), home.index('src="/assets/site.js"'),
++                        "site.js draws with the helpers summary.js shares")
+         for asset in ("site.js", "site.css", "summary.js", "summary.css"):
+             self.assertTrue((self.out / "assets" / asset).is_file(), asset)
+ 
+@@ -271,8 +273,8 @@ def build(self) -> dict:
+         self.assertEqual(0, code)
+         return json.loads((self.out / "site.json").read_text())
+ 
+-    def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, int | None], list[str]]:
+-        """Each review's stackedOn, and the head branches the build asked GitHub about."""
++    def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, list[int]], list[str]]:
++        """The pull requests in each review's stack, as its page lists them, and the head branches the build asked GitHub about."""
+         asked: list[str] = []
+ 
+         def lookup(*args: str) -> str | None:
+@@ -285,18 +287,23 @@ def lookup(*args: str) -> str | None:
+         with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+             reviews = self.build()["reviews"]
+         self.assertTrue(all("baseRef" not in r for r in reviews), "the page shows pull requests, not branch names")
+-        return {r["number"]: r["stackedOn"] for r in reviews}, asked
+ 
+-    def test_a_review_names_the_review_its_pull_request_is_stacked_on(self) -> None:
++        def stack(number: int) -> list[int]:
++            page = next((self.out / "reviews" / str(number)).glob("*/data.json"))
++            return [row["number"] for row in json.loads(page.read_text())["stack"]]
++
++        return {r["number"]: stack(r["number"]) for r in reviews}, asked
++
++    def test_a_review_shares_a_stack_with_the_review_its_pull_request_is_stacked_on(self) -> None:
+         self.publish(9, "c" * 40, headRef="feature-a")
+         self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
+ 
+-        self.assertEqual(({9: None, 10: 9}, []), self.stacks(), "a review's head branch answers without GitHub")
++        self.assertEqual(({9: [9, 10], 10: [9, 10]}, []), self.stacks(), "a review's head branch answers without GitHub")
+ 
+     def test_a_summary_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a", basePr=7)
+ 
+-        self.assertEqual(({10: 7}, []), self.stacks())
++        self.assertEqual(({10: [7, 10]}, []), self.stacks())
+ 
+     def test_an_older_summary_asks_github_once_per_base_branch(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a")
+@@ -305,14 +312,15 @@ def test_an_older_summary_asks_github_once_per_base_branch(self) -> None:
+ 
+         stacked, asked = self.stacks({"feature-a": "7"})
+ 
+-        self.assertEqual({10: 7, 11: 7, 12: None}, stacked, "a base branch no pull request uses marks nothing")
++        self.assertEqual({10: [7, 10, 11], 11: [7, 10, 11], 12: []}, stacked,
++                         "a base branch no pull request uses marks nothing")
+         self.assertEqual(["feature-a", "release"], sorted(asked))
+ 
+     def test_a_pull_request_on_the_default_branch_is_never_stacked_or_looked_up(self) -> None:
+         self.publish(9, "c" * 40, headRef="main")
+         self.publish(10, "d" * 40)
+ 
+-        self.assertEqual(({9: None, 10: None}, []), self.stacks({"main": "9"}))
++        self.assertEqual(({9: [], 10: []}, []), self.stacks({"main": "9"}))
+ 
+     def test_a_default_branch_misjudged_is_still_not_a_stack(self) -> None:
+         # A checkout on a feature branch that never recorded origin's HEAD takes feature for the default.
+@@ -321,7 +329,7 @@ def test_a_default_branch_misjudged_is_still_not_a_stack(self) -> None:
+                         "commit", "-q", "--allow-empty", "-m", "start"], check=True)
+         self.publish(10, "d" * 40)
+ 
+-        self.assertEqual(({10: None}, ["main"]), self.stacks({}),
++        self.assertEqual(({10: []}, ["main"]), self.stacks({}),
+                          "on a checkout that does not know its default branch, main is asked about and is no pull request's head")
+ 
+     def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -> None:
+@@ -330,7 +338,7 @@ def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -
+                         "refs/remotes/origin/trunk"], check=True)
+         self.publish(9, "c" * 40, baseRef="trunk")
+ 
+-        self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
++        self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+ 
+     def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+         """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
+@@ -429,7 +437,54 @@ def stack(number: int, head: str) -> list[dict]:
+     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a")
+ 
+-        self.assertEqual({10: None}, self.stacks(None)[0])
++        self.assertEqual({10: []}, self.stacks(None)[0])
++
++    def test_the_reviews_index_lists_each_stack_together_from_the_default_branch_up(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-a")
++        self.publish(10, "b" * 40, headRef="feature-b", baseRef="feature-a")
++        self.publish(11, "c" * 40, headRef="feature-c", baseRef="feature-b")
++        self.publish(12, "d" * 40, headRef="feature-d", baseRef="feature-b")
++        self.publish(13, "e" * 40, headRef="feature-e", baseRef="feature-x", basePr=7)
++        self.publish(14, "f" * 40, headRef="alone")
++        self.publish(15, "a" * 40, headRef="feature-p")
++        self.publish(16, "b" * 40, headRef="between")
++        self.publish(18, "c" * 40, headRef="feature-q", baseRef="feature-p")
++        self.publish(30, "d" * 40, headRef="feature-s", baseRef="feature-r", basePr=25)
++        self.publish(31, "e" * 40, headRef="feature-t", baseRef="feature-r", basePr=25)
++        self.stacks()
++
++        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
++
++        self.assertEqual([(30, 30), (31, 30), (15, 15), (18, 15), (16, None), (14, None), (13, None),
++                          (9, 9), (10, 9), (11, 9), (12, 9)], [(r["number"], r["stack"]) for r in reviews],
++                         "a stack sits where its newest pull request would, and lists its pull requests from the "
++                         "bottom up; two on a base with no review here stay together, and one alone is no stack")
++        projects = {p["name"]: p["reviews"] for p in json.loads((self.out / "site.json").read_text())["projects"]}
++        self.assertEqual([31, 30, 18, 16, 15, 14, 13, 12, 11, 10, 9], projects["alpha"],
++                         "a project still lists its reviews newest first")
++
++    def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
++        self.publish(9, "d" * 40)
++        self.publish(10, "e" * 40)
++        states = {9: "open", 10: "merged"}
++
++        def pr_status(repo: str, number: int) -> dict:
++            return {"state": states[number], "reviews": [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)]}
++
++        with mock.patch.object(summary, "pr_status", side_effect=pr_status):
++            reviews = self.build()["reviews"]
++
++        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
++                         [(r["number"], r["state"], r["review"]) for r in reviews],
++                         "each row carries what its newest head's page does")
++
++    def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
++        self.publish(9, "c" * 40)
++
++        review = self.build()["reviews"][0]
++
++        self.assertNotIn("state", review)
++        self.assertNotIn("review", review)
+ 
+     def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+         self.publish(9, "c" * 40)
+@@ -489,6 +544,13 @@ def test_the_search_index_covers_every_served_document(self) -> None:
+ 
+ 
+ SITE_JS = Path(__file__).parents[1] / "site" / "assets" / "site.js"
++SUMMARY_JS = SITE_JS.with_name("summary.js")
++
++
++def shared_js() -> str:
++    """The helpers at the top of the compiled summary.js, which every page loads before site.js."""
++    text = SUMMARY_JS.read_text()
++    return text[:text.index("\n(function () {")]
+ 
+ 
+ def js_function(name: str) -> str:
+@@ -552,7 +614,8 @@ def projects_html(self, projects: list[dict]) -> str:
+             "function frame(active, title, body) { drawn = body; return {querySelector: function () {"
+             " return {addEventListener: function () {}}; }}; }\n"
+         )
+-        program = stub + "\n".join(js_function(n) for n in ("esc", "badge", "depth", "ownerName", "showProjects")) + \
++        program = stub + shared_js() + "\n" + \
++            "\n".join(js_function(n) for n in ("badge", "depth", "ownerName", "showProjects")) + \
+             "\nshowProjects(); process.stdout.write(drawn);"
+         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+ 
+@@ -597,7 +660,7 @@ def header_html(self, args: str) -> str:
+             " FULL_ICON = '<svg full></svg>';\n"
+             "function nav() { return ''; }\n"
+         )
+-        program = stub + js_function("esc") + "\n" + js_function("header") + \
++        program = stub + shared_js() + "\n" + js_function("header") + \
+             f"\nprocess.stdout.write(header({args}));"
+         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+ 
+@@ -626,7 +689,7 @@ def test_an_html_page_can_go_full_screen_and_starts_with_its_sidebar_closed(self
+ @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
+ class HighlightTests(unittest.TestCase):
+     def highlight(self, text: str, words: list[str]) -> str:
+-        program = js_function("esc") + "\n" + js_function("highlight") + \
++        program = shared_js() + "\n" + js_function("highlight") + \
+             f"\nprocess.stdout.write(highlight({json.dumps(text)}, {json.dumps(words)}));"
+         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+ 
+@@ -641,6 +704,136 @@ def test_the_text_is_escaped_and_matching_ignores_case(self) -> None:
+         self.assertEqual("&lt;b&gt;<mark>Plan</mark>&lt;/b&gt;", self.highlight("<b>Plan</b>", ["plan"]))
+ 
+ 
++def node(program: str) -> str:
++    """What `program` writes to stdout under node, in UTC and US English, so a time it formats is the same everywhere."""
++    env = dict(os.environ, TZ="UTC", LC_ALL="en_US.UTF-8")
++    return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True, env=env).stdout
++
++
++@unittest.skipUnless(shutil.which("node"), "the reviews view test needs node")
++class ReviewsViewTests(unittest.TestCase):
++    def draw(self, reviews: list[dict]) -> dict[str, str]:
++        """The Reviews index for `reviews`, drawn by the compiled showReviews.
++
++        `page` is the view around the list, `first` the list as it opens, and
++        `all` the list once the reader checks the box that shows merged and
++        closed pull requests.
++        """
++        stub = (
++            "const base = '/';\n"
++            f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
++            "const list = {innerHTML: ''};\n"
++            "const box = {checked: false, addEventListener: function (type, listener) { this.changed = listener; }};\n"
++            "let page = '';\n"
++            "function frame(active, title, body) { page = body; return {querySelector: function (selector) {"
++            " return selector === '.reviewlist' ? list : page.includes('showdone') ? box : null; }}; }\n"
++        )
++        functions = ("projectNamed", "projectLinks", "isDone", "reviewRow", "reviewsTable", "showReviews")
++        program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
++            "\nshowReviews(); const first = list.innerHTML;"
++            " box.checked = true; if (box.changed) box.changed();"
++            " process.stdout.write(JSON.stringify({page: page, first: first, all: list.innerHTML}));")
++        return json.loads(node(program))
++
++    @staticmethod
++    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
++        """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
++        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1, "projects": [],
++               "stack": stack, "updated": "2023-11-14T22:21:40Z"}
++        if state is not None:
++            row["state"] = state
++            row["review"] = review or {"status": "unreviewed"}
++        return row
++
++    @staticmethod
++    def bodies(html: str) -> list[tuple[bool, list[int]]]:
++        """Each table body of the list: whether it is a stack's, and the pull requests in its rows."""
++        return [(stack != "", [int(n) for n in re.findall(r'<tr><td><a href="/reviews/(\d+)/">', rows)])
++                for stack, rows in re.findall(r'<tbody( class="stack")?>(.*?)</tbody>', html)]
++
++    def test_a_stack_shares_one_table_body_and_a_merged_or_closed_review_waits_to_be_shown(self) -> None:
++        drawn = self.draw([self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
++                           self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open")])
++
++        self.assertIn('<label class="showdone"><input type="checkbox"> Show merged and closed '
++                      '<span class="count">2</span></label>', drawn["page"])
++        self.assertEqual([(True, [30, 31]), (True, [10, 11])], self.bodies(drawn["first"]),
++                         "a stack keeps its open reviews together when a merged one is left out")
++        self.assertEqual([(True, [30, 31]), (False, [16]), (True, [9, 10, 11])], self.bodies(drawn["all"]))
++
++    def test_each_row_shows_its_status_and_when_it_was_updated_in_the_readers_time_zone(self) -> None:
++        clean = {"status": "clean", "url": review_url(1)}
++        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)])
++
++        self.assertIn("<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>",
++                      drawn["all"])
++        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', drawn["all"])
++        self.assertEqual([f'<a class="rstatus clean" href="{review_url(1)}" target="_blank" rel="noopener">Clean</a>',
++                          "", '<span class="rstatus merged">Merged</span>'], statuses,
++                         "a status GitHub could not tell is left blank, and a merged pull request's verdict gives way")
++        self.assertRegex(drawn["all"], r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
++        for gone in ("Head", "Stacked on", "summarize-pr"):
++            self.assertNotIn(gone, drawn["page"] + drawn["all"])
++
++    def test_a_list_of_only_merged_or_closed_reviews_says_so(self) -> None:
++        drawn = self.draw([self.review(9, None, "merged")])
++
++        self.assertEqual('<p class="note">Every review here is of a merged or closed pull request.</p>', drawn["first"])
++        self.assertEqual([(False, [9])], self.bodies(drawn["all"]))
++
++    def test_no_box_to_check_when_nothing_is_merged_or_closed(self) -> None:
++        drawn = self.draw([self.review(9, None, "open"), self.review(8)])
++
++        self.assertNotIn("showdone", drawn["page"])
++        self.assertEqual([(False, [9]), (False, [8])], self.bodies(drawn["first"]))
++
++    def test_a_stack_draws_no_divider_between_its_rows(self) -> None:
++        css = (SITE_JS.parent / "site.css").read_text()
++
++        self.assertIn("table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }", css)
++
++
++@unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
++class SharedHelperTests(unittest.TestCase):
++    def test_merged_or_closed_takes_the_place_of_the_verdict(self) -> None:
++        program = shared_js() + (
++            "\nprocess.stdout.write(JSON.stringify([statusHtml('merged', {status: 'clean', url: 'u'}),"
++            " statusHtml('closed', undefined), statusHtml('open', {status: 'changes-requested', url: 'https://x/?a&b'}),"
++            " statusHtml('open', {status: 'unreviewed'}), statusHtml(undefined, undefined)]));")
++
++        self.assertEqual(['<span class="rstatus merged">Merged</span>', '<span class="rstatus closed">Closed</span>',
++                          '<a class="rstatus changes-requested" href="https://x/?a&amp;b" target="_blank" '
++                          'rel="noopener">Changes requested</a>', '<span class="rstatus unreviewed">Unreviewed</span>',
++                          ""], json.loads(node(program)))
++
++    def test_every_site_page_carries_the_summary_pages_credit(self) -> None:
++        stub = ("const root = {innerHTML: ''}, main = {innerHTML: ''};\n"
++                "const document = {title: '', body: {classList: {remove: function () {}}},"
++                " getElementById: function () { return main; }};\n"
++                "let fitFrame = null;\nconst site = {repo: 'owner/example'};\n"
++                "function header() { return ''; }\n")
++        program = stub + shared_js() + "\n" + js_function("frame") + \
++            "\nframe('docs', 'Docs', 'body'); process.stdout.write(root.innerHTML);"
++
++        self.assertTrue(node(program).endswith(
++            '<footer class="sitefoot">Generated by <a href="https://projector.bot">Projector</a></footer>'))
++
++    def test_summary_js_does_nothing_on_a_page_without_a_summary_but_look_for_one(self) -> None:
++        # Every site page loads summary.js for the helpers above, so on a page
++        # with no summary it must not draw, fetch, or listen for anything.
++        program = (
++            "const touched = [], asked = [];\n"
++            "function watch(name, value) { return new Proxy(value, {get: function (target, key) {"
++            " touched.push(name + '.' + String(key)); return target[key]; }}); }\n"
++            "const document = watch('document', {getElementById: function (id) { asked.push(id); return null; }});\n"
++            "const window = watch('window', {}), localStorage = watch('localStorage', {});\n"
++            "function fetch() { touched.push('fetch'); return new Promise(function () {}); }\n"
++            + SUMMARY_JS.read_text() +
++            "\nprocess.stdout.write(JSON.stringify({touched: touched, asked: asked}));")
++
++        self.assertEqual({"touched": ["document.getElementById"], "asked": ["summary"]}, json.loads(node(program)))
++
++
+ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
+     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+@@ -687,7 +880,6 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
+ """
+ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/survey.md",
+                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
+-SUMMARY_JS = SITE_JS.with_name("summary.js")
+ 
+ 
+ def rendered_summary(data: dict, popovers: bool = True) -> str:
+@@ -699,7 +891,7 @@ def rendered_summary(data: dict, popovers: bool = True) -> str:
+                "const document = {getElementById: function () { return root; }, body: root};\n"
+                "const window = {};\n"
+                f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
+-               "\n".join(lines[start:end + 1]) +
++               shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
+                f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
+     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+ 
+@@ -849,6 +1041,18 @@ def test_the_file_link_shows_the_file_as_it_is_now(self) -> None:
+                 self.assertIn(f'href="{expected}"', rendered_summary(data))
+                 shutil.rmtree(self.out)
+ 
++    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
++    def test_the_page_shows_merged_or_closed_in_place_of_its_verdict_and_the_sites_credit(self) -> None:
++        for state, expected in (("open", '<span class="rstatus unreviewed">Unreviewed</span>'),
++                                ("merged", '<span class="rstatus merged">Merged</span>'),
++                                ("closed", '<span class="rstatus closed">Closed</span>')):
++            with self.subTest(state=state):
++                html = rendered_summary(self.build(state=state))
++                self.assertIn(f" · {expected}</div><h1>", html)
++                self.assertIn('<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>', html)
++                shutil.rmtree(self.out)
++        self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
++
+     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
+         # A backport, or a stack layer merged into its parent's branch, may
+@@ -988,7 +1192,7 @@ def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self)
+ 
+     def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
+         # The home page loads summary.css as well, and its Reviews table draws
+-        # each "Stacked on #N" note as a `div.stack`, so a rule written for the
++        # each stack's rows in a `tbody.stack`, so a rule written for the
+         # sidebar's stack list names the sidebar block the list sits in.
+         css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
+         stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
+@@ -1038,6 +1242,11 @@ def served_summary(number: int, head: str) -> dict:
+                         "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
+ 
+ 
++# When `published_remote` commits each head, as the Reviews index dates it.
++C_PUBLISHED = "2023-11-14T22:13:20Z"
++D_PUBLISHED = "2023-11-14T22:21:40Z"
++
++
+ class ServeTests(SiteRepoCase):
+     def setUp(self) -> None:
+         super().setUp()
+@@ -1135,7 +1344,10 @@ def test_a_failed_rebuild_keeps_serving_the_last_build_until_the_next_change(sel
+ 
+     def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT,
+                          name: str = "summary.json") -> Path:
+-        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`, each stored as `name`."""
++        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`, each stored as `name`.
++
++        Head c is committed at C_PUBLISHED and head d at D_PUBLISHED.
++        """
+         remote = Path(tempfile.mkdtemp())
+         run_git(remote, "init", "--quiet")
+         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
+@@ -1153,7 +1365,7 @@ def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAG
+     def assert_serves_both_heads(self, ref: str, root: str) -> None:
+         site = self.site(summaries=serve.extract_summaries(self.repo, ref, Path(tempfile.mkdtemp()), root))
+         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+-        self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
++        self.assertEqual([(D_PUBLISHED, 2)], [(w["updated"], w["heads"]) for w in manifest["reviews"]],
+                          "each summary is dated by its own commit, not the ref's newest")
+         self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
+ 
+@@ -1180,7 +1392,7 @@ def test_a_republished_summary_keeps_the_date_its_head_was_first_published(self)
+         with redirect_stdout(io.StringIO()):
+             cli.build_checkout(self.repo.resolve(), out, remote / summary.PAGES_ROOT, "/", "owner/example")
+         reviews = json.loads((out / "site.json").read_text())["reviews"]
+-        self.assertEqual([("d" * 40, 2)], [(review["head"], review["heads"]) for review in reviews],
++        self.assertEqual([(D_PUBLISHED, 2)], [(review["updated"], review["heads"]) for review in reviews],
+                          "dated from Git, as the site action builds a checkout of the ref")
+ 
+     def test_reads_the_old_walkthroughs_ref_and_reports_its_spec_json_summaries_as_skipped(self) -> None:
+@@ -1280,19 +1492,19 @@ def build(out: Path) -> str:
+ 
+         def reviews() -> list[tuple[str, int]]:
+             manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
+-            return [(review["head"], review["heads"]) for review in manifest["reviews"]]
++            return [(review["updated"], review["heads"]) for review in manifest["reviews"]]
+ 
+         self.assertEqual([], reviews(), "nothing is fetched yet")
+         self.assertIsNone(site.refresh(), "no change, no rebuild")
+ 
+         self.assertEqual("", published.fetch())
+         self.assertIsNotNone(site.refresh(), "the ref that appeared after startup is a change")
+-        self.assertEqual([("d" * 40, 2)], reviews())
++        self.assertEqual([(D_PUBLISHED, 2)], reviews())
+ 
+         run_git(remote, "update-ref", summary.PAGES_REF, "HEAD~1")
+         self.assertEqual("", published.fetch())
+         self.assertIsNotNone(site.refresh(), "a fetched ref that moved is a change")
+-        self.assertEqual([("c" * 40, 1)], reviews())
++        self.assertEqual([(C_PUBLISHED, 1)], reviews())
+ 
+     def test_a_served_site_shows_a_summary_published_after_the_server_started(self) -> None:
+         self.published_remote()
+@@ -1319,7 +1531,7 @@ def reviews() -> list:
+                 if reviews():
+                     break
+                 time.sleep(0.1)
+-            self.assertEqual(["d" * 40], [review["head"] for review in reviews()])
++            self.assertEqual([D_PUBLISHED], [review["updated"] for review in reviews()])
+         finally:
+             process.terminate()
+             process.communicate(timeout=10)
+@@ -1397,7 +1609,7 @@ def routes(self) -> list[str]:
+         for project in manifest["projects"]:
+             paths += [project["path"], *(f["path"] for f in project["files"])]
+         program = f"var site = {json.dumps(manifest)}, base = '/projector/';\n" + \
+-            "\n".join(js_function(n) for n in ("esc", "repoUrl", "routeFor")) + \
++            shared_js() + "\n" + "\n".join(js_function(n) for n in ("repoUrl", "routeFor")) + \
+             f"\nprocess.stdout.write(JSON.stringify({json.dumps(paths)}.map(routeFor)));"
+         return json.loads(subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 83d92e9..b7a5686 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -283,7 +283,8 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+                       (built_site / "reviews" / "7" / "index.html").read_text(), "the newest head, rendered in place")
+         index = (built_site / "index.html").read_text()
+         listed = json.loads((built_site / "site.json").read_text())["reviews"]
+-        self.assertEqual([(7, "New", "c" * 40, 2)], [(w["number"], w["name"], w["head"], w["heads"]) for w in listed])
++        self.assertEqual([(7, "New", "1970-01-01T00:03:20Z", 2)],
++                         [(w["number"], w["name"], w["updated"], w["heads"]) for w in listed], "dated by the newest head")
+         self.assertTrue((built_site / ".nojekyll").exists())
+         page = (built_site / "reviews" / "7" / ("a" * 40) / "index.html").read_text()
+         self.assertNotIn("summary-data", page)

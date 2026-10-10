@@ -1,0 +1,181 @@
+{
+ "version": 1,
+ "name": "Stacks and status on the Reviews index",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 213,
+  "title": "Group stacked pull requests on the Reviews index and show each one's status",
+  "head": "8193671d77a0c3c62c851392f922fdbb325ec4cc",
+  "headRef": "reviews-stack-group",
+  "base": "7645db9e3ff49fac3e51a78cc55c00aa79ad5052",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has a <b>Reviews</b> index: one row per pull request that has a published summary, linking to that summary's page. Before this change the index listed rows newest first and marked a stacked pull request with a \"Stacked on #N\" line, so the layers of one stack were scattered wherever their numbers fell. The index also did not say whether a pull request was still open or what its latest review found.",
+   "This change does three things:",
+   "<ol><li><b>It groups each stack.</b> The build orders the rows in <code>site.json</code> so that each stack's pull requests sit together, from the layer on the default branch up, at the position where the stack's newest pull request would sort. The page draws a stack's rows in one table body with no divider between them.</li><li><b>It shows each pull request's status.</b> A row reads <b>Merged</b> or <b>Closed</b> once the pull request is, and otherwise shows the verdict of the newest Projector review of its newest head: <b>Clean</b>, <b>Changes requested</b>, or <b>Unreviewed</b>. The summary page's header now shows Merged and Closed the same way.</li><li><b>It hides finished pull requests by default.</b> Merged and closed rows stay hidden until the reader checks <b>Show merged and closed</b>. A stack's open layers still show together when a layer beneath them has merged.</li></ol>",
+   "To keep the summary page and the site drawing these the same way, the status, the time format, the credit line, and the HTML escaper move to the top of <code>summary.ts</code> as global functions. Every site page now loads <code>summary.js</code> before <code>site.js</code>, and on a page with no summary <code>summary.js</code> returns after one lookup."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests where each one's base branch is the head branch of the one beneath it. Siblings on the same base belong to one stack.</li><li><b>site.json</b>: the data file the build writes and <code>site.js</code> reads to draw every view of the site.</li><li><b><code>stack</code> field</b>: on each review row, the number of the first review in its stack, shared by every row in it, or null when the row stands alone.</li><li><b>Newest head</b>: the most recently published version of a pull request's summary.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <span class=\"mono\">8193671d7</span> is clean, with no finding threads. It suggests one wording fix in <code>docs/cli.md</code>, noted on that file below.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "data",
+   "title": "The order and fields of site.json",
+   "kicker": "The build sorts reviews into stacks and records each one's status",
+   "intro": [
+    "The Python build decides the order of the index. A new <code>stack_groups</code> walks the reviewed pull requests from newest to oldest. For each one not yet placed, it takes the whole stack from <code>stack_rows</code>, the same function that lists a stack in a summary's sidebar, and keeps the members that have a review here. So the index and the sidebar always agree on a stack's members and order.",
+    "Each row in <code>site.json</code> now carries <code>stack</code>, the pull request's <code>state</code>, and its newest head's <code>review</code>, and drops the old <code>head</code> and <code>stackedOn</code> fields. <code>updated</code> becomes a full UTC timestamp instead of a date, so the page can show it in the reader's time zone."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Nothing outside <code>site.ts</code> reads <code>site.json</code>, and <code>tsc</code> accepts the new <code>SiteReview</code> type, so no reader still expects <code>head</code> or <code>stackedOn</code>. Checked by searching <code>src/</code> and running <code>npm run check</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>stack_groups</code> orders the entries; <code>review_row</code> writes each row of <code>site.json</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 271,
+       "text": "Every reviewed pull request lands in exactly one group: walking down <code>bases</code> from any member of a stack reaches the same bottom, so <code>stack_rows</code> returns the same members from each of them. A base pull request with no review here is left out of the group. Traced by hand, including a cycle in <code>bases</code>."
+      },
+      {
+       "kind": "context",
+       "line": 629,
+       "text": "The entries now come in stack order, so a project's own list of reviews is sorted again here to stay newest first."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds the shared <code>PullState</code> and <code>ReviewStatus</code> types and reshapes <code>SiteReview</code> to match the new rows."
+    }
+   ]
+  },
+  {
+   "id": "shared",
+   "title": "Helpers both pages share",
+   "kicker": "summary.js now holds the status, time, credit, and escaping helpers",
+   "intro": [
+    "The summary page and the site's own pages are drawn by two scripts. This change moves four helpers out of the summary renderer's private scope to the top of <code>summary.ts</code>, where they become global functions: <code>esc</code>, <code>creditHtml</code>, <code>localTime</code>, and <code>statusHtml</code>. <code>site.ts</code> drops its own copy of <code>esc</code> and calls these instead.",
+    "<code>statusHtml</code> puts Merged or Closed ahead of any verdict, and returns nothing when the build could not ask GitHub, so an unknown status never reads as Unreviewed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "The shared helpers at the top, and an early return when the page has no <code>#summary</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 834,
+       "text": "On a site page with no <code>#summary</code>, <code>summary.js</code> makes one <code>getElementById</code> call and returns before it renders, fetches, or adds a listener. <code>SharedHelperTests</code> checks this with a proxied <code>document</code>, and it passed at this head."
+      },
+      {
+       "kind": "context",
+       "line": 27,
+       "text": "The link this builds matches what the header's old <code>ext(...)</code> call built: same class, <code>target=\"_blank\"</code>, and <code>rel=\"noopener\"</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Adds the Merged and Closed colors for the light and dark themes."
+    }
+   ]
+  },
+  {
+   "id": "view",
+   "title": "The Reviews index",
+   "kicker": "Stacks share a table body; finished pull requests wait behind a checkbox",
+   "intro": [
+    "<code>showReviews</code> now draws a <b>Show merged and closed</b> checkbox when any row is merged or closed, and redraws the table when the reader checks it. <code>reviewsTable</code> groups consecutive rows that share a non-null <code>stack</code> into one <code>tbody class=\"stack\"</code>, which the CSS draws with no divider between rows.",
+    "The table gains a Status column and loses the Head column and the \"Stacked on\" line. The Updated column shows the newest head's publish time in a <code>&lt;time&gt;</code> element. The footer on every site page now reads \"Generated by Projector\", like the summary page's credit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "The new table, the checkbox, and the shared footer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 416,
+       "text": "Hiding a merged middle layer leaves the open layers above it in one table body, because the grouping keys on <code>stack</code>, which every row of a stack shares. <code>ReviewsViewTests</code> covers it, and passed at this head."
+      },
+      {
+       "kind": "context",
+       "line": 432,
+       "text": "A row with no <code>state</code> means the build could not ask GitHub. <code>isDone</code> is false for it, so it is always shown."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Baseline-aligns the row cells and removes the divider inside a stack's table body."
+    }
+   ]
+  },
+  {
+   "id": "generated",
+   "title": "Compiled JavaScript",
+   "kicker": "The committed output of npm run build",
+   "intro": [
+    "The site serves compiled JavaScript from <code>site/assets/</code>, so the change commits it. Running <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> at this head left both files unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/assets/site.js"
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "New view tests under node, and the CLI reference",
+   "intro": [
+    "The tests run the compiled functions under node with stubs for the DOM. They cover the build's stack order, the rows' state and verdict, the table bodies with and without the checkbox, the time format under <code>TZ=UTC</code>, and the guarantee that <code>summary.js</code> does nothing on a page without a summary. The full suite ran 527 tests at this head, all passing.",
+    "<code>docs/cli.md</code> describes the new index and the header's Merged and Closed status."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    },
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 681,
+       "text": "The review suggests dropping \"open\" here. <code>stack_bases</code> never checks a pull request's state, so a layer whose base pull request has merged stays in that stack, on the index and in the sidebar. The text before this change said the same."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
