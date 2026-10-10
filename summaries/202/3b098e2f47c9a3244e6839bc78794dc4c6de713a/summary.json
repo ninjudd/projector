@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Fix loop stack subagent name",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 202,
+  "title": "Name a fix loop's stack subagent fix-stack-<number>",
+  "head": "3b098e2f47c9a3244e6839bc78794dc4c6de713a",
+  "headRef": "fix-loop-stack-subagent-name",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>start-fix-loop</code> skill watches the operator's pull requests for review findings and merge conflicts, and starts one long-lived fixing subagent per pull request. The subagent's name tells the main loop, and anyone reading the loop's updates, which pull request it works on.",
+   "A stack of dependent pull requests gets one subagent for all its layers, because a fix to a lower layer is carried up into every layer above it. Until this change, that subagent was named for the bottom layer only, such as <code>fix-196</code>, so when it worked on the layer above, #197, its updates looked like the wrong agent on the wrong pull request.",
+   "This change names a stack's subagent <code>fix-stack-&lt;number&gt;</code>, still for the bottom layer. The name stays stable for the life of the stack: it does not change when the bottom layer merges or when a layer is stacked on top. A pull request that stands alone keeps <code>fix-&lt;number&gt;</code>."
+  ],
+  "cards": [
+   {
+    "id": "names",
+    "title": "Subagent names",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Pull request</th><th>Subagent name</th></tr></thead><tbody><tr><td>Stands alone</td><td class=\"r\"><code>fix-&lt;number&gt;</code></td></tr><tr><td>Layer of a stack</td><td class=\"r\"><code>fix-stack-&lt;bottom layer&gt;</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>3b098e2</code>: clean, with no finding threads.</li><li>One suggestion: say what a running <code>fix-&lt;number&gt;</code> subagent is called once a layer is stacked on its pull request.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "naming",
+   "title": "The stack subagent's name",
+   "kicker": "Two bullets in the fix loop's subagent rules",
+   "intro": [
+    "Both edits are in the section \"Give each pull request its own subagent\". The first sets the new name when the loop starts a subagent for a stack. The second restates the rule for what happens when the stack's bottom layer merges: the same subagent, under the same name, goes on fixing the layers above it.",
+    "A <b>stack</b> here is a chain of pull requests in which each one's base branch is the head branch of the one below. The <b>bottom layer</b> is the one whose base is the default branch."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "collapsed": false,
+     "note": "The fix loop's skill. Two bullets now name a stack's subagent <code>fix-stack-&lt;number&gt;</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 115,
+       "text": "No other skill, document, test, or script names the fix loop's subagents. A repository-wide search for <code>fix-&lt;number&gt;</code>, <code>fix-stack</code>, and the old wording found only this file."
+      },
+      {
+       "kind": "context",
+       "line": 115,
+       "text": "The skill does not say what a running <code>fix-&lt;number&gt;</code> subagent is called once a layer is stacked on its pull request. Before this change both cases used the same name. The rules above and below still route every layer's events to that one subagent, so only the name is unclear."
+      },
+      {
+       "kind": "verify",
+       "line": 132,
+       "text": "The merge rule still holds with the new name: the subagent closes only when no layer it owns is open, and the bullet below restarts a lost subagent under the same name."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

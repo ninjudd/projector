@@ -1,0 +1,31 @@
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-fix-loop/SKILL.md
+index d5163f9..10208f1 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-fix-loop/SKILL.md
+@@ -112,9 +112,10 @@ the recurrence it is instead of as new work.
+   `fix-<number>`. Give it the repository, the pull request, the operator
+   login, the event lines, and the path of `../fix-pr/SKILL.md`, and have it
+   run that skill for the pull request.
+-- Give a stack one subagent for all its layers, named for the bottom layer.
+-  A fix to a lower layer is carried up into every layer above it, so two
+-  subagents working one stack would push the same branches.
++- Give a stack one subagent for all its layers, named `fix-stack-<number>`
++  for the bottom layer, so the name says it covers more than that one pull
++  request. A fix to a lower layer is carried up into every layer above it,
++  so two subagents working one stack would push the same branches.
+ - Have each subagent work in its own worktree of its pull request's branch,
+   so two subagents never share a checkout and none touches the main loop's.
+ - Send every later event for that pull request, or for any layer of its
+@@ -128,9 +129,9 @@ the recurrence it is instead of as new work.
+ - When a pull request merges or closes, delete its line from the tracked
+   file at once. Tell its subagent to finish, remove its worktrees, and close
+   only when no layer it owns is still open. A stack merges from the bottom,
+-  so the subagent named for the bottom layer keeps that name and goes on
+-  fixing the layers above it, starting with the base merge the retargeted
+-  child needs.
++  so its `fix-stack-<number>` subagent keeps that name after the bottom
++  layer merges and goes on fixing the layers above it, starting with the
++  base merge the retargeted child needs.
+ - When a subagent is lost, to a session restart for example, start a
+   replacement under the same name. It rebuilds its context from GitHub: each
+   open layer's review threads, the replies on them, and its review bodies.
