@@ -1,0 +1,138 @@
+{
+ "version": 1,
+ "name": "Summary file header links",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 203,
+  "title": "Link a summary file to its project and branch, and set inline notes apart",
+  "head": "5d9505b237944cfff2dce1546439c231d6d9b3eb",
+  "headRef": "summary-file-header-links",
+  "base": "0d5a2132bf0e80394cbf9c85616fe101eb5b1148",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page, like this one, walks a reviewer through a pull request's diff one file card at a time. Each card's header holds the file's path, its line counts, a few links, and a <b>Reviewed</b> box. The header linked to the file in the pull request's diff, labelled <b>PR</b>, and to the file at the commit the summary describes, labelled <b>file</b>. A reader who wanted the plan a file belongs to had to find it in the site's Projects section by hand.",
+   "This pull request gives each header three links:",
+   "<ul><li><b>Diff</b> opens the file in the pull request's diff on GitHub. It is the old <b>PR</b> link under a clearer name.</li><li><b>File</b> opens the file on the pull request's head branch, <code>pr.headRef</code>, so it shows the branch's current version. A summary with no <code>headRef</code> links the commit it describes, as before.</li><li><b>Project</b> opens the site's page for the project whose folder holds the file. It appears only when the site has a page for that project.</li></ul>",
+   "Two layout changes go with the links. <b>Reviewed</b> sits 6px further from them, and a review note under a diff line now spans the line-number columns, so it starts at the left edge of the card.",
+   "The review of this head left one finding open: the <b>File</b> link names a branch that GitHub deletes when the pull request merges in this repository. The flag on <code>site/src/summary.ts</code> line 32 carries it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the JSON a review writes for a pull request, which the site renders as a page like this one.</li><li><b>Site build</b>: <code>project site build</code>, which the repository's Pages workflow runs on each deploy. It reads every stored summary and writes each page's <code>data.json</code>.</li><li><b>Project</b>: a folder under <code>docs/projects/</code> with its own lowercase <code>readme.md</code>. Projects nest, and a project's folder can also hold supplemental files.</li><li><b><code>pr.head</code></b>: the commit a summary describes. <b><code>pr.headRef</code></b>: the pull request's head branch, which <code>project summary init</code> records.</li></ul>"
+   },
+   {
+    "id": "testing",
+    "title": "What the review ran at this head",
+    "html": "<ul class=\"tight\"><li><code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code>: no lint findings, and the build leaves <code>site/assets/summary.js</code> unchanged.</li><li>All 500 Python tests under Python 3.12, including the four new <code>FileHeaderTests</code>.</li><li><code>project check</code>, both <code>claude plugin validate</code> commands, and <code>git diff --check</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "build",
+   "title": "The site build finds each file's project",
+   "kicker": "Where the Project link's target comes from",
+   "intro": [
+    "The site build already worked out which projects a pull request touches, so a review page could list them and each project page could list its reviews. <code>project_linker</code> does that work: for each changed file, it finds the deepest project folder that holds the file, among the projects the site has pages for.",
+    "The change keeps that search and also writes its answer onto the file, as a <code>project</code> object with the project's name, title, and site URL. The renderer reads that object to draw the <b>Project</b> link."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>project_linker</code> now sets <code>project</code> on each changed file it can place, through a shared <code>page_of</code> helper.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The candidate folders come from the projects in the checkout the build runs in, sorted longest path first, so the first match is the deepest project. A project the pull request adds has no page until the site deploys from a checkout that has it, so its files get no link on an open pull request.",
+       "line": 416
+      },
+      {
+       "kind": "verify",
+       "text": "The build writes <code>data.json</code> after this mutation: <code>build_summaries</code> calls the linker on the payload, then serializes the same payload. <code>test_a_file_belongs_to_the_deepest_project_the_site_has</code> reads <code>project</code> back from <code>data.json</code> and passed at this head.",
+       "line": 418
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "renderer",
+   "title": "The renderer draws the new header and note rows",
+   "kicker": "The TypeScript that draws each file card, and its compiled copy",
+   "intro": [
+    "<code>renderSummary</code> in <code>site/src/summary.ts</code> draws the whole summary page in the browser from <code>data.json</code>. The file card header is one string of HTML; this change relabels the first link, points the second at the branch, and adds the third.",
+    "The repository commits the compiled JavaScript beside the TypeScript, because every deploy and every CLI install reads the site's assets from a Git tree. <code>site/assets/summary.js</code> is that compiled copy."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Types the new <code>project</code> field on a file and the optional <code>headRef</code> on <code>pr</code>."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>blobUrl</code> for the <b>File</b> link, relabels the links, draws <b>Project</b> when the file has one, and widens a note row across the gutter.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open review finding: <code>blobUrl</code> links the file on <code>pr.headRef</code>, which <code>project summary init</code> always records. This repository has GitHub delete a head branch on merge, so every <b>File</b> link on a merged pull request's summary pages returns 404. A link at <code>pr.head</code> keeps working, because GitHub keeps a merged pull request's commits. The suggested fix keeps <code>pr.head</code> in the <b>File</b> link and adds any branch link beside it.",
+       "line": 32
+      },
+      {
+       "kind": "context",
+       "text": "Each segment of the branch and of the path goes through <code>encodeURIComponent</code> on its own, so the slashes between segments stay, and a <code>#</code> in a name becomes <code>%23</code> instead of starting a URL fragment.",
+       "line": 33
+      },
+      {
+       "kind": "context",
+       "text": "The note row's single cell spans <code>sides + 1</code> columns: one or two line-number columns plus the code column. Hunk and meta rows still use the separate <code>gutter</code> cell.",
+       "line": 106
+      },
+      {
+       "kind": "context",
+       "text": "<b>Project</b> links within the site, so it opens in the same tab, unlike <b>Diff</b> and <b>File</b>, which open GitHub in a new one. <code>esc</code> escapes both the URL and the title.",
+       "line": 137
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>site/src/summary.ts</code>. The review rebuilt it with <code>npm run build</code> and got the committed file back unchanged."
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Adds <code>margin-left: 6px</code> to <b>Reviewed</b>, so the three links read as a group."
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "The header tests, and the two documents that describe the links",
+   "intro": [
+    "<code>FileHeaderTests</code> builds one summary through <code>project site build</code> for a diff that touches a project's readme, a supplemental file in that project, a nested project's readme, a readme for a project the site lacks, and <code>src/app#1.py</code> outside every project. Three of its tests run the compiled <code>renderSummary</code> under node and check the header markup; they skip where node is missing.",
+    "The CLI reference and the summary format guide each gain a sentence on the links."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "note": "Adds <code>FileHeaderTests</code> and <code>rendered_summary</code>, which cuts <code>renderSummary</code> out of the compiled file and runs it under node with a stub <code>document</code>."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the three header links under <code>project site build</code>."
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "note": "Says the <b>File</b> link uses <code>pr.headRef</code>, or <code>pr.head</code> without it."
+    }
+   ]
+  }
+ ]
+}
