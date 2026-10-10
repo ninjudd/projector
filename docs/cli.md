@@ -758,16 +758,28 @@ current one. A pull request with no summary on the site links to GitHub, and
 a pull request with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
-then the verdict of the newest Projector review of its head, **Clean** or
-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
-no Projector review names the head. When that review is incremental, the
-header reads **Clean · incremental from a8cf3d5**, where the second part names
-the head of the full review it builds on and links that review, while the row
-on Reviews shows **Clean** alone. A review counts only when its author owns
-the repository, belongs to its organization, or collaborates on it, because
-anyone can review a public repository's pull request. The build reads the
-pull request's state and reviews through `gh` and shows no status when `gh`
-cannot answer. **Docs** renders `README.md`
+then the verdict on its head, linked to the review on GitHub that decides it.
+Each model that reviewed the head counts by its newest Projector review of it,
+and the verdict is **Changes requested** when any of those requests changes
+and **Clean** otherwise. A head no Projector review names is **Unreviewed**.
+Models are told apart by their model ID, lowercased and without a trailing
+bracketed variant such as `[1m]`. When one model reviewed the head and its
+review is incremental, the header reads **Clean · incremental from a8cf3d5**,
+where the second part names the head of the full review it builds on and
+links that review. When several models reviewed the head, the header still
+shows the one status, marked with an asterisk, as in **Changes requested\***,
+but as a button rather than a link to one review. Hovering over it, moving
+keyboard focus to it, or clicking or tapping it shows a list with a row for
+each model, changes requested first: the model's name, its verdict drawn as
+the status is and linked to its review, and for an incremental review the full
+review it builds on. A click or a tap keeps the list open until you click or
+move focus elsewhere. Tab moves from the status into the list's links, and
+skips them while the list is hidden. Escape hides the list. The row on
+Reviews shows the status alone, unmarked, as a link. A review counts only
+when its author owns the repository, belongs to its organization, or
+collaborates on it, because anyone can review a public repository's pull
+request. The build reads the pull request's state and reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
