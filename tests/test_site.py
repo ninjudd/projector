@@ -682,8 +682,10 @@ class ProjectsViewTests(unittest.TestCase):
         self.assertIn("table.tbl.projects { table-layout: fixed; }", css, "the columns line up from one status to the next")
         for col in ("priority", "owner", "name"):
             self.assertRegex(css, rf"table\.tbl\.projects col\.{col} {{ width: [\d.]+em; }}")
-        self.assertRegex(css, r"@media \(max-width: 640px\) \{\s*table\.tbl\.projects \.name \{ display: none; \}",
-                         "a phone leaves the name out")
+        self.assertRegex(css, r"@media \(max-width: 760px\) \{\s*table\.tbl\.projects \.name \{ display: none; \}",
+                         "a narrow window leaves the name out where a section's sidebar moves above its page")
+        self.assertIn("@media (max-width: 760px) {\n  .sitemain.withside { display: block; }", css,
+                      "the sidebar's breakpoint is the one the name column shares")
 
     def test_the_manifest_carries_each_owner(self) -> None:
         repo = Path(tempfile.mkdtemp())
