@@ -454,9 +454,11 @@ class PublishTests(unittest.TestCase):
         self.summary_path.write_text(json.dumps(data))
         cwd = os.getcwd()
         os.chdir(self.repo)
+        self.err = io.StringIO()
         try:
             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
+                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()), \
+                 redirect_stderr(self.err):
                 return summary.publish(self.summary_path, "origin", **kwargs)
         finally:
             os.chdir(cwd)
@@ -472,7 +474,7 @@ class PublishTests(unittest.TestCase):
         try:
             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
                  mock.patch.object(summary, "fetch_diff", side_effect=AssertionError("must not fetch")), \
-                 redirect_stdout(io.StringIO()):
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 summary.publish(self.summary_path, "origin", diff_path=diff_file)
         finally:
             os.chdir(cwd)
@@ -631,6 +633,231 @@ class PublishTests(unittest.TestCase):
         run(self.repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
         with self.assertRaisesRegex(summary.SummaryError, "origin is someone/else, but the summary is for owner/repo"):
             self.publish("a" * 40)
+
+    def test_stores_the_heads_attributes_beside_the_diff_when_the_checkout_has_the_head(self) -> None:
+        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\ngen/** -linguist-generated\n")
+        run(self.repo, "git", "add", ".gitattributes")
+        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
+        head = run(self.repo, "git", "rev-parse", "HEAD")
+        # The head's attributes count, not an uncommitted change to them.
+        (self.repo / ".gitattributes").write_text("src/core_test.go linguist-generated\n")
+
+        self.publish(head)
+
+        folder = f"summaries/7/{head}"
+        self.assertEqual([f"{folder}/attributes.json", f"{folder}/diff.patch", f"{folder}/summary.json"],
+                         self.ref_files())
+        stored = Path(tempfile.mkdtemp()) / "attributes.json"
+        stored.write_text(run(self.remote, "git", "show", f"refs/projector/summaries:{folder}/attributes.json"))
+        self.assertEqual({"gen/api.pb.go": False, "src/core.go": True}, summary.stored_attributes(stored),
+                         "what publish writes is what the site build reads")
+        self.assertEqual("", self.err.getvalue())
+        self.assertIsNone(self.publish(head), "an unchanged summary publishes nothing")
+
+    def test_fetches_a_head_the_checkout_lacks_to_read_its_attributes(self) -> None:
+        other = self.remote.parent / "other"
+        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(other))
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
+            run(other, "git", "config", key, value)
+        (other / ".gitattributes").write_text("src/core.go linguist-generated\n")
+        run(other, "git", "add", ".gitattributes")
+        run(other, "git", "commit", "--quiet", "-m", "Mark the core generated")
+        run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
+        head = run(other, "git", "rev-parse", "HEAD")
+        refs = run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags")
+
+        self.publish(head)
+
+        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
+        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
+        self.assertEqual(refs, run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags"),
+                         "the fetch changes no branch or tag")
+
+    def test_says_so_and_stores_no_attributes_when_the_remote_cannot_serve_the_head(self) -> None:
+        self.publish("a" * 40)
+
+        self.assertNotIn(f"summaries/7/{'a' * 40}/attributes.json", self.ref_files())
+        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err.getvalue())
+
+
+ATTRIBUTES = {
+    ".gitattributes": "site/assets/*.js linguist-generated=true\n"
+                      "Build/Out.js linguist-generated\n"
+                      "yarn.lock -linguist-generated\n"
+                      "api/gen/** linguist-generated=false\n",
+    "pkg/.gitattributes": "*.js linguist-generated\nkeep.js -linguist-generated\n",
+}
+# The paths ATTRIBUTES decides, each with whether it is generated, and paths it leaves to the path heuristic.
+DECIDED = {"site/assets/summary.js": True, "Build/Out.js": True, "yarn.lock": False, "api/gen/client.pb.go": False,
+           "pkg/lib/index.js": True, "pkg/keep.js": False}
+UNDECIDED = ["build/out.js", "lib/index.js", "src/core.go"]
+
+
+def attributes_repo(files: dict[str, str], origin: str = "https://github.com/Owner/Repo.git") -> tuple[Path, str]:
+    """A checkout of `origin` whose one commit holds `files`, and that commit."""
+    repo = Path(tempfile.mkdtemp()) / "repo"
+    run(repo.parent, "git", "init", "--quiet", str(repo))
+    for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
+        run(repo, "git", "config", key, value)
+    run(repo, "git", "remote", "add", "origin", origin)
+    for path, text in files.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(text)
+    run(repo, "git", "add", "--all")
+    run(repo, "git", "commit", "--quiet", "-m", "Add attributes")
+    return repo, run(repo, "git", "rev-parse", "HEAD")
+
+
+def embedded(page: Path) -> dict:
+    """The data a standalone page embeds."""
+    html = (page / "index.html").read_text()
+    start = html.index('type="application/json">') + len('type="application/json">')
+    return json.loads(html[start:html.index("</script>", start)])
+
+
+class GeneratedAttributeTests(unittest.TestCase):
+    def test_the_attribute_overrules_the_path(self) -> None:
+        self.assertEqual("", summary.kind_of("site/assets/summary.js"))
+        self.assertEqual("generated", summary.kind_of("site/assets/summary.js", True))
+        self.assertEqual("generated", summary.kind_of("yarn.lock"))
+        self.assertEqual("", summary.kind_of("yarn.lock", False))
+        self.assertEqual("test", summary.kind_of("gen/check_test.go", False), "a test unmarked as generated is a test")
+        self.assertEqual("docs", summary.kind_of("docs/generated/api.md", False))
+        self.assertEqual("generated", summary.kind_of("tests/fixtures/out_test.go", True))
+
+    def test_reads_the_heads_attributes_by_exact_case_and_nested_files(self) -> None:
+        repo, head = attributes_repo(ATTRIBUTES)
+        # As Git sets it on a case-insensitive file system, where it would match Build/Out.js to build/out.js.
+        run(repo, "git", "config", "core.ignoreCase", "true")
+        (repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
+
+        self.assertEqual(DECIDED, summary.head_attributes(repo, head, [*DECIDED, *UNDECIDED]),
+                         "the commit's attributes, not the working tree's")
+        self.assertEqual(DECIDED, summary.generated_attributes([*DECIDED, *UNDECIDED], head, "owner/repo", repo / "pkg"))
+        self.assertIsNone(summary.head_attributes(repo, "HEAD", ["src/core.go"]), "only a full commit SHA is looked up")
+        self.assertIsNone(summary.head_attributes(repo, "f" * 40, ["src/core.go"]), "a commit the checkout lacks")
+
+    def test_a_git_without_check_attr_source_reads_the_head_through_a_scratch_index(self) -> None:
+        repo, head = attributes_repo(ATTRIBUTES)
+        index = (repo / ".git" / "index").read_bytes()
+        real = summary.check_attr
+
+        def before_git_2_40(root: Path, paths: list[str], *options: str, env: dict | None = None) -> list[str] | None:
+            if any(option.startswith("--source") for option in options):
+                return None
+            return real(root, paths, *options, env=env)
+
+        with mock.patch.object(summary, "check_attr", side_effect=before_git_2_40) as check:
+            self.assertEqual(DECIDED, summary.head_attributes(repo, head, [*DECIDED, *UNDECIDED]))
+        self.assertIn("--cached", check.call_args.args)
+        self.assertEqual(index, (repo / ".git" / "index").read_bytes(), "the checkout's own index is untouched")
+
+    def test_without_the_head_a_checkout_of_the_repository_reads_its_working_tree(self) -> None:
+        repo, _ = attributes_repo(ATTRIBUTES)
+        missing = "f" * 40
+        paths = [*DECIDED, *UNDECIDED]
+
+        self.assertEqual(DECIDED, summary.generated_attributes(paths, missing, "owner/repo", repo))
+        (repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
+        self.assertEqual({"src/core.go": True, "pkg/lib/index.js": True, "pkg/keep.js": False},
+                         summary.generated_attributes(paths, missing, "owner/repo", repo))
+        run(repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
+        self.assertEqual({}, summary.generated_attributes(paths, missing, "owner/repo", repo),
+                         "another repository's checkout says nothing about this one")
+        self.assertEqual({}, summary.generated_attributes(paths, missing, "owner/repo", Path(tempfile.mkdtemp())),
+                         "nor does a directory outside any checkout")
+
+    def test_only_the_repositorys_own_attributes_count(self) -> None:
+        repo, head = attributes_repo(ATTRIBUTES)
+        personal = repo.parent / "attributes"
+        personal.write_text("src/core.go linguist-generated\n")
+        run(repo, "git", "config", "core.attributesFile", str(personal))
+
+        self.assertEqual({}, summary.head_attributes(repo, head, ["src/core.go"]))
+        self.assertEqual({}, summary.generated_attributes(["src/core.go"], "f" * 40, "owner/repo", repo))
+
+    def marked_repo(self) -> tuple[Path, str]:
+        """A checkout whose head marks src/core.go generated and gen/api.pb.go not."""
+        return attributes_repo({".gitattributes": "src/core.go linguist-generated\ngen/** -linguist-generated\n",
+                                "src/.keep": ""})
+
+    def in_directory(self, directory: Path):
+        cwd = os.getcwd()
+        os.chdir(directory)
+        self.addCleanup(os.chdir, cwd)
+
+    def test_a_page_counts_files_as_the_heads_attributes_mark_them(self) -> None:
+        repo, head = self.marked_repo()
+        tmp = Path(tempfile.mkdtemp())
+        data = make_summary(GOOD_GROUPS)
+        data["pr"]["head"] = head
+        (tmp / "summary.json").write_text(json.dumps(data))
+        (tmp / "pr.diff").write_text(DIFF)
+        self.in_directory(repo / "src")
+
+        with redirect_stdout(io.StringIO()):
+            code = cli.main(["site", "page", "--summary", str(tmp / "summary.json"), "--out", str(tmp / "site"),
+                             "--diff", str(tmp / "pr.diff"), "--at-head"])
+
+        self.assertEqual(0, code)
+        payload = embedded(tmp / "site")
+        self.assertEqual({"src/core.go": "generated", "src/core_test.go": "test", "gen/api.pb.go": ""},
+                         {f["path"]: f["kind"] for f in payload["files"]})
+        self.assertEqual({"files": 3, "adds": 5, "dels": 2, "hand": 2, "test": 2, "generated": 3, "docs": 0},
+                         payload["stats"])
+
+    def test_init_flags_the_files_the_heads_attributes_mark(self) -> None:
+        repo, head = self.marked_repo()
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "pr.diff").write_text(DIFF)
+        self.in_directory(repo)
+        out = io.StringIO()
+
+        with mock.patch.object(summary, "pr_metadata", return_value=dict(make_summary([])["pr"], head=head)), \
+             redirect_stdout(out):
+            code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary",
+                             str(tmp / "summary.json"), "--diff", str(tmp / "pr.diff")])
+
+        self.assertEqual(0, code)
+        lines = out.getvalue().splitlines()
+        self.assertTrue(any(line.endswith("src/core.go [generated]") for line in lines), lines)
+        self.assertTrue(any(line.endswith(" gen/api.pb.go") for line in lines), lines)
+
+    def build_stored(self, checkout: Path, attributes: str | None) -> tuple[dict[str, str], list[str]]:
+        """Build a stored summary of head aaaa… from `checkout`, with `attributes` as its attributes.json.
+
+        Returns each file's kind, and the build's failures.
+        """
+        tmp = Path(tempfile.mkdtemp())
+        folder = tmp / "summaries" / "7" / ("a" * 40)
+        folder.mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps(make_summary(GOOD_GROUPS)))
+        (folder / "diff.patch").write_text(DIFF)
+        if attributes is not None:
+            (folder / "attributes.json").write_text(attributes)
+        with redirect_stdout(io.StringIO()):
+            _, failures = site.build_site(tmp / "site", summaries=tmp / "summaries", repo_root=checkout)
+        data = tmp / "site" / "reviews" / "7" / ("a" * 40) / "data.json"
+        files = json.loads(data.read_text())["files"] if data.is_file() else []
+        return {f["path"]: f["kind"] for f in files}, failures
+
+    def test_a_deploy_prefers_the_stored_attributes_to_its_own_checkout(self) -> None:
+        # The deploy's checkout is the default branch, which lacks the summary's head.
+        checkout, _ = attributes_repo({".gitattributes": "src/core.go linguist-generated\n"})
+
+        self.assertEqual(({"src/core.go": "generated", "src/core_test.go": "test", "gen/api.pb.go": "generated"}, []),
+                         self.build_stored(checkout, None), "a summary published without them reads the checkout")
+        self.assertEqual(({"src/core.go": "", "src/core_test.go": "test", "gen/api.pb.go": ""}, []),
+                         self.build_stored(checkout, '{"linguist-generated": {"gen/api.pb.go": false}}'))
+
+    def test_a_deploy_skips_a_summary_whose_stored_attributes_are_malformed(self) -> None:
+        checkout, _ = attributes_repo({".gitattributes": ""})
+
+        kinds, failures = self.build_stored(checkout, '{"linguist-generated": {"gen/api.pb.go": "no"}}')
+
+        self.assertEqual({}, kinds)
+        self.assertEqual([f"7/{'a' * 40}/summary.json: attributes.json must map each path to whether it is "
+                          "linguist-generated"], failures)
 
 
 class RepoSlugTests(unittest.TestCase):
