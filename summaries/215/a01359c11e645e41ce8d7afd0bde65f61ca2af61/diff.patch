@@ -1,0 +1,749 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 4a6ae46..dd9ae54 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -676,15 +676,21 @@ when GitHub cannot serve a diff that large.
+ when there are any. Its menu has three sections. **Projects**, the home page,
+ groups the projects by status, and opens each one beside a sidebar of its
+ top-level project's folder: every supplemental file, subdirectory, and nested
+-project. **Reviews** lists the summaries, newest pull request first, with
+-each one's status and when its newest version was published, in your time
+-zone. A pull request is stacked when its base branch is another open pull
++project. **Reviews** lists the summaries, newest pull request first, each as
++its pull request's number and title, the way a summary's sidebar lists its
++stack, with its status and when its newest version was published, in your
++time zone. A pull request is stacked when its base branch is another pull
+ request's head, and the pull requests of a stack are listed together where
+-the newest of them would be, from the one on the default branch up, with no
+-divider between them. A summary that did not record the pull request beneath
+-it has it looked up with `gh` at build time; when `gh` cannot answer, the
+-review shows no stack. The list leaves out merged and closed pull requests
+-until you check **Show merged and closed** above it. A summary's sidebar lists
++the newest of them would be, from the one on the default branch up, close
++together with a divider only below the stack. A summary that
++did not record the pull request beneath it has it looked up with `gh` at
++build time; when `gh` cannot answer, the review shows no stack. Two boxes
++above the list, **Open** and **Closed**, each with its count, choose which
++pull requests it shows. A merged pull request counts as closed, and one whose
++state `gh` could not tell counts as open. Only **Open** starts checked, and
++the address records any other choice, as `?state=closed`,
++`?state=open,closed`, or `?state=` for neither, so a copied link opens the
++same list. A summary's sidebar lists
+ every pull request in its stack, the ones beneath it and the ones above it,
+ one row each with its title, and highlights the current one; a pull request
+ with no stack is a stack of one, with its own row highlighted. Its older
+diff --git a/site/assets/site.css b/site/assets/site.css
+index 4f952f3..6b43b7d 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -118,13 +118,31 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
+ .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
+ table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
+ table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
+-/* Every cell of a review's row sits on the first line's baseline, so the small
+-   status lines up with the title beside it. A stack's rows share one table body
+-   and draw no divider between them. */
+-table.tbl.reviews td { vertical-align: baseline; }
++/* The reviews table sets every column's width but the pull request's, which
++   takes the rest and wraps its title, so checking Open or Closed never moves a
++   column. The status fits CHANGES REQUESTED, and the time one such as "Oct 10,
++   2026, 12:30 AM". Each pull request is a row as a summary's sidebar draws its
++   stack, an .srow, and a stack's rows sit as close together as the sidebar's,
++   with a divider only below the stack. Every cell sits on its row's first
++   baseline, so the status and the time line up with the title. No link in the
++   table is underlined. On a phone the time is left out and the status may
++   wrap, so the title keeps room. */
++table.tbl.reviews { table-layout: fixed; }
++table.tbl.reviews col.status { width: 11.5em; }
++table.tbl.reviews col.date { width: 13em; }
++table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }
++table.tbl.reviews td.pr { padding: 1px 1px 0; }
++table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }
++table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+ table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
+-table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }
+-.showdone { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 12px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
++table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
++@media (max-width: 640px) {
++  table.tbl.reviews .date { display: none; }
++  table.tbl.reviews col.status { width: 7.5em; }
++  table.tbl.reviews td.status { white-space: normal; }
++}
++.reviewstates { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 12px; }
++.reviewstates label { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+ 
+ .sitemain .badge {
+   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+diff --git a/site/assets/site.js b/site/assets/site.js
+index b50e365..c9016d4 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -394,22 +394,27 @@
+     function reviewFor(number) {
+         return site.reviews.find(function (r) { return r.number === number; }) ?? null;
+     }
+-    function projectLinks(names) {
+-        return names.map(function (name) {
+-            const project = projectNamed(name);
+-            return `<a href="${esc(`${base}projects/${name}/`)}">${esc(project !== null ? project.title : name)}</a>`;
+-        }).join('<br>');
+-    }
+-    function isDone(r) { return r.state === 'merged' || r.state === 'closed'; }
++    // A merged pull request counts as closed, as on GitHub, and one whose state
++    // the build could not ask GitHub for counts as open.
++    function stateOf(r) { return r.state === 'merged' || r.state === 'closed' ? 'closed' : 'open'; }
++    // The states the address asks to list: ?state=open,closed for both,
++    // ?state=closed for closed alone, and ?state= for neither. With no query it
++    // lists the open ones.
++    function listedStates() {
++        const asked = new URLSearchParams(location.search).get('state');
++        return asked === null ? ['open'] : asked.split(',');
++    }
++    // A review's row: its pull request's number and title as a summary's sidebar
++    // draws a stack's rows, its status, and when its newest head was published.
+     function reviewRow(r) {
+-        const url = esc(`${base}reviews/${String(r.number)}/`);
+-        return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
+-            `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+-            `<td>${projectLinks(r.projects)}</td>` +
++        return `<tr><td class="pr"><a class="srow" href="${esc(`${base}reviews/${String(r.number)}/`)}">` +
++            `<span class="snum">#${String(r.number)}</span><span class="stitle">${esc(r.title)}</span></a></td>` +
++            `<td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+             `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
+     }
+-    // The reviews in site.json's order, each stack's rows in one table body, which
+-    // draws no divider between them.
++    // The reviews in site.json's order, each stack's rows together in one table
++    // body, with a divider only below it. Every column but the pull request's has
++    // a set width, so checking a box never moves one.
+     function reviewsTable(reviews) {
+         const bodies = [];
+         reviews.forEach(function (r) {
+@@ -420,33 +425,51 @@
+                 bodies.push([r]);
+         });
+         return '<div class="tblwrap"><table class="tbl reviews">' +
+-            '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
+-            bodies.map(function (rows) {
+-                return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
+-            }).join('') + '</table></div>';
+-    }
+-    // A merged or closed pull request's review is left out until the reader asks
+-    // for it. A stack keeps its other reviews together.
++            '<colgroup><col><col class="status"><col class="date"></colgroup>' +
++            '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
++            bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
++            '</table></div>';
++    }
++    // The reviews of open pull requests, closed ones, or both, as the boxes at
++    // the top say and the address records. A stack keeps the reviews it has left
++    // together.
+     function showReviews() {
+-        const done = site.reviews.filter(isDone).length;
++        const listed = listedStates();
++        function box(state, label) {
++            const count = site.reviews.filter(function (r) { return stateOf(r) === state; }).length;
++            return `<label><input type="checkbox" value="${state}"${listed.includes(state) ? ' checked' : ''}> ${label} ` +
++                `<span class="count">${String(count)}</span></label>`;
++        }
+         const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
+-            (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
+-                `<span class="count">${String(done)}</span></label>` : '') +
++            `<div class="reviewstates" role="group" aria-label="Pull request states">${box('open', 'Open')}${box('closed', 'Closed')}</div>` +
+             '<div class="reviewlist"></div>');
+         const list = main.querySelector('.reviewlist');
+         if (list === null)
+             throw new Error('The reviews view lost the list it just drew');
+-        const box = main.querySelector('.showdone input');
++        const boxes = Array.from(main.querySelectorAll('.reviewstates input'));
++        function checked() {
++            return boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
++        }
+         function draw() {
+             if (list === null)
+                 return;
+-            const all = box?.checked === true;
+-            const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
+-            list.innerHTML = shown.length > 0 ? reviewsTable(shown)
+-                : '<p class="note">Every review here is of a merged or closed pull request.</p>';
++            const states = checked();
++            const shown = site.reviews.filter(function (r) { return states.includes(stateOf(r)); });
++            if (states.length === 0)
++                list.innerHTML = '<p class="note">Check Open or Closed to list their reviews.</p>';
++            else if (shown.length === 0)
++                list.innerHTML = `<p class="note">No ${states.length === 1 ? `${states[0] ?? ''} ` : ''}pull request has a review here.</p>`;
++            else
++                list.innerHTML = reviewsTable(shown);
+         }
+-        if (box !== null)
+-            box.addEventListener('change', draw);
++        boxes.forEach(function (b) {
++            b.addEventListener('change', function () {
++                const states = checked();
++                const query = states.length === 1 && states[0] === 'open' ? '' : `?state=${states.join(',')}`;
++                history.replaceState(null, '', location.pathname + query + location.hash);
++                draw();
++            });
++        });
+         draw();
+     }
+     // Centered on the whole query where the text holds it, else on the earliest word.
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 7a69108..0e010ac 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -103,19 +103,24 @@ a.rstatus:hover { text-decoration: underline; }
+ .versions li.current { background: var(--surface-2); color: var(--text); font-weight: 600; }
+ .versions .mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+ .versions .vwhen { white-space: nowrap; }
++/* A pull request as a row: its number, then its title beside the number's
++   line, and a band behind the row on hover. The sidebar's stack draws its rows
++   this way, and so does the site's Reviews index. The number's track is wide
++   enough for a four-digit number at any size, so every row's title starts at
++   the same place, and the number is a step smaller than the title. */
++.srow { display: grid; grid-template-columns: 2.9em 1fr; gap: 6px; align-items: baseline; padding: 8px 9px; border-radius: 6px; line-height: 1.35; color: var(--muted); text-decoration: none; }
++a.srow:hover { background: var(--surface-2); color: var(--text); }
++.snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
++.stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
+ .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+ .prblock .stack.projects + .stack { margin-top: 6px; }
+-/* Wide enough for a four-digit number, so every row's title starts at the same place. */
+-.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: 36px 1fr; gap: 6px; align-items: baseline; padding: 8px 9px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
+-.prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
++.prblock .stack .srow { margin: 0 -6px; font-size: 12.5px; }
+ .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
+-.prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+ .prblock .stack li.current .snum { color: var(--accent); }
+ /* A step up from the stack rows, so a project reads as the heading over its pull requests. */
+-.prblock .stack.projects li > a { grid-template-columns: 1fr; padding: 9px; font-size: 13.5px; }
++.prblock .stack.projects .srow { grid-template-columns: 1fr; padding: 9px; font-size: 13.5px; }
+ /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
+ .prblock .stack.projects:first-child { margin-top: -6px; }
+-.prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
+ .prbar { display: none; }
+ @media (max-width: 980px) {
+   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+@@ -125,7 +130,6 @@ a.rstatus:hover { text-decoration: underline; }
+ .nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+ .nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
+ .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
+-.prblock a { display: inline; padding: 0; }
+ .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+ .nav .ntitle { overflow-wrap: anywhere; }
+ .nav .ncheck, .ftree .fcheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 762fa4b..61f019f 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -327,9 +327,9 @@ function statusHtml(state, review) {
+             return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+                 const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+                 if (s.current)
+-                    return `<li class="current" aria-current="page">${row}</li>`;
++                    return `<li class="srow current" aria-current="page">${row}</li>`;
+                 const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
+-                return `<li><a href="${esc(href)}">${row}</a></li>`;
++                return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
+             }).join('') + '</ul>';
+         }
+         // The projects the pull request touches, as rows like the stack's, each
+@@ -339,7 +339,7 @@ function statusHtml(state, review) {
+             if (projects.length === 0)
+                 return '';
+             return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
+-                return `<li><a href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
++                return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+             }).join('') + '</ul>';
+         }
+         function reviewStatus() {
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index d5da573..3291296 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -109,7 +109,6 @@ interface SiteReview {
+   name: string;
+   title: string;
+   heads: number;
+-  projects: string[];
+   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
+   stack: number | null;
+   /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */
+diff --git a/site/src/site.ts b/site/src/site.ts
+index 949698a..6bcebf4 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -394,25 +394,30 @@
+     return site.reviews.find(function (r) { return r.number === number; }) ?? null;
+   }
+ 
+-  function projectLinks(names: string[]): string {
+-    return names.map(function (name) {
+-      const project = projectNamed(name);
+-      return `<a href="${esc(`${base}projects/${name}/`)}">${esc(project !== null ? project.title : name)}</a>`;
+-    }).join('<br>');
+-  }
++  // A merged pull request counts as closed, as on GitHub, and one whose state
++  // the build could not ask GitHub for counts as open.
++  function stateOf(r: SiteReview): 'open' | 'closed' { return r.state === 'merged' || r.state === 'closed' ? 'closed' : 'open'; }
+ 
+-  function isDone(r: SiteReview): boolean { return r.state === 'merged' || r.state === 'closed'; }
++  // The states the address asks to list: ?state=open,closed for both,
++  // ?state=closed for closed alone, and ?state= for neither. With no query it
++  // lists the open ones.
++  function listedStates(): string[] {
++    const asked = new URLSearchParams(location.search).get('state');
++    return asked === null ? ['open'] : asked.split(',');
++  }
+ 
++  // A review's row: its pull request's number and title as a summary's sidebar
++  // draws a stack's rows, its status, and when its newest head was published.
+   function reviewRow(r: SiteReview): string {
+-    const url = esc(`${base}reviews/${String(r.number)}/`);
+-    return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
+-      `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+-      `<td>${projectLinks(r.projects)}</td>` +
++    return `<tr><td class="pr"><a class="srow" href="${esc(`${base}reviews/${String(r.number)}/`)}">` +
++      `<span class="snum">#${String(r.number)}</span><span class="stitle">${esc(r.title)}</span></a></td>` +
++      `<td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+       `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
+   }
+ 
+-  // The reviews in site.json's order, each stack's rows in one table body, which
+-  // draws no divider between them.
++  // The reviews in site.json's order, each stack's rows together in one table
++  // body, with a divider only below it. Every column but the pull request's has
++  // a set width, so checking a box never moves one.
+   function reviewsTable(reviews: SiteReview[]): string {
+     const bodies: SiteReview[][] = [];
+     reviews.forEach(function (r) {
+@@ -421,31 +426,47 @@
+       else bodies.push([r]);
+     });
+     return '<div class="tblwrap"><table class="tbl reviews">' +
+-      '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
+-      bodies.map(function (rows) {
+-        return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
+-      }).join('') + '</table></div>';
++      '<colgroup><col><col class="status"><col class="date"></colgroup>' +
++      '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
++      bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
++      '</table></div>';
+   }
+ 
+-  // A merged or closed pull request's review is left out until the reader asks
+-  // for it. A stack keeps its other reviews together.
++  // The reviews of open pull requests, closed ones, or both, as the boxes at
++  // the top say and the address records. A stack keeps the reviews it has left
++  // together.
+   function showReviews(): void {
+-    const done = site.reviews.filter(isDone).length;
++    const listed = listedStates();
++    function box(state: string, label: string): string {
++      const count = site.reviews.filter(function (r) { return stateOf(r) === state; }).length;
++      return `<label><input type="checkbox" value="${state}"${listed.includes(state) ? ' checked' : ''}> ${label} ` +
++        `<span class="count">${String(count)}</span></label>`;
++    }
+     const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
+-      (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
+-        `<span class="count">${String(done)}</span></label>` : '') +
++      `<div class="reviewstates" role="group" aria-label="Pull request states">${box('open', 'Open')}${box('closed', 'Closed')}</div>` +
+       '<div class="reviewlist"></div>');
+     const list = main.querySelector('.reviewlist');
+     if (list === null) throw new Error('The reviews view lost the list it just drew');
+-    const box = main.querySelector<HTMLInputElement>('.showdone input');
++    const boxes = Array.from(main.querySelectorAll<HTMLInputElement>('.reviewstates input'));
++    function checked(): string[] {
++      return boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
++    }
+     function draw(): void {
+       if (list === null) return;
+-      const all = box?.checked === true;
+-      const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
+-      list.innerHTML = shown.length > 0 ? reviewsTable(shown)
+-        : '<p class="note">Every review here is of a merged or closed pull request.</p>';
++      const states = checked();
++      const shown = site.reviews.filter(function (r) { return states.includes(stateOf(r)); });
++      if (states.length === 0) list.innerHTML = '<p class="note">Check Open or Closed to list their reviews.</p>';
++      else if (shown.length === 0) list.innerHTML = `<p class="note">No ${states.length === 1 ? `${states[0] ?? ''} ` : ''}pull request has a review here.</p>`;
++      else list.innerHTML = reviewsTable(shown);
+     }
+-    if (box !== null) box.addEventListener('change', draw);
++    boxes.forEach(function (b) {
++      b.addEventListener('change', function () {
++        const states = checked();
++        const query = states.length === 1 && states[0] === 'open' ? '' : `?state=${states.join(',')}`;
++        history.replaceState(null, '', location.pathname + query + location.hash);
++        draw();
++      });
++    });
+     draw();
+   }
+ 
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index e194dc2..d3a8d1e 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -321,9 +321,9 @@ function renderSummary(data: SummaryData): void {
+     const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
+     return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+       const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+-      if (s.current) return `<li class="current" aria-current="page">${row}</li>`;
++      if (s.current) return `<li class="srow current" aria-current="page">${row}</li>`;
+       const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
+-      return `<li><a href="${esc(href)}">${row}</a></li>`;
++      return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
+     }).join('') + '</ul>';
+   }
+ 
+@@ -333,7 +333,7 @@ function renderSummary(data: SummaryData): void {
+     const projects = data.projects ?? [];
+     if (projects.length === 0) return '';
+     return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
+-      return `<li><a href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
++      return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+     }).join('') + '</ul>';
+   }
+ 
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index b21f20c..365dcc5 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -47,10 +47,10 @@ it. The summary is JSON:
+ 
+ ## Fields
+ 
+-- `name` labels the summary where the site lists reviews: in the Reviews
+-  table and in a project's list of reviews. Make it a short name for the
+-  change, not a sentence. The page and its browser tab take the pull
+-  request's title, and use `name` only when that title is empty.
++- `name` labels the summary in a project's list of reviews on the site.
++  Make it a short name for the change, not a sentence. The page, its
++  browser tab, and its row on the Reviews index take the pull request's
++  title.
+ - `pr.head` is the commit the page describes. `build` stops when the pull
+   request has moved past it, unless `--at-head` asks for that head exactly.
+ - `pr.base` is the merge base the diff is taken from. `init` records it; the
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index c5652b3..5c9b046 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -582,12 +582,13 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+ def review_row(entry: dict) -> dict:
+     """A review's row on the Reviews index, in site.json.
+ 
+-    `updated` is when its newest head was published, in UTC. `state` and
+-    `review` are its pull request's and its newest head's, as its page
+-    carries them, and are left out when the build could not ask GitHub.
++    `title` is the one its page has, `pr_title`'s. `updated` is when its
++    newest head was published, in UTC. `state` and `review` are its pull
++    request's and its newest head's, as its page carries them, and are left
++    out when the build could not ask GitHub.
+     """
+-    row = {"number": entry["number"], "name": entry["name"], "title": entry["pr"]["title"],
+-           "heads": entry["heads"], "projects": entry["projects"], "stack": entry["stack"],
++    row = {"number": entry["number"], "name": entry["name"], "title": pr_title(entry),
++           "heads": entry["heads"], "stack": entry["stack"],
+            "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")}
+     if entry["pr"].get("state") is not None:
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 6f19aad..7e83630 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -463,6 +463,21 @@ def test_the_reviews_index_lists_each_stack_together_from_the_default_branch_up(
+         self.assertEqual([31, 30, 18, 16, 15, 14, 13, 12, 11, 10, 9], projects["alpha"],
+                          "a project still lists its reviews newest first")
+ 
++    def test_a_stack_numbered_out_of_order_is_listed_by_what_sits_on_what(self) -> None:
++        # 35 was opened before 40 but rebased onto it, and 50 sits on 35.
++        self.publish(40, "a" * 40, headRef="feature-40")
++        self.publish(35, "b" * 40, headRef="feature-35", baseRef="feature-40")
++        self.publish(50, "c" * 40, headRef="feature-50", baseRef="feature-35")
++        self.publish(41, "d" * 40, headRef="alone-41")
++        self.publish(38, "e" * 40, headRef="alone-38")
++        self.stacks()
++
++        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
++
++        self.assertEqual([(40, 40), (35, 40), (50, 40), (41, None), (38, None)],
++                         [(r["number"], r["stack"]) for r in reviews],
++                         "the stack runs from its bottom up, not by number, and sits where its highest number would")
++
+     def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
+         self.publish(9, "d" * 40)
+         self.publish(10, "e" * 40)
+@@ -478,6 +493,14 @@ def pr_status(repo: str, number: int) -> dict:
+                          [(r["number"], r["state"], r["review"]) for r in reviews],
+                          "each row carries what its newest head's page does")
+ 
++    def test_the_reviews_index_titles_each_review_as_its_page_does(self) -> None:
++        self.publish(9, "c" * 40)
++
++        reviews = self.build()["reviews"]
++
++        self.assertEqual([(9, "Change 9", "Summary 9")], [(r["number"], r["title"], r["name"]) for r in reviews],
++                         "the pull request's title, not the summary's name")
++
+     def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
+         self.publish(9, "c" * 40)
+ 
+@@ -491,7 +514,6 @@ def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+ 
+         manifest = self.build()
+ 
+-        self.assertEqual([["alpha"]], [r["projects"] for r in manifest["reviews"]])
+         reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
+         self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
+         data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+@@ -515,8 +537,10 @@ def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
+ 
+         manifest = self.build()
+ 
+-        self.assertEqual(["alpha/beta", "alpha"], manifest["reviews"][0]["projects"],
++        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
++        self.assertEqual(["alpha/beta", "alpha"], [p["name"] for p in data["projects"]],
+                          "named projects first, unknown names dropped, then the ones the diff touches")
++        self.assertEqual({"alpha": [9], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]})
+ 
+     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
+         manifest = self.build()
+@@ -712,85 +736,140 @@ def node(program: str) -> str:
+ 
+ @unittest.skipUnless(shutil.which("node"), "the reviews view test needs node")
+ class ReviewsViewTests(unittest.TestCase):
+-    def draw(self, reviews: list[dict]) -> dict[str, str]:
+-        """The Reviews index for `reviews`, drawn by the compiled showReviews.
++    STUB = r"""
++const base = '/';
++const location = {pathname: '/reviews/', search: SEARCH, hash: '#top'};
++let address = location.pathname + location.search + location.hash, page = '';
++const history = {replaceState: function (state, title, url) { address = url; }};
++const list = {innerHTML: ''}, boxes = [];
++function frame(active, title, body) {
++  page = body;
++  return {
++    querySelector: function () { return list; },
++    querySelectorAll: function () {
++      for (const m of body.matchAll(/<input type="checkbox" value="(\w+)"( checked)?>/g)) {
++        boxes.push({value: m[1], checked: m[2] !== undefined, addEventListener: function (type, f) { this.changed = f; }});
++      }
++      return boxes;
++    },
++  };
++}
++"""
++
++    def draw(self, reviews: list[dict], search: str = "", toggles: tuple[tuple[str, bool], ...] = ()) -> dict:
++        """The Reviews index for `reviews`, drawn by the compiled showReviews at an address whose query is `search`.
+ 
+-        `page` is the view around the list, `first` the list as it opens, and
+-        `all` the list once the reader checks the box that shows merged and
+-        closed pull requests.
++        `page` is the view around the list, and `boxes` each box's value and
++        whether it starts checked. `steps` holds the list and the address as
++        the page opens and after each of `toggles`: a box's value, and
++        whether the reader checks or unchecks it.
+         """
+-        stub = (
+-            "const base = '/';\n"
++        stub = self.STUB.replace("SEARCH", json.dumps(search)) + \
+             f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
+-            "const list = {innerHTML: ''};\n"
+-            "const box = {checked: false, addEventListener: function (type, listener) { this.changed = listener; }};\n"
+-            "let page = '';\n"
+-            "function frame(active, title, body) { page = body; return {querySelector: function (selector) {"
+-            " return selector === '.reviewlist' ? list : page.includes('showdone') ? box : null; }}; }\n"
+-        )
+-        functions = ("projectNamed", "projectLinks", "isDone", "reviewRow", "reviewsTable", "showReviews")
++        functions = ("stateOf", "listedStates", "reviewRow", "reviewsTable", "showReviews")
+         program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
+-            "\nshowReviews(); const first = list.innerHTML;"
+-            " box.checked = true; if (box.changed) box.changed();"
+-            " process.stdout.write(JSON.stringify({page: page, first: first, all: list.innerHTML}));")
++            "\nshowReviews();"
++            "\nconst opened = boxes.map(function (b) { return [b.value, b.checked]; });"
++            "\nconst steps = [{list: list.innerHTML, address: address}];"
++            f"\nfor (const [value, on] of {json.dumps(toggles)}) {{"
++            "\n  const b = boxes.find(function (x) { return x.value === value; }); b.checked = on; b.changed();"
++            "\n  steps.push({list: list.innerHTML, address: address});"
++            "\n}"
++            "\nprocess.stdout.write(JSON.stringify({page: page, boxes: opened, steps: steps}));")
+         return json.loads(node(program))
+ 
+     @staticmethod
+     def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
+         """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
+-        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1, "projects": [],
++        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1,
+                "stack": stack, "updated": "2023-11-14T22:21:40Z"}
+         if state is not None:
+             row["state"] = state
+             row["review"] = review or {"status": "unreviewed"}
+         return row
+ 
+-    @staticmethod
+-    def bodies(html: str) -> list[tuple[bool, list[int]]]:
+-        """Each table body of the list: whether it is a stack's, and the pull requests in its rows."""
+-        return [(stack != "", [int(n) for n in re.findall(r'<tr><td><a href="/reviews/(\d+)/">', rows)])
+-                for stack, rows in re.findall(r'<tbody( class="stack")?>(.*?)</tbody>', html)]
+-
+-    def test_a_stack_shares_one_table_body_and_a_merged_or_closed_review_waits_to_be_shown(self) -> None:
+-        drawn = self.draw([self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
+-                           self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open")])
+-
+-        self.assertIn('<label class="showdone"><input type="checkbox"> Show merged and closed '
+-                      '<span class="count">2</span></label>', drawn["page"])
+-        self.assertEqual([(True, [30, 31]), (True, [10, 11])], self.bodies(drawn["first"]),
++    def bodies(self, html: str) -> list[list[int]]:
++        """The pull requests in each table body of the list, one body for each stack and for each review alone.
++
++        Each row is its pull request's number and title, drawn as a stack's
++        row in a summary's sidebar is.
++        """
++        found = []
++        for rows in re.findall(r'<tbody>(.*?)</tbody>', html):
++            numbers = [int(n) for n in re.findall(
++                r'<tr><td class="pr"><a class="srow" href="/reviews/(\d+)/"><span class="snum">#\1</span>'
++                r'<span class="stitle">Change \1</span></a></td>', rows)]
++            self.assertEqual(rows.count("<tr>"), len(numbers), rows)
++            found.append(numbers)
++        return found
++
++    def test_open_reviews_are_listed_first_and_each_box_changes_the_list_and_the_address(self) -> None:
++        reviews = [self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
++                   self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open"), self.review(8)]
++
++        drawn = self.draw(reviews, toggles=(("closed", True), ("open", False), ("closed", False), ("open", True)))
++
++        self.assertIn('<div class="reviewstates" role="group" aria-label="Pull request states">'
++                      '<label><input type="checkbox" value="open" checked> Open <span class="count">5</span></label>'
++                      '<label><input type="checkbox" value="closed"> Closed <span class="count">2</span></label></div>',
++                      drawn["page"], "merged counts as closed, and a state GitHub could not tell as open")
++        self.assertEqual([["open", True], ["closed", False]], drawn["boxes"])
++        steps = [(step["address"], step["list"]) for step in drawn["steps"]]
++        self.assertEqual(["/reviews/#top", "/reviews/?state=open,closed#top", "/reviews/?state=closed#top",
++                          "/reviews/?state=#top", "/reviews/#top"], [address for address, _ in steps])
++        self.assertEqual([[30, 31], [10, 11], [8]], self.bodies(steps[0][1]),
+                          "a stack keeps its open reviews together when a merged one is left out")
+-        self.assertEqual([(True, [30, 31]), (False, [16]), (True, [9, 10, 11])], self.bodies(drawn["all"]))
++        self.assertEqual([[30, 31], [16], [9, 10, 11], [8]], self.bodies(steps[1][1]))
++        self.assertEqual([[16], [9]], self.bodies(steps[2][1]), "a stack's last review drawn stands alone")
++        self.assertEqual('<p class="note">Check Open or Closed to list their reviews.</p>', steps[3][1])
++        self.assertEqual(steps[0][1], steps[4][1])
+ 
+-    def test_each_row_shows_its_status_and_when_it_was_updated_in_the_readers_time_zone(self) -> None:
+-        clean = {"status": "clean", "url": review_url(1)}
+-        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)])
++    def test_a_stack_keeps_site_jsons_order_not_its_numbers(self) -> None:
++        drawn = self.draw([self.review(40, 40, "open"), self.review(35, 40, "open"), self.review(50, 40, "open")])
+ 
+-        self.assertIn("<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>",
+-                      drawn["all"])
+-        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', drawn["all"])
+-        self.assertEqual([f'<a class="rstatus clean" href="{review_url(1)}" target="_blank" rel="noopener">Clean</a>',
+-                          "", '<span class="rstatus merged">Merged</span>'], statuses,
+-                         "a status GitHub could not tell is left blank, and a merged pull request's verdict gives way")
+-        self.assertRegex(drawn["all"], r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
+-        for gone in ("Head", "Stacked on", "summarize-pr"):
+-            self.assertNotIn(gone, drawn["page"] + drawn["all"])
++        self.assertEqual([[40, 35, 50]], self.bodies(drawn["steps"][0]["list"]))
+ 
+-    def test_a_list_of_only_merged_or_closed_reviews_says_so(self) -> None:
+-        drawn = self.draw([self.review(9, None, "merged")])
++    def test_the_address_says_which_boxes_start_checked(self) -> None:
++        reviews = [self.review(9, None, "open"), self.review(8, None, "merged")]
++        for search, boxes, listed in (("", [True, False], [9]), ("?state=closed", [False, True], [8]),
++                                      ("?state=open,closed", [True, True], [9, 8]), ("?state=", [False, False], []),
++                                      ("?state=closed,bogus", [False, True], [8]), ("?other=1", [True, False], [9])):
++            with self.subTest(search=search):
++                drawn = self.draw(reviews, search)
+ 
+-        self.assertEqual('<p class="note">Every review here is of a merged or closed pull request.</p>', drawn["first"])
+-        self.assertEqual([(False, [9])], self.bodies(drawn["all"]))
++                self.assertEqual([["open", boxes[0]], ["closed", boxes[1]]], drawn["boxes"])
++                self.assertEqual(listed, [n for numbers in self.bodies(drawn["steps"][0]["list"]) for n in numbers])
+ 
+-    def test_no_box_to_check_when_nothing_is_merged_or_closed(self) -> None:
+-        drawn = self.draw([self.review(9, None, "open"), self.review(8)])
++    def test_a_state_no_review_is_in_says_so(self) -> None:
++        drawn = self.draw([self.review(9, None, "merged")])
++
++        self.assertEqual('<p class="note">No open pull request has a review here.</p>', drawn["steps"][0]["list"])
+ 
+-        self.assertNotIn("showdone", drawn["page"])
+-        self.assertEqual([(False, [9]), (False, [8])], self.bodies(drawn["first"]))
++    def test_each_row_shows_its_status_and_when_it_was_updated_in_the_readers_time_zone(self) -> None:
++        clean = {"status": "clean", "url": review_url(1)}
++        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)],
++                          "?state=open,closed")
++        html = drawn["steps"][0]["list"]
++
++        self.assertIn('<colgroup><col><col class="status"><col class="date"></colgroup>'
++                      '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>', html)
++        self.assertNotIn("Summary 12", html, "a row names its pull request by its title alone")
++        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', html)
++        self.assertEqual([f'<a class="rstatus clean" href="{review_url(1)}" target="_blank" rel="noopener">Clean</a>',
++                          "", '<span class="rstatus merged">Merged</span>'], statuses,
++                         "a status GitHub could not tell is left blank, and a merged pull request's verdict gives way")
++        self.assertRegex(html, r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
++        for gone in ("Head", "Projects", "Stacked on", "summarize-pr", "Show merged"):
++            self.assertNotIn(gone, drawn["page"] + html)
+ 
+-    def test_a_stack_draws_no_divider_between_its_rows(self) -> None:
++    def test_a_stack_draws_no_divider_between_its_rows_and_no_link_is_underlined(self) -> None:
+         css = (SITE_JS.parent / "site.css").read_text()
+ 
+-        self.assertIn("table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }", css)
++        self.assertIn("table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }", css)
++        self.assertIn("table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid "
++                      "var(--border); }", css, "a divider only below each stack, or each review alone")
++        self.assertIn("table.tbl.reviews { table-layout: fixed; }", css, "checking a box never moves a column")
++        self.assertIn("table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }", css)
+ 
+ 
+ @unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
+@@ -1109,7 +1188,7 @@ def test_a_pull_request_alone_is_a_stack_of_one_in_the_sidebar(self) -> None:
+         data = self.build()
+         self.assertEqual([], data["stack"])
+ 
+-        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page">'
++        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="srow current" aria-current="page">'
+                       '<span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
+                       rendered_summary(data))
+ 
+@@ -1139,8 +1218,8 @@ def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
+ 
+         projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
+         self.assertIsNotNone(projects, "the projects list is missing")
+-        self.assertEqual('<li><a href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
+-                         '<li><a href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
++        self.assertEqual('<li><a class="srow" href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
++                         '<li><a class="srow" href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
+                          projects.group(1), "each project's title fills its row, with nothing before it")
+         self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
+                         "the projects come first in the sidebar")
+@@ -1191,9 +1270,10 @@ def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self)
+         self.assertIn("overflow-wrap: anywhere;", title.group(1))
+ 
+     def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
+-        # The home page loads summary.css as well, and its Reviews table draws
+-        # each stack's rows in a `tbody.stack`, so a rule written for the
+-        # sidebar's stack list names the sidebar block the list sits in.
++        # The site's own pages load summary.css as well, so a rule written for
++        # the sidebar's stack list names the sidebar block the list sits in.
++        # What the Reviews index draws the same way, a pull request's row, is
++        # in the shared .srow, .snum, and .stitle rules instead.
+         css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
+         stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
+                  for selector in rule.split(",") if re.search(r"\.stack\b", selector)]
+@@ -1202,8 +1282,8 @@ def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
+ 
+     def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
+         css = (SITE_JS.parent / "summary.css").read_text()
+-        title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
+-        self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
++        title = re.search(r"^\.stitle \{([^}]*)\}", css, re.M)
++        self.assertIsNotNone(title, "summary.css has no .stitle rule")
+         self.assertIn("overflow-wrap: anywhere;", title.group(1))
+         self.assertIn("-webkit-line-clamp: 3;", title.group(1))
+         # Every title has the same weight, because bold text is wider, and a

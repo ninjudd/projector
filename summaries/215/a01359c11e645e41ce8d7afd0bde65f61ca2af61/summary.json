@@ -1,0 +1,209 @@
+{
+ "version": 1,
+ "name": "Reviews index filters and stack rows",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 215,
+  "title": "Filter the Reviews index by Open and Closed and draw each row like a stack row",
+  "head": "a01359c11e645e41ce8d7afd0bde65f61ca2af61",
+  "headRef": "reviews-index-polish",
+  "base": "0a08b8fed10fc560a10490dda95b367a3b8ab054",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A repository's Projector site has a <b>Reviews</b> index at <code>reviews/</code>: one row for each pull request that has a published summary, with its status and when its newest summary was published. The site's build writes the rows into <code>site.json</code>, and <code>site.ts</code> draws them in the browser. #213 grouped each stack's pull requests together on that page and hid merged and closed ones behind a <b>Show merged and closed</b> box.",
+   "This pull request reworks the page in four ways:",
+   "<ul><li><b>Two filter boxes.</b> <b>Open</b> and <b>Closed</b>, each with its count, replace the single box. A merged pull request counts as closed, and one whose state the build could not ask GitHub for counts as open. Only <b>Open</b> starts checked, and the address records any other choice as <code>?state=closed</code>, <code>?state=open,closed</code>, or <code>?state=</code>, so a copied link opens the same list.</li><li><b>Rows drawn like the sidebar's stack.</b> Each row is one cell holding the pull request's number in a narrow track and its title beside it, the way a summary page's sidebar lists the pull requests in its stack. Shared <code>.srow</code>, <code>.snum</code>, and <code>.stitle</code> rules in <code>summary.css</code> draw both.</li><li><b>Fewer columns.</b> The Projects column goes, along with the <code>projects</code> list in <code>site.json</code>'s reviews that only it read. Every column except the pull request's has a fixed width, so toggling a box never moves a column.</li><li><b>The pull request's title.</b> Each row shows the pull request's title through <code>pr_title</code>, the same helper that titles its summary page, instead of the summary's <code>name</code>.</li></ul>",
+   "The review of this head found nothing to fix. The full test suite, the TypeScript check and build, <code>project check</code>, and both plugin validations pass."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack.</b> Pull requests where each one's base branch is the head branch of the one beneath it. The index lists a stack's rows together, from the one on the default branch up.</li><li><b>Summary.</b> The guided review page that <code>project summary publish</code> stores for a pull request. Each summary has a short <code>name</code> and the pull request's title.</li><li><b><code>site.json</code>.</b> The manifest the site's build writes. Its <code>reviews</code> list holds one row per pull request.</li><li><b><code>.srow</code>.</b> The CSS class for one pull request drawn as a number and a title, shared by the sidebar and the index.</li></ul>"
+   },
+   {
+    "id": "states",
+    "title": "Which box lists which pull request",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Pull request state</th><th>Listed under</th></tr></thead><tbody><tr><td>open</td><td class=\"r\">Open</td></tr><tr><td>merged</td><td class=\"r\">Closed</td></tr><tr><td>closed</td><td class=\"r\">Closed</td></tr><tr><td>unknown (GitHub not reachable at build time)</td><td class=\"r\">Open</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "data",
+   "title": "What site.json says about each review",
+   "kicker": "The build drops the projects list and titles each row as its page does.",
+   "intro": [
+    "The site's build turns each pull request's newest summary into a row of <code>site.json</code>'s <code>reviews</code> list with <code>review_row</code>. The browser reads only that list to draw the index.",
+    "The row loses <code>projects</code>, the names of the projects the pull request touches, because the Projects column was its only reader. A project page still lists its reviews, because the build computes each project's review numbers from its own entries, not from <code>site.json</code>'s rows. The row's <code>title</code> now comes from <code>pr_title</code>, which falls back to the summary's <code>name</code> and then to <code>#N</code> when the pull request has no title."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>review_row</code> drops <code>projects</code> and takes <code>title</code> from <code>pr_title</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 590,
+       "text": "<code>build_site</code> still fills each project's <code>reviews</code> from the build's entries, which keep <code>projects</code>, so dropping it from the row leaves project pages unchanged. Checked by reading <code>build_site</code> and by <code>test_a_review_links_to_the_projects_its_diff_changes_and_back</code> and <code>test_a_summary_can_name_a_project_its_diff_does_not_touch</code> passing, which assert each project's <code>reviews</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "<code>SiteReview</code> loses its <code>projects</code> field to match the row."
+    }
+   ]
+  },
+  {
+   "id": "row",
+   "title": "One pull request row for the sidebar and the index",
+   "kicker": "The sidebar's stack-row look moves into shared .srow, .snum, and .stitle rules.",
+   "intro": [
+    "A summary page's sidebar lists every pull request in its stack, one row each: a small monospace number, then the title on the number's line, with a band behind the row on hover. Those rules were scoped to the sidebar as <code>.prblock .stack li &gt; a</code>, so the index could not reuse them.",
+    "The pull request moves the row's look into three unscoped classes in <code>summary.css</code>, which every site page already loads. <code>.srow</code> is the grid, <code>.snum</code> the number, and <code>.stitle</code> the title, clamped to three lines. Sizes are now relative: the number track is 2.9em and the number 0.92em, which reproduce the sidebar's former 36px and 11.5px at its 12.5px font size. The sidebar keeps only its own margin and size in <code>.prblock .stack .srow</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/assets/summary.css",
+     "note": "Adds the shared row rules and trims the sidebar's rules to size and margin.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 111,
+       "text": "<code>.srow</code> has the low specificity of one class, so any rule naming an element and a class beats it. In the sidebar no <code>.nav ol a</code> or <code>.nav .extra a</code> rule reaches a stack row, because the stack is a <code>ul</code> outside <code>.extra</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 128,
+       "side": "old",
+       "text": "This rule had to go. At one class and one element it would beat <code>.srow</code> on <code>display</code> and <code>padding</code> and collapse every sidebar row to inline text. <code>.prblock</code> holds only the projects list and the stack list, so no other link depended on it. Checked by reading what <code>renderPage</code> puts in <code>.prblock</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "The sidebar's stack rows and project rows carry the <code>srow</code> class, and the current row gets it on its <code>li</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 324,
+       "text": "The current pull request's row is an <code>li</code>, not a link, so it takes <code>srow</code> itself to get the grid layout that <code>.prblock .stack li.current</code> used to set."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "index",
+   "title": "The Reviews index",
+   "kicker": "Open and Closed boxes, a filter the address records, and rows drawn as .srow.",
+   "intro": [
+    "<code>showReviews</code> draws the index. It reads which states to list from the address, draws one box for each state with its count, and redraws the list whenever a box changes. Each stack's rows still share one table body, so a stack stays together when a filter hides some of its layers.",
+    "Before this change one box toggled merged and closed pull requests on and off, and the choice did not survive a reload. Now a change writes the choice into the query with <code>history.replaceState</code>, leaving the path and the hash alone. The default, Open alone, writes no query at all, so the plain <code>reviews/</code> link stays the default view.",
+    "<h4>Columns that hold still</h4>",
+    "The table uses <code>table-layout: fixed</code> with a <code>colgroup</code>. The Status and Updated columns get fixed widths, and the pull request column takes the rest and wraps its title. Rows inside a table body sit close together, and only the last row of each body draws a divider, so a stack reads as one block. At phone width the Updated column is hidden and the status may wrap."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "<code>showReviews</code> draws the two boxes and keeps the address in step with them. <code>reviewRow</code> draws each row as an <code>.srow</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 399,
+       "text": "A pull request whose state the build could not ask GitHub for has no <code>state</code>, and <code>stateOf</code> lists it under Open, so it stays visible by default."
+      },
+      {
+       "kind": "verify",
+       "line": 404,
+       "text": "<code>listedStates</code> returns <code>['open']</code> with no <code>state</code> parameter and splits it on commas otherwise. An unknown value checks no box for it, so <code>?state=closed,bogus</code> checks Closed alone. Checked by tracing it and by <code>test_the_address_says_which_boxes_start_checked</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 466,
+       "text": "The handler rewrites only the query. Open alone writes none, and every other choice writes <code>?state=</code> with the checked values. The site's own <b>Reviews</b> nav link still opens the default view, because the in-site click handler pushes <code>reviews/</code> with no query. Checked by tracing the click handler and by <code>test_open_reviews_are_listed_first_and_each_box_changes_the_list_and_the_address</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Fixed column widths, the stack spacing, the phone layout, and no underlines in the table.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 136,
+       "text": "Every row stands in its own table body unless it belongs to a stack, so this one rule draws a divider under each lone row and under each stack's last row."
+      },
+      {
+       "kind": "context",
+       "line": 139,
+       "text": "At phone width <code>.date</code> hides the <code>col</code>, the header, and every cell of the Updated column together. The review checked this by reading the CSS, not in a browser."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.js"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Node-driven tests of the boxes and the address, plus a build-level stack-order test.",
+   "intro": [
+    "<code>ReviewsViewTests</code> runs the compiled <code>showReviews</code> under Node against a stub DOM and records the list and the address after each box change. A new build-level test in <code>SiteContentTests</code> covers a stack whose numbers run against its order, and the sidebar tests follow the rules to their new shared selectors."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 806,
+       "text": "Walks the boxes through Closed on, Open off, Closed off, Open on, and expects the addresses <code>/reviews/#top</code>, <code>?state=open,closed#top</code>, <code>?state=closed#top</code>, <code>?state=#top</code>, then <code>/reviews/#top</code> again, with the stack of 9, 10, and 11 kept together when 9 is merged and hidden."
+      },
+      {
+       "kind": "context",
+       "line": 466,
+       "text": "Pull request 35 sits on 40 and 50 on 35, so the expected order is 40, 35, 50 by what sits on what, then the lone 41 and 38."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and the summary format describe the new index.",
+   "intro": [
+    "<code>docs/cli.md</code> describes the boxes, the address, and the row look. It also stops saying a stack's base must be an open pull request, because <code>stack_bases</code> never checks the state of the pull request beneath. The summary format in <code>skills/summarize-pr/format.md</code> says where <code>name</code> still appears now that the index shows titles."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 50,
+       "text": "The revised entry drops the clause saying the page uses <code>name</code> when the pull request has no title. <code>pr_title</code> and the summary page's header still fall back that way, so a reader of this file no longer learns that <code>name</code> can title the page. Consider keeping \"and use <code>name</code> only when that title is empty\"."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
