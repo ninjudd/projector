@@ -155,12 +155,15 @@ conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
 fix commits, declined findings, and validation results, then keep watching.
 
 Report a stack's readiness as one unit, the same unit its subagent fixes,
-because the user merges it as one from GitHub. Check every open layer, and
-say "stack #<number> is ready to merge as a whole" when each layer's
-current head is clean by those conditions, which also puts the whole stack
-in sync. Otherwise name the bottom layers that are ready, such as "#12 and
-#13 at the bottom of stack #14 are ready to merge", and what holds back the
-lowest layer that is not. Name the stack by the number GitHub's stacks API
+because the user merges it as one from GitHub. Check every open layer
+against GitHub itself: its clean conditions, and GitHub's comparison of it
+with the layer below, which `../implement/SKILL.md` describes under "Stack
+dependent work". Never take sync from a local `gh stack view`, which reads
+only one checkout's branches. Say "stack #<number> is ready to merge as a
+whole" when every layer's current head is clean and every comparison
+prints `0`. Otherwise name the bottom layers that are ready, such as "#12
+and #13 at the bottom of stack #14 are ready to merge", and what holds back
+the lowest layer that is not. Name the stack by the number GitHub's stacks API
 gives it, or by its bottom pull request for a chain of base branches that
 GitHub does not record as a stack.
 

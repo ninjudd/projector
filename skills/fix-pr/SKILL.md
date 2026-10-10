@@ -214,7 +214,8 @@ patch parent code inside a child merely to avoid updating the layers above.
 The user can merge the whole stack, or its bottom layers, from GitHub at any
 moment, so a run that changes a layer with layers above it is not done when
 that layer is pushed. It is done once the change is carried up, every layer
-above is pushed, and the stack is in sync again, as that section defines.
+above is pushed, and GitHub's comparison shows the stack in sync again, as
+that section describes.
 
 After a parent merges, update the layers above it the same way: the rebase
 replays them onto the new base and drops a squash-merged parent's commits
@@ -232,9 +233,10 @@ A pull request is clean only when:
 - it merges into its base without a conflict,
 - a clean verdict names its current head,
 - no unresolved threads remain,
-- in a stack, it and every layer below it are in sync, so the stack shows
-  none of them needing a rebase, checked as `../implement/SKILL.md`
-  describes under "Stack dependent work",
+- in a stack, it and every layer below it are in sync on GitHub, so the
+  stack shows none of them needing a rebase: GitHub's comparison, which
+  `../implement/SKILL.md` describes under "Stack dependent work", prints
+  `0` for each, whatever a local `gh stack view` reads,
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull

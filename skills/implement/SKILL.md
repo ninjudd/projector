@@ -237,21 +237,26 @@ Within those rules, work a stack this way:
   when the pull request is in none, and it needs neither a checkout nor the
   extension. In a checkout that tracks the stack, `gh stack view --json`
   lists the same layers with their branches.
-- **Check that it is in sync.** In a checkout that tracks the stack,
-  `gh stack view --json` reads `"needsRebase": false` on every layer above
-  the bottom. Anywhere else, read each open layer's base and head branches
-  from `gh api repos/<owner>/<repo>/stacks/<number>`, using the `number`
-  the lookup above returns, and compare each layer based on another
-  layer's branch with that base:
+- **Check that it is in sync.** GitHub's comparison is the check that
+  counts, because GitHub is where the user merges. Read each open layer's
+  base and head branches from `gh api repos/<owner>/<repo>/stacks/<number>`,
+  using the `number` the lookup above returns, and compare each layer
+  based on another layer's branch with that base:
 
   ```sh
   gh api "repos/<owner>/<repo>/compare/<base branch>...<head branch>" --jq .behind_by
   ```
 
-  It prints `0` when the layer contains its base's current head. The
-  comparison needs neither a checkout nor the extension, so it checks a
-  chain of base branches the same way, with the branches
-  `gh pr view <number> --json baseRefName,headRefName` names.
+  It prints `0` when the layer on GitHub contains its base's current head
+  on GitHub. The comparison needs neither a checkout nor the extension, so
+  it checks a chain of base branches the same way, with the branches
+  `gh pr view <number> --json baseRefName,headRefName` names. Before a
+  push, `gh stack view --json` gives a quick local check: it reads
+  `"needsRebase": false` on every layer above the bottom when the
+  checkout's own branches are in sync. It sees only those branches, so a
+  layer pushed from somewhere else, or a push that updated only some
+  branches, can read as in sync there while GitHub shows a layer behind.
+  Never report a stack in sync from it.
 
 Fall back to base branches whenever `gh stack` cannot answer, and keep
 working. That is when `gh extension list` shows no `github/gh-stack`, when a
