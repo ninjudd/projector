@@ -832,9 +832,10 @@ project's segment opens with that project's header, linked to its page. A
 project that heads no segment shows **No reviews of this project.** in place
 of the stacks. Below them, the sidebar lists the project's supplemental files
 and nested projects, with the current page in bold, and its last row holds
-the credit and an icon that opens the page's history on GitHub. An HTML page in a project keeps its frame, with the sidebar in the
-column the menu button shows. At 980 pixels and narrower, the sidebar sits
-between the title row and the plan.
+the credit and an icon that opens the page's history on GitHub. An HTML page
+in a project keeps its frame, with the sidebar in the column the menu button
+shows. At 980 pixels and narrower, the sidebar sits between the title row
+and the plan.
 A review page's header has a **…** menu with
 the pull request's conversation, files, and compare views on GitHub. Each file
 card's header has one too: **View diff on GitHub**, **View file on GitHub**,
