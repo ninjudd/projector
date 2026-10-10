@@ -52,14 +52,14 @@ Each summary records the one project its stack carries out, or none, and a
 short title for the stack. The site build takes each stack's pull requests
 and their order from GitHub's stacks. For a pull request that GitHub puts in
 no stack, and for every pull request when GitHub cannot answer, it falls back
-to base branches, as it does today, and never fails. It decides one header per stack from its layers' summaries,
-lowest layer first: the first project the site has a page for, else the first
-title. The Reviews index draws that header above each stack's rows, and a
-summary page's sidebar draws it above its stack list in place of the project
-rows. A project header links to the project's page. A title header is plain
-text. A merged stack stays one stack. A summary published before the change
-gets its header by a fixed rule from the fields it already has, so nothing
-needs to be published again.
+to base branches, as it does today, and never fails. It decides one header
+per stack from its layers' summaries, lowest layer first: the first project
+the site has a page for, else the first title. The Reviews index draws that
+header above each stack's rows, and a summary page's sidebar draws it above
+its stack list in place of the project rows. A project header links to the
+project's page. A title header is plain text. A merged stack stays one stack.
+A summary published before the change gets its header by a fixed rule from
+the fields it already has, so nothing needs to be published again.
 
 ### 2.1 A summary records one project and a title
 
