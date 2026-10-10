@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -130,6 +131,19 @@ class PackagingTests(unittest.TestCase):
         ):
             prose = " ".join(citing.read_text().split())
             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
+
+    def test_every_citation_of_another_skills_section_names_a_heading_it_has(self) -> None:
+        citation = re.compile(r'`\.\./([\w-]+)/SKILL\.md` describes under "([^"]+)"')
+        cited = set()
+        for citing in sorted((ROOT / "skills").rglob("*.md")):
+            prose = " ".join(citing.read_text().split())
+            for skill, heading in citation.findall(prose):
+                cited.add((skill, heading))
+                target = (ROOT / "skills" / skill / "SKILL.md").read_text()
+                headings = re.findall(r"^## (.+)$", target, re.MULTILINE)
+                with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
+                    self.assertIn(heading, headings)
+        self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
 
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:

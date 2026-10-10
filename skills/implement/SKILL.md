@@ -187,6 +187,17 @@ differ, these rules win:
   merge would keep it. A layer of several commits gets its branch name as its
   title. Write each layer's title and body as the hand-over above describes
   and set them with `gh pr edit <number> --title <title> --body-file <file>`.
+- **Keep the stack mergeable as a unit.** The user merges a stack from
+  GitHub in one step: the whole stack, or any number of layers from the
+  bottom up. GitHub shows a layer that lacks the current head of the layer
+  below it as needing a rebase, and the stack cannot merge as a unit until
+  it is rebased. So keep the stack in sync: every open layer contains the
+  current head of the open layer below it. Carry every new commit on a
+  layer up through each layer above it right away, as the update below
+  describes, and never leave a layer behind its parent. Never plan or
+  propose a merge one layer at a time, such as merging the bottom layer and
+  then retargeting the next to the default branch, and never retarget a
+  layer while a layer below it is open.
 - **Never merge.** Never run `gh stack merge` or `gh pr merge`, whatever the
   skill says about merging. The merge is the user's checkpoint.
 
@@ -202,8 +213,12 @@ Within those rules, work a stack this way:
 - **Update it by rebasing.** `gh stack` keeps a stack current by rebasing
   its layers, and it has no option to merge instead. Inside a stack, that
   rebase is how a layer takes in a fix to the layer below it, the default
-  branch, and a layer below it that has merged. Run
-  `gh stack rebase --upstack` from a layer you fixed, or `gh stack rebase`
+  branch, and a layer below it that has merged. Whenever a layer with
+  layers above it gets a new commit, run `gh stack rebase --upstack` from
+  that layer at once, before the push or right after it. Add `--no-trunk`
+  where moving the local default branch would touch a checkout the user is
+  using: it fetches nothing and rebases only the layers onto each other,
+  from the local branches. Run `gh stack rebase`
   when a layer falls behind or conflicts with its base or a layer below it
   merges; the rebase drops a squash-merged layer's commits from the layers
   above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
@@ -222,6 +237,21 @@ Within those rules, work a stack this way:
   when the pull request is in none, and it needs neither a checkout nor the
   extension. In a checkout that tracks the stack, `gh stack view --json`
   lists the same layers with their branches.
+- **Check that it is in sync.** In a checkout that tracks the stack,
+  `gh stack view --json` reads `"needsRebase": false` on every layer above
+  the bottom. Anywhere else, read each open layer's base and head branches
+  from `gh api repos/<owner>/<repo>/stacks/<number>`, using the `number`
+  the lookup above returns, and compare each layer based on another
+  layer's branch with that base:
+
+  ```sh
+  gh api "repos/<owner>/<repo>/compare/<base branch>...<head branch>" --jq .behind_by
+  ```
+
+  It prints `0` when the layer contains its base's current head. The
+  comparison needs neither a checkout nor the extension, so it checks a
+  chain of base branches the same way, with the branches
+  `gh pr view <number> --json baseRefName,headRefName` names.
 
 Fall back to base branches whenever `gh stack` cannot answer, and keep
 working. That is when `gh extension list` shows no `github/gh-stack`, when a
@@ -239,11 +269,13 @@ pull requests' base branches:
   push each layer's branch with `git push -u origin <branch>`, and open it
   with `gh pr create --draft --base <branch of the layer below> --head <branch>`.
 - **Update it by merging**, as `fix-pr` updates any branch: carry a fix up
-  by merging each layer into the one above it, from the bottom up, and take
-  in the default branch by merging it into the bottom layer and carrying
-  that up the same way. Run each layer's full gate before you push it. A
-  merge needs no force-push, so review threads stay anchored to their
-  commits.
+  right away by merging each layer into the one above it, from the bottom
+  up, and take in the default branch by merging it into the bottom layer
+  and carrying that up the same way. Run each layer's full gate before you
+  push it. A merge needs no force-push, so review threads stay anchored to
+  their commits. The chain stays in sync as a stack does, with every child
+  on its parent's current head, and the comparison under "Check that it is
+  in sync" checks it.
 
 Tell the user at most once why the chain is not a stack: that
 `gh extension install github/gh-stack` would make it one when the extension

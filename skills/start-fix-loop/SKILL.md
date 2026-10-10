@@ -126,16 +126,19 @@ the recurrence it is instead of as new work.
   stack, to the same subagent as a message; never start a second one for it.
   Each message is another run of `fix-pr` for the pull request's current
   head.
-- The subagent reports each run back: the head SHA, the merge commit if it
-  made one, the fix commits, the declined findings, and the validation
-  results. A question for the user comes back to the main loop to ask, and
-  the subagent goes on with the pull request's unrelated work meanwhile.
+- The subagent reports each run back: the head SHA, each layer's new head
+  when it carried a change up a stack, the merge commit if it made one, the
+  fix commits, the declined findings, and the validation results. A
+  question for the user comes back to the main loop to ask, and the
+  subagent goes on with the pull request's unrelated work meanwhile.
 - When a pull request merges or closes, delete its line from the tracked
   file at once. Tell its subagent to finish, remove its worktrees, and close
-  only when no layer it owns is still open. A stack merges from the bottom,
-  so its `fix-stack-<number>` subagent keeps that name after the bottom
-  layer merges and goes on fixing the layers above it, starting with the
-  base merge the retargeted child needs.
+  only when no layer it owns is still open. The user merges a stack as a
+  unit, the whole of it or any number of layers from the bottom up, so when
+  only the bottom layers merge, the `fix-stack-<number>` subagent keeps its
+  name and goes on fixing the layers left open. It starts with the update
+  the lowest of them needs onto its new base, as `../fix-pr/SKILL.md`
+  describes under "Preserve stacked ownership".
 - When a subagent is lost, to a session restart for example, start a
   replacement under the same name. It rebuilds its context from GitHub: each
   open layer's review threads, the replies on them, and its review bodies.
@@ -150,6 +153,16 @@ request with work, in the order the events arrived.
 After each subagent report, check the pull request against the clean
 conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
 fix commits, declined findings, and validation results, then keep watching.
+
+Report a stack's readiness as one unit, the same unit its subagent fixes,
+because the user merges it as one from GitHub. Check every open layer, and
+say "stack #<number> is ready to merge as a whole" when each layer's
+current head is clean by those conditions, which also puts the whole stack
+in sync. Otherwise name the bottom layers that are ready, such as "#12 and
+#13 at the bottom of stack #14 are ready to merge", and what holds back the
+lowest layer that is not. Name the stack by the number GitHub's stacks API
+gives it, or by its bottom pull request for a chain of base branches that
+GitHub does not record as a stack.
 
 Delete closed or merged pull requests from the tracked file. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this
