@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Stack header plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 216,
+  "title": "Plan one header for each stack: its project or a title",
+  "head": "674c81428bc3730eaa76d233be0b66926aff0628",
+  "headRef": "spec-stack-header",
+  "base": "7833813cdb9681f7c469dd7f6724940313c296be",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has a <b>Reviews</b> index that lists every pull request with a published summary. Each summary page has a sidebar that lists the pull requests in its <b>stack</b>, a chain of pull requests where each one builds on the one beneath it. Neither place says what a stack as a whole is for. Today the only hint is a set of project links that the build derives from each pull request's diff. Today the site also works out a stack only from base branches, so a stack falls apart once a layer's base moves to the default branch.",
+   "This pull request adds one new plan, <code>docs/projects/stack-header/readme.md</code>, at <code>status: ready</code> and <code>priority: next</code>. It changes no code. The plan is written against <code>main</code> as #215 left it: the Reviews index has three columns, no Projects column, and <b>Open</b> and <b>Closed</b> boxes.",
+   "<ol><li><b>A summary records its project.</b> <code>summary.json</code> gains a <code>project</code> field, and <code>name</code> becomes the stack's title. Each layer records its own choice and copies no other layer's. <code>init</code> writes <code>null</code>, which means undecided, and <code>publish</code> refuses it.</li><li><b>The build takes stacks from GitHub.</b> One paginated request to GitHub's stacks API lists every stack and its members, bottom first, merged ones included. A pull request in no GitHub stack, or every pull request when GitHub cannot answer, falls back to base branches as today. One new function, <code>find_stacks</code>, works out membership for the index, the sidebar, and the header.</li><li><b>The build picks one header per stack.</b> It takes the lowest layer that names a project the site has a page for. Without one, it takes the first non-empty <code>name</code>, and without that, the first layer's pull request title.</li><li><b>The index and the sidebar draw it.</b> A header row opens each stack on the Reviews index, and one header replaces the sidebar's project rows.</li><li><b>Older summaries get a header without republishing.</b> A summary with no <code>project</code> keeps today's answer where today's answer is a single project, and otherwise gets its title.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests that build on each other, listed bottom layer first.</li><li><b>GitHub stack</b>: a stack GitHub records itself, made with the <code>gh stack</code> CLI and listed by <code>GET repos/{owner}/{repo}/stacks</code>. It keeps its members after they merge.</li><li><b>Layer</b>: one pull request in a stack.</li><li><b>Header</b>: the one line drawn above a stack, a project link or a title.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, the hidden ref the site builds summaries from.</li><li><b>Migration rule</b>: how the build chooses a project for a summary published before the <code>project</code> field existed.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b>First head.</b> One finding: the copy-the-layer-beneath rule let a refactor's <code>\"\"</code> erase the project above it.</li><li><b>Second head.</b> Fixed. Rewritten against #215, which had merged. Clean.</li><li><b>This head.</b> Takes stack membership from GitHub's stacks API and drops the copy rule entirely. One open finding: a line of the § 2 Solution paragraph is 112 characters, against the repository's rule to match the wrapping around a Markdown edit.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The stack header plan",
+   "kicker": "One header per stack, chosen from the summaries' recorded project or title.",
+   "intro": [
+    "The whole pull request is this one plan. Read it in order: § 1 is the problem, § 2 the design, § 3 the reasons, § 4 the tests the implementation must add, § 5 the cost, and § 7 the evidence from this repository and from GitHub.",
+    "The design has three parts. The summarizing agent decides each layer's project, in the <code>summarize-pr</code> skill (§ 2.1). The build works out each stack's members, from GitHub where it can and from base branches where it cannot (§ 2.2). Then it picks one header per stack, from the lowest layer up (§ 2.3). Sections 2.4 to 2.6 cover the drawing, the readers of the old fields, and the files that change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/stack-header/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the problem, the data, how the build finds stacks and picks a header, the drawing, the tests, and the evidence.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 22,
+       "text": "§ 1 describes today's rule. <code>project_linker</code> in <code>src/projector/site/__init__.py</code> returns every project whose folder holds a changed file, after any names in the summary's undocumented <code>projects</code> list. After #215, those links reach only the sidebar and the project pages, not the index."
+      },
+      {
+       "kind": "context",
+       "line": 40,
+       "text": "Today <code>stack_bases</code> places a pull request on the one whose head branch is its base branch, as its newest summary records it. Once a layer is rebased onto <code>main</code>, nothing ties it to the stack. GitHub's stack record keeps it."
+      },
+      {
+       "kind": "flag",
+       "line": 55,
+       "text": "This line is 112 characters, where the rest of the plan wraps prose at about 78. The repository's <code>CLAUDE.md</code> says to match the line wrapping already used around a Markdown edit. Rewrap the paragraph."
+      },
+      {
+       "kind": "context",
+       "line": 73,
+       "text": "<code>null</code> and <code>\"\"</code> mean different things. <code>null</code> means nobody chose, and <code>publish</code> refuses it. <code>\"\"</code> means this pull request names no project, and another layer can still give the stack one."
+      },
+      {
+       "kind": "context",
+       "line": 79,
+       "text": "No layer copies another any more. The build's rule, the lowest layer that names a project, does the work the copy rule used to, so a refactor at the bottom recording <code>\"\"</code> cannot hide the project above it."
+      },
+      {
+       "kind": "context",
+       "line": 99,
+       "text": "<code>review-pr</code> updates an existing summary rather than starting over. Every summary published before this change lacks <code>project</code>, so the update path has to set it, or <code>publish</code> would refuse the first republish of each open pull request."
+      },
+      {
+       "kind": "verify",
+       "line": 124,
+       "text": "<code>build_checkout</code> in <code>src/projector/cli.py</code> already wraps <code>base_pr</code> and <code>pr_status</code> so that a <code>SummaryError</code> becomes None. The new <code>stacks_lookup</code> follows that pattern. The review ran <code>GET repos/ninjudd/projector/stacks?per_page=100</code> with the version header and got the 16 stacks § 7 describes, in one page."
+      },
+      {
+       "kind": "context",
+       "line": 138,
+       "text": "Inside a GitHub stack, a member's recorded base branch is ignored. Outside one, base branches decide, so a pull request chained by hand onto a stack member joins that stack, but a branch between two GitHub stacks never merges them. The tables in § 4 cover each case."
+      },
+      {
+       "kind": "context",
+       "line": 150,
+       "text": "The walk is <code>stack_rows</code>'s depth-first walk with one change: a GitHub stack's next member comes before any pull request chained by hand onto the same layer, so GitHub's order stays together."
+      },
+      {
+       "kind": "context",
+       "line": 172,
+       "text": "The plan gives a pull request in two stacks to the higher-numbered one. It does not say what the next member of the lower stack then sits on. The review lists this as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 287,
+       "text": "Stack 199 on GitHub lists #196 then #197, both merged. #196's summary on the summaries ref has the <code>name</code> \"Stack List in Summary Sidebar\" shown here."
+      },
+      {
+       "kind": "verify",
+       "line": 298,
+       "text": "<code>site.css</code> on <code>main</code> pads each body's first row with <code>table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }</code>. The header row, a <code>th</code>, would displace it, so this paragraph moves the padding to the header."
+      },
+      {
+       "kind": "context",
+       "line": 360,
+       "text": "<code>validate</code> in <code>src/projector/summary.py</code> requires <code>pr.title</code>, and both <code>build_summaries</code> and <code>project site page</code> run it, so dropping the <code>name</code> fallback from <code>pr_title</code> changes no page."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
