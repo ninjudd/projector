@@ -25,7 +25,7 @@
    {
     "id": "review",
     "title": "What the review found",
-    "html": "<ul class=\"tight\"><li>Four heads reviewed so far. The first two findings are fixed: a rebased stack layer is gated before it is pushed, and <code>AGENTS.md</code> no longer says to rebase where the skills merge.</li><li>One finding is open at this head: the pull request body still describes earlier heads, including that the <code>project init</code> template is unchanged and that the tests print <code>Ran 530 tests</code>. See the flag under <code>src/projector/templates/agents-block.md</code>.</li><li>The command names, flags, exit code 9, and cited section names match <code>skills/gh-stack/SKILL.md</code> and <code>gh stack</code> v0.1.0's <code>--help</code>.</li><li>531 tests, <code>project check</code>, and both <code>claude plugin validate</code> runs pass at this head.</li></ul>"
+    "html": "<ul class=\"tight\"><li>Four heads reviewed, and a re-review of this head after the author rewrote the description. All three findings are fixed: a rebased stack layer is gated before it is pushed, <code>AGENTS.md</code> no longer says to rebase where the skills merge, and the description now matches this head. The last review is clean.</li><li>The command names, flags, exit code 9, and cited section names match <code>skills/gh-stack/SKILL.md</code> and <code>gh stack</code> v0.1.0's <code>--help</code>.</li><li>531 tests, <code>project check</code>, and both <code>claude plugin validate</code> runs pass at this head.</li></ul>"
    }
   ]
  },
@@ -127,9 +127,9 @@
      "note": "Adds the stack paragraph and bumps the template to version 2.",
      "checks": [
       {
-       "kind": "flag",
+       "kind": "verify",
        "line": 23,
-       "text": "Open review finding. The pull request body still says the <code>project init</code> template has no stack sentence and is unchanged, that no unit test covers the change, and that the tests print <code>Ran 530 tests</code> (this head prints 531). It also describes the fallback as a hand rebase and says <code>fix-pr</code> runs <code>gh stack sync</code>. A squash merge makes that body the commit message, so rewrite it for this head."
+       "text": "The description's <code>project init --no-site --no-publish-rule</code> command, run in a scratch checkout of this head, printed <code>unchanged AGENTS.md</code> and left <code>git status</code> clean. So the committed section matches this template."
       }
      ]
     },
