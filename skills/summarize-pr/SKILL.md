@@ -259,7 +259,8 @@ without touching the checkout, and sends a `repository_dispatch` event that
 starts the workflow. The deploy checks out the default branch, which lacks
 the head, so `publish` also stores the `linguist-generated` attributes the
 head's `.gitattributes` gives the changed files, as `attributes.json`, and
-fetches the head first when the checkout lacks it. Publishes that run at the
+the head's version of each changed file whose diff hides some of its lines,
+under `head/`. It fetches the head first when the checkout lacks it. Publishes that run at the
 same time, as a review loop's subagents run them, each land. A publish whose
 push loses the race for the ref fetches the ref again, rebuilds its commit on
 the new tip, and pushes again, up to five pushes in all. `publish` fetches the

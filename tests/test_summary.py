@@ -78,6 +78,11 @@ class ParseDiffTests(unittest.TestCase):
         self.assertEqual(["d", 11, "", "    b := 2"], lines[1])
         self.assertEqual(["a", "", 11, "    b := 3"], lines[2])
         self.assertEqual(["c", 12, 13, "    return"], lines[4])
+        self.assertEqual({"oldStart": 10, "oldLines": 3, "newStart": 10, "newLines": 4},
+                         {k: v for k, v in core["hunks"][0].items() if k not in ("header", "lines")})
+        self.assertEqual((1, 1, 1, 1), tuple(files["gen/api.pb.go"]["hunks"][0][k]
+                                             for k in ("oldStart", "oldLines", "newStart", "newLines")),
+                         "a side without a count has one line")
 
         self.assertTrue(files["src/core_test.go"]["new"])
         self.assertEqual("test", files["src/core_test.go"]["kind"])
@@ -457,10 +462,15 @@ class PublishTests(unittest.TestCase):
         self.output = ""
         self.err = ""
 
-    def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
+    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, **kwargs: object) -> object:
         """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
-        and its warnings in `self.err`."""
-        data = make_summary(GOOD_GROUPS)
+        and its warnings in `self.err`.
+
+        GitHub serves `diff` as the pull request's, and a diff other than DIFF gets a summary of one group.
+        """
+        groups = GOOD_GROUPS if diff == DIFF else [
+            {"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]
+        data = make_summary(groups)
         data["pr"]["head"] = head
         path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
         path.write_text(json.dumps(data))
@@ -469,7 +479,7 @@ class PublishTests(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         try:
             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+                 mock.patch.object(summary, "fetch_diff", return_value=diff), \
                  mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out), \
                  redirect_stderr(err):
                 return summary.publish(path, "origin", **kwargs)
@@ -780,8 +790,93 @@ class PublishTests(unittest.TestCase):
     def test_says_so_and_stores_no_attributes_when_the_remote_cannot_serve_the_head(self) -> None:
         self.publish("a" * 40)
 
-        self.assertNotIn(f"summaries/7/{'a' * 40}/attributes.json", self.ref_files())
-        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err)
+        self.assertEqual([f"summaries/7/{'a' * 40}/diff.patch", f"summaries/7/{'a' * 40}/summary.json"],
+                         self.ref_files(), "no attributes and no head files")
+        self.assertIn("could not read aaaaaaaaa, which origin did not serve; the site will mark generated files by "
+                      "the .gitattributes of the checkout it builds from, and the summary's page cannot expand the "
+                      "lines around its hunks", self.err)
+
+    def commit_context_change(self, repo: Path) -> tuple[str, str]:
+        """Commit, in `repo`, a change to a file of every kind `publish` stores or skips for a page to expand.
+
+        Returns the head and the diff from the commit before it. Only keep.txt and tool.sh can be expanded.
+        """
+        (repo / "keep.txt").write_text("".join(f"line {n}\n" for n in range(1, 31)))
+        (repo / "tool.sh").write_text("#!/bin/sh\necho 1\n")
+        (repo / "tool.sh").chmod(0o755)
+        (repo / "gone.txt").write_text("gone\n")
+        (repo / "big.txt").write_text(("x" * 99 + "\n") * 11000)
+        (repo / "sub").mkdir()
+        (repo / "sub" / ".gitattributes").write_text("*.md linguist-generated\n")
+        (repo / "bin.dat").write_bytes(b"\0\1\2")
+        os.symlink("keep.txt", repo / "link")
+        run(repo, "git", "add", "--all")
+        run(repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},mod")
+        run(repo, "git", "commit", "--quiet", "-m", "Base")
+        base = run(repo, "git", "rev-parse", "HEAD")
+        (repo / "keep.txt").write_text("".join(f"line {n}\n" if n != 15 else "changed\n" for n in range(1, 31)))
+        (repo / "tool.sh").write_text("#!/bin/sh\necho 2\n")
+        (repo / "gone.txt").unlink()
+        (repo / "fresh.txt").write_text("fresh\n")
+        (repo / "big.txt").write_text("y" * 99 + "\n" + ("x" * 99 + "\n") * 10999)
+        (repo / "sub" / ".gitattributes").write_text("*.md -linguist-generated\n")
+        (repo / "bin.dat").write_bytes(b"\0\1\3")
+        (repo / "link").unlink()
+        os.symlink("tool.sh", repo / "link")
+        run(repo, "git", "add", "--all")
+        run(repo, "git", "update-index", "--add", "--cacheinfo", f"160000,{'2' * 40},mod")
+        run(repo, "git", "commit", "--quiet", "-m", "Head")
+        return run(repo, "git", "rev-parse", "HEAD"), run(repo, "git", "diff", base, "HEAD") + "\n"
+
+    def head_entries(self, head: str) -> dict[str, tuple[str, str]]:
+        """Each file the remote's summaries ref stores under head/ for `head`, with its mode and blob."""
+        listed = run(self.remote, "git", "ls-tree", "-r", "refs/projector/summaries", f"summaries/7/{head}/head/")
+        prefix = f"summaries/7/{head}/head/"
+        return {path[len(prefix):]: (meta.split()[0], meta.split()[2])
+                for meta, path in (line.split("\t", 1) for line in listed.splitlines())}
+
+    def test_stores_each_changed_file_a_page_can_expand_as_the_heads_own_blob(self) -> None:
+        head, diff = self.commit_context_change(self.repo)
+        self.assertEqual({"keep.txt", "tool.sh", "gone.txt", "fresh.txt", "big.txt", "sub/.gitattributes", "bin.dat",
+                          "link", "mod"}, {f["path"] for f in summary.parse_diff(diff)})
+        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
+
+        def objects() -> set[str]:
+            return {line.split()[0] for line in run(self.remote, "git", "rev-list", "--objects", "--all").splitlines()}
+        before = objects()
+
+        self.publish(head, diff=diff)
+
+        self.assertEqual({path: ("100644", run(self.repo, "git", "rev-parse", f"{head}:{path}"))
+                          for path in ("keep.txt", "tool.sh")}, self.head_entries(head),
+                         "a new, deleted, oversized, binary, symlinked, or submodule file, or a .gitattributes, gets none")
+        new_blobs = {oid for oid in objects() - before if run(self.remote, "git", "cat-file", "-t", oid) == "blob"}
+        folder = f"refs/projector/summaries:summaries/7/{head}"
+        self.assertEqual({run(self.remote, "git", "rev-parse", f"{folder}/{name}")
+                          for name in ("summary.json", "diff.patch", "attributes.json")}, new_blobs,
+                         "the head's files add no object")
+        self.assertIn(f"summaries/7/{head}/summary.json, diff.patch, attributes.json and 2 head files under head/",
+                      self.output)
+        self.assertEqual("", self.err)
+        self.assertIsNone(self.publish(head, diff=diff), "an unchanged summary publishes nothing")
+
+    def test_stores_the_files_of_a_head_fetched_from_the_remote_and_keeps_them_when_it_cannot_read_the_head(self) -> None:
+        other = self.other_publisher()
+        head, diff = self.commit_context_change(other)
+        run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
+
+        self.publish(head, diff=diff)
+
+        self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)))
+        run(self.remote, "git", "update-ref", "-d", "refs/heads/feature")
+        run(self.remote, "git", "gc", "--quiet", "--prune=now")
+        third = self.remote.with_name("third")
+        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(third))
+        self.assertIsNone(self.publish(head, repo=third, diff=diff))
+        self.assertNotEqual(0, subprocess.run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=third,
+                                              capture_output=True).returncode, "the republish could not read the head")
+        self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)),
+                         "a republish that cannot read the head keeps what an earlier publish stored")
 
     def test_a_retry_after_losing_the_race_keeps_the_heads_attributes(self) -> None:
         (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")

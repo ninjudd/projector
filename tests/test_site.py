@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from projector import cli, summary
+from projector import site as site_build
 from projector.site import serve
 
 
@@ -585,6 +586,177 @@ def js_function(name: str) -> str:
         return lines[start]
     end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     return "\n".join(lines[start:end + 1])
+
+
+def head_file(lines: list[str], ending: str = "\n", last: str = "\n") -> bytes:
+    """A file at the head holding `lines`, each ended by `ending` except the last, ended by `last`."""
+    return (ending.join(lines) + last).encode()
+
+
+class HunkGapTests(unittest.TestCase):
+    """The hidden lines the build finds around a file's hunks, which its page can expand."""
+
+    def context(self, hunks: str, data: bytes) -> dict | None:
+        """The `context` the build gives f.txt, whose diff is `hunks` and whose head copy is `data`."""
+        tmp = Path(tempfile.mkdtemp()).resolve()
+        (tmp / "head").mkdir()
+        (tmp / "head" / "f.txt").write_bytes(data)
+        payload = {"pr": {"number": 7, "head": "c" * 40},
+                   "files": summary.parse_diff(f"diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n{hunks}")}
+        with redirect_stdout(io.StringIO()):
+            site_build.add_context(payload, tmp / "head", tmp / "site", "/", {})
+        return payload["files"][0].get("context")
+
+    def gaps(self, hunks: str, lines: list[str]) -> list[dict]:
+        return self.context(hunks, head_file(lines))["gaps"]
+
+    def test_a_first_hunk_at_line_1_leaves_no_gap_above(self) -> None:
+        lines = ["1", "two", *map(str, range(3, 11))]
+        self.assertEqual([{"before": 1, "start": 5, "end": 10, "oldStart": 5}],
+                         self.gaps("@@ -1,4 +1,4 @@\n 1\n-2\n+two\n 3\n 4\n", lines))
+
+    def test_adjacent_hunks_leave_no_gap_between(self) -> None:
+        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
+                          {"before": 2, "start": 4, "end": 5, "oldStart": 4}],
+                         self.gaps("@@ -2 +2 @@\n-2\n+two\n@@ -3 +3 @@\n-3\n+three\n", ["1", "two", "three", "4", "5"]))
+
+    def test_a_pure_addition_sits_after_its_old_start(self) -> None:
+        lines = ["1", "2", "3", "4", "x", "y", *map(str, range(5, 11))]
+        self.assertEqual([{"before": 0, "start": 1, "end": 4, "oldStart": 1},
+                          {"before": 1, "start": 7, "end": 12, "oldStart": 5}],
+                         self.gaps("@@ -4,0 +5,2 @@\n+x\n+y\n", lines))
+
+    def test_a_pure_deletion_sits_after_its_new_start(self) -> None:
+        lines = ["1", "2", "3", "4", "7", "8", "9", "10"]
+        self.assertEqual([{"before": 0, "start": 1, "end": 4, "oldStart": 1},
+                          {"before": 1, "start": 5, "end": 8, "oldStart": 7}],
+                         self.gaps("@@ -5,2 +4,0 @@\n-5\n-6\n", lines))
+
+    def test_a_last_hunk_at_the_end_of_the_file_leaves_no_gap_below(self) -> None:
+        lines = [*map(str, range(1, 10)), "ten"]
+        self.assertEqual([{"before": 0, "start": 1, "end": 6, "oldStart": 1}],
+                         self.gaps("@@ -7,4 +7,4 @@\n 7\n 8\n 9\n-10\n+ten\n", lines))
+
+    def test_a_last_line_without_a_newline_is_a_line(self) -> None:
+        context = self.context("@@ -2,3 +2,3 @@\n 2\n-3\n+three\n 4\n", head_file(["1", "2", "three", "4", "5", "6"], last=""))
+        self.assertEqual(6, context["lines"])
+        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
+                          {"before": 1, "start": 5, "end": 6, "oldStart": 5}], context["gaps"])
+        self.assertEqual([{"before": 0, "start": 1, "end": 2, "oldStart": 1}],
+                         self.gaps("@@ -3,3 +3,3 @@\n 3\n 4\n-5\n\\ No newline at end of file\n+five\n"
+                                   "\\ No newline at end of file\n", ["1", "2", "3", "4", "five"]))
+
+    def test_crlf_lines_match_the_diff_that_reads_them_as_lf(self) -> None:
+        context = self.context("@@ -2,3 +2,3 @@\n 2\n-3\n+three\n 4\n",
+                               head_file(["1", "2", "three", "4", "5", "6", "7"], ending="\r\n", last="\r\n"))
+        self.assertEqual(7, context["lines"])
+        self.assertEqual([{"before": 0, "start": 1, "end": 1, "oldStart": 1},
+                          {"before": 1, "start": 5, "end": 7, "oldStart": 5}], context["gaps"])
+
+    def test_a_file_its_hunks_show_whole_gets_no_context(self) -> None:
+        self.assertIsNone(self.context("@@ -1,3 +1,3 @@\n 1\n-2\n+two\n 3\n", head_file(["1", "two", "3"])))
+
+
+CONTEXT_DIFF = """diff --git a/crlf.txt b/crlf.txt
+index 1111111..2222222 100644
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -2,3 +2,3 @@
+ 2
+-3
++three
+ 4
+diff --git a/wrong.txt b/wrong.txt
+index 1111111..2222222 100644
+--- a/wrong.txt
++++ b/wrong.txt
+@@ -2,3 +2,3 @@
+ 2
+-3
++three
+ 4
+"""
+CRLF_FILE = b"1\r\n2\r\nthree\r\n4\r\n5\r\n6\r\n7\r\n"
+
+
+class ContextBuildTests(unittest.TestCase):
+    """The build checks each head file `publish` stored, serves it once, and tells the page where its gaps are."""
+
+    def setUp(self) -> None:
+        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
+        self.out = Path(tempfile.mkdtemp()) / "site"
+
+    def store(self, head: str, diff: str, files: dict[str, bytes]) -> Path:
+        """Store a summary of `diff` at `head`, as `publish` does, with `files` under head/; return its folder."""
+        folder = self.summaries / "7" / head
+        (folder / "head").mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({
+            "version": 1, "pr": {"repo": "owner/example", "number": 7, "title": "Seven", "head": head, "base": "b" * 40,
+                                 "baseRef": "main"},
+            "groups": [{"id": "all", "title": "All",
+                        "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]}))
+        (folder / "diff.patch").write_text(diff)
+        for path, data in files.items():
+            (folder / "head" / path).parent.mkdir(parents=True, exist_ok=True)
+            (folder / "head" / path).write_bytes(data)
+        return folder
+
+    def build(self) -> str:
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            _, failures = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
+        self.assertEqual([], failures)
+        return printed.getvalue()
+
+    def files(self, head: str) -> dict[str, dict]:
+        data = json.loads((self.out / "reviews" / "7" / head / "data.json").read_text())
+        return {f["path"]: f for f in data["files"]}
+
+    def test_each_head_file_is_checked_and_served_once_under_the_base(self) -> None:
+        for head in ("c" * 40, "d" * 40):
+            self.store(head, CONTEXT_DIFF, {"crlf.txt": CRLF_FILE, "wrong.txt": b"1\n2\nTHREE\n4\n5\n"})
+
+        printed = self.build()
+
+        blob = subprocess.run(["git", "hash-object", "--stdin"], input=CRLF_FILE, capture_output=True,
+                              check=True).stdout.decode().strip()
+        for head in ("c" * 40, "d" * 40):
+            files = self.files(head)
+            self.assertEqual({"url": f"/projector/reviews/blobs/{blob}.txt", "lines": 7,
+                              "gaps": [{"before": 0, "start": 1, "end": 1, "oldStart": 1},
+                                       {"before": 1, "start": 5, "end": 7, "oldStart": 5}]},
+                             files["crlf.txt"]["context"], "the url names Git's id for the stored bytes")
+            self.assertNotIn("context", files["wrong.txt"], "a file that disagrees with its diff shows no lines")
+            self.assertIn(f"::warning title=Context dropped::7/{head}: wrong.txt at the head does not match its diff",
+                          printed)
+        self.assertEqual([f"{blob}.txt"], [p.name for p in (self.out / "reviews" / "blobs").iterdir()],
+                         "two heads with the same file share it")
+        self.assertEqual(b"1\n2\nthree\n4\n5\n6\n7\n", (self.out / "reviews" / "blobs" / f"{blob}.txt").read_bytes())
+        self.assertIn("wrote 1 head file for summary pages to expand, 18 bytes, under reviews/blobs/", printed)
+
+    def test_a_summary_published_without_head_files_has_no_context(self) -> None:
+        self.store("c" * 40, CONTEXT_DIFF, {})
+
+        printed = self.build()
+
+        self.assertEqual([None, None], [f.get("context") for f in self.files("c" * 40).values()])
+        self.assertFalse((self.out / "reviews" / "blobs").exists())
+        self.assertIn("wrote 0 head files for summary pages to expand, 0 bytes, under reviews/blobs/", printed)
+
+    def test_a_path_that_leads_out_of_the_head_folder_reads_nothing(self) -> None:
+        # Whoever can push the summaries ref writes the diff and the files beside it.
+        diff = CONTEXT_DIFF.replace("wrong.txt", "../outside.txt").replace("crlf.txt", "link.txt")
+        folder = self.store("c" * 40, diff, {})
+        matching = b"1\n2\nthree\n4\n5\n"
+        (folder / "outside.txt").write_bytes(matching)
+        (folder.parent / "secret.txt").write_bytes(matching)
+        os.symlink("../../secret.txt", folder / "head" / "link.txt")
+
+        self.build()
+
+        self.assertEqual({"../outside.txt": None, "link.txt": None},
+                         {path: f.get("context") for path, f in self.files("c" * 40).items()})
+        self.assertFalse((self.out / "reviews" / "blobs").exists())
 
 
 TS_PROJECT = Path(__file__).parents[1] / "site"
