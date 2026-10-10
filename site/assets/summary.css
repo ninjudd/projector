@@ -191,7 +191,9 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .greviewed:hover, .freviewed:hover { background: var(--surface); border-color: var(--border); }
 /* Inset so the section's box sits over its files' boxes, which their cards' padding moves in from the edge. */
 .greviewed { width: 34px; height: 34px; border-radius: 8px; margin-right: 10px; }
-.greviewed input { accent-color: var(--ok); width: 18px; height: 18px; margin: 0; cursor: pointer; }
+/* Every checkbox on the page, a section's, a file's, and a concern note's, is one size and colour.
+   Each place sets only where its box sits. */
+.greviewed input, .freviewed input, input.nbox { width: 16px; height: 16px; margin: 0; accent-color: var(--ok); cursor: pointer; }
 @media (max-width: 640px) { .gstats { display: none; } }
 .group.folded .gbody { display: none; }
 .kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
@@ -205,8 +207,6 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .notes li { display: grid; grid-template-columns: 92px 1fr auto; column-gap: 8px; align-items: start; padding: 13px 8px 13px 0; background: var(--surface-2); font-size: 13.5px; line-height: 1.5; }
 .notes li.flag { background: var(--accent-soft); }
 .notes li .chip { justify-self: end; margin: 0 6px 0 0; }
-.nbox { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--ok); }
-input.nbox { cursor: pointer; }
 .notes li .nbox { margin: 2px 0 0 4px; }
 .notes li.checked .chip, .notes li.checked .ntext { opacity: .5; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
@@ -272,7 +272,6 @@ input.nbox { cursor: pointer; }
 .top .morelinks { font-size: 14px; }
 /* Pulled toward the "…" button, whose dots and box both sit inside their targets, so the two read as far apart as the row's other items. */
 .freviewed { width: 28px; height: 28px; border-radius: 6px; margin-left: -8px; }
-.freviewed input { accent-color: var(--ok); width: 15px; height: 15px; margin: 0; cursor: pointer; }
 .fnote { margin: 0; padding: 13px 14px; font-size: 15px; line-height: 1.55; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
 .fnotes { border-bottom: 1px solid var(--border); }
 /* A collapsed file keeps its description, which then ends the card, and hides its notes with its diff. */
