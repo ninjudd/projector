@@ -749,8 +749,7 @@ def interdiff_lines(result: dict, base_ref: str) -> list[str]:
     if result["from"]:
         lines.append(f"earlier full review: {result['from'][:7]}" + (f", {result['review']}" if result["review"] else ""))
     if result["kind"]:
-        kind = {"push": "push", "merge": f"merge of {base_ref}", "retarget": f"retarget onto {base_ref}",
-                "rebase": f"rebase onto {base_ref}", "rewrite": "rewrite"}[result["kind"]]
+        kind = KINDS[result["kind"]].format(base=base_ref)
         if result["unchanged_commits"] is not None:
             kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
                      else "; a reviewed commit changed")
@@ -792,7 +791,10 @@ MARKER = re.compile(
     r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=(\S+) model=(\S+) (?:effort=(\S+) )?"
     r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
-KINDS = ("push", "merge", "retarget", "rebase", "rewrite")
+# How a head moved since the full review, by kind: `interdiff` prints the phrase, and an incremental
+# review's lead names every kind but a push as "across a <phrase>".
+KINDS = {"push": "push", "merge": "merge of {base}", "retarget": "retarget onto {base}",
+         "rebase": "rebase onto {base}", "rewrite": "rewrite of its commits"}
 # The line after an incremental review's marker, naming the full review it builds on.
 INCREMENTAL = re.compile(
     r"^<!-- projector-incremental v=1 from=([0-9a-f]{40}) kind=(" + "|".join(KINDS) + r") "
@@ -1036,9 +1038,7 @@ def listed(items: list[str]) -> str:
 def incremental_lead(rules: dict, base_ref: str) -> str:
     """The sentence that opens an incremental review: the full review it builds on, how the head
     moved since, the size of the change, and any conflict the author resolved."""
-    across = {"push": "", "merge": f" across a merge of `{base_ref}`",
-              "retarget": f" across a retarget onto `{base_ref}`", "rebase": f" across a rebase onto `{base_ref}`",
-              "rewrite": " across a rewrite of its commits"}[rules["kind"]]
+    across = "" if rules["kind"] == "push" else f" across a {KINDS[rules['kind']].format(base=f'`{base_ref}`')}"
     sentence = (f"Incremental review of the change since the full review of [`{rules['from'][:7]}`]"
                 f"({rules['review']}){across}: {change_size(rules)}")
     conflicts = [f"`{path}`" for path in rules["conflicts"]]

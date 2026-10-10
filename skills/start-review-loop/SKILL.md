@@ -178,7 +178,7 @@ Every pushed SHA, including a fix-only SHA, starts a review cycle that ends in
 a verdict published on that SHA, full or incremental. `review-pr` decides
 which: a head that changed little since this loop's last full review can get
 an incremental review, and every other head gets a full one. Green CI and
-resolved threads are evidence about state, not substitutes for review. When a pull request closes or merges, close its subagent and delete
-its line from the tracked file. The watcher adopts the operator's new pull
-requests itself; append one the user assigns, and continue until the user
-stops the loop.
+resolved threads are evidence about state, not substitutes for review. When a
+pull request closes or merges, close its subagent and delete its line from the
+tracked file. The watcher adopts the operator's new pull requests itself;
+append one the user assigns, and continue until the user stops the loop.

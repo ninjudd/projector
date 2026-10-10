@@ -1554,6 +1554,28 @@ class IncrementalPublishTests(IncrementalCase):
         self.assertIn("--covered must be", no_coverage[2])
 
 
+class KindPhraseTests(unittest.TestCase):
+    def test_every_kind_has_one_phrase_that_the_output_and_the_lead_both_use(self) -> None:
+        self.assertEqual({"push", "merge", "retarget", "rebase", "rewrite"}, set(review.KINDS))
+        for kind, phrase in review.KINDS.items():
+            with self.subTest(kind):
+                self.assertTrue(phrase)
+                result = {"incremental": True, "reason": None, "needs_gate": False, "from": "f" * 40,
+                          "review": review_page(901), "kind": kind, "unchanged_commits": None, "conflicts": [],
+                          "insertions": 1, "deletions": 1, "files": ["a.css"], "patch": ""}
+                printed = phrase.format(base="trunk")
+                lead = review.incremental_lead(result, "trunk")
+
+                self.assertIn(f"kind: {printed}", review.interdiff_lines(result, "trunk"))
+                if kind == "push":
+                    self.assertNotIn("across", lead)
+                else:
+                    self.assertIn(f" across a {phrase.format(base='`trunk`')}: +1 −1 lines in 1 file.", lead)
+                self.assertIsNotNone(review.INCREMENTAL.match(
+                    f"<!-- projector-incremental v=1 from={'f' * 40} kind={kind} insertions=1 deletions=1 files=1 "
+                    "conflicts=0 -->"))
+
+
 class VerdictMarkerTests(unittest.TestCase):
     SHA, FROM = "a" * 40, "b" * 40
     MARKER = (f"<!-- projector-review v=1 verdict=clean projector=0.7.2 model=claude-opus-5-5 effort=high sha={'a' * 40} "
