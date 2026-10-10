@@ -30,7 +30,7 @@ from pathlib import Path
 
 from ..core import Project, title_from_text
 from ..review import MARKER
-from ..summary import DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page
+from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
 
 
 
@@ -77,8 +77,10 @@ def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: s
         bar_style = f'<link rel="stylesheet" href="{escape(assets)}site.css">\n'
         bar = f'<div id="sitebar" data-base="{escape(site_base)}"></div>\n'
         bar_script = f'<script src="{escape(assets)}site.js"></script>\n'
-    return f"""<title>{escape(title)}</title>
+    return f"""<!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
@@ -163,15 +165,17 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
 
 
 def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
-                    lookup=None, review_lookup=None) -> tuple[list[dict], list[str]]:
+                    lookup=None, repo_root: Path | None = None, review_lookup=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest.
 
     Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
-    `lookup`, and each page lists the pull requests in its stack. Each page
-    also carries `review`, the newest Projector review of its head, from the
-    reviews `review_lookup` returns for its pull request: `unreviewed` when
-    none names the head, and no `review` at all when `review_lookup` is
-    missing or returns None because it could not ask.
+    `lookup`, and each page lists the pull requests in its stack. A file is
+    generated as the `attributes.json` that `publish` stored beside a summary
+    says, or, for a summary without one, as the checkout at `repo_root` reads
+    its .gitattributes. Each page also carries `review`, the newest Projector
+    review of its head, from the reviews `review_lookup` returns for its pull
+    request: `unreviewed` when none names the head, and no `review` at all
+    when `review_lookup` is missing or returns None because it could not ask.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
@@ -200,7 +204,10 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
             stored = path.with_name(DIFF_FILE)
             if not stored.is_file():
                 raise SummaryError(f"it has no {DIFF_FILE} beside it; republish it with `project summary publish`")
-            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True)
+            attributes = path.with_name(ATTRIBUTES_FILE)
+            generated = stored_attributes(attributes) if attributes.is_file() else None
+            payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True, root=repo_root,
+                                   generated=generated)
             payload["projects"] = link(summary, payload) if link else []
         except (SummaryError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
@@ -547,8 +554,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     files = collect_files(repo_root, projects_dir, out) if repo_root else []
     assign_routes(docs, described)
     link = project_linker(described, base)
-    built = build_summaries(summaries, out, base, link, trunk, lookup, review_lookup) \
-        if summaries and summaries.is_dir() else ([], [])
+    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
+                            review_lookup=review_lookup) if summaries and summaries.is_dir() else ([], [])
     entries, failures = built
     for project in described:
         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]

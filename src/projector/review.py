@@ -547,6 +547,9 @@ PLACEHOLDERS = ("took", "seconds", "sha", "short_sha", "census")
 PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
 # Code the body quotes is left exactly as written: fenced blocks, then inline spans.
 CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
+# An inline span that holds a placeholder and nothing else asks for the value in code font,
+# as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
+LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
 SIGNATURE = re.compile(
@@ -695,19 +698,21 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
         raise ReviewError("the body is empty; write the review below the signature line")
     if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
         raise ReviewError("leave the signature line and marker out of the body; publish writes them")
-    if not PLACEHOLDER.search(CODE.sub("", body)) or "{census}" not in CODE.sub("", body):
+    prose = CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
+    if "{census}" not in prose:
         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
                           "outside code")
     seconds = elapsed(state["start_comment"]["created_at"], at)
     took = duration(seconds, state["heads"])
     values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
               "census": census_line}
-    # Placeholders are filled only in prose, so quoted code keeps its braces; anything else in
-    # braces is the author's text, not a placeholder.
+    # Placeholders are filled only in prose and in a span that holds one alone, so quoted code
+    # keeps its braces; anything else in braces is the author's text, not a placeholder.
     pieces, last = [], 0
     for code in CODE.finditer(body):
         pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
-        pieces.append(code.group(0))
+        lone = LONE_PLACEHOLDER.fullmatch(code.group(0))
+        pieces.append(f"`{values[lone.group(1)]}`" if lone else code.group(0))
         last = code.end()
     pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
     filled = "".join(pieces)

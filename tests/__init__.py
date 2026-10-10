@@ -1,4 +1,16 @@
+import atexit
 import os
+import shutil
+import tempfile
+
+# Tests make scratch repositories with tempfile.mkdtemp and do not remove them.
+# One run leaves about 19,000 inodes, so review loops that run the suite in
+# parallel can fill a tmpfs /tmp. Every temporary path a run makes, including
+# its subprocesses' paths, goes under one root that the run removes at exit.
+root = tempfile.mkdtemp(prefix="projector-tests-")
+tempfile.tempdir = root
+os.environ["TMPDIR"] = root
+atexit.register(shutil.rmtree, root, ignore_errors=True)
 
 # GitHub Actions sets these for every step, and Projector reads them: the site
 # build skips a summary for any repository but GITHUB_REPOSITORY. Every

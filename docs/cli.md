@@ -73,14 +73,15 @@ what it did to each:
   terminal, as an agent refreshing the instructions runs it, `init` reports
   the file as `kept` and says on stderr how to add the rules, and
   `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
-  to leave the file alone for one run. `init` adds the rules to the file's
-  existing settings, keeps every other setting, writes through a symlink such
-  as one into a dotfiles repository, and writes the file back as two-space
-  JSON. It keeps a file that is not valid UTF-8 JSON, holds settings of an
-  unexpected shape, sits under a `.claude` that is not a directory, or cannot
-  be written, as one linked into a read-only directory such as the Nix store
-  cannot, and says on stderr how to add the rules yourself. `init` still
-  exits 0.
+  to leave the file alone for one run. To check the rules without `init`, run
+  `project review rules`, which writes nothing. `init` adds the rules to the
+  file's existing settings, keeps every other setting, writes through a
+  symlink such as one into a dotfiles repository, and writes the file back as
+  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds settings
+  of an unexpected shape, sits under a `.claude` that is not a directory, or
+  cannot be written, as one linked into a read-only directory such as the Nix
+  store cannot, and says on stderr how to add the rules yourself. `init`
+  still exits 0.
 - `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
   commands, for Codex's approval reviewer, which otherwise can refuse
   `project summary publish` as sending repository content to another host.
@@ -603,7 +604,14 @@ project site workflow --write
 unassigned group. `summary publish` fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
-workflow.
+workflow. It commits the head's `linguist-generated` attributes beside them
+as `attributes.json`, as [Generated files](#generated-files) describes.
+Publishes that run at the same time, as a review loop's subagents run them,
+each land. A publish whose push loses the race for the ref fetches the ref
+again, rebuilds its commit on the new tip, keeping every other publisher's
+summaries, and pushes again, up to five pushes in all. It says how many
+times it retried. Any other push failure, such as a refused login, fails at
+once.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the summary's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
@@ -626,13 +634,18 @@ Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
-It keeps one such comment per account and pull request, as the newest
-comment: each publish posts the link again at the end, and then deletes the
-account's older summary comments. A rerun on the same head posts nothing
-while its comment is still the newest. It also puts the same link at the very
-bottom of the pull request's description, after a blank line, and removes the
-link an earlier publish left there. Where the account cannot edit the
-description, it prints why and leaves the description as it was.
+It keeps one such comment per account and pull request, as the pull
+request's last message: each publish posts the link again at the end, and
+then deletes the account's older summary comments. A rerun on the same head
+posts nothing while its comment is still the last item on the pull request's
+timeline. Anything the conversation shows after the comment, such as another
+comment, a submitted review, a push, or a ready-for-review event, makes the
+rerun post the link again. A pending review, a subscription, or a mention
+does not, because readers of the conversation do not see it.
+`summary publish` also puts the same link at the very bottom of the pull
+request's description, after a blank line, and removes the link an earlier
+publish left there. Where the account cannot edit the description, it prints
+why and leaves the description as it was.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.
@@ -724,6 +737,8 @@ deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
 `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any summary that fails or has no stored diff.
+It marks generated files by the `attributes.json` beside a summary, or by the
+checkout's `.gitattributes` for a summary stored without one.
 It reads only `summary.json`, so it also reports each summary stored only as
 `spec.json`, the name older releases wrote. To show such a summary, publish it
 again with a current release, as
@@ -804,6 +819,55 @@ when a summary is published, when a push to the default branch changes
 `.projector.toml`, or the workflow itself, and on demand; `--branch` names the
 default branch when `origin` does not record it.
 
+### Generated files
+
+A summary page counts each changed file's lines as hand-written, test,
+generated, or documentation, labels generated files, and starts every file but
+a hand-written one collapsed. A file is generated when the repository's
+`.gitattributes` marks it `linguist-generated`, which is how GitHub decides to
+collapse it in a pull request's diff:
+
+```text
+site/assets/summary.js linguist-generated=true
+yarn.lock -linguist-generated
+```
+
+Setting `linguist-generated`, bare or to any value but `false`, makes a file
+generated. `-linguist-generated` or `linguist-generated=false` keeps a file
+out, even one whose path looks generated. When the attributes do not mention a
+file, its path decides: a name such as `package-lock.json`, `yarn.lock`,
+`api.pb.go`, or `client_pb2.py`, or a path through a `gen/`, `generated/`,
+`mocks/`, or `__generated__/` directory, makes it generated.
+
+`summary init` and `site page` read the attributes with `git check-attr` in
+the checkout they run in. `site build` and `site serve` read them in the
+checkout `--repo-root` names, for each summary stored without them:
+
+- **The checkout has the pull request's head commit.** The head's own
+  `.gitattributes` files answer, so a pull request that changes them is
+  summarized as it changes them. Git 2.40 and later read them with
+  `check-attr --source`. An earlier Git reads the head's tree into a
+  temporary index and checks the attributes there.
+- **The checkout lacks the head, but one of its remotes is the pull request's
+  repository.** Its working tree answers.
+- **Anything else**, such as a checkout of another repository or a directory
+  outside one. The path alone decides.
+
+Only the repository's `.gitattributes` files count, as on GitHub. The commands
+leave out your global attributes file and the system's, and a pattern matches
+a path's exact case even in a checkout on a case-insensitive file system.
+
+A deploy checks out the default branch, which lacks the head of an open pull
+request. So `summary publish` reads the head's attributes itself and stores
+them beside the summary as `attributes.json`, which the site build uses in
+place of its checkout's. When the checkout lacks the head, `publish` first
+fetches it from the remote it publishes to. The fetch adds the commit's
+objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
+remote cannot serve the head either, `publish` says so and stores no
+attributes. A summary stored without them, as every summary an earlier
+release published was, takes its attributes from the default branch when the
+site builds.
+
 ## Review a pull request
 
 `project review` runs the mechanical steps of the `review-pr` skill, so
@@ -816,6 +880,7 @@ project review census 66 --json
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
 project review release 66
 project review gate 66
+project review rules
 ```
 
 `setup` checks that pull request 66 is open, fetches its head into the
@@ -847,8 +912,9 @@ clears the pull request's review lock.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,
-`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills only outside
-quoted code; `--threads` names a JSON list
+`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills in prose and
+in a backtick span that holds one placeholder alone, but not in longer quoted
+code; `--threads` names a JSON list
 of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
 files read over the files changed. `publish` writes the signature line and
 marker itself from the review's state and one reading of the clock, and adds
@@ -856,7 +922,7 @@ the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
 when the pull request closed or its head moved, when a finding's line is
 outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
-has no `{census}` outside code, when the verdict disagrees with the finding
+has no `{census}` outside quoted code, when the verdict disagrees with the finding
 count, or when the reviewer already has a verdict on the head that this loop's
 record does not account for; outside a loop, `--second-verdict <review-id>`
 publishes beside an earlier verdict the body names. On a self-review it
@@ -878,6 +944,20 @@ command, its exit status, the head, and when it ran. The command runs the
 head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `setup` recorded as untrusted, whether or not `review.gate` is set, and when
 `review.gate` is unset.
+
+`rules` checks whether your own settings allow `project review publish` and
+`project summary publish`: the rules `init` adds to `~/.claude/settings.json`,
+and to `~/.codex/rules/projector.rules` where Codex is installed. It prints
+each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+whole check and for each file. It writes nothing, takes no pull request, and
+runs from any directory. It exits 0 when every file has the rules. It exits 1
+when a file lacks them or cannot be read, says on stderr what is missing, and
+asks for `project init` at a terminal, because `init` adds the rules only for a
+person. A review loop runs `rules` once before its first review, so it can warn
+you before a publish is refused rather than after. A file that lacks the rules
+means the host's automatic approval can refuse a publish, not that it will:
+the repository's own settings, or settings your organization manages, can still
+allow the commands.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

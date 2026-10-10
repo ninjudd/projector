@@ -82,6 +82,14 @@ it. The summary is JSON:
   also check off each `flag` note; `context` and `verify` notes have no box.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
+- A file is generated when the repository's `.gitattributes` marks it
+  `linguist-generated`, as GitHub does when it collapses the file in a pull
+  request's diff. `-linguist-generated` or `linguist-generated=false` keeps a
+  file out. A file the attributes do not mention is generated when its path
+  looks generated, such as `package-lock.json` or a file under `gen/`. The
+  CLI reads the attributes at the head when the checkout it runs in has that
+  commit, and from the working tree otherwise. `publish` fetches the head
+  when the checkout lacks it and stores the head's attributes for the site.
 
 ## HTML in text fields
 
