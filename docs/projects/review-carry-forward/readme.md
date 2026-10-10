@@ -41,10 +41,11 @@ newest verdict is clean, finds the fully reviewed head that verdict rests on,
 and measures the pull request's own change since that head, leaving out what a
 merge of the base branch brought in. It also checks the other rules that need
 no judgment: the head is trusted, no finding is open, the earlier head is an
-ancestor, and the change edits files in place and stays within
-`review.carry_max_lines`. When those rules pass, the subagent reads the change
-and carries the verdict only when every hunk is presentation, prose, or
-formatting. It then runs
+ancestor, the change edits files in place and stays within
+`review.carry_max_lines`, and, when a merge of the base branch moved the merge
+base, the repository's gate passed on the new head. When those rules pass, the
+subagent reads the change and carries the verdict only when every hunk is
+presentation, prose, or formatting. It then runs
 `project review publish <number> --carry --change "<what changed>"`, which
 checks the same rules again and posts a clean review whose body is the
 signature line, the markers, and one sentence: what changed since the earlier
@@ -62,13 +63,17 @@ from, so everything that reads a verdict keeps working.
    review's state, applies the rules in § 2.2.1, and exits 0 when they allow a
    carry. It prints the head it would carry from, the counts, and the
    interdiff's patch. It exits 1 when a rule fails, naming the rule, and still
-   prints the patch when it got as far as measuring one. Any non-zero exit
-   means a full review. That includes the exit from a CLI too old to know the
-   command, so a skill newer than the installed CLI falls back to today's
-   behavior.
-3. On exit 0, the subagent reads the whole patch, and the code around a hunk at
-   the head when it needs context. It carries only when every hunk is one of
-   the kinds in § 2.2.2 and every prose hunk passes the two readings there.
+   prints the patch when it got as far as measuring one. When the only rule
+   that fails is the gate rule, the output says that the gate is what remains,
+   as `needs_gate` under `--json`, and the subagent goes on to step 3. Any
+   other non-zero exit means a full review. That includes the exit from a CLI
+   too old to know the command, so a skill newer than the installed CLI falls
+   back to today's behavior.
+3. On exit 0, or when the gate is what remains, the subagent reads the whole
+   patch, and the code around a hunk at the head when it needs context. It
+   carries only when every hunk is one of the kinds in § 2.2.2 and every prose
+   hunk passes the two readings there. When the gate is what remains, it then
+   runs `project review gate <number>` and carries only when the gate exits 0.
    Otherwise it continues at step 5 of `review-pr`, the full method, on the
    setup from step 1.
 4. To carry, the subagent runs
@@ -101,6 +106,20 @@ rules. It refuses at the first rule that fails:
 | The change can be measured | The measurement in § 2.3 meets a conflict, or needs a Git older than 2.40. |
 | Files change in place | The interdiff adds, deletes, or renames a file, changes a file's mode, or touches a binary file, a symlink, or a submodule. |
 | The change is small | The interdiff's insertions plus deletions exceed `review.carry_max_lines`. |
+| The base's changes passed the gate | The merge base moved since the earlier head (`MO` differs from `MN` in § 2.3), and the review's state records no `project review gate` run on this head that exited 0. |
+
+The gate rule covers what the interdiff leaves out. A merge of the base can
+break the pull request without changing a line of the interdiff. When the
+base changes the signature of a function that the pull request calls from a
+file of its own, the merge is clean, the interdiff can be empty, and only
+running the code shows the break. The gate is the check a full review of that
+head would run. `project review gate` already records its exit status and
+head in the review's state, and the rule reads that record, so the reviewer's
+word is not what says the gate passed. Where `.projector.toml` sets no
+`review.gate`, `gate` refuses and records nothing, so a head whose base moved
+gets a full review, which runs the checks the repository's instructions name.
+The command checks the gate rule last, so a refusal that names it means every
+other rule passed.
 
 The earlier head is the one a full review covered. When the reviewer's newest
 verdict is itself carried, the earlier head is the one its carry marker names
@@ -171,6 +190,7 @@ With `--json`, `interdiff` prints one object, with the same exit status:
 | --- | --- |
 | `carry` | `true` when every rule in § 2.2.1 passes. |
 | `reason` | The rule that failed, in words, or `null`. |
+| `needs_gate` | `true` when the gate rule is the only one that fails, and `false` otherwise. |
 | `from` | The full SHA of the earlier head, or `null` when there is none. |
 | `review` | The URL of that head's full review, or `null`. |
 | `insertions`, `deletions` | The interdiff's line counts, or `null` when it was not measured. |
@@ -268,12 +288,12 @@ carried verdict.
 
 | File | Change |
 | --- | --- |
-| `src/projector/review.py` | `CARRY`, the carry marker's pattern beside `MARKER`, and `verdict_marker(body)`, which returns a body's verdict, head, and carried-from head for both the carry rules and the site. `reviewer_reviews`, one paginated listing of the reviewer's Projector reviews with id, URL, time, and body: `check_collision` filters it by `sha=` as today, and the carry rules read the newest verdict from it. `interdiff` (§ 2.3) and `carry_rules` (§ 2.2.1). `publish` gains `carry` and `change`: it applies the rules, composes the body in § 2.4, and posts a `COMMENT`. `OWN_MARKER` also matches `projector-carry`, and `SIGNATURE` accepts the `carried from` segment. |
+| `src/projector/review.py` | `CARRY`, the carry marker's pattern beside `MARKER`, and `verdict_marker(body)`, which returns a body's verdict, head, and carried-from head for both the carry rules and the site. `reviewer_reviews`, one paginated listing of the reviewer's Projector reviews with id, URL, time, and body: `check_collision` filters it by `sha=` as today, and the carry rules read the newest verdict from it. `interdiff` (§ 2.3) and `carry_rules` (§ 2.2.1), which reads the gate record that `gate` already writes to the review's state. `publish` gains `carry` and `change`: it applies the rules, composes the body in § 2.4, and posts a `COMMENT`. `OWN_MARKER` also matches `projector-carry`, and `SIGNATURE` accepts the `carried from` segment. |
 | `src/projector/cli.py` | `review interdiff <number>`, with `--json`. `review publish` gains `--carry` and `--change`, and requires `--verdict`, `--body`, and `--covered` only without `--carry`. Both read `review.carry_max_lines`. |
 | `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker` and adds `carriedFrom` to a carried head's status. |
 | `site/src/globals.d.ts`, `site/src/summary.ts` | The optional `carriedFrom` on a clean status, and the header text **Clean (carried from `<short-sha>`)**. |
 | `site/assets/summary.js` | Rebuilt with `npm run build`. |
-| `skills/review-pr/SKILL.md` | A section, "Carry a clean verdict across a minimal change", with steps 2 to 4 of § 2.1, the kinds in § 2.2.2 and the two readings a prose hunk must pass, and the publish command. The section on labels describes the carry marker, and the report names the carried-from head. A full re-review may read its new range from `interdiff`'s patch. |
+| `skills/review-pr/SKILL.md` | A section, "Carry a clean verdict across a minimal change", with steps 2 to 4 of § 2.1, the gate step for a moved base, the kinds in § 2.2.2 and the two readings a prose hunk must pass, and the publish command. The section on labels describes the carry marker, and the report names the carried-from head. A full re-review may read its new range from `interdiff`'s patch. |
 | `skills/start-review-loop/SKILL.md` | "Continue after fixes" says that every pushed SHA ends in a published verdict on that SHA, full or carried. A subagent's report names the carried-from head. |
 | `docs/cli.md` | The `review.carry_max_lines` row, `review interdiff`, `publish --carry`, and the header's carried status. |
 | `tests/test_review.py`, `tests/test_site.py` | The tests in § 4. |
@@ -343,9 +363,20 @@ carried verdict.
   carried verdict posts a `COMMENT` even where `review.allow_approve` is on,
   because an approval vouches for the code, and a carry vouches only that the
   change since a reviewed head was minimal.
-- **Run no gate and no tests.** The kinds that carry are ones a test does not
-  observe, and CI runs on the push regardless. Running the repository's gate
-  would spend the time a carry exists to save.
+- **Run the gate only when the base moved.** While the merge base stays where
+  it was, the head's code differs from code a full review read and gated only
+  in the kinds that carry, which a test does not observe, and running the gate
+  would spend the time a carry exists to save. A merge of the base breaks that
+  premise. It brings in code that no review of this pull request ran beside the
+  pull request's own, and a clean merge can still break a call. The gate is
+  the check in a full review that catches such a break, so a carry across a
+  moved base needs a passing gate on the head and still skips the method's
+  passes and the long body. The rule compares with the last full review's
+  merge base, as the size rule measures from it, so every carry after a merge
+  of the base runs the gate until the next full review. Rejected: relying on
+  CI, because a verdict does not wait for CI and many repositories have none,
+  and refusing every carry across a moved base, which would give a full
+  review and its long body to each small push after the base is merged.
 - **Mark the carried status in the header.** The header is the site's one
   statement of how well a head was checked. A carried verdict rests on a
   judgment about a small change, not on the method, so the header says so, as
@@ -383,6 +414,11 @@ The tests run in temporary Git repositories against the fake GitHub that
    number, or `true` refuses and names the key. When the newest verdict was
    carried from head F, the change is measured from F, and it refuses when the
    total since F is over the limit even though the last push alone is not.
+   A merge of a trunk that moved the merge base refuses with `needs_gate`
+   until a `project review gate` run that exited 0 on this head is recorded,
+   and then carries. A run that exited non-zero, and a passing run recorded on
+   an earlier head, still refuse. An unmoved merge base carries with no gate
+   run, and an empty interdiff across a moved base still needs the gate.
 3. **Publish.** On a self-review, `publish --carry` posts one `COMMENT` whose
    body has exactly the parts in § 2.4. Its marker line matches `MARKER`, its
    carry line names F, and its sentence links F's review. Publish marks the
@@ -390,7 +426,8 @@ The tests run in temporary Git repositories against the fake GitHub that
    loop's record, and releases the lock. On another author's pull request with
    `review.allow_approve = true`, it posts a `COMMENT` with the approval
    sentence. It refuses and keeps the lock when a rule fails at publish time,
-   such as a thread opened since `interdiff` ran, or when the head moved. It
+   such as a thread opened since `interdiff` ran or a moved base with no
+   passing gate on the head, or when the head moved. It
    refuses `--carry` with `--threads`, `--body`, `--covered`,
    `--second-verdict`, or `--verdict changes-requested`, and a `--change` that
    is empty, longer than one line or 200 characters, or holds `<!--`. An
@@ -423,14 +460,16 @@ Criteria 1 to 4 fail before the change, because neither `review interdiff` nor
   seconds each. Publish shares one listing between the collision check and the
   carry rules.
 - **What a carry saves.** The method's passes, the reading outward from each
-  changed definition, the gate and focused tests, and the long body. On #209
+  changed definition, focused tests, the long body, and the gate unless the
+  base moved. On #209
   the eight heads in § 1 took 638 seconds of full review. Each ran 514 unit
   tests, the site's type check and build, and both plugin validations.
 - **What a carry still spends.** Setup still fetches the head, creates the
   worktree, looks up trust, and posts the start comment. The reviewer reads at
-  most `review.carry_max_lines` lines with their context. Publish posts the
-  review, and the summary update republishes the page, which deploys the site
-  once, as after any review.
+  most `review.carry_max_lines` lines with their context. When a merge of the
+  base moved the merge base since the last full review, the gate runs once on
+  the head. Publish posts the review, and the summary update republishes the
+  page, which deploys the site once, as after any review.
 - **How it is measured.** The marker's `seconds=` already records each
   verdict's time. The implementing pull request reports the `seconds=` of a
   carried verdict and of a full review on the same scratch pull request.
