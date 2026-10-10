@@ -45,7 +45,7 @@ The browser has a plan's headings only once it renders the Markdown, after
 
 | Option | How it works | Trade-off |
 | --- | --- | --- |
-| Read them after the render | `showDocument` fills the list from the rendered headings, whose ids `site.ts` already sets | No build change, and the links match by construction. The sidebar draws without the list first, then grows when the list arrives, which moves everything below it. |
+| Read them after the render | `showDocument` fills the list from the rendered headings, whose ids `site.ts` already sets | No build change, and the links match by construction. `showDocument` already redraws the whole frame, sidebar included, when the Markdown arrives, because `frame` rewrites `root.innerHTML` in place of the `Loading…` page. The list arrives in that same redraw, so only the sidebar blocks below it move, at the moment the plan itself appears. |
 | Extract them at build time | The build, which already reads every plan for `title_from_text` and for `search_index`, puts each plan's headings in `site.json` | The list draws on first paint. The build must find the same headings the browser renders, and the links must match the rendered ids (§ 2.2). |
 | Both | The build's list draws first, and the rendered headings replace it | No jump, and the links always match in the end. Two sources for one list, and a redraw whenever they disagree. |
 
@@ -72,7 +72,7 @@ headings with the same text share one id today.
 
 - **`##` only.** Every plan has them, as its numbered sections: 4 to 14 per
   plan here. The list stays short.
-- **`##` and `###`.** Seven plans here have subsections, up to 8 each, so a
+- **`##` and `###`.** Nine plans here have subsections, up to 8 each, so a
   plan's list could pass 20 rows. The subsections could indent under their
   section, or show only under the section you are in.
 
@@ -110,7 +110,7 @@ feeds it.
 
 | Option | What the sidebar lists | Trade-off |
 | --- | --- | --- |
-| Its own pages | The current project's files and nested projects, as `project-page-nav` does | One project per sidebar. A sibling is two clicks away. |
+| Its own pages | The current project's files and nested projects, as `project-page-nav` does | One project in the pages list. A stack that spans the current project and its parent or a sibling shows that project's header as a link, so the stacks reach a neighbor only when a stack spans the two. Any other sibling is two clicks away, through the breadcrumbs. |
 | The whole top-level tree | The top-level project's folder, as today's tree column does, below the current project's stacks | Siblings are one click away. The title row and the stacks' current headers name the child while the tree starts at the parent, and on the parent's readme a project header and the tree's **Overview** entry would both be current. |
 | Its own pages, and its neighbors | Its own pages, then a short block naming the parent and the siblings | Siblings are one click away, and the title row and the pages still agree. A third kind of block in the sidebar. |
 | The whole tree, folded | The top-level tree, open along the path to the current project and closed elsewhere | Today's reach without today's length. The tree's own entry for the current project repeats the title row. |
@@ -125,10 +125,15 @@ feeds it.
   sections stay with it. The readme has no entry in the pages list, because
   the project's headers link to it, so its sections need a place of their
   own, above the stacks or below them.
-- **Length.** A few stacks, each with one or more headers, 14 sections, and
-  a tree can pass the window's height. The sidebar sticks and scrolls on its
-  own, so a long sidebar works, but whichever block comes last is the one a
-  reader scrolls to reach.
+- **Length on a wide screen.** A few stacks, each with one or more headers,
+  14 sections, and a tree can pass the window's height. The sidebar sticks
+  and scrolls on its own, so a long sidebar works, but whichever block comes
+  last is the one a reader scrolls to reach.
+- **Length on a narrow screen.** At 980 pixels and narrower, `summary.css`
+  makes the sidebar static, `project-page-nav` puts it before the plan, and
+  the `.nav ol` rules lay a section list out as a grid of columns. Fourteen
+  sections then push the plan further down the page, below the stacks and
+  the pages.
 
 Only one item may be the current page: on the readme, the first of the
 project's headers, and on any other page, the file's entry. The current
@@ -156,9 +161,10 @@ The user decides each, and the plan moves to `ready` once all are answered.
 
 ## 4. Background
 
-- **Heading counts.** On 2026-10-10, this repository's plans held 4 to 14
-  `##` lines each, and seven held `###` subsections, up to 8 each. One `##`
-  line, in `agent-instructions`, sits in a fenced code block.
+- **Heading counts.** On 2026-10-10, on `main` with `project-page-nav`, this
+  repository's plans held 4 to 14 `##` lines each, and eight held `###`
+  subsections, up to 8 each. This plan makes nine. One `##` line, in
+  `agent-instructions`, sits in a fenced code block.
 - **Ids today.** `renderMarkdown` in `site/src/site.ts` sets
   `h.id = slug(h.textContent)` on each rendered heading that has no id.
 - **The summary's list.** `renderPage` in `site/src/summary.ts` draws the
