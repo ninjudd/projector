@@ -36,6 +36,7 @@ CLAUDE_DIR="${PROJECTOR_CLAUDE_DIR:-${CLAUDE_CONFIG_DIR:-$PROJECTOR_USER_ROOT/.c
 CODEX_DIR="${PROJECTOR_CODEX_DIR:-$PROJECTOR_USER_ROOT/.codex}"
 CLAUDE_COMMAND="${PROJECTOR_CLAUDE_COMMAND:-claude}"
 CODEX_COMMAND="${PROJECTOR_CODEX_COMMAND:-codex}"
+GH_COMMAND="${PROJECTOR_GH_COMMAND:-gh}"
 
 legacy_links_for() {
   # Only a checkout ever linked itself into a host's directory.
@@ -152,6 +153,28 @@ expected_version() {
   printf '%s\n' "$manifest" | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
+# The gh-stack release Projector pins, from the gh-stack entry in the Claude
+# Code marketplace, the same file the host reads it from: the checkout's, or
+# the release's, fetched from GitHub. Offline, or when GitHub cannot answer,
+# there is none.
+pinned_gh_stack() {
+  local marketplace
+  if [ -n "$REPO" ]; then
+    marketplace="$(cat "$REPO/.claude-plugin/marketplace.json" 2>/dev/null)" || return 0
+  elif [ -n "${PROJECTOR_OFFLINE:-}" ]; then
+    return 0
+  else
+    marketplace="$(curl -fsSL --max-time 15 \
+      "https://raw.githubusercontent.com/$RELEASE_REPO/$RELEASE_REF/.claude-plugin/marketplace.json" 2>/dev/null)" || return 0
+  fi
+  printf '%s\n' "$marketplace" | python3 -c '
+import json, sys
+for entry in json.load(sys.stdin).get("plugins", []):
+    if entry.get("name") == "gh-stack":
+        print(entry.get("source", {}).get("ref", "").lstrip("v"))
+' 2>/dev/null || true
+}
+
 # Where the plugin installs from: the repository this checkout was cloned
 # from, read off its `origin` remote, so a fork installs from the fork and a
 # clone of the upstream installs from the upstream. A host refreshes a
@@ -229,19 +252,20 @@ for entry in json.load(sys.stdin).get("marketplaces", []):
 }
 
 host_plugin_version() {
+  local plugin="${2:-projector@projector}"
   case "$1" in
     claude) run_claude plugin list --json 2>/dev/null | python3 -c '
 import json, sys
 for entry in json.load(sys.stdin):
-    if entry.get("id") == "projector@projector":
+    if entry.get("id") == sys.argv[1]:
         print(entry.get("version", "?"))
-' 2>/dev/null || true ;;
+' "$plugin" 2>/dev/null || true ;;
     codex) run_codex plugin list --json 2>/dev/null | python3 -c '
 import json, sys
 for entry in json.load(sys.stdin).get("installed", []):
-    if entry.get("pluginId") == "projector@projector":
+    if entry.get("pluginId") == sys.argv[1]:
         print(entry.get("version", "?"))
-' 2>/dev/null || true ;;
+' "$plugin" 2>/dev/null || true ;;
   esac
 }
 
@@ -276,6 +300,22 @@ install_claude() {
   else
     run_claude plugin install projector@projector --scope user
   fi
+  install_claude_gh_stack
+}
+
+# Projector depends on the gh-stack plugin and fails to load without it, but
+# `update` neither installs a dependency a plugin newly declares nor moves one
+# already installed, so the installer does both by name. A marketplace from
+# before Projector depended on gh-stack has no such plugin; that failure
+# leaves Projector as it was and is reported rather than fatal.
+install_claude_gh_stack() {
+  if [ -n "$(host_plugin_version claude gh-stack@projector)" ]; then
+    run_claude plugin update gh-stack@projector ||
+      warn_row "gh-stack" "claude could not update gh-stack@projector"
+  else
+    run_claude plugin install gh-stack@projector --scope user ||
+      warn_row "gh-stack" "claude could not install gh-stack@projector"
+  fi
 }
 
 # Codex reads a local marketplace live and snapshots a Git one. A local
@@ -304,6 +344,60 @@ install_codex() {
     case "$marketplace" in git*) run_codex plugin marketplace upgrade projector ;; esac
   fi
   run_codex plugin add projector@projector
+  # Codex has no plugin dependencies, so GitHub's gh-stack skill is a plugin
+  # of its own here. Projector works without it, so a marketplace that does
+  # not serve it yet is reported rather than fatal.
+  run_codex plugin add gh-stack@projector ||
+    warn_row "gh-stack" "codex could not install gh-stack@projector"
+}
+
+# The `gh stack` extension the stack workflow runs, at least at the release
+# Projector pins. Installing it needs no login and is announced; nothing here
+# is fatal, because Projector falls back to base branches without it. An
+# extension that provides `gh stack` from another owner is someone's choice
+# and is left alone.
+install_gh_stack() {
+  local installed pinned
+  if ! command -v "$GH_COMMAND" >/dev/null 2>&1; then
+    printf '%-14s %s\n' "skipped" "gh is not installed, so neither is gh stack"
+    return 0
+  fi
+  installed="$(gh_stack_extension)"
+  pinned="$(pinned_gh_stack)"
+  case "$installed" in
+    "")
+      if "$GH_COMMAND" extension install github/gh-stack; then
+        printf '%-14s %s\n' "installed" "gh stack (github/gh-stack)"
+      else
+        warn_row "gh-stack" "could not install gh stack -- run gh extension install github/gh-stack"
+      fi ;;
+    github/gh-stack\ *)
+      if [ -n "$pinned" ] && version_older "${installed#* }" "$pinned"; then
+        "$GH_COMMAND" extension upgrade stack ||
+          warn_row "gh-stack" "could not upgrade gh stack -- run gh extension upgrade stack"
+      fi ;;
+    *)
+      printf '%-14s %s\n' "skipped" "gh stack comes from ${installed%% *}, which the installer leaves alone" ;;
+  esac
+}
+
+# The repository and version of the extension that provides `gh stack`, as
+# `owner/repo version`, or nothing when no extension does.
+gh_stack_extension() {
+  "$GH_COMMAND" extension list 2>/dev/null | awk -F'\t' '
+    $1 == "gh stack" { version = $3; sub(/^v/, "", version); print $2, version; exit }
+  ' || true
+}
+
+# True when dotted version $1 is older than $2. A version that is not plain
+# numbers is never older, so an unusual one is left alone.
+version_older() {
+  python3 -c '
+import sys
+def parts(version):
+    return tuple(int(part) for part in version.split("."))
+sys.exit(0 if parts(sys.argv[1]) < parts(sys.argv[2]) else 1)
+' "$1" "$2" 2>/dev/null
 }
 
 # pipx and `pip install --user` both install a copy of the source, so a
@@ -388,6 +482,33 @@ report_plugin() {
   fi
 }
 
+# The `gh stack` extension against the release Projector pins. It is optional,
+# so a missing or old one is a row to act on rather than a failure.
+report_gh_stack() {
+  local installed pinned version
+  if ! command -v "$GH_COMMAND" >/dev/null 2>&1; then
+    printf '%-14s %s\n' "gh-missing" "gh -- install the GitHub CLI to use gh stack"
+    return
+  fi
+  installed="$(gh_stack_extension)"
+  pinned="$(pinned_gh_stack)"
+  version="${installed#* }"
+  case "$installed" in
+    "")
+      printf '%-14s %s\n' "stack-absent" "gh stack -- run $(rerun all)" ;;
+    github/gh-stack\ *)
+      if [ -z "$pinned" ]; then
+        printf '%-14s %s\n' "stack" "gh stack $version (no pinned version to compare against)"
+      elif version_older "$version" "$pinned"; then
+        printf '%-14s %s\n' "stack-stale" "gh stack $version, pinned $pinned -- run $(rerun all)"
+      else
+        printf '%-14s %s\n' "stack-current" "gh stack $version"
+      fi ;;
+    *)
+      printf '%-14s %s\n' "stack-other" "gh stack comes from ${installed%% *}" ;;
+  esac
+}
+
 # A row the reader must not scroll past: a marker always, because a captured
 # log has no color, and bold yellow when stdout is a terminal.
 warn_row() {
@@ -443,6 +564,7 @@ show_status() {
   report_cli
   report_plugin claude "$CLAUDE_COMMAND"
   report_plugin codex "$CODEX_COMMAND"
+  report_gh_stack
 
   local host source target state
   for host in claude codex; do
@@ -475,6 +597,7 @@ case "${1:-all}" in
     else
       printf '%-14s %s\n' "skipped" "Codex is not installed"
     fi
+    install_gh_stack
     report_checkout
     if [ "$installed_hosts" -eq 0 ]; then
       echo "install.sh: neither Claude Code nor Codex is installed" >&2
