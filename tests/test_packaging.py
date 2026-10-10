@@ -15,7 +15,6 @@ PUBLISHED_SKILLS = {
     "fix-pr",
     "start-review-loop",
     "start-fix-loop",
-    "gh-stack",
     "summarize-pr",
     "write",
 }
@@ -68,6 +67,39 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("projector", codex["plugins"][0]["name"])
         self.assertTrue((ROOT / ".claude-plugin" / "plugin.json").exists())
         self.assertTrue((ROOT / ".codex-plugin" / "plugin.json").exists())
+
+    def gh_stack_entries(self) -> dict[str, dict]:
+        """Each host's marketplace entry for gh-stack, by host."""
+
+        return {
+            host: next(entry for entry in json.loads((ROOT / path).read_text())["plugins"]
+                       if entry["name"] == "gh-stack")
+            for host, path in (("claude", ".claude-plugin/marketplace.json"),
+                               ("codex", ".agents/plugins/marketplace.json"))
+        }
+
+    def test_both_hosts_serve_upstreams_gh_stack_skill_from_one_pin(self) -> None:
+        # install.sh reads the pin from the Claude Code entry to decide when the
+        # gh stack extension is too old, so the entries must name one release.
+        entries = self.gh_stack_entries()
+        for host, entry in entries.items():
+            with self.subTest(host=host):
+                source = entry["source"]
+                self.assertEqual("git-subdir", source["source"])
+                self.assertEqual("https://github.com/github/gh-stack.git", source["url"])
+                self.assertEqual("skills", source["path"])
+                self.assertEqual(["./gh-stack"], entry["skills"])
+                self.assertRegex(source["ref"], r"^v\d+\.\d+\.\d+$")
+                self.assertRegex(source["sha"], r"^[0-9a-f]{40}$")
+                self.assertEqual(source["ref"], "v" + entry["version"])
+        claude, codex = entries["claude"], entries["codex"]
+        self.assertEqual(claude["source"], codex["source"])
+        self.assertEqual(claude["version"], codex["version"])
+
+    def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
+        # Codex has no plugin dependencies; install.sh adds gh-stack there.
+        self.assertEqual(["gh-stack"], self.manifest("claude")["dependencies"])
+        self.assertNotIn("dependencies", self.manifest("codex"))
 
     def test_every_python_package_is_listed_for_the_wheel(self) -> None:
         # The package list is explicit because site/assets is mapped in from

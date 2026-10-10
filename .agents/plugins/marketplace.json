@@ -15,6 +15,23 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Productivity"
+    },
+    {
+      "name": "gh-stack",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/github/gh-stack.git",
+        "path": "skills",
+        "ref": "v0.2.1",
+        "sha": "29a36d314be664583705f18e41cebdf2b61ad514"
+      },
+      "version": "0.2.1",
+      "skills": ["./gh-stack"],
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
     }
   ]
 }

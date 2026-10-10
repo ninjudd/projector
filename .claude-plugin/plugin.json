@@ -11,5 +11,6 @@
   "repository": "https://github.com/ninjudd/projector",
   "license": "MIT",
   "keywords": ["projects", "planning", "git", "agents", "code-review"],
+  "dependencies": ["gh-stack"],
   "skills": "./skills/"
 }
