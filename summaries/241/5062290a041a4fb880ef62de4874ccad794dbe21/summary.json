@@ -1,0 +1,169 @@
+{
+ "version": 1,
+ "name": "Multi-model finding adoption",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 241,
+  "title": "Let each model re-check its own findings and adopt a stopped model's",
+  "head": "5062290a041a4fb880ef62de4874ccad794dbe21",
+  "headRef": "multi-model-adoption",
+  "base": "d2bf926318ef75ccd4083712c678e732cefef9ab",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loops can run several models on one pull request, such as one in Claude Code and one in Codex, all posting as the same GitHub account. The earlier layers of this plan gave each model its own state and made the sign-off wait for every model. One gap remained: every review still settled every Projector finding thread. One model could withdraw a finding that another had opened, and that model could reopen it on the next head, so the two opinions were not independent.",
+   "This pull request makes each model re-check only the findings it opened. A finding passes to another model only when its model has <b>stopped</b>. A model has stopped when it owes the pull request a review and posts nothing for <code>review.peer_wait</code> seconds, 180 by default. The model still reviewing then takes the thread over with a new command, <code>project review adopt</code>. Its reply on the thread records the stop on GitHub, and from then on the sign-off leaves the stopped model's verdicts out.",
+   "<ul><li><b>Census.</b> <code>project review census</code> now reads every account's reviews, start comments, and threads. For each thread it reports the model that opened it, the <code>verifier</code> that re-checks it now, whether the thread is <code>mine</code>, and whether this model may adopt it.</li><li><b>Adopt.</b> <code>project review adopt</code> waits out the stopped model's window and posts a verify reply that names both models. It then reads the thread again, so that the first adopter wins, and resolves or unresolves the thread.</li><li><b>Publish and status.</b> <code>publish</code> counts only this model's threads for its verdict, and refuses while a thread it may adopt now is open. <code>status</code> shows a stopped model as <code>stopped</code>.</li></ul>",
+   "The review of this head found one problem, flagged on <code>src/projector/review.py</code>. A review that publishes before a stopped model's window closes leaves that model's finding with no one to re-check it, and the pull request stays a draft until the next push."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Model.</b> A reviewer, told apart by the model ID passed as <code>--model</code>, lowercased and without a bracketed variant such as <code>[1m]</code>, within one GitHub account.</li><li><b>Verifier.</b> The model that re-checks a finding now: the model that opened it, unless it has stopped; otherwise the first adopter that has not stopped; otherwise no one.</li><li><b>Owes a review.</b> A model owes the pull request a review on a new head, after an author's answer on its thread, or when its newest verdict requests changes and all its threads are resolved.</li><li><b>Window.</b> The <code>review.peer_wait</code> seconds a model that owes a review has to post before it counts as stopped.</li><li><b>Adoption reply.</b> A verify reply with <code>adopted-from=</code>, which records the stop on GitHub.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>First full review at <code>5062290</code>: changes requested, one P2 finding about a publish inside the window.</li><li>The full suite passes on the head with 740 tests. <code>project check</code>, both plugin validations, and <code>git diff --check</code> pass.</li><li>Criterion 15, which runs two loops by hand on two hosts, is deferred. The plan stays <code>in-progress</code> until the operator runs it.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Who re-checks a finding",
+   "kicker": "The census fields, the stop rule, and the adopt command",
+   "intro": [
+    "The new <code>Activity</code> class reads every model's posts on the pull request: its verdicts, its start comments, and the verify replies that name it. From those it decides whether a model owes a review, whether the model has stopped, and which model is each thread's verifier. <code>census</code>, <code>adopt</code>, <code>publish</code>, <code>status</code>, and the incremental rules all ask it the same questions.",
+    "A model is a login paired with a model identity, so a finding from another account follows the same rule, read from that account's own posts. The model running the review never reads itself as stopped."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The stop is decided once, by the clock, in the review that adopts. After that every reader agrees without a clock: a model is recorded as stopped while an adoption reply naming it is newer than anything it has posted."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>Activity</code>, the census fields, <code>census --wait</code>, <code>adopt</code>, and recorded stops in the sign-off and <code>status</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 826,
+       "text": "<code>owes</code> returns the moment a model began to owe a review. The new-head and re-review cases count from <code>began</code>, which is when the review that is asking began on the head, so the window is measured from the adopter's start rather than from the push."
+      },
+      {
+       "kind": "context",
+       "line": 703,
+       "text": "<code>census --wait</code> waits only on threads that are both <code>answered</code> and at <code>adopt: wait</code>. An unanswered thread at <code>wait</code> does not hold it."
+      },
+      {
+       "kind": "verify",
+       "line": 1388,
+       "text": "When two models adopt the same thread, the one whose reply comes later in the thread deletes it and refuses. <code>AdoptTests</code> covers both replies posting before either reads the thread again, and the suite passes on this head."
+      },
+      {
+       "kind": "flag",
+       "line": 1738,
+       "text": "<code>publish</code> refuses only threads at <code>adopt: now</code>. A thread at <code>wait</code> passes, and <code>sign</code> waits for peers only while the sign-off reads <code>clean</code>. A review that publishes inside the window ends before the window closes, and nothing adopts the thread afterward. With an unanswered finding from a model that reviewed an earlier head, a <code>clean</code> publish returns <code>waiting</code> with no wait. In the upgrade case, where the old ID requested changes on this head and the author resolved its thread, the sign-off stays <code>changes-requested</code>. Both were reproduced against this head's fake GitHub, and in both the pull request stays a draft until the next push."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>adopt</code> subcommand and <code>census --wait</code>, and passes <code>review.peer_wait</code> to each command that decides ownership.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 933,
+       "text": "<code>census</code> runs before <code>setup</code> when a loop handles <code>RESPONDED</code>. With no state for the model, it reads as this checkout's reviewer and starts the windows from now. When a state file from an earlier review exists, it reads that review's <code>head_started_at</code> instead, because the state file outlives <code>publish</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "What the review and fix skills tell an agent",
+   "kicker": "The rules each loop follows when several models review",
+   "intro": [
+    "The skills carry the same rules as the code, in the words an agent follows. <code>review-pr</code> gains a section on who re-checks a finding, and tells the agent to adopt a stopped model's thread even when the thread is resolved, because only the adoption reply records the stop. <code>start-review-loop</code> sends every <code>RESPONDED</code> event to every model's loop and tells each loop to run <code>census --wait</code> before it decides whether the event is its own. <code>fix-pr</code> still answers every finding from every model."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds the section on who re-checks a finding, and narrows the clean verdict to the threads this model re-checks.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 689,
+       "text": "The section tells the agent to re-run census just before the verdict, because a window open at the start has usually closed by then. Nothing enforces that, which is the gap the flag on <code>review.py</code> describes."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Says how a loop decides whether a <code>RESPONDED</code> event belongs to its model.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 141,
+       "text": "A loop re-reviews when its own newest verdict requests changes, when it has no verdict on the head, or when an answered thread is <code>mine</code> or at <code>adopt: now</code>. Otherwise it posts nothing."
+      }
+     ]
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "States that the fix loop answers every finding, whichever model opened it."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Reference and plan",
+   "kicker": "The CLI reference and the multi-model plan",
+   "intro": [
+    "<code>docs/cli.md</code> documents the census fields, <code>census --wait</code>, and <code>adopt</code>. The plan adds a third case in which a model owes a review, the re-review, so that an upgraded model's old ID cannot hold the sign-off at <code>changes-requested</code> after the author resolves every thread by hand. A new § 9 records the four layers and the deferred criterion 15."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the census fields table, <code>--wait</code>, and <code>adopt</code>."
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "§ 2.8 adds the re-review case and requires adopting resolved threads. § 9 records the implementation.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 502,
+       "text": "§ 2.8, When a model has stopped: the re-review case counts from when the adopting review began. That review must still be running when the window closes, or no review adopts the thread."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The fake GitHub, census ownership, adoption, and the fix-loop watcher",
+   "intro": [
+    "The fake GitHub in <code>tests/test_review.py</code> now answers thread replies, comment deletes, and resolve mutations, and a fake clock lets the 15-second waits advance it. <code>CensusOwnershipTests</code> and <code>AdoptTests</code> cover plan criteria 6, 13, 16 to 21, and 23. A watcher test pins that the fix loop still reports every finding."
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "note": "Adds <code>OwnershipCase</code>, <code>CensusOwnershipTests</code>, and <code>AdoptTests</code>."
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Checks that <code>watch-threads.sh</code> reports a <code>FINDING</code> for each model's thread."
+    }
+   ]
+  }
+ ],
+ "project": "multi-model-review"
+}
