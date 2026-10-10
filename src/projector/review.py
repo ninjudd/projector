@@ -991,10 +991,7 @@ def duration(seconds: int, heads: int) -> str:
 
 def elapsed(created_at: str, at: datetime) -> int:
     """Whole seconds from the start comment's `created_at` to `at`, both in UTC."""
-    start = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    return max(0, int((at - start).total_seconds()))
+    return max(0, int((at - parse_time(created_at)).total_seconds()))
 
 
 def diff_lines(repo: str, number: int) -> dict[str, list[tuple[int, int]]]:

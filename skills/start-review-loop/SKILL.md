@@ -73,11 +73,13 @@ nothing open.
    `<repo>-review-<model-key>`, where the model key is the model ID
    lowercased, without a trailing bracketed variant such as `[1m]`, and with
    every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
-   loop passes `--loop <id>` and `--model <model-id>` to every
-   `project review` command. The record of which reviews this loop published
-   lives under that id in the review state directory, where `project review
-   publish` keeps it. Give each model's loop an id of its own, because two
-   loops that write one record can lose an entry.
+   loop passes `--loop <id>` and `--model <model-id>` to each
+   `project review` command it runs on a pull request: `setup`, `move`,
+   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
+   which reviews this loop published lives under that id in the review state
+   directory, where `project review publish` keeps it. Give each model's loop
+   an id of its own, because two loops that write one record can lose an
+   entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 

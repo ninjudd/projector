@@ -1105,8 +1105,10 @@ head, rechecks trust, edits the start comment in place to name it, re-reads the
 comment to confirm the edit, and updates the state file. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments. `release`
-clears the pull request's review lock.
+`path:line`; with `--json` each thread also carries its comments. It counts
+every model's threads alike and takes `--model` like the commands around it,
+so a review loop passes the same flags to each. `release` clears the locks of
+one model's review of the pull request.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,

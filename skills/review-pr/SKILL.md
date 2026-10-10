@@ -197,10 +197,11 @@ copied from this file. It names the start comment and keys the review's
 state, so each model reviewing the pull request keeps its own state, lock,
 and scratch worktree, as
 [Review as one model among several](#review-as-one-model-among-several)
-describes. Every later command finds the review by the pull request and the
-model; pass `--model` to each one when more than one model has a review of
-the pull request set up on this machine, and it refuses, naming them, until
-you do.
+describes. Each later command, `move`, `census`, `interdiff`, `gate`,
+`publish`, and `release`, takes `--model` too. Every one but `census` finds
+the review by the pull request and the model, and refuses, naming the models,
+when more than one model has a review of the pull request set up on this
+machine and `--model` does not pick one.
 
 The review holds a lock for the pull request, head, and model from `setup`
 until it is published, so a second instance of the same model for the same

@@ -484,7 +484,7 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True,
                               help="the model ID of this session, which names the start comment and keys the "
                                    "review's state")
-    for command in (review_move, review_release, review_publish, review_gate, review_interdiff):
+    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
                                              "of this pull request set up here)")
     review_setup.add_argument("--rereview", action="store_true",
@@ -874,6 +874,9 @@ def run_review(arguments: argparse.Namespace) -> int:
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
+            # Every model's threads are counted alike, so the model a loop passes is only checked.
+            if arguments.model is not None:
+                review.model_key(arguments.model)
             result = review.census(repo, arguments.pr)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))

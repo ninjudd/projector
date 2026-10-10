@@ -311,7 +311,7 @@ class SetupTests(ReviewCase):
         self.assertIn("is closed", closed[2])
         self.assertIn("does not exist", missing[2])
         self.assertEqual([], self.github.posts())
-        self.assertEqual([], list((self.state / "prs" / REPO).glob("*.lock")) if (self.state / "prs").exists() else [])
+        self.assertEqual([], list(self.state.rglob("*.lock")) if self.state.exists() else [])
 
     def test_a_refusal_after_the_lock_releases_it(self) -> None:
         # GitHub's answer and the fetched ref disagree when the head moves in
@@ -1126,6 +1126,24 @@ class ModelTests(PublishCase):
         self.assertEqual(1, code)
         self.assertIn("is model a/b's", err)
         self.assertEqual("a/b", self.read_state("a/b")["model"])
+
+    def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> None:
+        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "start-review-loop" / "SKILL.md").read_text()
+        sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
+                             r"runs on a pull request: (.*?)\. ", skill, re.S)
+        commands = re.findall(r"`(\w+)`", sentence.group(1))
+        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release"], commands)
+        flags = ("--loop", "l1", "--model", "claude-opus-5-5")
+        # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
+        self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+        ran = {"setup": 0}
+        for command in commands[1:]:
+            extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
+            ran[command] = self.later(command, *flags, *extra)[0]
+
+        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
+                         ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
 
     def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
