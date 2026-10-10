@@ -604,7 +604,8 @@ project site workflow --write
 unassigned group. `summary publish` fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
-workflow.
+workflow. It commits the head's `linguist-generated` attributes beside them
+as `attributes.json`, as [Generated files](#generated-files) describes.
 Publishes that run at the same time, as a review loop's subagents run them,
 each land. A publish whose push loses the race for the ref fetches the ref
 again, rebuilds its commit on the new tip, keeping every other publisher's
@@ -727,6 +728,8 @@ deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
 `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
 for nothing, and skips and reports any summary that fails or has no stored diff.
+It marks generated files by the `attributes.json` beside a summary, or by the
+checkout's `.gitattributes` for a summary stored without one.
 It reads only `summary.json`, so it also reports each summary stored only as
 `spec.json`, the name older releases wrote. To show such a summary, publish it
 again with a current release, as
@@ -806,6 +809,55 @@ when a summary is published, when a push to the default branch changes
 `README.md`, `docs/`, a configured `projects.dir` outside `docs/`,
 `.projector.toml`, or the workflow itself, and on demand; `--branch` names the
 default branch when `origin` does not record it.
+
+### Generated files
+
+A summary page counts each changed file's lines as hand-written, test,
+generated, or documentation, labels generated files, and starts every file but
+a hand-written one collapsed. A file is generated when the repository's
+`.gitattributes` marks it `linguist-generated`, which is how GitHub decides to
+collapse it in a pull request's diff:
+
+```text
+site/assets/summary.js linguist-generated=true
+yarn.lock -linguist-generated
+```
+
+Setting `linguist-generated`, bare or to any value but `false`, makes a file
+generated. `-linguist-generated` or `linguist-generated=false` keeps a file
+out, even one whose path looks generated. When the attributes do not mention a
+file, its path decides: a name such as `package-lock.json`, `yarn.lock`,
+`api.pb.go`, or `client_pb2.py`, or a path through a `gen/`, `generated/`,
+`mocks/`, or `__generated__/` directory, makes it generated.
+
+`summary init` and `site page` read the attributes with `git check-attr` in
+the checkout they run in. `site build` and `site serve` read them in the
+checkout `--repo-root` names, for each summary stored without them:
+
+- **The checkout has the pull request's head commit.** The head's own
+  `.gitattributes` files answer, so a pull request that changes them is
+  summarized as it changes them. Git 2.40 and later read them with
+  `check-attr --source`. An earlier Git reads the head's tree into a
+  temporary index and checks the attributes there.
+- **The checkout lacks the head, but one of its remotes is the pull request's
+  repository.** Its working tree answers.
+- **Anything else**, such as a checkout of another repository or a directory
+  outside one. The path alone decides.
+
+Only the repository's `.gitattributes` files count, as on GitHub. The commands
+leave out your global attributes file and the system's, and a pattern matches
+a path's exact case even in a checkout on a case-insensitive file system.
+
+A deploy checks out the default branch, which lacks the head of an open pull
+request. So `summary publish` reads the head's attributes itself and stores
+them beside the summary as `attributes.json`, which the site build uses in
+place of its checkout's. When the checkout lacks the head, `publish` first
+fetches it from the remote it publishes to. The fetch adds the commit's
+objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
+remote cannot serve the head either, `publish` says so and stores no
+attributes. A summary stored without them, as every summary an earlier
+release published was, takes its attributes from the default branch when the
+site builds.
 
 ## Review a pull request
 

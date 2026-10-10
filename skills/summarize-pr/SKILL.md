@@ -91,7 +91,9 @@ push to, or approve the pull request unless the user asks.
      that line in the diff. A note about one file goes on that file. Only a
      note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
-     collapsed unless a file's `collapsed` says otherwise. Give the files a
+     collapsed unless a file's `collapsed` says otherwise. A file the
+     repository marks `linguist-generated` in `.gitattributes` counts as
+     generated, as on GitHub; `format.md` says how. Give the files a
      reviewer must read a one-line `note` that says what the file is for and
      what changed in it, not a list of the names it defines.
    - **Open the overview with orientation.** Say first what the part of the
@@ -253,16 +255,19 @@ add them yourself.
 that does not build. It then commits the summary and that diff to
 `summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,
 without touching the checkout, and sends a `repository_dispatch` event that
-starts the workflow. Publishes that run at the same time, as a review loop's
-subagents run them, each land. A publish whose push loses the race for the
-ref fetches the ref again, rebuilds its commit on the new tip, and pushes
-again, up to five pushes in all. `publish` fetches the diff from the compare
-API, which serves pull requests past the 300-file limit of `gh pr diff`, so
-pass `--diff` only when `publish` reports that GitHub could not serve the
-diff. The file is then the local `git diff` from step 3, since the compare
-call there fails with `publish`'s. It must be the diff from the summary's
-`pr.base` to its `pr.head`, because every later deploy serves the stored diff
-as it is. Because the diff is
+starts the workflow. The deploy checks out the default branch, which lacks
+the head, so `publish` also stores the `linguist-generated` attributes the
+head's `.gitattributes` gives the changed files, as `attributes.json`, and
+fetches the head first when the checkout lacks it. Publishes that run at the
+same time, as a review loop's subagents run them, each land. A publish whose
+push loses the race for the ref fetches the ref again, rebuilds its commit on
+the new tip, and pushes again, up to five pushes in all. `publish` fetches the
+diff from the compare API, which serves pull requests past the 300-file limit
+of `gh pr diff`, so pass `--diff` only when `publish` reports that GitHub
+could not serve the diff. The file is then the local `git diff` from step 3,
+since the compare call there fails with `publish`'s. It must be the diff from
+the summary's `pr.base` to its `pr.head`, because every later deploy serves
+the stored diff as it is. Because the diff is
 stored, the site deploy asks GitHub for nothing: it checks each summary against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any summary that still
