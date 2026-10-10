@@ -11,9 +11,11 @@ its parent and sibling projects. This draft outlines the questions the two
 raise and how they meet. It settles none of them.
 
 It builds on [`project-page-nav`](../project-page-nav/readme.md), which gives
-each project page a summary's title row and sidebar: the project as the
-header, its stacks of pull requests, its own supplemental files and nested
-projects, and the footer row.
+each project page a summary's title row and sidebar: every stack of pull
+requests that holds a segment of the project, each under its segments'
+headers, then the project's own supplemental files and nested projects, and
+the footer row. On the project's readme, the project's own headers are
+current.
 
 ## 1. Problem
 
@@ -109,27 +111,28 @@ feeds it.
 | Option | What the sidebar lists | Trade-off |
 | --- | --- | --- |
 | Its own pages | The current project's files and nested projects, as `project-page-nav` does | One project per sidebar. A sibling is two clicks away. |
-| The whole top-level tree | The top-level project's folder, as today's tree column does, under the current project's header | Siblings are one click away. The header names the child while the tree starts at the parent, and on the parent's readme the header and the tree's **Overview** entry would both be current. |
-| Its own pages, and its neighbors | Its own pages, then a short block naming the parent and the siblings | Siblings are one click away, and the header and the pages still agree. A third kind of block in the sidebar. |
-| The whole tree, folded | The top-level tree, open along the path to the current project and closed elsewhere | Today's reach without today's length. The tree's own entry for the current project repeats the header. |
+| The whole top-level tree | The top-level project's folder, as today's tree column does, below the current project's stacks | Siblings are one click away. The title row and the stacks' current headers name the child while the tree starts at the parent, and on the parent's readme a project header and the tree's **Overview** entry would both be current. |
+| Its own pages, and its neighbors | Its own pages, then a short block naming the parent and the siblings | Siblings are one click away, and the title row and the pages still agree. A third kind of block in the sidebar. |
+| The whole tree, folded | The top-level tree, open along the path to the current project and closed elsewhere | Today's reach without today's length. The tree's own entry for the current project repeats the title row. |
 
 ### 2.7 How the sections and the pages share the sidebar
 
-- **Separate blocks.** The header, the stacks, the sections, the pages, and
-  the footer, in that order. The sections sit where a summary's sit, below
-  its stacks. On a page that is not the readme, the sections are that page's.
+- **Separate blocks.** The stacks, the sections, the pages, and the footer,
+  in that order. The sections sit where a summary's sit, below its stacks. On
+  a page that is not the readme, the sections are that page's.
 - **Sections inside the tree.** The current page's entry in the pages list
   opens to show its sections, as many documentation sites do. Each page's
-  sections stay with it. On the readme, whose entry is the header, the
-  sections would hang under the header, above the stacks or below them.
-- **Length.** The header, a few stacks, 14 sections, and a tree can pass the
-  window's height. The sidebar sticks and scrolls on its own, so a long
-  sidebar works, but whichever block comes last is the one a reader scrolls
-  to reach.
+  sections stay with it. The readme has no entry in the pages list, because
+  the project's headers link to it, so its sections need a place of their
+  own, above the stacks or below them.
+- **Length.** A few stacks, each with one or more headers, 14 sections, and
+  a tree can pass the window's height. The sidebar sticks and scrolls on its
+  own, so a long sidebar works, but whichever block comes last is the one a
+  reader scrolls to reach.
 
-Only one item may be the current page: the header on the readme, or the file's
-entry on any other page. The current section, if § 2.4 marks one, is a
-location within it.
+Only one item may be the current page: on the readme, the first of the
+project's headers, and on any other page, the file's entry. The current
+section, if § 2.4 marks one, is a location within it.
 
 ### 2.8 Pages without sections
 
