@@ -85,6 +85,13 @@ order:
    stack's project or title, publish the summary of the lowest layer that
    names one again, because the build takes the header from that layer.
 
+An update makes the same three choices. `review-pr`, and the skill's "Update
+the page when the pull request moves" section, start from the newest summary
+on the summaries ref. A summary published before this change has no
+`project`, so step 2 of that section sets `project` and checks `name` by the
+steps above before the summary is published again. Without that step, the
+first republish of every open pull request would meet the refusal below.
+
 `publish` refuses a summary whose `project` is `null`, missing, or not a
 string, or whose `name` is empty or longer than `NAME_MAX`, which is 60
 characters. The message names the field and says what to set. `publish` does
@@ -265,7 +272,7 @@ a summary with no `project`.
 | `site/src/globals.d.ts` | A `StackHeader` type. `header` replaces `projects` in `SummaryData`, and replaces `name` and `projects` in `SiteReview`. |
 | `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals and adds no divider. |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
-| `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the three choices in § 2.1. |
+| `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the three choices in § 2.1, in both "Build the summary" and step 2 of "Update the page when the pull request moves". |
 | `docs/cli.md` | The Reviews index, the sidebar, and the project pages as § 2.3 and § 2.4 describe them. |
 | `tests/test_summary.py`, `tests/test_site.py` | The tests in § 4. |
 
