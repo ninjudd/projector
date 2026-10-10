@@ -141,8 +141,11 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
 .prblock .stackhead:first-child { margin-top: -6px; }
 .prblock .stack + .stackhead { margin-top: 6px; }
-/* A project's sidebar can list several stacks, each whole, with a divider
-   between them as wide as the footer row's; one with none says so. */
+/* A project's sidebar names the project once, above its stacks. Another
+   project's header that opens the first stack sits below that name as a
+   header sits below a stack's rows. The stacks have a divider between them as
+   wide as the footer row's, and a project with none says so. */
+.prblock > .stackhead + .stackgroup > .stackhead:first-child { margin-top: 6px; }
 .prblock .stackgroup + .stackgroup { margin: 10px -6px 0; padding: 16px 6px 0; border-top: 1px solid var(--border); }
 .prblock .snone { margin: 0; padding: 0 3px 4px; font-size: 12.5px; color: var(--muted); }
 .prbar { display: none; }

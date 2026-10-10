@@ -1721,8 +1721,9 @@ class ProposedViewTests(unittest.TestCase):
                       'readme.md">View on GitHub</a></div>', top.group(0))
         self.assertIn(f'<a class="history" href="https://github.com/owner/example/commits/{self.HEAD}/docs/projects/gamma/'
                       'readme.md"', shown["page"], "the site's branch lacks the file, so its history is at the head")
-        self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock"><div class="stackgroup">'
-                      '<div class="stackhead current" aria-current="page"><span>Ship gamma</span></div>', shown["page"])
+        self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock">'
+                      '<div class="stackhead current" aria-current="page"><span>Ship gamma</span></div><div class="stackgroup">'
+                      '<ul class="stack"', shown["page"])
         self.assertEqual(self.HEAD, shown["ref"], "the page renders its links at the proposal's head")
 
     def test_a_relative_link_to_a_file_the_site_lacks_points_at_the_given_ref(self) -> None:
@@ -1804,11 +1805,23 @@ class ProjectPageTests(unittest.TestCase):
     def stack(*segments: tuple[dict, list[int]]) -> list[dict]:
         return [{"header": header, "members": members} for header, members in segments]
 
+    ALPHA_HERE = '<div class="stackhead current" aria-current="page"><span>Build alpha</span></div>'
+    ALPHA_LINK = '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+    BETA_LINK = '<div class="stackhead"><a href="/projects/alpha/beta/">Build beta</a></div>'
+
     @staticmethod
     def sidebar(page: str) -> str:
         found = re.search(r'<aside class="side"[^>]*>(.*?)</aside>', page)
         assert found is not None, page
         return found.group(1)
+
+    @staticmethod
+    def outline(side: str) -> list[str]:
+        """The sidebar's headers and rows in order: each header's markup, `|` where a stack starts, and `#n` for
+        each row."""
+        found = re.findall(r'(<div class="stackhead[^>]*>.*?</div>)|(<div class="stackgroup">)|'
+                           r'<span class="snum">(#\d+)</span>', side)
+        return [head or ("|" if group else row) for head, group, row in found]
 
     def drawn(self, site: dict, path: str = README, body: list[list[str]] | None = None) -> tuple[dict, str]:
         """The page drawn for `path`, and its sidebar, which holds exactly one current item."""
@@ -1888,48 +1901,46 @@ class ProjectPageTests(unittest.TestCase):
 
     # The sidebar
 
-    def test_a_readme_heads_its_stack_with_its_own_header_current(self) -> None:
+    def test_a_readme_opens_its_sidebar_with_its_own_header_current_and_its_stack_as_rows(self) -> None:
         shown, side = self.drawn(self.site([self.stack((self.ALPHA, [9, 10, 11]))]))
 
-        self.assertTrue(side.startswith('<nav class="nav" aria-label="Project"><div class="prblock"><div class="stackgroup">'
-                                        '<div class="stackhead current" aria-current="page"><span>Build alpha</span></div>'),
+        self.assertTrue(side.startswith(f'<nav class="nav" aria-label="Project"><div class="prblock">{self.ALPHA_HERE}'
+                                        '<div class="stackgroup"><ul class="stack" aria-label="Pull requests in this stack">'),
                         side)
-        self.assertEqual(1, side.count('<ul class="stack"'))
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", "#10", "#11"], self.outline(side),
+                         "a stack that is all this project's shows only rows")
         self.assertEqual(["/reviews/9/", "/reviews/10/", "/reviews/11/"], re.findall(r'<a class="srow" href="([^"]*)">', side))
         self.assertNotIn("srow current", side, "no pull request is this page")
         self.assertNotIn("plist", shown["page"])
 
-    def test_a_project_lists_each_of_its_stacks_with_only_the_first_current_header_marked(self) -> None:
+    def test_a_project_lists_each_of_its_stacks_below_its_one_header(self) -> None:
         _, side = self.drawn(self.site([self.stack((self.ALPHA, [9, 10, 11])), self.stack((self.ALPHA, [8]))]))
 
-        groups = re.findall(r'<div class="stackgroup">(.*?)</ul></div>', side)
-        self.assertEqual([["9", "10", "11"], ["8"]], [re.findall(r'<span class="snum">#(\d+)</span>', g) for g in groups])
-        self.assertTrue(groups[1].startswith('<div class="stackhead current"><span>Build alpha</span></div>'), groups[1])
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", "#10", "#11", "|", "#8"], self.outline(side),
+                         "the header shows once, above the stacks, newest first")
 
-    def test_a_stack_of_two_projects_links_the_other_projects_header(self) -> None:
+    def test_a_stack_of_two_projects_heads_only_the_other_projects_segment_with_a_link(self) -> None:
         _, side = self.drawn(self.site([self.stack((self.BETA, [9]), (self.ALPHA, [10]))]))
 
-        self.assertEqual(1, side.count('<div class="stackgroup">'))
-        self.assertEqual(['<div class="stackhead"><a href="/projects/alpha/beta/">Build beta</a></div>',
-                          '<div class="stackhead current" aria-current="page"><span>Build alpha</span></div>'],
-                         re.findall(r'<div class="stackhead[^>]*>.*?</div>', side))
+        self.assertEqual([self.ALPHA_HERE, "|", self.BETA_LINK, "#9", "#10"], self.outline(side))
+        self.assertIn(f'{self.ALPHA_HERE}<div class="stackgroup">{self.BETA_LINK}'
+                      '<ul class="stack" aria-label="Pull requests for Build beta">', side)
+        self.assertIn('</ul><ul class="stack" aria-label="Pull requests for Build alpha"><li><a class="srow" href="/reviews/10/">',
+                      side, "this project's segment keeps its rows and its list's name")
 
-    def test_a_stack_that_returns_to_the_project_marks_only_its_first_header(self) -> None:
-        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]), (self.BETA, [10]), (self.ALPHA, [11]))]))
+    def test_a_stack_that_returns_to_the_project_never_repeats_its_header(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]), (self.BETA, [10]), (self.ALPHA, [11])),
+                                        self.stack((self.ALPHA, [8]))]))
 
-        self.assertEqual(['<div class="stackhead current" aria-current="page"><span>Build alpha</span></div>',
-                          '<div class="stackhead"><a href="/projects/alpha/beta/">Build beta</a></div>',
-                          '<div class="stackhead current"><span>Build alpha</span></div>'],
-                         re.findall(r'<div class="stackhead[^>]*>.*?</div>', side))
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", self.BETA_LINK, "#10", "#11", "|", "#8"], self.outline(side))
 
-    def test_a_nested_project_heads_its_own_segment_and_lists_only_its_own_pages(self) -> None:
+    def test_a_nested_project_heads_its_sidebar_and_lists_only_its_own_pages(self) -> None:
         stack = self.stack((self.BETA, [9]), (self.ALPHA, [10]))
 
         _, side = self.drawn(self.site([stack], [stack]), "docs/projects/alpha/beta/readme.md")
 
         self.assertEqual(['<div class="stackhead current" aria-current="page"><span>Build beta</span></div>',
-                          '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'],
-                         re.findall(r'<div class="stackhead[^>]*>.*?</div>', side))
+                          "|", "#9", self.ALPHA_LINK, "#10"], self.outline(side))
         pages = re.search(r'<div class="navpages">(.*?)</div>', side)
         assert pages is not None
         self.assertEqual(['<a href="/projects/alpha/beta/design/">Beta design</a>'],
@@ -1951,8 +1962,7 @@ class ProjectPageTests(unittest.TestCase):
     def test_a_supplemental_page_links_the_project_and_is_current_among_the_pages(self) -> None:
         _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/notes.md")
 
-        self.assertIn('<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>', side)
-        self.assertNotIn("stackhead current", side)
+        self.assertEqual([self.ALPHA_LINK, "|", "#9"], self.outline(side))
         self.assertIn('<div class="navpages"><ul class="sidetree">', side)
         self.assertIn('<a href="/projects/alpha/notes/" class="active" aria-current="page">Alpha notes</a>', side)
 
@@ -1982,12 +1992,14 @@ class ProjectPageTests(unittest.TestCase):
 
     def test_a_project_title_is_escaped(self) -> None:
         title = "<script>alert(1)</script>"
-        for stacks in ([self.stack((dict(self.ALPHA, title=title), [9]))], []):
+        for stacks in ([self.stack((dict(self.BETA, title=title), [9]), (dict(self.ALPHA, title=title), [10]))], []):
             with self.subTest(stacks=len(stacks)):
                 shown, side = self.drawn(self.site(stacks, title=title))
 
                 self.assertIn('<div class="stackhead current" aria-current="page">'
                               "<span>&lt;script&gt;alert(1)&lt;/script&gt;</span></div>", side)
+                if stacks:
+                    self.assertIn('<a href="/projects/alpha/beta/">&lt;script&gt;alert(1)&lt;/script&gt;</a>', side)
                 self.assertIn("<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>", shown["page"])
                 self.assertNotIn("<script>", shown["page"])
 

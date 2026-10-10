@@ -60,23 +60,19 @@ function titleRowHtml(eyebrow, title, sub) {
 function stackHeaderHtml(header, current) {
     return header.url !== undefined && !current ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
 }
-function namesProject(header, project) {
-    return project !== '' && header.project === project;
-}
-// A segment's header in its box: highlighted when it names the page you are
-// on, and the page's one current item when `mark` says so.
-function segmentHeadHtml(header, current, mark) {
-    return `<div class="stackhead${current ? ' current' : ''}"${mark ? ' aria-current="page"' : ''}>${stackHeaderHtml(header, current)}</div>`;
+// A segment's header in its box: highlighted, and the page's current item,
+// when it names the page you are on.
+function segmentHeadHtml(header, current) {
+    return `<div class="stackhead${current ? ' current" aria-current="page' : ''}">${stackHeaderHtml(header, current)}</div>`;
 }
 // A stack as a sidebar lists it: each segment's header above a row for each of
 // its pull requests, the current one marked. `rows` has a row for every member
-// of the stack. A header that names the project `current` is the page you are
-// on, and when `mark` is true the first of them is the page's current item. A
+// of the stack. A segment whose header names the project `own` shows only its
+// rows, because the sidebar names that project once, above its stacks. A
 // screen reader names a lone segment's list for the stack, and each of several
 // by its header.
-function stackSegmentsHtml(segments, rows, current, mark) {
-    const first = mark ? segments.findIndex(function (s) { return namesProject(s.header, current); }) : -1;
-    return segments.map(function (segment, i) {
+function stackSegmentsHtml(segments, rows, own) {
+    return segments.map(function (segment) {
         const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
         const items = segment.members.map(function (number) {
             const s = rows.find(function (r) { return r.number === number; });
@@ -85,21 +81,19 @@ function stackSegmentsHtml(segments, rows, current, mark) {
             const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
             return s.current === true ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
         }).join('');
-        return segmentHeadHtml(segment.header, namesProject(segment.header, current), i === first) +
-            `<ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
+        const head = own !== '' && segment.header.project === own ? '' : segmentHeadHtml(segment.header, false);
+        return `${head}<ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
     }).join('');
 }
 // The sidebar a summary page and a project page share, as `SideNav` describes
-// it. Only the first stack with a current header marks it, so the sidebar
-// holds one current item.
+// it: the page's own project's header once, when it has one, then its stacks.
 function sideNavHtml(nav) {
-    const marked = nav.stacks.findIndex(function (stack) {
-        return stack.segments.some(function (s) { return namesProject(s.header, nav.current); });
-    });
-    const stacks = nav.stacks.map(function (stack, i) {
-        return `<div class="stackgroup">${stackSegmentsHtml(stack.segments, stack.rows, nav.current, i === marked)}</div>`;
+    const own = nav.head?.header.project ?? '';
+    const stacks = nav.stacks.map(function (stack) {
+        return `<div class="stackgroup">${stackSegmentsHtml(stack.segments, stack.rows, own)}</div>`;
     }).join('');
-    return `<nav class="nav" aria-label="${esc(nav.label)}"><div class="prblock">${stacks !== '' ? stacks : nav.empty}</div>` +
+    const head = nav.head !== undefined ? segmentHeadHtml(nav.head.header, nav.head.current) : '';
+    return `<nav class="nav" aria-label="${esc(nav.label)}"><div class="prblock">${head}${stacks !== '' ? stacks : nav.empty}</div>` +
         `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
 }
 (function () {
@@ -518,7 +512,7 @@ function sideNavHtml(nav) {
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${esc(pr.title)}</span></div>` +
                 titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
                 '<div class="layout"><aside class="side">' +
-                sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], current: '', empty: '',
+                sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
                     middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
                 '</aside>' +
                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +

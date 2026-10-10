@@ -422,12 +422,12 @@
         }
         showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
     }
-    // A project's sidebar, drawn as a summary's is: every stack that holds a
-    // segment it heads, each whole, or its own header and a line saying it has
-    // none; then the other pages under its folder; then the credit and its
-    // history on GitHub. On its readme, its headers are the page you are on, and
-    // on any other page they link to the readme and the page's own entry in the
-    // pages is current.
+    // A project's sidebar, drawn as a summary's is: the project's header once,
+    // then every stack that holds a segment it heads, each whole but for this
+    // project's headers, or a line saying it has none; then the other pages
+    // under its folder; then the credit and its history on GitHub. On its
+    // readme, its header is the page you are on, and on any other page it links
+    // to the readme and the page's own entry in the pages is current.
     function projectNav(project, path) {
         const isReadme = path === project.path;
         const ref = project.proposed?.head ?? site.branch;
@@ -454,9 +454,9 @@
             `title="History on GitHub">${HISTORY_ICON}</a>`;
         return sideNavHtml({
             label: 'Project',
+            head: { header: own, current: isReadme },
             stacks: stacks,
-            current: isReadme ? project.name : '',
-            empty: `${segmentHeadHtml(own, isReadme, isReadme)}<p class="snone">No reviews of this project.</p>`,
+            empty: '<p class="snone">No reviews of this project.</p>',
             middle: items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path)}</div>` : '',
             foot: history,
         });

@@ -128,15 +128,15 @@ interface StackRow {
 }
 
 /**
- * A sidebar, as `sideNavHtml` draws it on a summary page and on a project page: a landmark named `label`; each of
- * `stacks`, its segments with a row for each member; `empty` in their place when there is none; then `middle`, and
- * the footer row with the credit and `foot`. A header that names the project `current` is drawn as the page you
- * are on, and "" names none.
+ * A sidebar, as `sideNavHtml` draws it on a summary page and on a project page: a landmark named `label`; `head`, the
+ * page's own project's header, once, drawn as the page you are on when `current` says so; each of `stacks`, its
+ * segments with a row for each member, and with no header for a segment that names `head`'s project; `empty` in their
+ * place when there is none; then `middle`, and the footer row with the credit and `foot`.
  */
 interface SideNav {
   label: string;
+  head?: { header: StackHeader; current: boolean };
   stacks: { segments: StackSegment[]; rows: StackRow[] }[];
-  current: string;
   empty: string;
   middle: string;
   foot: string;

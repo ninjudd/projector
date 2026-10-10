@@ -786,9 +786,9 @@ collaborates on it, because anyone can review a public repository's pull
 request. The build reads the pull request's state and reviews through `gh`
 and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
-projects directory, which Projects covers. Each sidebar lists its readme as
-**Overview** and appears only when there is more than that readme to list, and
-the menu button at the start of the header shows and hides it. A repository
+projects directory, which Projects covers. The Docs sidebar lists its readme
+as **Overview** and appears only when there is more than that readme to list,
+and the menu button at the start of the header shows and hides it. A repository
 with no projects opens on Docs instead. A document, in Docs or in a project, is
 a Markdown file or an HTML page. The build copies those files under `content/`
 and describes them in `site.json`; the page renders Markdown in the browser and
@@ -821,18 +821,18 @@ assets under `assets/`; it defaults to `/`. A project page takes a summary
 page's layout. A title row across the top holds the breadcrumbs, the status
 and priority badges, the owner when the plan names one, **View on GitHub**,
 and the plan's title, so the plan's own first heading leaves the body when
-the body opens with it. Beside the plan, the summary's sidebar lists every
-stack that holds a segment the project heads, newest first, each whole: every
-layer, merged and closed ones included, under its segments' headers, and a
-layer with no summary on the site as its number, linked to GitHub. On the
-project's readme, its own headers are highlighted, and the first is the
-page's current item; another project's header links to that project. A
-project that heads no segment shows its header and **No reviews of this
-project.** in place of the stacks. Below them, the sidebar lists the
-project's supplemental files and nested projects, with the current page in
-bold, and its last row holds the credit and an icon that opens the page's
-history on GitHub. On a supplemental page, the project's headers link to its
-readme. An HTML page in a project keeps its frame, with the sidebar in the
+the body opens with it. Beside the plan, the summary's sidebar opens with the
+project's header, once. On the project's readme the header is highlighted
+and is the page's current item, and on a supplemental page it links to the
+readme. Below it, the sidebar lists every stack that holds a segment the
+project heads, newest first, each whole: every layer, merged and closed ones
+included, and a layer with no summary on the site as its number, linked to
+GitHub. The project's own segments show only their rows, and another
+project's segment opens with that project's header, linked to its page. A
+project that heads no segment shows **No reviews of this project.** in place
+of the stacks. Below them, the sidebar lists the project's supplemental files
+and nested projects, with the current page in bold, and its last row holds
+the credit and an icon that opens the page's history on GitHub. An HTML page in a project keeps its frame, with the sidebar in the
 column the menu button shows. At 980 pixels and narrower, the sidebar sits
 between the title row and the plan.
 A review page's header has a **…** menu with
