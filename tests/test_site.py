@@ -644,14 +644,16 @@ class ProjectsViewTests(unittest.TestCase):
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
     @staticmethod
-    def project(name: str, owner: str | None) -> dict:
-        return {"name": name, "title": name.title(), "status": "in-progress", "priority": "now", "owner": owner,
+    def project(name: str, owner: str | None, status: str = "in-progress") -> dict:
+        return {"name": name, "title": name.title(), "status": status, "priority": "now", "owner": owner,
                 "path": f"docs/projects/{name}/readme.md", "files": [], "reviews": []}
 
     def test_an_owner_column_lists_each_owner_and_the_filter_matches_it(self) -> None:
         html = self.projects_html([self.project("alpha", "aparsuri-poly"), self.project("beta", None)])
 
-        self.assertIn("<th>Priority</th><th>Owner</th><th>Name</th>", html)
+        self.assertIn('<colgroup><col><col class="priority"><col class="owner"><col class="name"></colgroup>'
+                      '<thead><tr><th>Project</th><th>Priority</th><th>Owner</th><th class="name">Name</th></tr></thead>',
+                      html)
         self.assertIn('<td class="owner">aparsuri-poly</td>', html)
         self.assertIn('<td class="owner"></td>', html)
         self.assertIn('data-search="alpha alpha aparsuri-poly"', html)
@@ -659,8 +661,29 @@ class ProjectsViewTests(unittest.TestCase):
     def test_no_owner_column_when_no_plan_names_an_owner(self) -> None:
         html = self.projects_html([self.project("alpha", None), self.project("beta", None)])
 
-        self.assertIn("<th>Priority</th><th>Name</th>", html)
+        self.assertIn('<colgroup><col><col class="priority"><col class="name"></colgroup>'
+                      '<thead><tr><th>Project</th><th>Priority</th><th class="name">Name</th></tr></thead>', html)
         self.assertNotIn("Owner", html)
+        self.assertNotIn("owner", html)
+
+    def test_every_status_table_sets_the_same_column_widths(self) -> None:
+        html = self.projects_html([self.project("alpha", "octocat"), self.project("alpha/beta", None),
+                                   self.project("gamma", None, "ready"), self.project("delta", None, "completed")])
+
+        colgroups = re.findall(r"<colgroup>.*?</colgroup>", html)
+        self.assertEqual(3, len(colgroups), "one table for each status")
+        self.assertEqual(1, len(set(colgroups)), "every table names the same columns")
+        nested = re.search(r'<tr data-search="alpha/beta[^"]*">(.*?)</tr>', html)
+        assert nested is not None
+        self.assertTrue(nested.group(1).startswith('<td style="padding-left:2rem">'),
+                        "a nested project's indent sits inside the project's column")
+        self.assertEqual(4, nested.group(1).count("<td"), "a nested row has every column")
+        css = (SITE_JS.parent / "site.css").read_text()
+        self.assertIn("table.tbl.projects { table-layout: fixed; }", css, "the columns line up from one status to the next")
+        for col in ("priority", "owner", "name"):
+            self.assertRegex(css, rf"table\.tbl\.projects col\.{col} {{ width: [\d.]+em; }}")
+        self.assertRegex(css, r"@media \(max-width: 640px\) \{\s*table\.tbl\.projects \.name \{ display: none; \}",
+                         "a phone leaves the name out")
 
     def test_the_manifest_carries_each_owner(self) -> None:
         repo = Path(tempfile.mkdtemp())
