@@ -680,7 +680,10 @@ project. **Reviews** lists the summaries, and marks a pull request whose base
 branch is another open pull request's head with that pull request's number,
 linked to its review when the site has one and to GitHub otherwise. A summary
 that did not record the number has it looked up with `gh` at build time;
-when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`
+when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
+every pull request in its stack, the ones beneath it and the ones above it,
+one row each with its title, and highlights the current one; its older
+versions follow the sections. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
