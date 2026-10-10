@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: completed
+priority: now
 ---
 
 # Give each project page a summary's sidebar
@@ -684,3 +684,47 @@ The evidence comes from this repository's site, `site.json` fetched on
   lists by 12 pixels, space its rows 5 pixels apart, and turn its links muted,
   because `site.css` loads after `summary.css` and its selectors are as
   specific or more.
+
+## 8. Outcome
+
+The project shipped in the pull request that implements it. Every row of § 4
+has a test in `tests/test_site.py` that passes and fails against the code
+before the change: the build rows in `SiteContentTests`, the page rows in
+`ProjectPageTests` and `ProposedViewTests`, and the style rows in
+`TreeColumnStyleTests` and `SummarySidebarTests`. The page tests run the
+compiled `showProjectFile`, `frame`, and `showDocument` under node, with a
+stub DOM whose rendered Markdown is the elements each test names.
+
+The browser checks ran on this repository's summaries, served by
+`project site serve --base /projector/`:
+
+- **At 1440 pixels**, the sidebar on `incremental-review`'s page and on
+  #212's summary page has a left of 16, a width of 250, and a top of 156.24,
+  below title rows 96.24 pixels tall. Scrolled down, the project page's
+  sidebar sticks 16 pixels below the window's top, and the plan's title
+  shows once.
+- **At 375 pixels**, the title row starts at 118, the sidebar at 262, and the
+  plan at 523, and `scrollWidth` and `clientWidth` are both 375.
+- **From the keyboard**, Tab from the title row on `project-page-nav`'s page
+  reaches #219's row, the `project-page-sections` header, #222's row, the
+  credit, and the history link, then the plan's first link.
+- **Themes.** The pages draw in the dark theme and with
+  `data-theme="light"`.
+
+The implementation settles four details the design left open:
+
+- **The summary page's stack sits in a `stackgroup` too.** `sideNavHtml`
+  wraps every stack it draws, so the three summary sidebar tests that read
+  the `.prblock`'s markup expect the wrapper. What they check, the headers
+  and rows and their order, is unchanged.
+- **One helper draws a header in its box.** `segmentHeadHtml(header,
+  current, mark)` draws a segment's `<div class="stackhead">`.
+  `stackSegmentsHtml` calls it for each segment, and `projectNav` calls it
+  for the project's own header above `No reviews of this project.`, so that
+  line needs no second copy of the header's markup.
+- **An HTML page's head keeps its markup.** Its breadcrumbs and
+  **View on GitHub** link stay as they were, and the title row's eyebrow
+  uses the same breadcrumbs.
+- **The badges sit in the eyebrow like its words.** In the title row they
+  drop the margin that follows each badge elsewhere, and keep one between
+  the two, so the ` · ` on each side sits as far from them as from a word.

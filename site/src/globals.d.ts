@@ -116,6 +116,32 @@ interface StackSegment {
   members: number[];
 }
 
+/**
+ * A pull request's row in a stack: its title, or "" when it has no summary on the site, and where the row links,
+ * its review or else its page on GitHub. `current` marks the summary page's own pull request.
+ */
+interface StackRow {
+  number: number;
+  title: string;
+  url: string;
+  current?: boolean;
+}
+
+/**
+ * A sidebar, as `sideNavHtml` draws it on a summary page and on a project page: a landmark named `label`; each of
+ * `stacks`, its segments with a row for each member; `empty` in their place when there is none; then `middle`, and
+ * the footer row with the credit and `foot`. A header that names the project `current` is drawn as the page you
+ * are on, and "" names none.
+ */
+interface SideNav {
+  label: string;
+  stacks: { segments: StackSegment[]; rows: StackRow[] }[];
+  current: string;
+  empty: string;
+  middle: string;
+  foot: string;
+}
+
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
@@ -140,7 +166,7 @@ interface SummaryData {
    * Every pull request in this one's stack, bottom first; absent or empty when it stands alone. One without a
    * summary on the site has no title, and its `url` is its page on GitHub.
    */
-  stack?: { number: number; title: string; url: string; current: boolean }[];
+  stack?: StackRow[];
   /** The stack's segments, bottom first, every member of the stack in one. A pull request alone has one. */
   segments: StackSegment[];
   /** The header of the segment this pull request is in. */
@@ -175,7 +201,8 @@ interface SiteProject {
   priority: string | null;
   owner?: string | null;
   files: SitePage[];
-  reviews: number[];
+  /** Every stack that holds a segment this project heads, newest first, each as its pages carry its segments. */
+  stacks: StackSegment[][];
   /** Present only on a project an open pull request proposes, which is not in the checkout the site was built from. */
   proposed?: Proposal;
 }
