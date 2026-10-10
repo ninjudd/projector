@@ -800,8 +800,8 @@ class FileHeaderTests(SiteRepoCase):
         data = self.build()
         self.assertEqual([], data["stack"])
 
-        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page" '
-                      'title="Change 9"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
+        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page">'
+                      '<span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
                       rendered_summary(data))
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
@@ -820,10 +820,9 @@ class FileHeaderTests(SiteRepoCase):
 
         projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
         self.assertIsNotNone(projects, "the projects list is missing")
-        rows = re.findall(r'<li><a href="([^"]+)" title="([^"]+)"><span class="snum"><svg[^>]*>.*?</svg></span>'
+        rows = re.findall(r'<li><a href="([^"]+)"><span class="snum"><svg[^>]*>.*?</svg></span>'
                           r'<span class="stitle">([^<]+)</span></a></li>', projects.group(1))
-        self.assertEqual([("/projects/alpha/", "Build alpha", "Build alpha"),
-                          ("/projects/alpha/beta/", "Finish beta", "Finish beta")], rows)
+        self.assertEqual([("/projects/alpha/", "Build alpha"), ("/projects/alpha/beta/", "Finish beta")], rows)
         self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
                         "the projects come first in the sidebar")
         self.assertNotIn("Projects:", html)

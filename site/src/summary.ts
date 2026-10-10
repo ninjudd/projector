@@ -261,9 +261,9 @@ function renderSummary(data: SummaryData): void {
     const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
     return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
       const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
-      if (s.current) return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
+      if (s.current) return `<li class="current" aria-current="page">${row}</li>`;
       const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
-      return `<li><a href="${esc(href)}" title="${esc(s.title)}">${row}</a></li>`;
+      return `<li><a href="${esc(href)}">${row}</a></li>`;
     }).join('') + '</ul>';
   }
 
@@ -273,7 +273,7 @@ function renderSummary(data: SummaryData): void {
     const projects = data.projects ?? [];
     if (projects.length === 0) return '';
     return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
-      return `<li><a href="${esc(p.url)}" title="${esc(p.title)}"><span class="snum">${FILE_ICON}</span>` +
+      return `<li><a href="${esc(p.url)}"><span class="snum">${FILE_ICON}</span>` +
         `<span class="stitle">${esc(p.title)}</span></a></li>`;
     }).join('') + '</ul>';
   }
