@@ -1,0 +1,721 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index aeebb2d..1fc9789 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -724,7 +724,13 @@ Pass `--base` with the path the site is served under, such as `/projector/`
+ for a project site, so every page links to the others and to the shared
+ assets under `assets/`; it defaults to `/`. A review links to the projects
+ its diff changes, and to any its summary names in a `projects` list, and each
+-project page lists its reviews. `search/` searches every document the site
++project page lists its reviews. Each file card's header links to the file's
++**Diff** on GitHub, to the **File** on the pull request's head branch, and, for
++a file in a project's folder, to that **Project** on the site. That is the
++deepest project the site has a page for, so a nested project owns its own
++files, not the project around it. Once the build finds the pull request merged
++or closed, the **File** link uses its head commit, because its branch is
++usually deleted then. `search/` searches every document the site
+ serves, from a `search.json` index the build writes, and non-Markdown files
+ under `docs/`, such as images, are copied into the site so a relative link to
+ one resolves there.
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index ac39799..377e735 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -245,7 +245,7 @@ input.nbox { cursor: pointer; }
+ .stat { font-variant-numeric: tabular-nums; }
+ .flink { text-decoration: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: var(--surface); }
+ .flink:hover { color: var(--accent); border-color: var(--accent); }
+-.freviewed { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
++.freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
+ .freviewed input { accent-color: var(--ok); margin: 0; }
+ .fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
+ .fnotes { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+@@ -268,13 +268,18 @@ table.diff tr.del td { background: var(--del-bg); } table.diff tr.del td.ln { ba
+ table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff tr.del .sign { color: var(--del-text); font-weight: 600; }
+ table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
+ table.diff tr.meta td { color: var(--muted); font-style: italic; }
+-table.diff tr.noterow td { background: var(--surface); padding-block: 6px 8px; }
++/* A note under a line: its tag in the line-number gutter, and its text, on the note's own background, where the code starts. */
++table.diff tr.noterow td { background: var(--surface); padding-block: 5px; }
++table.diff tr.noterow td.nte { background: var(--surface-2); }
++table.diff tr.noterow.flag td.nte { background: var(--accent-soft); }
++table.diff td.ngut { padding-inline: 2px 6px; text-align: right; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; }
++table.diff td.ngut .chip { margin-top: 0; }
+ table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 13.5px; line-height: 1.5; }
+-.inotes { gap: 6px; }
+-.inotes li { padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 6px 6px 0; }
+-.inotes li.context { border-left-color: var(--info); }
+-.inotes li.verify { border-left-color: var(--ok); }
+-.inotes li.flag { border-left-color: var(--accent); background: var(--accent-soft); }
++table.diff td.nte .nbox { float: right; margin: 2px 0 0 12px; }
++table.diff tr.noterow.checked .chip, table.diff tr.noterow.checked .ntext { opacity: .5; }
++/* A diff with one line-number column has half the room, so its tags shrink to fit it. */
++table.diff.oneside td.ngut { padding-inline: 1px; }
++table.diff.oneside td.ngut .chip { margin-top: 2px; padding-inline: 1px; font-size: 8px; letter-spacing: 0; }
+ /* syntax tokens (highlight.js classes), themed through the tokens above; the add/del tint stays on the row background */
+ .hljs-comment, .hljs-quote { color: var(--tk-cmt); font-style: italic; }
+ .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-name { color: var(--tk-kw); }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 93e78dc..4bade19 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -26,6 +26,14 @@
+         function ext(href, text, cls) {
+             return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
+         }
++        // A file on the pull request's head branch, which always shows its current
++        // version. A merged or closed pull request's branch is usually deleted, so its
++        // files, and those of a summary that did not record its branch, link the head.
++        function blobUrl(path) {
++            const live = pr.state !== 'merged' && pr.state !== 'closed';
++            const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
++            return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
++        }
+         // The build checks every file a group names against the diff.
+         function fileAt(path) {
+             const f = filesByPath[path];
+@@ -46,15 +54,22 @@
+                 h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+             return h.toString(16).padStart(8, '0');
+         }
++        // A concern note's checkbox; other notes have none.
++        function noteBox(c, scope) {
++            return kindOf(c) === 'flag'
++                ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
++                : '';
++        }
++        function chip(c) {
++            const k = kindOf(c);
++            return `<span class="chip ${k}">${CHIPS[k] ?? k}</span>`;
++        }
+         function notesList(checks, cls, scope) {
+             if (checks.length === 0)
+                 return '';
+             return `<ul class="notes ${cls}">` + checks.map(function (c) {
+-                const k = kindOf(c);
+-                const box = k === 'flag'
+-                    ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
+-                    : '<span class="nbox"></span>';
+-                return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
++                const box = noteBox(c, scope);
++                return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
+             }).join('') + '</ul>';
+         }
+         // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
+@@ -97,7 +112,11 @@
+             function notesAt(l) {
+                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
+                 const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
+-                return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
++                // Each note is a row: its tag in the line-number gutter, its text where the code starts.
++                return found.map(function (c) {
++                    return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
++                        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
++                }).join('');
+             }
+             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+             if (f.new === true)
+@@ -119,7 +138,7 @@
+                     rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+                     rows.push(notesAt(l));
+                 });
+-                return `<table class="diff">${columns}${rows.join('')}</table>`;
++                return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
+             }).join('') || '<p class="fnote">No content changes.</p>';
+             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+                 '<div class="fsentinel" aria-hidden="true"></div>' +
+@@ -131,8 +150,9 @@
+                 `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
+                 `<span class="fmeta">${badges}` +
+                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
+-                ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
+-                ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
++                ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
++                ext(blobUrl(f.path), 'File', 'flink') +
++                (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
+                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+                 '</span>' +
+                 '</header>' +
+@@ -448,7 +468,7 @@
+         }
+         document.querySelectorAll('.note-box').forEach(function (box) {
+             const nid = box.dataset.nid ?? '';
+-            const item = box.closest('li');
++            const item = box.closest('li, tr');
+             box.checked = get('n:' + nid) === '1';
+             if (item !== null)
+                 item.classList.toggle('checked', box.checked);
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index ba3e9e9..571d824 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -27,6 +27,8 @@ interface SummaryFile {
+   adds: number;
+   dels: number;
+   hunks: { header: string; lines: SummaryLine[] }[];
++  /** The deepest project on the site whose folder holds the file; absent outside every project the site has. */
++  project?: { name: string; title: string; url: string };
+ }
+ 
+ /** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
+@@ -49,7 +51,8 @@ interface SummaryGroup {
+ /** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+   name?: string;
+-  pr: { repo: string; number: number; title: string; head: string; baseRef?: string };
++  /** `state` is the pull request's state when the site was built; absent when the build could not ask GitHub. */
++  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string; state?: 'open' | 'merged' | 'closed' };
+   files: SummaryFile[];
+   groups: SummaryGroup[];
+   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 874b721..8946d4c 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -26,6 +26,14 @@ function renderSummary(data: SummaryData): void {
+   function ext(href: string, text: string, cls?: string): string {
+     return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
+   }
++  // A file on the pull request's head branch, which always shows its current
++  // version. A merged or closed pull request's branch is usually deleted, so its
++  // files, and those of a summary that did not record its branch, link the head.
++  function blobUrl(path: string): string {
++    const live = pr.state !== 'merged' && pr.state !== 'closed';
++    const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
++    return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
++  }
+   // The build checks every file a group names against the diff.
+   function fileAt(path: string): SummaryFile {
+     const f = filesByPath[path];
+@@ -46,14 +54,21 @@ function renderSummary(data: SummaryData): void {
+     for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+     return h.toString(16).padStart(8, '0');
+   }
++  // A concern note's checkbox; other notes have none.
++  function noteBox(c: SummaryCheck, scope: string): string {
++    return kindOf(c) === 'flag'
++      ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
++      : '';
++  }
++  function chip(c: SummaryCheck): string {
++    const k = kindOf(c);
++    return `<span class="chip ${k}">${CHIPS[k] ?? k}</span>`;
++  }
+   function notesList(checks: SummaryCheck[], cls: string, scope: string): string {
+     if (checks.length === 0) return '';
+     return `<ul class="notes ${cls}">` + checks.map(function (c) {
+-      const k = kindOf(c);
+-      const box = k === 'flag'
+-        ? `<input type="checkbox" class="nbox note-box" data-nid="${noteId(scope, c.text)}" aria-label="Handled" title="Handled">`
+-        : '<span class="nbox"></span>';
+-      return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
++      const box = noteBox(c, scope);
++      return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
+     }).join('') + '</ul>';
+   }
+ 
+@@ -95,7 +110,11 @@ function renderSummary(data: SummaryData): void {
+     function notesAt(l: SummaryLine): string {
+       const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
+       const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
+-      return found.length > 0 ? `<tr class="noterow">${gutter}<td class="nte">${notesList(found, 'inotes', f.path)}</td></tr>` : '';
++      // Each note is a row: its tag in the line-number gutter, its text where the code starts.
++      return found.map(function (c) {
++        return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
++          `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
++      }).join('');
+     }
+     let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+     if (f.new === true) badges += '<span class="badge new">new</span>';
+@@ -111,7 +130,7 @@ function renderSummary(data: SummaryData): void {
+         rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+         rows.push(notesAt(l));
+       });
+-      return `<table class="diff">${columns}${rows.join('')}</table>`;
++      return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
+     }).join('') || '<p class="fnote">No content changes.</p>';
+     return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+       '<div class="fsentinel" aria-hidden="true"></div>' +
+@@ -123,8 +142,9 @@ function renderSummary(data: SummaryData): void {
+         `<button class="copypath" type="button" data-path="${esc(f.path)}" title="Copy file path" aria-label="Copy file path">${COPY_ICON}</button>` +
+         `<span class="fmeta">${badges}` +
+           `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
+-          ext(`${prUrl}/files#${f.anchor}`, 'PR', 'flink') +
+-          ext(`${repoUrl}/blob/${pr.head}/${f.path}`, 'file', 'flink') +
++          ext(`${prUrl}/files#${f.anchor}`, 'Diff', 'flink') +
++          ext(blobUrl(f.path), 'File', 'flink') +
++          (f.project !== undefined ? `<a class="flink" href="${esc(f.project.url)}" title="${esc(f.project.title)}">Project</a>` : '') +
+           `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+         '</span>' +
+       '</header>' +
+@@ -426,7 +446,7 @@ function wireSummary(): void {
+   }
+   document.querySelectorAll<HTMLInputElement>('.note-box').forEach(function (box) {
+     const nid = box.dataset.nid ?? '';
+-    const item = box.closest('li');
++    const item = box.closest('li, tr');
+     box.checked = get('n:' + nid) === '1';
+     if (item !== null) item.classList.toggle('checked', box.checked);
+     box.addEventListener('change', function () {
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index b4e3113..d5445fd 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -58,6 +58,10 @@ it. The summary is JSON:
+ - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
+   request's head, are what the site's review list uses to mark a stacked pull
+   request. `init` records both; keep them when you edit a summary by hand.
++  Each file's **File** link opens the file on `pr.headRef`, so it shows the
++  current version. It opens the file at `pr.head` instead when a summary has
++  no `headRef`, and when the site's last build found the pull request merged
++  or closed, because its branch is usually deleted then.
+ - `overview.summary` is what the pull request does, in a few paragraphs.
+   The page adds the line counts and the list of files itself.
+ - Each item of `overview.summary` and of a group's `intro` renders as a
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ddfa939..fefd7d6 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -991,10 +991,11 @@ def base_pr(base_ref: str) -> Optional[int]:
+         except summary.SummaryError:
+             return None
+ 
+-    # A review that cannot be asked about shows no status, rather than unreviewed.
+-    def pr_reviews(number: int) -> Optional[list[dict]]:
++    # A pull request that cannot be asked about shows no review status, rather
++    # than unreviewed, and keeps its branch in its file links.
++    def pr_status(number: int) -> Optional[dict]:
+         try:
+-            return summary.pr_reviews(repo, number)
++            return summary.pr_status(repo, number)
+         except summary.SummaryError:
+             return None
+ 
+@@ -1009,7 +1010,7 @@ def pr_reviews(number: int) -> Optional[list[dict]]:
+         trunk=trunk_branch(root),
+         base=base,
+         lookup=base_pr if repo else None,
+-        review_lookup=pr_reviews if repo else None,
++        status_lookup=pr_status if repo else None,
+     )
+     return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
+ 
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index d1da492..f44559c 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -165,17 +165,18 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+ 
+ 
+ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+-                    lookup=None, repo_root: Path | None = None, review_lookup=None) -> tuple[list[dict], list[str]]:
++                    lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+     Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
+     `lookup`, and each page lists the pull requests in its stack. A file is
+     generated as the `attributes.json` that `publish` stored beside a summary
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+-    its .gitattributes. Each page also carries `review`, the newest Projector
+-    review of its head, from the reviews `review_lookup` returns for its pull
+-    request: `unreviewed` when none names the head, and no `review` at all
+-    when `review_lookup` is missing or returns None because it could not ask.
++    its .gitattributes. `status_lookup` returns a pull request's state and
++    reviews, as `summary.pr_status` does, or None when it cannot ask. From
++    them each page carries `pr.state`, and `review`, the newest Projector
++    review of its head: `unreviewed` when none names the head. A page has
++    neither when the lookup is missing or cannot ask.
+     """
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+@@ -225,12 +226,13 @@ def skip(path: Path, reason: object) -> None:
+         # The review skill publishes its review before the summary, and publishing
+         # the summary starts this build, so the reviews include the verdict on the
+         # head the summary describes.
+-        reviews = review_lookup(int(number)) if review_lookup is not None else None
+-        statuses = review_statuses(reviews) if reviews is not None else None
++        status = status_lookup(int(number)) if status_lookup is not None else None
++        statuses = review_statuses(status["reviews"]) if status is not None else None
+         for _, payload in versions:
+             head = payload["pr"]["head"]
+             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack)
+-            if statuses is not None:
++            if status is not None:
++                payload["pr"]["state"] = status["state"]
+                 payload["review"] = statuses.get(head, {"status": "unreviewed"})
+             folder = out / "reviews" / number / head
+             folder.mkdir(parents=True, exist_ok=True)
+@@ -397,17 +399,28 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
+ 
+ 
+ def project_linker(described: list[dict], base: str):
+-    """Link a review to every project whose files its diff changes, or that its summary names."""
++    """Link a review to every project whose files its diff changes, or that its summary names.
++
++    Each changed file in a project's folder also gets that project as its
++    `project`: the deepest one, so a nested project owns its own files. Only
++    a project in `described` has a page on the site, so a file in any other
++    project's folder, such as one the pull request adds, gets none.
++    """
+     by_name = {p["name"]: p for p in described}
+     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+ 
++    def page_of(name: str) -> dict:
++        return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
++
+     def link(summary: dict, payload: dict) -> list[dict]:
+         names = [n for n in summary.get("projects") or [] if n in by_name]
+         for f in payload["files"]:
+             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
+-            if owner and owner not in names:
+-                names.append(owner)
+-        return [{"name": n, "title": by_name[n]["title"], "url": f"{base}projects/{n}/"} for n in names]
++            if owner:
++                f["project"] = page_of(owner)
++                if owner not in names:
++                    names.append(owner)
++        return [page_of(n) for n in names]
+ 
+     return link
+ 
+@@ -532,15 +545,15 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+-               trunk: str | None = None, lookup=None, review_lookup=None) -> tuple[list[dict], list[str]]:
++               trunk: str | None = None, lookup=None, status_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+     `trunk` the default branch a pull request that is not stacked is based on.
+     `lookup` finds the pull request whose head is a branch, for a summary that
+-    did not record the one it is stacked on. `review_lookup` returns a pull
+-    request's reviews, or None when it cannot ask, for each summary's review
+-    status.
++    did not record the one it is stacked on. `status_lookup` returns a pull
++    request's state and reviews, or None when it cannot ask, for each
++    summary's file links and review status.
+     """
+     trunk = trunk or branch
+     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
+@@ -555,7 +568,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     assign_routes(docs, described)
+     link = project_linker(described, base)
+     built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
+-                            review_lookup=review_lookup) if summaries and summaries.is_dir() else ([], [])
++                            status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
+     entries, failures = built
+     for project in described:
+         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 1cc7d90..09faf76 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -647,13 +647,35 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+     return int(found) if found and found.strip().isdigit() else None
+ 
+ 
+-def pr_reviews(repo: str, number: int) -> list[dict]:
+-    """Every submitted review of pull request `number`: its `body`, its page as `url`, its time as `at`, and its
+-    author's relation to the repository as `association`, GitHub's `author_association`."""
+-    rows = gh("api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+-              "--jq", ".[] | select(.submitted_at != null) "
+-                      "| {body, url: .html_url, at: .submitted_at, association: .author_association} | @json")
+-    return [json.loads(row) for row in rows.splitlines() if row.strip()]
++PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
++  repository(owner: $owner, name: $name) {
++    pullRequest(number: $number) {
++      state
++      reviews(first: 100, after: $endCursor) {
++        nodes { body url submittedAt authorAssociation }
++        pageInfo { hasNextPage endCursor }
++      }
++    }
++  }
++}"""
++
++
++def pr_status(repo: str, number: int) -> dict:
++    """Pull request `number`'s `state`, `open`, `merged` or `closed`, and its submitted `reviews`.
++
++    Each review has its `body`, its page as `url`, its time as `at`, and its
++    author's relation to the repository as `association`, GitHub's
++    `authorAssociation`. One query answers both, a page of reviews at a time.
++    """
++    owner, name = repo.split("/", 1)
++    pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
++               "-f", f"name={name}", "-F", f"number={number}",
++               "--jq", ".data.repository.pullRequest | {state, reviews: [.reviews.nodes[] | select(.submittedAt != null) "
++                       "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
++    found = [json.loads(page) for page in pages.splitlines() if page.strip()]
++    if not found or not found[0].get("state"):
++        raise SummaryError(f"GitHub returned no state for {repo}#{number}")
++    return {"state": str(found[0]["state"]).lower(), "reviews": [r for page in found for r in page["reviews"]]}
+ 
+ 
+ def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 067403b..ab15922 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -14,7 +14,7 @@
+ import unittest
+ import urllib.error
+ import urllib.request
+-from contextlib import redirect_stderr, redirect_stdout
++from contextlib import nullcontext, redirect_stderr, redirect_stdout
+ from pathlib import Path
+ from unittest import mock
+ 
+@@ -44,8 +44,8 @@ def setUp(self) -> None:
+             (self.repo / path).write_text(text)
+         self.out = Path(tempfile.mkdtemp()) / "site"
+         # A build that knows its repository asks GitHub for each pull request's
+-        # reviews. No test reaches GitHub; one that needs reviews supplies them.
+-        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
++        # state and reviews. No test reaches GitHub; one that needs them supplies them.
++        offline = mock.patch.object(summary, "pr_status", side_effect=summary.SummaryError("gh api failed: offline"))
+         offline.start()
+         self.addCleanup(offline.stop)
+ 
+@@ -336,15 +336,15 @@ def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+         """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
+         asked: list[tuple[str, int]] = []
+ 
+-        def pr_reviews(repo: str, number: int) -> list[dict]:
++        def pr_status(repo: str, number: int) -> dict:
+             asked.append((repo, number))
+             if reviews is None:
+                 raise summary.SummaryError("gh api failed: offline")
+-            return reviews
++            return {"state": "open", "reviews": reviews}
+ 
+         self.publish(9, "c" * 40)
+         self.publish(9, "d" * 40)
+-        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
++        with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+             self.build()
+         self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
+         return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
+@@ -649,6 +649,165 @@ def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
+     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+ 
+ 
++HEADER_DIFF = """diff --git a/docs/projects/alpha/readme.md b/docs/projects/alpha/readme.md
++index 1111111..2222222 100644
++--- a/docs/projects/alpha/readme.md
+++++ b/docs/projects/alpha/readme.md
++@@ -1,1 +1,1 @@
++-old
+++new
++diff --git a/docs/projects/alpha/research/survey.md b/docs/projects/alpha/research/survey.md
++index 1111111..2222222 100644
++--- a/docs/projects/alpha/research/survey.md
+++++ b/docs/projects/alpha/research/survey.md
++@@ -1,1 +1,1 @@
++-old
+++new
++diff --git a/docs/projects/alpha/beta/readme.md b/docs/projects/alpha/beta/readme.md
++index 1111111..2222222 100644
++--- a/docs/projects/alpha/beta/readme.md
+++++ b/docs/projects/alpha/beta/readme.md
++@@ -1,1 +1,1 @@
++-old
+++new
++diff --git a/docs/projects/gamma/readme.md b/docs/projects/gamma/readme.md
++new file mode 100644
++index 0000000..3333333
++--- /dev/null
+++++ b/docs/projects/gamma/readme.md
++@@ -0,0 +1,1 @@
+++new
++diff --git a/src/app#1.py b/src/app#1.py
++index 1111111..2222222 100644
++--- a/src/app#1.py
+++++ b/src/app#1.py
++@@ -1,1 +1,1 @@
++-old = 1
+++new = 2
++"""
++HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/survey.md",
++                "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
++SUMMARY_JS = SITE_JS.with_name("summary.js")
++
++
++def rendered_summary(data: dict) -> str:
++    """The markup the compiled renderSummary draws for `data`, run under node."""
++    lines = SUMMARY_JS.read_text().splitlines()
++    start = lines.index("    function renderSummary(data) {")
++    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
++    program = ("const root = {innerHTML: ''};\n"
++               "const document = {getElementById: function () { return root; }, body: root};\n"
++               "const window = {};\n" + "\n".join(lines[start:end + 1]) +
++               f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
++    return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
++
++
++class FileHeaderTests(SiteRepoCase):
++    """Each file card's header links to its diff, to the file on the head branch, and to its project."""
++
++    def build(self, state: str | None = None, **pr: str) -> dict:
++        """The data the site build writes for pull request 9, which changes HEADER_FILES.
++
++        GitHub reports the pull request as `state`, or cannot be asked when it is None.
++        """
++        summaries = Path(tempfile.mkdtemp()) / "summaries"
++        folder = summaries / "9" / ("c" * 40)
++        folder.mkdir(parents=True)
++        (folder / "summary.json").write_text(json.dumps({
++            "version": 1, "name": "Summary 9",
++            "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": "c" * 40, "base": "b" * 40,
++                   "baseRef": "main", **pr},
++            "overview": {"summary": [], "cards": []},
++            "groups": [{"id": "all", "title": "All", "files": [
++                {"path": p, "collapsed": False,
++                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
++                    {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
++                    else {})}
++                for p in HEADER_FILES]}],
++        }))
++        (folder / "diff.patch").write_text(HEADER_DIFF)
++        status = mock.patch.object(summary, "pr_status", return_value={"state": state, "reviews": []}) \
++            if state is not None else nullcontext()
++        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
++             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
++                             "--summaries", str(summaries)])
++        self.assertEqual(0, code)
++        return json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
++
++    def test_a_file_belongs_to_the_deepest_project_the_site_has(self) -> None:
++        files = {f["path"]: f.get("project") for f in self.build()["files"]}
++
++        alpha = {"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++        self.assertEqual({
++            "docs/projects/alpha/readme.md": alpha,
++            "docs/projects/alpha/research/survey.md": alpha,
++            "docs/projects/alpha/beta/readme.md": {"name": "alpha/beta", "title": "Finish beta",
++                                                   "url": "/projects/alpha/beta/"},
++            "docs/projects/gamma/readme.md": None,
++            "src/app#1.py": None,
++        }, files, "a supplemental file belongs to its project, a nested project owns its files, and a project "
++                  "the site has no page for, such as one the pull request adds, owns nothing")
++
++    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
++    def test_the_header_links_the_diff_the_file_on_its_branch_and_the_project(self) -> None:
++        data = self.build(headRef="feature/header-links")
++        html = rendered_summary(data)
++
++        def header(path: str) -> str:
++            fid = next(f["id"] for f in data["files"] if f["path"] == path)
++            start = re.search(f'<article class="file[^"]*" id="{fid}"', html).start()
++            return html[start:html.index("</header>", start)]
++
++        survey = header("docs/projects/alpha/research/survey.md")
++        anchor = next(f["anchor"] for f in data["files"] if f["path"] == "docs/projects/alpha/research/survey.md")
++        self.assertIn(f'href="https://github.com/owner/example/pull/9/files#{anchor}" target="_blank" rel="noopener">Diff</a>',
++                      survey)
++        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/docs/projects/alpha/research/'
++                      'survey.md" target="_blank" rel="noopener">File</a>', survey)
++        self.assertIn('<a class="flink" href="/projects/alpha/" title="Build alpha">Project</a>', survey)
++        self.assertIn('<a class="flink" href="/projects/alpha/beta/" title="Finish beta">Project</a>',
++                      header("docs/projects/alpha/beta/readme.md"))
++        for outside in ("docs/projects/gamma/readme.md", "src/app#1.py"):
++            self.assertNotIn(">Project</a>", header(outside))
++        self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/src/app%231.py"',
++                      header("src/app#1.py"), "each path segment is encoded and the branch keeps its slash")
++        self.assertNotIn(">PR</a>", html)
++
++    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
++    def test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes(self) -> None:
++        # GitHub usually deletes a merged or closed pull request's branch, and
++        # its head commit stays reachable, so those link the head.
++        branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
++        at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
++        for state, expected in (("open", branch), ("merged", at_head), ("closed", at_head), (None, branch)):
++            with self.subTest(state=state):
++                data = self.build(state=state, headRef="feature/header-links")
++                self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
++                self.assertIn(f'href="{expected}"', rendered_summary(data))
++                shutil.rmtree(self.out)
++
++    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
++    def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
++        data = self.build()
++        self.assertNotIn("headRef", data["pr"])
++
++        self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
++
++    @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
++    def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
++        html = rendered_summary(self.build())
++
++        rows = dict(re.findall(r'<tr class="noterow (\w+)">(.*?)</tr>', html))
++        self.assertEqual('<td class="ngut" colspan="2"><span class="chip context">context</span></td>'
++                         '<td class="nte"><span class="ntext">The new value.</span></td>', rows["context"],
++                         "a file with both sides has two line-number columns for the tag")
++        self.assertTrue(rows["flag"].startswith('<td class="ngut" colspan="1"><span class="chip flag">concern</span></td>'
++                                                '<td class="nte"><input type="checkbox" class="nbox note-box"'),
++                        "a new file has one line-number column, and a concern's checkbox sits with its text")
++        self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its tags fit its gutter")
++
++
+ class SummarySidebarTests(unittest.TestCase):
+     def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
+         # The sidebar is sticky on a wide screen, so a list taller than the
+@@ -711,7 +870,7 @@ def review_url(review_id: int) -> str:
+ 
+ 
+ def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
+-    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
++    """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
+ 
+     `association` is the author's relation to the repository, as GitHub's
+     `author_association` gives it.
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 6dd6bb3..3f273ef 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1039,20 +1039,29 @@ def test_the_live_head_check_asks_nothing_about_stacks(self) -> None:
+         self.assertNotIn("basePr", meta)
+ 
+ 
+-class PrReviewsTests(unittest.TestCase):
+-    def test_reads_every_page_of_reviews_one_row_each(self) -> None:
+-        rows = [{"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
+-                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"},
+-                {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+-                 "at": "2026-10-02T10:00:00Z", "association": "NONE"}]
+-        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(r) + "\n" for r in rows)) as gh:
+-            reviews = summary.pr_reviews("owner/example", 7)
+-
+-        self.assertEqual(rows, reviews)
++class PrStatusTests(unittest.TestCase):
++    def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
++        first = {"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
++                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
++        second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
++                  "at": "2026-10-02T10:00:00Z", "association": "NONE"}
++        pages = [{"state": "MERGED", "reviews": [first]}, {"state": "MERGED", "reviews": [second]}]
++        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
++            status = summary.pr_status("owner/example", 7)
++
++        self.assertEqual({"state": "merged", "reviews": [first, second]}, status)
+         args = gh.call_args.args
+-        self.assertEqual(("api", "--paginate", "repos/owner/example/pulls/7/reviews"), args[:3])
+-        self.assertIn("select(.submitted_at != null)", args[-1], "a pending review has no verdict to show yet")
+-        self.assertIn("association: .author_association", args[-1], "the site trusts a verdict by who wrote it")
++        self.assertEqual(("api", "graphql", "--paginate"), args[:3])
++        self.assertIn("owner=owner", args)
++        self.assertIn("name=example", args)
++        self.assertIn("number=7", args)
++        self.assertIn("select(.submittedAt != null)", args[-1], "a pending review has no verdict to show yet")
++        self.assertIn("association: .authorAssociation", args[-1], "the site trusts a verdict by who wrote it")
++
++    def test_an_answer_without_a_state_is_an_error(self) -> None:
++        with mock.patch.object(summary, "gh", return_value=""):
++            with self.assertRaisesRegex(summary.SummaryError, "no state for owner/example#7"):
++                summary.pr_status("owner/example", 7)
+ 
+ 
+ class StatusTests(unittest.TestCase):

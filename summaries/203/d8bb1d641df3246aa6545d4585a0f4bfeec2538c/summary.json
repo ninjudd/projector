@@ -1,0 +1,191 @@
+{
+ "version": 1,
+ "name": "Summary file header links",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 203,
+  "title": "Link a summary file to its project and branch, and set inline notes apart",
+  "head": "d8bb1d641df3246aa6545d4585a0f4bfeec2538c",
+  "headRef": "summary-file-header-links",
+  "base": "0d5a2132bf0e80394cbf9c85616fe101eb5b1148",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page, like this one, walks a reviewer through a pull request's diff one file card at a time. Each card's header holds the file's path, its line counts, a few links, and a <b>Reviewed</b> box. The header linked to the file in the pull request's diff, labelled <b>PR</b>, and to the file at the commit the summary describes, labelled <b>file</b>. A reader who wanted the plan a file belongs to had to find it in the site's Projects section by hand.",
+   "This pull request gives each header three links:",
+   "<ul><li><b>Diff</b> opens the file in the pull request's diff on GitHub. It is the old <b>PR</b> link under a clearer name.</li><li><b>File</b> opens the file on the pull request's head branch, <code>pr.headRef</code>, so it shows the branch's current version. Once the site build finds the pull request merged or closed, it links the head commit instead, because GitHub deletes a merged branch in this repository and keeps the commit. A summary with no <code>headRef</code> also links the head commit.</li><li><b>Project</b> opens the site's page for the project whose folder holds the file. It appears only when the site has a page for that project.</li></ul>",
+   "To learn whether a pull request merged, the site build now asks GitHub for its state in the same request that fetches its reviews, one GraphQL query in place of the REST reviews call.",
+   "A review note under a diff line also changes shape. Each note is now its own table row, with its tag, such as <b>context</b> or <b>concern</b>, in the line-number gutter and its text where the code starts. <b>Reviewed</b> sits 6px further from the header links.",
+   "The review of the first head found that the <b>File</b> link broke once a pull request merged. This head fixes that, and the review of this head is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the JSON a review writes for a pull request, which the site renders as a page like this one.</li><li><b>Site build</b>: <code>project site build</code>, which the repository's Pages workflow runs on each deploy. It reads every stored summary and writes each page's <code>data.json</code>.</li><li><b>Project</b>: a folder under <code>docs/projects/</code> with its own lowercase <code>readme.md</code>. Projects nest, and a project's folder can also hold supplemental files.</li><li><b><code>pr.head</code></b>: the commit a summary describes. <b><code>pr.headRef</code></b>: the pull request's head branch, which <code>project summary init</code> records. <b><code>pr.state</code></b>: <code>open</code>, <code>merged</code>, or <code>closed</code>, as the last site build found it.</li></ul>"
+   },
+   {
+    "id": "testing",
+    "title": "What the review ran at this head",
+    "html": "<ul class=\"tight\"><li><code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code>: no lint findings, and the build leaves <code>site/assets/summary.js</code> unchanged.</li><li>All 502 Python tests under Python 3.12, including the new open, merged, closed, and unknown-state cases.</li><li><code>summary.pr_status</code> run live: <code>merged</code> for #197 and <code>open</code> for #203, with the same 8 reviews for #197 as the REST endpoint it replaces.</li><li><code>project check</code>, both <code>claude plugin validate</code> commands, and <code>git diff --check</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "build",
+   "title": "The site build finds each file's project and records the state",
+   "kicker": "Where the Project link's target comes from",
+   "intro": [
+    "The site build already worked out which projects a pull request touches, so a review page could list them and each project page could list its reviews. <code>project_linker</code> does that work: for each changed file, it finds the deepest project folder that holds the file, among the projects the site has pages for.",
+    "The change keeps that search and also writes its answer onto the file, as a <code>project</code> object with the project's name, title, and site URL. The renderer reads that object to draw the <b>Project</b> link."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "<code>project_linker</code> sets <code>project</code> on each changed file it can place. <code>build_summaries</code> takes the renamed <code>status_lookup</code> and writes <code>pr.state</code> onto each page.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The candidate folders come from the projects in the checkout the build runs in, sorted longest path first, so the first match is the deepest project. A project the pull request adds has no page until the site deploys from a checkout that has it, so its files get no link on an open pull request.",
+       "line": 418
+      },
+      {
+       "kind": "verify",
+       "text": "The build writes <code>data.json</code> after this mutation: <code>build_summaries</code> calls the linker on the payload, then serializes the same payload. <code>test_a_file_belongs_to_the_deepest_project_the_site_has</code> reads <code>project</code> back from <code>data.json</code> and passed at this head.",
+       "line": 420
+      },
+      {
+       "kind": "context",
+       "text": "Every stored head of a pull request gets the same state, so an older head's page also switches to commit links once the pull request merges.",
+       "line": 235
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "state",
+   "title": "The site build learns each pull request's state",
+   "kicker": "One GraphQL query returns the state and the reviews",
+   "intro": [
+    "On each deploy, the site build asks GitHub for every summarized pull request's reviews, to show whether its head was reviewed. The <b>File</b> link also needs to know whether the pull request has merged or closed, so the build asks for the state in the same request.",
+    "<code>summary.pr_status</code> replaces <code>summary.pr_reviews</code>. It sends one GraphQL query for the pull request's <code>state</code> and its reviews, a page of 100 reviews at a time, and returns both. The build writes the state onto each page as <code>pr.state</code>. When GitHub cannot be asked, a page gets neither a state nor a review status, and its <b>File</b> links stay on the branch."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The state is read when the site deploys. A merge that touches the files the site workflow watches starts a deploy, and so does each summary publish, so a page can keep branch links for a while after a merge."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Replaces <code>pr_reviews</code> with <code>pr_status</code>, a paginated GraphQL query for the state and the submitted reviews.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Run against GitHub at this head, <code>pr_status</code> returned <code>merged</code> for #197 and <code>open</code> for #203. For #197 it returned the same 8 submitted reviews as the REST endpoint, with the same <code>OWNER</code> association that <code>review_statuses</code> checks.",
+       "line": 663
+      },
+      {
+       "kind": "context",
+       "text": "An answer with no state raises <code>SummaryError</code>, which <code>build_checkout</code> turns into no state and no review status.",
+       "line": 677
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>build_checkout</code> passes <code>pr_status</code> as the build's <code>status_lookup</code>, and still answers None when GitHub cannot be asked."
+    }
+   ]
+  },
+  {
+   "id": "renderer",
+   "title": "The renderer draws the new header and note rows",
+   "kicker": "The TypeScript that draws each file card, and its compiled copy",
+   "intro": [
+    "<code>renderSummary</code> in <code>site/src/summary.ts</code> draws the whole summary page in the browser from <code>data.json</code>. The file card header is one string of HTML; this change relabels the first link, points the second at the branch or the head commit, and adds the third.",
+    "A note under a diff line is now a table row of its own: a <code>ngut</code> cell holds the note's tag across the line-number columns, and an <code>nte</code> cell holds its text, with a <b>Handled</b> checkbox for a concern. A diff with one line-number column, such as a new file's, is marked <code>oneside</code> so the smaller tag fits.",
+    "The repository commits the compiled JavaScript beside the TypeScript, because every deploy and every CLI install reads the site's assets from a Git tree. <code>site/assets/summary.js</code> is that compiled copy."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Types the new <code>project</code> field on a file, and the optional <code>headRef</code> and <code>state</code> on <code>pr</code>."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>blobUrl</code> for the <b>File</b> link, relabels the links, draws <b>Project</b> when the file has one, and draws each note under a line as its own row.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>blobUrl</code> uses the head commit when <code>pr.state</code> is <code>merged</code> or <code>closed</code>, and the branch otherwise, including when the build could not learn the state. <code>test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes</code> covers all four cases and passed at this head.",
+       "line": 33
+      },
+      {
+       "kind": "context",
+       "text": "Each segment of the branch and of the path goes through <code>encodeURIComponent</code> on its own, so the slashes between segments stay, and a <code>#</code> in a name becomes <code>%23</code> instead of starting a URL fragment.",
+       "line": 35
+      },
+      {
+       "kind": "context",
+       "text": "The tag cell spans <code>sides</code> columns, one or two line-number columns, and the text cell takes the code column. Several notes on one line make several rows.",
+       "line": 115
+      },
+      {
+       "kind": "context",
+       "text": "<b>Project</b> links within the site, so it opens in the same tab, unlike <b>Diff</b> and <b>File</b>, which open GitHub in a new one. <code>esc</code> escapes both the URL and the title.",
+       "line": 147
+      },
+      {
+       "kind": "verify",
+       "text": "A concern's checkbox now finds its row as well as a list item, so checking it dims a note under a line through <code>tr.noterow.checked</code>. The open-concern count reads every <code>.note-box</code> in the file, so it still counts these.",
+       "line": 449
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>site/src/summary.ts</code>. The review rebuilt it with <code>npm run build</code> and got the committed file back unchanged."
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Adds <code>margin-left: 6px</code> to <b>Reviewed</b>, styles the note rows' gutter tag and text cells, and drops the <code>.inotes</code> rules that nothing renders any more."
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "The header tests, and the two documents that describe the links",
+   "intro": [
+    "<code>FileHeaderTests</code> builds one summary through <code>project site build</code> for a diff that touches a project's readme, a supplemental file in that project, a nested project's readme, a readme for a project the site lacks, and <code>src/app#1.py</code> outside every project. Four of its tests run the compiled <code>renderSummary</code> under node and check the header links, the <b>File</b> link for each pull request state, and the note rows; they skip where node is missing.",
+    "<code>PrStatusTests</code> checks that <code>pr_status</code> reads the state and every page of reviews from one query. The CLI reference and the summary format guide describe the links."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py",
+     "note": "Adds <code>FileHeaderTests</code> and <code>rendered_summary</code>, which cuts <code>renderSummary</code> out of the compiled file and runs it under node with a stub <code>document</code>."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Replaces the REST reviews test with <code>PrStatusTests</code>, including an answer with no state."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the three header links, and the head-commit link once the build finds the pull request merged or closed."
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "note": "Says when the <b>File</b> link uses <code>pr.headRef</code> and when it uses <code>pr.head</code>."
+    }
+   ]
+  }
+ ]
+}
