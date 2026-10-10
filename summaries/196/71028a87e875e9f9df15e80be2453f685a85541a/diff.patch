@@ -1,0 +1,368 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 80bc037..e1c5cb2 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -678,7 +678,10 @@ project. **Reviews** lists the summaries, and marks a pull request whose base
+ branch is another open pull request's head with that pull request's number,
+ linked to its review when the site has one and to GitHub otherwise. A summary
+ that did not record the number has it looked up with `gh` at build time;
+-when `gh` cannot answer, the review shows no stack. **Docs** renders `README.md`
++when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
++every pull request in its stack, the ones beneath it and the ones above it,
++one row each with its title, and highlights the current one; its older
++versions follow the sections. **Docs** renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+ projects directory, which Projects covers. Each sidebar lists its readme as
+ **Overview** and appears only when there is more than that readme to list, and
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 9b816d4..1045a15 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -77,6 +77,23 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+ .prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+ .prmeta a { color: inherit; text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+ .prmeta a:hover { text-decoration: underline; }
++.nav .versions { margin: 10px 0 0; padding: 10px 6px 0; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
++.versions > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
++.versions > summary::-webkit-details-marker { display: none; }
++.versions:not([open]) > summary .chev { transform: rotate(-45deg); }
++.versions ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
++.versions li > a, .versions li.current { display: flex; justify-content: space-between; gap: 10px; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; color: var(--muted); text-decoration: none; font-variant-numeric: tabular-nums; }
++.versions li > a:hover { background: var(--surface-2); color: var(--text); }
++.versions li.current { background: var(--accent-soft); color: var(--text); font-weight: 600; }
++.versions .mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
++.versions .vwhen { white-space: nowrap; }
++.prblock .stack { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
++.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: baseline; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
++.prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
++.prblock .stack li.current { background: var(--accent-soft); color: var(--text); font-weight: 600; }
++.prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
++.prblock .stack li.current .snum { color: var(--accent); }
++.prblock .stack .stitle { min-width: 0; overflow-wrap: anywhere; }
+ .prbar { display: none; }
+ @media (max-width: 980px) {
+   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index ae485a9..b9902db 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -180,13 +180,35 @@
+             out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
+             return out;
+         }
++        // Every published head, newest first, one line each with when it was
++        // published in the reader's own time zone, in a list that starts closed.
+         function headsList() {
+             const heads = data.heads ?? [];
+             if (heads.length < 2)
+                 return '';
+-            return '<div class="prmeta">Versions: ' + heads.map(function (h) {
+-                return h.current ? `<b class="mono">${short(h.head)}</b>` : `<a href="${esc(h.url)}">${short(h.head)}</a>`;
+-            }).join(' · ') + '</div>';
++            const rows = heads.map(function (h) {
++                const when = h.at !== undefined
++                    ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
++                    : '';
++                const row = `<span class="mono">${short(h.head)}</span>${when}`;
++                return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
++            }).join('');
++            return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
++        }
++        // The pull requests stacked with this one, one row each, this one marked; a
++        // pull request alone shows its title instead. A pull request in the stack
++        // with no summary on the site links to GitHub.
++        function stackList() {
++            const stack = data.stack ?? [];
++            if (stack.length < 2)
++                return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
++            return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
++                const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
++                if (s.current)
++                    return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
++                const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
++                return `<li><a href="${esc(href)}" title="${esc(s.title)}">${row}</a></li>`;
++            }).join('') + '</ul>';
+         }
+         function projectsList() {
+             const projects = data.projects ?? [];
+@@ -209,12 +231,10 @@
+                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+                 `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-                `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}` +
+-                `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>` +
+-                `<div class="prmeta">${ext(`${repoUrl}/commit/${pr.head}`, short(pr.head))} → ${esc(baseRef ?? 'base')} · ${ext(`${prUrl}/files`, 'files')}</div>${headsList()}${projectsList()}</div>` +
++                `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
+                 `<div class="extra">${extra}</div>` +
+                 `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-                `<ol>${nav}</ol></nav></aside>` +
++                `<ol>${nav}</ol>${headsList()}</nav></aside>` +
+                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+                 `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 32be3cb..9c9cbfc 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -54,7 +54,10 @@ interface SummaryData {
+   groups: SummaryGroup[];
+   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };
+   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
+-  heads?: { head: string; url: string; current: boolean }[];
++  /** Every published head of the pull request, newest first; `at` is when it was published, in Unix seconds. */
++  heads?: { head: string; url: string; current: boolean; at?: number }[];
++  /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
++  stack?: { number: number; title: string; url: string; current: boolean }[];
+   projects?: { name: string; title: string; url: string }[];
+   indexUrl?: string;
+   generatedAt?: string;
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index dccaa84..894bf4a 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -174,12 +174,33 @@ function renderSummary(data: SummaryData): void {
+     return out;
+   }
+ 
++  // Every published head, newest first, one line each with when it was
++  // published in the reader's own time zone, in a list that starts closed.
+   function headsList(): string {
+     const heads = data.heads ?? [];
+     if (heads.length < 2) return '';
+-    return '<div class="prmeta">Versions: ' + heads.map(function (h) {
+-      return h.current ? `<b class="mono">${short(h.head)}</b>` : `<a href="${esc(h.url)}">${short(h.head)}</a>`;
+-    }).join(' · ') + '</div>';
++    const rows = heads.map(function (h) {
++      const when = h.at !== undefined
++        ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
++        : '';
++      const row = `<span class="mono">${short(h.head)}</span>${when}`;
++      return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
++    }).join('');
++    return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
++  }
++
++  // The pull requests stacked with this one, one row each, this one marked; a
++  // pull request alone shows its title instead. A pull request in the stack
++  // with no summary on the site links to GitHub.
++  function stackList(): string {
++    const stack = data.stack ?? [];
++    if (stack.length < 2) return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
++    return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
++      const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
++      if (s.current) return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
++      const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
++      return `<li><a href="${esc(href)}" title="${esc(s.title)}">${row}</a></li>`;
++    }).join('') + '</ul>';
+   }
+ 
+   function projectsList(): string {
+@@ -203,12 +224,10 @@ function renderSummary(data: SummaryData): void {
+       `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+         `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-        `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}` +
+-          `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>` +
+-          `<div class="prmeta">${ext(`${repoUrl}/commit/${pr.head}`, short(pr.head))} → ${esc(baseRef ?? 'base')} · ${ext(`${prUrl}/files`, 'files')}</div>${headsList()}${projectsList()}</div>` +
++        `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
+         `<div class="extra">${extra}</div>` +
+         `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-        `<ol>${nav}</ol></nav></aside>` +
++        `<ol>${nav}</ol>${headsList()}</nav></aside>` +
+       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+         `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+         `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 11dcb57..83f883c 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -275,10 +275,10 @@ fails, or that names another repository, so one bad summary costs one
+ summary rather than the deployment. The site's Reviews section lists
+ every summary at `reviews/`, serves each pull request's newest head at
+ `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
+-older heads from each page. The summary on the ref is the durable copy: to
+-update a summary later, fetch it with
+-`git fetch origin refs/projector/summaries` and start from it rather than
+-from a fresh `init`. A summary that an older release stored there as
++older heads and every pull request in the same stack from each page. The
++summary on the ref is the durable copy: to update a summary later, fetch it
++with `git fetch origin refs/projector/summaries` and start from it rather
++than from a fresh `init`. A summary that an older release stored there as
+ `spec.json` does not appear on the site, and the deploy reports it as
+ skipped. To update one, start from its `spec.json` and publish it as
+ `summary.json`. A repository that has not published since summaries were
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 9a38d0d..a376957 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -129,13 +129,15 @@ def summary_time(path: Path) -> int:
+     return int(path.stat().st_mtime)
+ 
+ 
+-def build_summaries(root: Path, out: Path, base: str = "/", link=None,
+-                    repo_root: Path | None = None) -> tuple[list[dict], list[str]]:
++def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
++                    lookup=None, repo_root: Path | None = None) -> tuple[list[dict], list[str]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+-    A file is generated as the `attributes.json` that `publish` stored beside
+-    a summary says, or, for a summary without one, as the checkout at
+-    `repo_root` reads its .gitattributes.
++    Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
++    `lookup`, and each page lists the pull requests in its stack. A file is
++    generated as the `attributes.json` that `publish` stored beside a summary
++    says, or, for a summary without one, as the checkout at `repo_root` reads
++    its .gitattributes.
+     """
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+@@ -173,14 +175,19 @@ def skip(path: Path, reason: object) -> None:
+             skip(path, exc)
+             continue
+         by_pr.setdefault(number, []).append((summary_time(path), payload))
++    for versions in by_pr.values():
++        versions.sort(key=lambda v: v[0], reverse=True)
++    prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
++    bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
+     entries = []
+     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
+-        versions.sort(key=lambda v: v[0], reverse=True)
+         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
+                  for when, p in versions]
++        stack = stack_rows(int(number), bases, prs, base)
+         for _, payload in versions:
+             head = payload["pr"]["head"]
+-            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads])
++            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads],
++                           stack=stack)
+             folder = out / "reviews" / number / head
+             folder.mkdir(parents=True, exist_ok=True)
+             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+@@ -195,11 +202,42 @@ def skip(path: Path, reason: object) -> None:
+             page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
+                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
+         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
+-                        "heads": len(versions), "updated": versions[0][0],
++                        "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),
+                         "projects": [p["name"] for p in latest["projects"]]})
+     return entries, failures
+ 
+ 
++def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
++    """Every pull request in `number`'s stack, from the one on the default branch up, or [] when it stands alone.
++
++    The stack holds the pull requests beneath `number` and every pull request
++    stacked above any of them, so a branch in the stack shows its siblings
++    too; each pull request's own branches follow it, lowest number first.
++    A pull request with a summary links to its review, and one without, known
++    only as a base, has no title or link here. `bases` maps a pull request to
++    the one beneath it, as `stack_bases` returns it.
++    """
++    bottom, seen = number, {number}
++    while bases.get(bottom) is not None and bases[bottom] not in seen:
++        bottom = bases[bottom]
++        seen.add(bottom)
++    above: dict[int, list[int]] = {}
++    for top, beneath in bases.items():
++        above.setdefault(beneath, []).append(top)
++    order: list[int] = []
++    pending = [bottom]
++    while pending:
++        current = pending.pop()
++        if current in order:
++            continue
++        order.append(current)
++        pending.extend(sorted(above.get(current, []), reverse=True))
++    if len(order) < 2:
++        return []
++    return [{"number": n, "title": (prs.get(n) or {}).get("title") or "",
++             "url": f"{base}reviews/{n}/" if n in prs else "", "current": n == number} for n in order]
++
++
+ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+     """For each stacked pull request, the number of the pull request beneath it.
+ 
+@@ -470,14 +508,14 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     files = collect_files(repo_root, projects_dir, out) if repo_root else []
+     assign_routes(docs, described)
+     link = project_linker(described, base)
+-    built = build_summaries(summaries, out, base, link, repo_root) if summaries and summaries.is_dir() else ([], [])
++    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root) \
++        if summaries and summaries.is_dir() else ([], [])
+     entries, failures = built
+     for project in described:
+         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
+     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
+-    bases = stack_bases(entries, trunk, lookup)
+     manifest = {
+         "repo": repo,
+         "base": base,
+@@ -492,7 +530,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+         "reviews": [
+             {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
+              "heads": e["heads"], "projects": e["projects"],
+-             "stackedOn": bases.get(e["number"]),
++             "stackedOn": e["stackedOn"],
+              "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
+             for e in entries
+         ],
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 1b6bb61..60f87a8 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -327,6 +327,29 @@ def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -
+ 
+         self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+ 
++    def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
++        self.publish(9, "c" * 40, headRef="feature-a")
++        self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
++        self.publish(11, "e" * 40, headRef="feature-c", baseRef="feature-b")
++        self.publish(12, "f" * 40, headRef="feature-d", baseRef="feature-b")
++        self.publish(13, "a" * 40, headRef="feature-e", baseRef="feature-x", basePr=7)
++        self.publish(20, "b" * 40, headRef="alone")
++        self.stacks()
++
++        def stack(number: int, head: str) -> list[dict]:
++            return json.loads((self.out / "reviews" / str(number) / head / "data.json").read_text())["stack"]
++
++        rows = stack(10, "d" * 40)
++        self.assertEqual([9, 10, 11, 12], [r["number"] for r in rows], "beneath first, then each branch above")
++        self.assertEqual([10], [r["number"] for r in rows if r["current"]])
++        self.assertEqual({"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": False}, rows[0])
++        self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(11, "e" * 40)], "the top sees the whole stack")
++        self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(9, "c" * 40)], "the bottom sees the whole stack")
++        self.assertEqual([{"number": 7, "title": "", "url": "", "current": False},
++                          {"number": 13, "title": "Change 13", "url": "/reviews/13/", "current": True}],
++                         stack(13, "a" * 40), "a pull request with no summary has no title or link")
++        self.assertEqual([], stack(20, "b" * 40), "a pull request alone has no stack")
++
+     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
+         self.publish(10, "d" * 40, baseRef="feature-a")
+ 
+@@ -574,6 +597,23 @@ def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self)
+         self.assertIsNotNone(title, "summary.css has no .nav .ntitle rule")
+         self.assertIn("overflow-wrap: anywhere;", title.group(1))
+ 
++    def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
++        # The home page loads summary.css as well, and its Reviews table draws
++        # each "Stacked on #N" note as a `div.stack`, so a rule written for the
++        # sidebar's stack list names the sidebar block the list sits in.
++        css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
++        stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
++                 for selector in rule.split(",") if re.search(r"\.stack\b", selector)]
++        self.assertTrue(stack, "summary.css has no .stack rule")
++        self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
++
++    def test_a_stack_row_shows_its_whole_title(self) -> None:
++        css = (SITE_JS.parent / "summary.css").read_text()
++        title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
++        self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
++        self.assertIn("overflow-wrap: anywhere;", title.group(1))
++        self.assertNotIn("line-clamp", title.group(1))
++
+ 
+ def served_summary(number: int, head: str) -> dict:
+     """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""

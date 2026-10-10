@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "Stack List in Summary Sidebar",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 196,
+  "title": "List the pull requests in a summary's stack in its sidebar",
+  "head": "71028a87e875e9f9df15e80be2453f685a85541a",
+  "headRef": "summary-stack-sidebar",
+  "base": "c15c5edfe797bfbc66d964c50620b6bf0f146a7c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector site serves a review page, called a <b>summary</b>, for each pull request, at <code>reviews/&lt;number&gt;/</code>. A pull request is <b>stacked</b> when its base branch is another open pull request's head branch, so a chain of pull requests builds one change in reviewable layers. Until now, a summary's sidebar named only its own pull request, so a reviewer working through a stack had to go back to GitHub to find the next layer.",
+   "This change lists the whole stack in the sidebar: the pull requests beneath this one down to the default branch, and every pull request stacked above any of them. Each row shows the number and title and links to that pull request's summary, or to GitHub when the site has none. The current row is highlighted. A pull request that stands alone keeps its title line, as before.",
+   "The stack is worked out when the site deploys, from every summary stored on the summaries ref, so a page learns of a pull request stacked on it later without being republished. The sidebar also drops its head-and-base line, which repeated the page header. The Versions line moves below the sections and becomes a list that starts closed, with one row for each published head and the time it was published, in the reader's time zone."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the JSON a reviewer writes for one head of a pull request, stored with its diff on the hidden ref <code>refs/projector/summaries</code>.</li><li><b>Trunk</b>: the repository's default branch. A pull request based on it is not stacked.</li><li><b><code>bases</code></b>: the map from each stacked pull request's number to the number of the one beneath it, which <code>stack_bases</code> builds.</li><li><b>Stack row</b>: one entry of a page's <code>stack</code> list, with <code>number</code>, <code>title</code>, <code>url</code>, and <code>current</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, at <span class=\"mono\">cd6cd4c81</span>, found that the new unscoped <code>.stack</code> rule in <code>summary.css</code> also styled the “Stacked on #N” note on the Reviews index, which loads <code>summary.css</code> too, and split it across three lines.</p><p>The second head, <span class=\"mono\">3710a64b1</span>, reworked the Versions list and left that rule as it was.</p><p>This head, <span class=\"mono\">2cccf035d</span>, scopes every stack rule to the sidebar, adds a test that keeps them scoped, shows each stack row's whole title, and takes the review's two suggestions. Its review was clean, with no finding open.</p><p>The newest head, <span class=\"mono\">71028a87e</span>, merges <code>main</code>, which had added a <code>repo_root</code> parameter to <code>build_summaries</code>. The merge keeps both parameters, and its review is clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "build",
+   "title": "Working out each page's stack at deploy time",
+   "kicker": "The site build computes every pull request's stack once and writes it into each page's data.",
+   "intro": [
+    "When the site deploys, <code>build_summaries</code> reads every summary on the ref and writes a page for each head. Before this change it knew nothing about stacks; <code>build_site</code> called <code>stack_bases</code> afterwards, only to mark stacked pull requests on the Reviews index.",
+    "Now <code>build_summaries</code> calls <code>stack_bases</code> itself, before writing any page, using each pull request's newest summary. It passes the result to the new <code>stack_rows</code>, which turns it into the rows one page shows, and it returns each entry's <code>stackedOn</code> so the Reviews index reuses the same answer. A base branch that no summary names is still looked up on GitHub at most once per build.",
+    "<code>main</code> has since given <code>build_summaries</code> a <code>repo_root</code> parameter of its own, which decides which files the page treats as generated. <code>build_site</code> now passes <code>trunk</code>, <code>lookup</code>, and <code>repo_root</code> by keyword."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The new test builds pull request 9 on <code>main</code>, 10 on 9, and both 11 and 12 on 10, and checks that the bottom, the middle, and the top each list <code>[9, 10, 11, 12]</code> with only themselves current. I ran the full suite of 455 tests with Python 3.12, and it passed."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Moves the <code>stack_bases</code> call into <code>build_summaries</code> and adds <code>stack_rows</code>, which orders one pull request's stack.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The pull request map <code>prs</code> takes each number's newest summary, the same one the Reviews index used before, so <code>stackedOn</code> does not change for any entry.",
+       "line": 181
+      },
+      {
+       "kind": "verify",
+       "text": "The walk down to the bottom stops at a pull request it has already seen, so two pull requests recorded as each other's base end the loop. I walked that case by hand: the walk from 10 stops at 11, and the walk upward lists 11 and then 10, once each.",
+       "line": 221
+      },
+      {
+       "kind": "context",
+       "text": "<code>pending</code> is used as a stack, so pushing each pull request's branches in reverse order pops the lowest number first, and a branch's own branches follow it before its next sibling.",
+       "line": 234
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "One test covers a branched stack, a base with no summary, and a pull request alone; two more check that the stack styles stay scoped to the sidebar and do not cut a title short.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This test reads every selector in <code>summary.css</code> that names <code>.stack</code> and requires each to start with <code>.prblock .stack</code>.",
+       "line": 600
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "page",
+   "title": "Drawing the stack in the sidebar",
+   "kicker": "The summary page renders the stack rows and a closed list of versions, and restyles the sidebar.",
+   "intro": [
+    "The page's renderer is TypeScript in <code>site/src/summary.ts</code>, compiled into <code>site/assets/summary.js</code>, which the repository commits. It reads the page's <code>data.json</code>, whose shape <code>globals.d.ts</code> declares, and now draws the <code>stack</code> rows under the <code>repo#number</code> header.",
+    "A row for the current pull request is not a link. A row whose <code>url</code> is empty, a base with no summary on the site, links to the pull request on GitHub. With fewer than two rows the sidebar shows the title line it showed before. A row's title wraps onto as many lines as it needs.",
+    "Versions now renders as a <code>details</code> element that starts closed. Each row shows a head's short SHA and, when the head has an <code>at</code> time, when it was published. <code>build_summaries</code> already records that time for every head, from <code>summary_time</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Declares the optional <code>stack</code> field and the optional <code>at</code> time on each head."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>stackList</code>, removes the head-and-base line, and turns <code>headsList</code> into a closed list of versions below the section list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each title and link is escaped before it reaches the page. <code>npm run check</code> found no type or lint problem.",
+       "line": 201
+      },
+      {
+       "kind": "context",
+       "text": "The times use the reader's locale and time zone, so two readers can see different times for the same head.",
+       "line": 179
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles the stack rows and the Versions list in both themes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every stack rule starts with <code>.prblock</code>, the sidebar block, because the site's home page loads <code>summary.css</code> too and its Reviews table has its own <code>div.stack</code> note. I loaded both stylesheets in headless Chromium, in the home page's order, and the note stayed on one line.",
+       "line": 90
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>summary.ts</code>; the test suite fails if it differs from a fresh build."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The site and summarize-pr docs describe the new sidebar.",
+   "intro": [
+    "<code>docs/cli.md</code> describes what a summary's sidebar lists, and the <code>summarize-pr</code> skill notes that each page links the pull requests in its stack."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds a sentence on the stack list and the moved Versions line."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Adds the stack to what each page links."
+    }
+   ]
+  }
+ ]
+}
