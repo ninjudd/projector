@@ -865,7 +865,7 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         self.refused(self.publish("clean", body=self.body("No census here.\n")), "{census}")
-        self.refused(self.publish("clean", body=self.body("Only quoted: `{census}`.\n")), "{census}")
+        self.refused(self.publish("clean", body=self.body("Only quoted: `print({census})`.\n")), "{census}")
 
     def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -882,11 +882,23 @@ class PublishRefusalTests(PublishCase):
 
         self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
 
+    def test_a_span_holding_only_a_placeholder_is_filled_in_code_font(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        body = self.body("Reviewed `{short_sha}` (`{sha}`) in `{took}`.\n\n`{census}`\n\n```\n{short_sha}\n```\n")
+        code, _, err = self.publish("clean", body=body)
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()["body"]
+        self.assertIn(f"Reviewed `{self.head[:7]}` (`{self.head}`) in `12m 34s`.", posted)
+        self.assertIn("`0 finding threads: 0 resolved, 0 open`", posted)
+        self.assertIn("```\n{short_sha}\n```", posted, "a fenced block stays quoted code")
+
     def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         body = self.body(
             "The loop id `example-projector-review-loop` and the `projector-finding` marker both appear here.\n\n"
-            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `{short_sha}` from state.\n"
+            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `state[\"{short_sha}\"]`.\n"
             "- Findings are `{path, line}` objects.\n\n```\nprint(f\"{sha} {took}\")\n```\n")
         item = finding(body="**P2 · The `projector-finding` marker is parsed by substring**\n\n"
                             "`census` matches `{name}` too loosely.\n\n**Fix:** match the comment.")
@@ -895,7 +907,7 @@ class PublishRefusalTests(PublishCase):
 
         self.assertEqual(0, code, err)
         posted = self.posted()["body"]
-        self.assertIn('`f"sha={sha}"` should read `{short_sha}` from state.', posted)
+        self.assertIn('`f"sha={sha}"` should read `state["{short_sha}"]`.', posted)
         self.assertIn("`{path, line}` objects", posted)
         self.assertIn('print(f"{sha} {took}")', posted)
         self.assertIn("`example-projector-review-loop`", posted)

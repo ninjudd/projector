@@ -76,8 +76,10 @@ def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: s
         bar_style = f'<link rel="stylesheet" href="{escape(assets)}site.css">\n'
         bar = f'<div id="sitebar" data-base="{escape(site_base)}"></div>\n'
         bar_script = f'<script src="{escape(assets)}site.js"></script>\n'
-    return f"""<title>{escape(title)}</title>
+    return f"""<!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>
 <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">

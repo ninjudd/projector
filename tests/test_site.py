@@ -222,6 +222,11 @@ index 3333333..4444444 100644
 +new = 2
 """
 
+# Without a doctype a browser lays the page out in quirks mode, and without the
+# viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
+STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
+                  '<meta name="viewport" content="width=device-width, initial-scale=1">\n')
+
 
 class SiteContentTests(SiteRepoCase):
     def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
@@ -339,6 +344,18 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
         self.assertEqual("/reviews/", data["indexUrl"])
         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
+
+    def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
+        self.publish(9, "c" * 40)
+
+        self.build()
+
+        # The pages under content/ are the repository's own, copied as they are.
+        pages = sorted(p for p in self.out.rglob("*.html") if not p.is_relative_to(self.out / "content"))
+        for path in ("reviews/9/index.html", f"reviews/9/{'c' * 40}/index.html", "index.html", "404.html"):
+            self.assertIn(self.out / path, pages)
+        for page in pages:
+            self.assertTrue(page.read_text().startswith(STANDARDS_HEAD), page.relative_to(self.out))
 
     def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
         self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])

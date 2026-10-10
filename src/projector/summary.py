@@ -15,11 +15,13 @@ import html
 from html.parser import HTMLParser
 import json
 import os
+import random
 import re
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -33,6 +35,14 @@ PAGES_ROOT = "summaries"
 DIFF_FILE = "diff.patch"
 # What `publish` read from the head's .gitattributes, stored beside the diff.
 ATTRIBUTES_FILE = "attributes.json"
+# Publishes running at once, as a review loop's subagents run them, race to
+# move the summaries ref, so a push that loses is rebuilt on the new tip and
+# tried again, up to this many pushes in all.
+PUSH_ATTEMPTS = 5
+# What git prints when a push lost that race: the ref moved since the fetch, or
+# the server could not lock or update it while another push held it. A hook or
+# permission refusal says "rejected" too, so that word alone is not one of them.
+PUSH_RACE_SIGNS = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
 # The name older releases stored each summary under. The site shows no summary
 # from this file. It reports each one with no summary.json beside it, so the
 # repository knows to republish it, and dates a republished summary by this file.
@@ -1075,19 +1085,40 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
         return commit
     local = tracking_ref(remote, ref)
-    parent = fetch_ref(remote, ref)
-    seeded = False
-    if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
-        parent = seed_from_legacy(remote)
-        seeded = bool(parent)
-    tree = summary_tree(parent, folder, summary, diff, generated)
-    if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-        print(f"{ref} already has this summary; nothing to publish")
-        return None
-    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
-    git("push", "--quiet", remote, f"{commit}:{ref}")
+    tip = fetch_ref(remote, ref)
+    seed = None
+    for attempt in range(PUSH_ATTEMPTS):
+        parent = tip
+        if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+            if seed is None:
+                seed = seed_from_legacy(remote)
+            parent = seed
+        tree = summary_tree(parent, folder, summary, diff, generated)
+        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+            print(f"{ref} already has this summary; nothing to publish")
+            return None
+        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        try:
+            git("push", "--quiet", remote, f"{commit}:{ref}")
+            break
+        except SummaryError as error:
+            if attempt + 1 == PUSH_ATTEMPTS:
+                raise
+            raced = any(sign in str(error) for sign in PUSH_RACE_SIGNS)
+            if raced:
+                time.sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
+            moved = fetch_ref(remote, ref)
+            # While the ref has not moved, the push lost no race unless git says
+            # so, so a refused login or a dropped connection fails now rather
+            # than after every attempt. A failed refetch leaves nothing to
+            # build on.
+            if (tip and not moved) or (moved == tip and not raced):
+                raise
+            tip = moved
+    seeded = bool(seed) and parent == seed
     git("update-ref", local, commit)
-    print(f"pushed {commit[:9]} to {remote} {ref}: {written}")
+    retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
+    print(f"pushed {commit[:9]} to {remote} {ref}: {written}{retried}")
     if seeded:
         print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
               "once every site reads the new ref")
@@ -1145,17 +1176,27 @@ def describe_summary(repo: str, number: int, head: str, site: str) -> str:
     return f"linked the summary of {head[:7]} at the end of the description"
 
 
+# Timeline events GitHub does not render on the pull request's conversation, so
+# they do not bury the summary comment: subscriptions and mentions are
+# notification bookkeeping, and a publish that deletes its own older summary
+# comment leaves a `comment_deleted` behind.
+INVISIBLE_EVENTS = frozenset({"subscribed", "unsubscribed", "mentioned", "comment_deleted"})
+
+
 def comment_summary(repo: str, number: int, head: str, site: str | None = None) -> str:
     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
 
     The pull request keeps one such comment per account, naming the head it
-    summarizes, and keeps it the newest comment: each publish posts the link
-    afresh at the end and then deletes the account's older summary comments,
-    so the pull request is never without one. A comment that already names
-    this head and is the newest on the pull request is left alone, and only
-    the account's older summary comments are deleted. A
-    repository whose site is not hosted gets no comment. `site` is the site's
-    URL when the caller already looked it up. Returns what it did.
+    summarizes, and keeps it the pull request's last message: each publish
+    posts the link afresh at the end and then deletes the account's older
+    summary comments, so the pull request is never without one. A comment that
+    already names this head and is still the last visible item on the pull
+    request's timeline is left alone, and only the account's older summary
+    comments are deleted. Any later comment, submitted review, or other event
+    GitHub shows on the conversation, such as a ready-for-review or a review
+    request, buries it; a pending review and the events in `INVISIBLE_EVENTS`
+    do not. A repository whose site is not hosted gets no comment. `site` is
+    the site's URL when the caller already looked it up. Returns what it did.
     """
     if site is None:
         url, reason = hosting(repo)
@@ -1167,24 +1208,29 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
     page = review_page(site, number)
     body = summary_link(head, page)
     login = gh("api", "user", "--jq", ".login").strip()
-    # Every comment, oldest first, with its body only when it is this
-    # account's summary comment: the newest decides whether one is at the end.
-    rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
-              f'.[] | if (.user.login | ascii_downcase) == "{login.lower()}" '
-              f'and (.body | test("<!-- {SUMMARY_MARKER} v=1 ")) then [.id, .body] else [.id, null] end | @json')
-    comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
+    # Every timeline item, oldest first, as its event, its id, a review's state,
+    # and its body only when it is this account's summary comment, whose id is
+    # the issue comment's: the last visible item decides whether one is at the end.
+    rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/timeline", "--jq",
+              f'.[] | [.event, .id, ((.state // "") | ascii_downcase), '
+              f'if .event == "commented" and ((.user.login // "") | ascii_downcase) == "{login.lower()}" '
+              f'and ((.body // "") | test("<!-- {SUMMARY_MARKER} v=1 ")) then .body else null end] | @json')
+    items = [json.loads(row) for row in rows.splitlines() if row.strip()]
+    visible = [item for item in items
+               if item[0] not in INVISIBLE_EVENTS and not (item[0] == "reviewed" and item[2] == "pending")]
+    comments = [item[1] for item in items if item[3] is not None]
 
-    def delete(older: list[list]) -> str:
-        """Delete the account's summary comments among `older`, and name them."""
-        stale = [comment_id for comment_id, current in older if current is not None]
+    def delete(stale: list[int]) -> str:
+        """Delete the account's summary comments `stale`, and name them."""
         for comment_id in stale:
             gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
         return ", ".join(f"comment {comment_id}" for comment_id in stale)
 
-    if comments and comments[-1][1] is not None and comments[-1][1].strip() == body.strip():
+    if visible and visible[-1][3] is not None and visible[-1][3].strip() == body.strip():
         # A delete that failed on an earlier run can have left an older one behind.
-        deleted = delete(comments[:-1])
-        return (f"comment {comments[-1][0]} already links the summary of {head[:7]}"
+        last = visible[-1][1]
+        deleted = delete([comment_id for comment_id in comments if comment_id != last])
+        return (f"comment {last} already links the summary of {head[:7]}"
                 f"{f', deleting {deleted}' if deleted else ''}: {page}")
     posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
     deleted = delete(comments)

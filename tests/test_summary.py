@@ -7,12 +7,17 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from projector import cli, site, summary
 
 ROOT = Path(__file__).parents[1]
+
+# Without a doctype a browser lays the page out in quirks mode, and without the
+# viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
+STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
+                  '<meta name="viewport" content="width=device-width, initial-scale=1">\n')
 
 DIFF = """diff --git a/src/core.go b/src/core.go
 index 1111111..2222222 100644
@@ -138,7 +143,7 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(0, code, err)
         html = (site / "index.html").read_text()
-        self.assertTrue(html.startswith("<title>Core Summary</title>"))
+        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Core Summary</title>\n"), html[:200])
         self.assertTrue((site / "summary.js").is_file())
         self.assertTrue((site / "summary.css").is_file())
         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
@@ -291,6 +296,7 @@ class SiteTests(unittest.TestCase):
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
             self.assertIn(site.icon_link(), built)
+            self.assertTrue(built.startswith(STANDARDS_HEAD), built[:200])
 
     def test_a_summary_published_with_its_diff_builds_without_github(self) -> None:
         tmp = Path(tempfile.mkdtemp())
@@ -447,21 +453,122 @@ class PublishTests(unittest.TestCase):
         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
         self.summary_path = tmp / "summary.json"
         self.dispatches: list[str] = []
+        self.sleeps: list[float] = []
+        self.output = ""
+        self.err = ""
 
-    def publish(self, head: str, **kwargs: object) -> object:
+    def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
+        """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
+        and its warnings in `self.err`."""
         data = make_summary(GOOD_GROUPS)
         data["pr"]["head"] = head
-        self.summary_path.write_text(json.dumps(data))
+        path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
+        path.write_text(json.dumps(data))
         cwd = os.getcwd()
-        os.chdir(self.repo)
-        self.err = io.StringIO()
+        os.chdir(repo or self.repo)
+        out, err = io.StringIO(), io.StringIO()
         try:
             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()), \
-                 redirect_stderr(self.err):
-                return summary.publish(self.summary_path, "origin", **kwargs)
+                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+                 mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out), \
+                 redirect_stderr(err):
+                return summary.publish(path, "origin", **kwargs)
         finally:
             os.chdir(cwd)
+            if not repo:
+                self.output = out.getvalue()
+                self.err = err.getvalue()
+
+    def other_publisher(self) -> Path:
+        """A second clone of the remote, committing as someone else, as another review loop subagent would."""
+        other = self.remote.with_name("other")
+        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(other))
+        for key, value in (("user.name", "Other"), ("user.email", "other@example.com"), ("commit.gpgsign", "false")):
+            run(other, "git", "config", key, value)
+        return other
+
+    def racing(self, head: str) -> tuple[AbstractContextManager[object], list[object]]:
+        """Patch git so another clone publishes `head` just before this clone's first push; the list gets its commit."""
+        other = self.other_publisher()
+        real = summary.git
+        theirs: list[object] = []
+
+        def git(*args: str, **kwargs: object) -> str:
+            if args[0] == "push" and not theirs:
+                theirs.append(None)
+                theirs[0] = self.publish(head, repo=other)
+            return real(*args, **kwargs)
+        return mock.patch.object(summary, "git", side_effect=git), theirs
+
+    def test_a_publish_that_loses_the_race_for_the_ref_rebuilds_on_the_new_tip(self) -> None:
+        first = self.publish("d" * 40)
+        race, theirs = self.racing("e" * 40)
+
+        with race:
+            mine = self.publish("c" * 40)
+
+        self.assertEqual(mine, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine),
+                         "the retry builds on the other publisher's commit")
+        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", theirs[0]))
+        files = self.ref_files()
+        for head in ("c", "d", "e"):
+            self.assertIn(f"summaries/7/{head * 40}/summary.json", files, "no publisher's summary is dropped")
+        self.assertEqual(1, len(self.sleeps))
+        self.assertIn("after 1 retry because another publish moved the ref", self.output)
+        self.assertEqual(["owner/repo"] * 3, self.dispatches)
+
+    def test_a_publish_finds_its_summary_already_pushed_after_losing_the_race(self) -> None:
+        race, theirs = self.racing("c" * 40)
+
+        with race:
+            self.assertIsNone(self.publish("c" * 40))
+
+        self.assertEqual(theirs[0], run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertIn("already has this summary; nothing to publish", self.output)
+        self.assertEqual(["owner/repo"], self.dispatches, "only the publish that pushed dispatches")
+
+    def counting_pushes(self, failure: str = "") -> tuple[AbstractContextManager[object], list[tuple[str, ...]]]:
+        """Patch git to count pushes, failing each with `failure` when it is given."""
+        real = summary.git
+        pushes: list[tuple[str, ...]] = []
+
+        def git(*args: str, **kwargs: object) -> str:
+            if args[0] == "push":
+                pushes.append(args)
+                if failure:
+                    raise summary.SummaryError(failure)
+            return real(*args, **kwargs)
+        return mock.patch.object(summary, "git", side_effect=git), pushes
+
+    def test_a_push_the_remote_refuses_fails_without_retrying(self) -> None:
+        first = self.publish("d" * 40)
+        hook = self.remote / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho no pushes today >&2\nexit 1\n")
+        hook.chmod(0o755)
+        # A global core.hooksPath would otherwise send the remote's hooks elsewhere.
+        run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
+        counted, pushes = self.counting_pushes()
+
+        with counted, self.assertRaisesRegex(summary.SummaryError, "pre-receive hook declined"):
+            self.publish("c" * 40)
+
+        self.assertEqual(1, len(pushes), "a refusal that leaves the ref in place is not a race")
+        self.assertEqual([], self.sleeps)
+        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(["owner/repo"], self.dispatches)
+
+    def test_a_push_that_keeps_losing_the_race_gives_up(self) -> None:
+        counted, pushes = self.counting_pushes(
+            "git push failed: error: cannot lock ref 'refs/projector/summaries': reference already exists")
+
+        with counted, self.assertRaisesRegex(summary.SummaryError, "cannot lock ref"):
+            self.publish("c" * 40)
+
+        self.assertEqual(summary.PUSH_ATTEMPTS, len(pushes))
+        self.assertEqual(summary.PUSH_ATTEMPTS - 1, len(self.sleeps))
+        self.assertLess(sum(self.sleeps), 15, "the retries stay brief")
+        self.assertEqual([], self.dispatches)
 
     def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
         diff_file = self.summary_path.with_name("pr.diff")
@@ -651,14 +758,11 @@ class PublishTests(unittest.TestCase):
         stored.write_text(run(self.remote, "git", "show", f"refs/projector/summaries:{folder}/attributes.json"))
         self.assertEqual({"gen/api.pb.go": False, "src/core.go": True}, summary.stored_attributes(stored),
                          "what publish writes is what the site build reads")
-        self.assertEqual("", self.err.getvalue())
+        self.assertEqual("", self.err)
         self.assertIsNone(self.publish(head), "an unchanged summary publishes nothing")
 
     def test_fetches_a_head_the_checkout_lacks_to_read_its_attributes(self) -> None:
-        other = self.remote.parent / "other"
-        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(other))
-        for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
-            run(other, "git", "config", key, value)
+        other = self.other_publisher()
         (other / ".gitattributes").write_text("src/core.go linguist-generated\n")
         run(other, "git", "add", ".gitattributes")
         run(other, "git", "commit", "--quiet", "-m", "Mark the core generated")
@@ -677,7 +781,25 @@ class PublishTests(unittest.TestCase):
         self.publish("a" * 40)
 
         self.assertNotIn(f"summaries/7/{'a' * 40}/attributes.json", self.ref_files())
-        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err.getvalue())
+        self.assertIn("could not read the .gitattributes of aaaaaaaaa, which origin did not serve", self.err)
+
+    def test_a_retry_after_losing_the_race_keeps_the_heads_attributes(self) -> None:
+        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
+        run(self.repo, "git", "add", ".gitattributes")
+        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
+        head = run(self.repo, "git", "rev-parse", "HEAD")
+        race, theirs = self.racing("e" * 40)
+
+        with race:
+            mine = self.publish(head)
+
+        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine))
+        self.assertIn("after 1 retry", self.output)
+        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
+        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
+        self.assertEqual([f"summaries/7/{head}/attributes.json"],
+                         [path for path in self.ref_files() if path.endswith("attributes.json")],
+                         "written once, for this head, and not for the other publisher's")
 
 
 ATTRIBUTES = {
@@ -1091,10 +1213,10 @@ class DescribeSummaryTests(unittest.TestCase):
 
 
 class CommentSummaryTests(unittest.TestCase):
-    """The pull request's comments stand in a list; the fake answers the calls comment_summary makes."""
+    """The pull request's timeline stands in a list; the fake answers the calls comment_summary makes."""
 
     def setUp(self) -> None:
-        self.comments = [{"id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
+        self.timeline: list[dict] = [{"event": "commented", "id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
         self.calls: list[str] = []
         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
         self.next_id = 101
@@ -1102,19 +1224,25 @@ class CommentSummaryTests(unittest.TestCase):
     def gh(self, *args: str) -> str:
         if args == ("api", "user", "--jq", ".login"):
             return "operator\n"
-        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/comments"):
-            return "".join(json.dumps([c["id"], c["body"] if c["user"]["login"] == "operator"
-                                       and "<!-- projector-summary v=1 " in c["body"] else None]) + "\n"
-                           for c in self.comments)
+        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/timeline"):
+            return "".join(json.dumps([item.get("event"), item.get("id"), (item.get("state") or "").lower(),
+                                       item["body"] if item.get("event") == "commented"
+                                       and item["user"]["login"].lower() == "operator"
+                                       and "<!-- projector-summary v=1 " in item["body"] else None]) + "\n"
+                           for item in self.timeline)
         if args[:3] == ("api", "-X", "DELETE"):
             comment_id = int(args[3].rsplit("/", 1)[1])
             self.calls.append(f"delete {comment_id}")
-            self.comments.remove(next(c for c in self.comments if c["id"] == comment_id))
+            self.timeline.remove(next(item for item in self.timeline
+                                      if item.get("event") == "commented" and item["id"] == comment_id))
+            # GitHub records the deletion on the timeline, where only the actor's own feed shows it.
+            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id, "actor": {"login": "operator"}})
             return ""
         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
-            new = {"id": self.next_id, "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
+            new = {"event": "commented", "id": self.next_id, "user": {"login": "operator"},
+                   "body": args[3].removeprefix("body=")}
             self.next_id += 1
-            self.comments.append(new)
+            self.timeline.append(new)
             self.calls.append(f"post {new['id']}")
             return json.dumps({"html_url": f"https://github.com/owner/repo/pull/7#issuecomment-{new['id']}"})
         raise AssertionError(f"unexpected gh call {args}")
@@ -1124,8 +1252,17 @@ class CommentSummaryTests(unittest.TestCase):
              mock.patch.object(summary, "hosting", return_value=self.hosted):
             return summary.comment_summary("owner/repo", 7, head)
 
+    def add_comment(self, comment_id: int, body: str, login: str = "teammate", at: int | None = None) -> None:
+        """Add a comment to the timeline, at the end or at index `at`."""
+        item = {"event": "commented", "id": comment_id, "user": {"login": login}, "body": body}
+        self.timeline.insert(len(self.timeline) if at is None else at, item)
+
+    def comment_ids(self) -> list[int]:
+        return [item["id"] for item in self.timeline if item.get("event") == "commented"]
+
     def summary_comments(self) -> list[str]:
-        return [c["body"] for c in self.comments if "projector-summary" in c["body"]]
+        return [item["body"] for item in self.timeline
+                if item.get("event") == "commented" and "projector-summary" in item["body"]]
 
     def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
         result = self.comment()
@@ -1140,56 +1277,121 @@ class CommentSummaryTests(unittest.TestCase):
 
     def test_a_later_head_reposts_the_comment_at_the_end_and_deletes_the_old_one(self) -> None:
         self.comment()
-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "Pushed a fix."})
+        self.add_comment(2, "Pushed a fix.")
 
         result = self.comment("b" * 40)
 
         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls, "the new link is up before the old goes")
-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
+        self.assertEqual([1, 2, 102], self.comment_ids())
         self.assertIn("sha=" + "b" * 40, self.summary_comments()[0])
         self.assertIn("moved the link to the summary of bbbbbbb to a new comment at the end, deleting comment 101",
                       result)
 
     def test_a_rerun_on_the_same_head_moves_a_buried_comment_to_the_end(self) -> None:
         self.comment()
-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "One question."})
+        self.add_comment(2, "One question.")
 
         self.comment()
 
         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
+        self.assertEqual([1, 2, 102], self.comment_ids())
 
-    def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
-        for comment_id in (5, 6):
-            self.comments.append({"id": comment_id, "user": {"login": "operator"},
-                                  "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
+    def test_a_later_review_buries_the_comment_and_it_moves_to_the_end(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "review-bot"}, "state": "commented",
+                              "body": "Two findings."})
 
         result = self.comment()
 
-        self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
-        self.assertIn("deleting comment 5, comment 6", result)
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+        self.assertEqual([1, 102], self.comment_ids())
+        self.assertIn("moved the link to the summary of aaaaaaa to a new comment at the end, deleting comment 101",
+                      result)
 
-    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+    def test_marking_the_pull_request_ready_buries_the_comment(self) -> None:
         self.comment()
-        self.comments.insert(1, {"id": 5, "user": {"login": "operator"},
-                                 "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
+        self.timeline.append({"event": "ready_for_review", "id": 3, "actor": {"login": "operator"}})
+        self.timeline.append({"event": "review_requested", "id": 4, "actor": {"login": "operator"}})
+
+        self.comment()
+
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+
+    def test_a_push_after_the_comment_buries_it(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "committed", "sha": "b" * 40, "message": "Fix the typo."})
+
+        self.comment()
+
+        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+
+    def test_events_the_conversation_does_not_show_leave_the_comment_last(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "subscribed", "id": 3, "actor": {"login": "teammate"}})
+        self.timeline.append({"event": "mentioned", "id": 4, "actor": {"login": "teammate"}})
+        self.timeline.append({"event": "unsubscribed", "id": 5, "actor": {"login": "teammate"}})
+
+        result = self.comment()
+
+        self.assertEqual(["post 101"], self.calls)
+        self.assertIn("comment 101 already links the summary of aaaaaaa", result)
+
+    def test_a_pending_review_leaves_the_comment_last(self) -> None:
+        self.comment()
+        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "teammate"}, "state": "pending"})
+
+        self.comment()
+
+        self.assertEqual(["post 101"], self.calls, "only its author sees a pending review")
+
+    def test_the_deletion_a_repost_leaves_behind_does_not_bury_the_new_comment(self) -> None:
+        self.comment()
+        self.add_comment(2, "One question.")
+        self.comment()
         self.calls.clear()
 
         result = self.comment()
 
-        self.assertEqual(["delete 5"], self.calls, "the newest comment stays, and the straggler goes")
-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
+        self.assertEqual("comment_deleted", self.timeline[-1]["event"], "the old comment's deletion comes last")
+        self.assertEqual([], self.calls)
+        self.assertIn("comment 102 already links the summary of aaaaaaa", result)
+
+    def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
+        for comment_id in (5, 6):
+            self.add_comment(comment_id, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator")
+
+        result = self.comment()
+
+        self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
+        self.assertEqual([1, 101], self.comment_ids())
+        self.assertIn("deleting comment 5, comment 6", result)
+
+    def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+        self.comment()
+        self.add_comment(5, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator", at=1)
+        self.timeline.append({"event": "mentioned", "id": 3, "actor": {"login": "teammate"}})
+        self.calls.clear()
+
+        result = self.comment()
+
+        self.assertEqual(["delete 5"], self.calls, "the last comment stays, and the straggler goes")
+        self.assertEqual([1, 101], self.comment_ids())
         self.assertIn("comment 101 already links the summary of aaaaaaa, deleting comment 5", result)
 
+    def test_the_accounts_login_matches_in_any_case(self) -> None:
+        self.add_comment(5, f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n",
+                         login="Operator")
+
+        self.assertIn("comment 5 already links the summary of aaaaaaa", self.comment())
+        self.assertEqual([], self.calls)
+
     def test_another_accounts_summary_comment_is_left_alone(self) -> None:
-        self.comments.append({"id": 2, "user": {"login": "teammate"},
-                              "body": f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs."})
+        self.add_comment(2, f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.")
 
         self.comment()
 
         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
-        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.comments[1]["body"])
+        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.timeline[1]["body"])
 
     def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
         with mock.patch.object(summary, "gh", side_effect=self.gh), \
