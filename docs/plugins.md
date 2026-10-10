@@ -45,11 +45,15 @@ the README`. The core workflows use the local CLI and do not require MCP.
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
 GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
-the layers above it. The extension is optional. Without it, or in a
-repository that does not have stacks enabled, `implement` chains the pull
-requests by base branch and tells you once, and `fix-pr` and
-`start-fix-loop` find a stack's layers from those base branches. Install it
-with `gh extension install github/gh-stack` to get real stacks.
+the layers above it right away. Every layer stays on the current head of the
+layer below it, so you can merge the whole stack, or any number of layers
+from the bottom up, in one step from GitHub, and `start-fix-loop` reports
+which of them are ready to merge together. The extension is optional.
+Without it, or in a repository that does not have stacks enabled,
+`implement` chains the pull requests by base branch and tells you once, and
+`fix-pr` and `start-fix-loop` find a stack's layers from those base
+branches. Install it with `gh extension install github/gh-stack` to get
+real stacks.
 
 GitHub's own `gh-stack` skill teaches an agent the extension's commands.
 Projector does not copy it. Both hosts' Projector marketplaces serve a

@@ -1,4 +1,4 @@
-<!-- projector:begin 2 -->
+<!-- projector:begin 3 -->
 ## Projector conventions
 
 This repository keeps its project plans in Git with
@@ -23,9 +23,10 @@ line breaks.
 Open dependent work that is too large to review as one pull request as a
 GitHub stack with `gh stack`, as Projector's `implement` skill describes
 under "Stack dependent work". Fix stacked code on the branch that introduced
-it, and let `gh stack` carry the fix up by rebasing the layers above. Chain
-pull requests by base branch, and update them by merging, only where
-`gh stack` is unavailable.
+it, and let `gh stack` carry the fix up right away by rebasing every layer
+above, so each layer stays on the current head of the one below and the
+stack can merge as a unit. Chain pull requests by base branch, and update
+them by merging, only where `gh stack` is unavailable.
 
 Projector generates this section. To change it, change the template in
 Projector and run `project init`.

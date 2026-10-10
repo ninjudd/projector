@@ -26,6 +26,7 @@ import os
 import re
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1110,9 +1111,153 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
 
 
-def self_review(repo: str, number: int, reviewer: str) -> bool:
-    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
-    return ((pr or {}).get("user") or {}).get("login", "").lower() == reviewer.lower()
+# The sign-off
+
+PEER_WAIT = 180
+PEER_POLL = 15
+sleep = time.sleep
+
+
+def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) -> dict[str, dict]:
+    """Each model with a Projector verdict or a start comment among the reviewer's, keyed by identity.
+
+    `verdict` is its newest verdict on `head`, and `earlier` its newest on
+    another head, each with the review's `id`, `url`, `at`, `sha`, and
+    `verdict`, or None. `reviewing` is its live start comment on `head`, and
+    `elsewhere` one on another head, each None when there is none."""
+    models: dict[str, dict] = {}
+
+    def entry(model: str) -> dict:
+        return models.setdefault(identity(model), {"model": identity(model), "verdict": None, "earlier": None,
+                                                   "reviewing": None, "elsewhere": None})
+
+    for review in reviews:
+        marker = verdict_marker(review.get("body") or "")
+        if marker is None or not review.get("at"):
+            continue
+        found = entry(marker.model)
+        key = "verdict" if marker.sha == head else "earlier"
+        if found[key] is None or parse_time(review["at"]) >= parse_time(found[key]["at"]):
+            found[key] = {"id": review.get("id"), "url": review.get("url"), "at": review["at"], "sha": marker.sha,
+                          "verdict": marker.verdict}
+    for comment in starts:
+        if is_live(comment, reviews, at):
+            entry(comment["model"])["reviewing" if comment["sha"] == head else "elsewhere"] = comment
+    return models
+
+
+def signoff(models: dict[str, dict], open_threads: int) -> str:
+    """The rule review-pr § Review as one model among several states: `changes-requested` when any
+    model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
+    or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
+    and `unreviewed` when no model has one."""
+    verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
+    if "changes-requested" in verdicts:
+        return "changes-requested"
+    if open_threads or any(m["reviewing"] for m in models.values()):
+        return "waiting"
+    return "clean" if verdicts else "unreviewed"
+
+
+def pending_peers(models: dict[str, dict], me: str) -> list[str]:
+    """The other models that reviewed an earlier head, or are reviewing another one, and have neither a
+    verdict nor a live start comment on this one: a loop that has not noticed the push yet."""
+    return sorted(key for key, m in models.items()
+                  if key != me and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
+
+
+def peer_wait(value: object) -> int:
+    """`review.peer_wait`: unset is the default, and anything but a non-negative integer is refused."""
+    if value is None:
+        return PEER_WAIT
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReviewError(f"review.peer_wait must be a non-negative number of seconds, not {value!r}")
+    return value
+
+
+def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
+         posted: Optional[dict] = None) -> dict:
+    """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
+    says `clean`.
+
+    The rule reads the reviewer's verdicts and start comments; `posted` stands
+    in for this review's verdict before it is submitted. While the rule says
+    `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
+    until `deadline`: a peer's start comment makes it `waiting`, a peer's
+    verdict joins the rule, and a peer that posts nothing by the deadline is
+    absent. A head that moves ends the wait, because the reviews of the new
+    head decide it. Returns `signoff`, the `models` it read, how many whole
+    seconds it `waited`, the peers still `pending`, and whether the head
+    `moved`."""
+    started = now()
+    while True:
+        reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
+            + ([posted] if posted else [])
+        models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
+        result = signoff(models, open_threads)
+        pending = pending_peers(models, me) if result == "clean" else []
+        waited = int((now() - started).total_seconds())
+        if not pending or now() >= deadline:
+            return {"signoff": result, "models": models, "waited": waited, "pending": pending, "moved": False}
+        sleep(max(0.0, min(PEER_POLL, (deadline - now()).total_seconds())))
+        if pull_request(repo, number)["head"]["sha"] != head:
+            return {"signoff": result, "models": models, "waited": int((now() - started).total_seconds()),
+                    "pending": pending, "moved": True}
+
+
+FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
+
+
+def thread_model(thread: dict) -> Optional[str]:
+    """The model a finding thread's marker names, or None for one an earlier release opened."""
+    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
+    return found.group(1) if found else None
+
+
+def status(repo: str, number: int, reviewer: str) -> dict:
+    """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
+    part in it and every open Projector finding thread."""
+    try:
+        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+    except NotFound as exc:
+        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+    head = pr["head"]["sha"]
+    models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
+    threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+    rows = []
+    for key in sorted(models):
+        m = models[key]
+        row = {"model": m["model"],
+               "state": "reviewing" if m["reviewing"] else m["verdict"]["verdict"] if m["verdict"] else "pending"}
+        verdict = m["verdict"] or m["earlier"]
+        if verdict:
+            row.update(review=verdict["id"], url=verdict["url"], at=verdict["at"], sha=verdict["sha"])
+        comment = m["reviewing"] or m["elsewhere"]
+        if comment:
+            row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
+        rows.append(row)
+    return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
+            "signoff": signoff(models, len(threads)), "models": rows,
+            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
+
+
+def status_lines(result: dict) -> list[str]:
+    """`review status` without --json: the sign-off, a line for each model, and the open threads."""
+    lines = [f"#{result['number']} at {result['head'][:7]}: {result['signoff']}"]
+    width = max((len(row["model"]) for row in result["models"]), default=0) + 3
+    for row in result["models"]:
+        if row["state"] == "reviewing" or row["state"] == "pending" and "comment" in row:
+            since = parse_time(row["since"]).strftime("%H:%M UTC")
+            where = "" if row["state"] == "reviewing" else f" on {row['comment_sha'][:7]}"
+            detail = f"start comment {row['comment']}{where}, since {since}"
+        else:
+            detail = f"review {row['review']}" + (f" on {row['sha'][:7]}" if row["sha"] != result["head"] else "")
+        lines.append(f"  {row['model']:<{width}}{row['state']:<20}{detail}")
+    threads = result["open_threads"]
+    if threads:
+        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
+        lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
+    return lines
 
 
 def check_body(body: str) -> None:
@@ -1219,17 +1364,21 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
-            incremental: bool = False, enabled: bool = True) -> dict:
-    """Submit the review, then set draft state, re-read, record, delete the start comment, and
-    release the lock, in that order. Every refusal leaves the lock held for this review to retry.
+            incremental: bool = False, enabled: bool = True, wait: int = PEER_WAIT) -> dict:
+    """Submit the review, then apply the sign-off rule and set draft state, re-read, record, delete the
+    start comment, and release the lock, in that order. Every refusal leaves the lock held for this
+    review to retry.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
-    `review.incremental`."""
+    `review.incremental`. `wait` is `review.peer_wait`: how long after this review began on the
+    head the rule waits for a model that reviewed an earlier head before it signs off."""
     root, number = paths.root, paths.number
     state = read_state(paths)
     loop = loop if loop is not None else state.get("loop")
-    repo, sha = state["repo"], state["sha"]
+    repo, sha, reviewer = state["repo"], state["sha"], state["reviewer"]
+    me = identity(state["model"])
+    deadline = parse_time(state["head_started_at"]) + timedelta(seconds=wait)
     if incremental:
         for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
             if given is not None:
@@ -1250,7 +1399,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     published = state.get("published")
     if published and published.get("sha") == sha and state.get("start_comment"):
         # A publish that submitted and then stopped: finish it rather than post a second review.
-        review_id, draft_wanted = published["id"], published["draft"]
+        review_id = published["id"]
     else:
         if not body_path.is_file():
             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
@@ -1260,43 +1409,51 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         if pr["head"]["sha"] != sha:
             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
                               f"run `project review move {number}` and review the new head")
-        reviews = reviewer_reviews(repo, number, state["reviewer"])
+        reviews = reviewer_reviews(repo, number, reviewer)
         check_collision(root, state, loop, second, body, reviews)
         incremental_from = None
+        mine = ((pr.get("user") or {}).get("login") or "").lower() == reviewer.lower()
         if incremental:
             rules = incremental_rules(root, state, loop, enabled, reviews)
             if not rules["incremental"]:
                 raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
                                   "on this setup")
             incremental_from = rules["from"]
-            mine = self_review(repo, number, state["reviewer"])
             text = compose_incremental(state, body, rules, not mine, now())
-            event = "COMMENT"
+            event, open_after = "COMMENT", 0
         else:
             check_threads(threads, diff_lines(repo, number) if threads else {})
             tally = census(repo, number)
-            open_now = tally["open"] + len(threads)
-            if verdict == "clean" and open_now:
+            open_after = tally["open"] + len(threads)
+            if verdict == "clean" and open_after:
                 raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
                                   f"{len(threads)} are being posted; settle them or request changes")
-            if verdict == "changes-requested" and not open_now:
+            if verdict == "changes-requested" and not open_after:
                 raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
                                   "is clean")
             total = tally["total"] + len(threads)
             noun = "thread" if total == 1 else "threads"
-            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
+            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_after} open"
             text = compose(state, verdict, body, covered, len(threads), census_line, now())
-            mine = self_review(repo, number, state["reviewer"])
-            if mine or (verdict == "clean" and not allow_approve):
+            if mine or verdict == "clean" and not allow_approve:
                 event = "COMMENT"
+            elif verdict == "changes-requested":
+                event = "REQUEST_CHANGES"
             else:
-                event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
-        draft_wanted = (verdict == "changes-requested") if mine else None
+                # One account's newest approval or change request sets reviewDecision, so an approval would
+                # replace another model's standing change request: approve only when the rule, counting
+                # this verdict as posted, signs the head off.
+                posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
+                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
+                if ahead["moved"]:
+                    raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
+                                      f"other models; run `project review move {number}` and review the new head")
+                event = "APPROVE" if ahead["signoff"] == "clean" else "COMMENT"
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
                                  "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
                                          f"model={state['model']} -->\n{t['body'].strip()}\n"} for t in threads]}
-        token = reviewer_token(state["reviewer"])
+        token = reviewer_token(reviewer)
         paths.folder.mkdir(parents=True, exist_ok=True)
         paths.request.write_text(json.dumps(payload), encoding="utf-8")
         posted = gh_json(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input",
@@ -1306,27 +1463,38 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         # Recorded before anything else can fail, so a retry finishes this review rather than
         # posting a second one.
         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
-                              "draft": draft_wanted, "from": incremental_from}
+                              "from": incremental_from, "self": mine, "open": open_after}
         write_state(paths, state)
-    token = reviewer_token(state["reviewer"])
-    if draft_wanted is not None:
-        run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
-    posted = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"])
-    if f"sha={sha}" not in (posted or {}).get("body", ""):
+    published = state["published"]
+    token = reviewer_token(reviewer)
+    read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
+    if f"sha={sha}" not in (read.get("body") or ""):
         raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
+    # The rule counts this review as read back, whether or not the reviews listing shows it yet.
+    posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+              "login": reviewer, "body": read["body"]}
+    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+    # Only a draft is about to be signed off, so only a draft waits for its peers.
+    signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
+                  deadline if published.get("self") and draft else now(), posted)
+    draft_wanted = None
+    if published.get("self") and not signed["moved"]:
+        draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
+    if draft_wanted is not None and draft_wanted != draft:
+        run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
     if draft_wanted is not None:
         draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
         if draft != draft_wanted:
-            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the "
-                              f"{state['published']['verdict']} verdict; set it with `gh pr ready` and retry")
+            raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the sign-off "
+                              f"{signed['signoff']}; set it with `gh pr ready` and retry")
     if loop is not None:
         record = read_record(root, loop)
         if not any(r.get("review_id") == review_id for r in record):
             # `base` is the merge base a later incremental review measures from; `from` marks an
             # incremental review, which a later one never builds on.
             record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
-                           "verdict": state["published"]["verdict"], "published_at": now().isoformat(),
-                           "base": state["base"], "from": state["published"].get("from"), "model": state["model"]})
+                           "verdict": published["verdict"], "published_at": now().isoformat(),
+                           "base": state["base"], "from": published.get("from"), "model": state["model"]})
             loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
             loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     comment = (state.get("start_comment") or {}).get("id")
@@ -1335,6 +1503,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         state["start_comment"] = None
     write_state(paths, state)
     paths.lock(sha).unlink(missing_ok=True)
-    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id,
-            "verdict": state["published"]["verdict"], "event": state["published"]["event"],
-            "draft": draft_wanted, "from": state["published"].get("from")}
+    return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
+            "event": published["event"], "draft": draft_wanted, "from": published.get("from"),
+            "signoff": signed["signoff"], "waited": signed["waited"], "pending": signed["pending"],
+            "moved": signed["moved"]}

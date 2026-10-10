@@ -41,10 +41,11 @@ what it did to each:
   markers: where plans live, how to use `project`, the writing style for
   documentation and GitHub prose, and how to open dependent work as a stack
   with `gh stack`, or as pull requests chained by base branch where
-  `gh stack` is unavailable. `init` appends the section to an existing
-  file or creates the file with only that section, and refreshes the section
-  when it falls behind the template this command ships. Everything outside the
-  markers is yours and is never changed.
+  `gh stack` is unavailable, and keep every layer on the current head of the
+  one below so the stack can merge as a unit. `init` appends the section to
+  an existing file or creates the file with only that section, and refreshes
+  the section when it falls behind the template this command ships.
+  Everything outside the markers is yours and is never changed.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
@@ -388,7 +389,7 @@ collaborator on an older CLI is told what to do without a failing gate.
 
 ```console
 $ project check
-warning: AGENTS.md: Projector section is version 1; this command ships version 2 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+warning: AGENTS.md: Projector section is version 2; this command ships version 3 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
 Project plans are valid.
 ```
 
@@ -519,6 +520,7 @@ These are the keys Projector reads today:
 | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+| `review.peer_wait` | non-negative integer | `180` | `project review publish`, as the seconds after a review began on a head that it waits for a model that reviewed an earlier head to start on this one before it signs the head off; `0` turns the wait off |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 
@@ -526,7 +528,10 @@ These are the keys Projector reads today:
 `false` rather than a question to ask. It never applies to a review of your own
 pull request, where GitHub refuses the verdict regardless. `review.incremental`
 is on unless it is `false`, and a value that is neither `true` nor `false`
-makes both commands that read it refuse and name the key.
+makes both commands that read it refuse and name the key. `review.peer_wait`
+is read from the review's checkout, and a value that is not a non-negative
+integer, such as a string, a negative number, or `true`, makes `publish`
+refuse and name the key.
 
 The operator -- the account whose branches carry fixes and whose token pushes
 them -- is deliberately not a key. It follows whichever token is authenticated,
@@ -1080,6 +1085,7 @@ project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
 project review gate 66
+project review status 66
 project review rules
 ```
 
@@ -1143,14 +1149,63 @@ count, or when the reviewer already has a verdict by this model on the head
 that this loop's record does not account for. A verdict by another model is a
 second opinion and never collides, and one whose marker names no model
 collides with every model. Outside a loop, `--second-verdict <review-id>`
-publishes beside an earlier verdict the body names. On a self-review it
-submits a `COMMENT` and then marks the pull request ready or returns it to
-draft; on another author's pull request it posts `REQUEST_CHANGES` or a
-`COMMENT`, or an `APPROVE` where `review.allow_approve` is `true`, and leaves
-draft state alone. It then re-reads the review and the draft state, adds the
-review id to the loop's record, deletes the start comment, and releases the
-lock. A run that fails after submitting exits non-zero, and running it again
-finishes that review rather than posting another.
+publishes beside an earlier verdict the body names.
+
+On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
+rule to the head it published on. The rule reads the reviewer's verdicts and
+start comments and every Projector finding thread. A start comment is live
+until its model posts a verdict on its head, or until a day passes since its
+last edit, and a model is reviewing the head while its start comment there is
+live. With each model's newest verdict on the head counting, the head is
+`changes-requested` when any of those requests changes, `waiting` when none
+does and a model is reviewing it or a finding thread is open, `clean` when
+every one is clean, and `unreviewed` when there is none. `changes-requested`
+returns the pull request to draft, `clean` marks it ready, and `waiting`
+leaves it as it is, so the last model to finish sets the draft state. Before
+it marks a draft ready, `publish` waits for each peer: another model with a
+verdict on an earlier head, or a live start comment on another head, and
+nothing on this one. It re-reads the start comments and verdicts every 15
+seconds until `review.peer_wait` seconds after this review began on the head.
+A peer's start comment makes the head `waiting`, a peer's verdict joins the
+rule, and a head that moves ends the wait and leaves the draft state alone. A
+review that already took longer does not wait. On another author's pull
+request `publish` posts `REQUEST_CHANGES` or a `COMMENT`, and leaves draft
+state alone. Where `review.allow_approve` is `true` it posts an `APPROVE` for
+a clean verdict only when the rule, counting that verdict as posted, signs
+the head off after the same wait, because one account's newest approval
+would replace another model's change request. `publish` then re-reads the
+review and the draft state, adds the review id to the loop's record, deletes
+the start comment, and releases the lock. It prints the sign-off, how long it
+waited and for which models, and the draft state it set; `--json` gives them
+as `signoff`, `waited`, `pending`, `moved`, and `draft`. A run that fails
+after submitting exits non-zero, and running it again finishes that review
+rather than posting another.
+
+`status` prints the sign-off of the pull request's current head, by the same
+rule, with each model's part in it and the open finding threads:
+
+```
+$ project review status 66
+#66 at 4f2a9c1: waiting
+  claude-opus-5-5   clean               review 3301
+  gpt-5.5           reviewing           start comment 2290, since 14:02 UTC
+  1 open finding thread: src/projector/review.py:648 (gpt-5.5)
+```
+
+A model with a verdict or a start comment only on an earlier head is
+`pending`, and does not change the sign-off. It reads the pull request, its
+reviews, its issue comments, and its threads, finds the reviewer as `setup`
+does, from `--reviewer`, then `review.username`, then the authenticated user,
+and runs from any directory. It exits 0 whatever the sign-off, and 1 only
+when it cannot read the pull request. With `--json` it prints one object:
+
+| Field | Value |
+| --- | --- |
+| `repo`, `number`, `head` | The pull request and its current head SHA. |
+| `draft` | Whether the pull request is a draft. |
+| `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
+| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
+| `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review
@@ -1203,10 +1258,10 @@ head, the kind, and the counts, and a lead that links the full review and
 states the change's size, the kind, and any resolved conflict. It always posts
 a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
 approval is what remains." on another author's pull request, and on a
-self-review marks the pull request ready. It refuses, keeping the lock, when a
-rule fails, when the body is empty, too long, or holds a signature line, a
-marker, or `{census}`, and when given `--threads`, `--covered`,
-`--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
+self-review applies the sign-off rule, as any clean verdict does. It refuses,
+keeping the lock, when a rule fails, when the body is empty, too long, or
+holds a signature line, a marker, or `{census}`, and when given `--threads`,
+`--covered`, `--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
 `--verdict` and `--covered` are required, and a body that holds a
 `projector-incremental` line is refused like one that holds its own marker.
 
