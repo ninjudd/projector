@@ -19,6 +19,10 @@ PUBLISHED_SKILLS = {
     "summarize-pr",
     "write",
 }
+# A skill cites another skill's section as: `../<skill>/SKILL.md` describes
+# under "<heading>". The heading may be at any level.
+SECTION_CITATION = re.compile(r'`\.\./([\w-]+)/SKILL\.md` describes under "([^"]+)"')
+HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.MULTILINE)
 
 
 class PackagingTests(unittest.TestCase):
@@ -133,17 +137,30 @@ class PackagingTests(unittest.TestCase):
             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
 
     def test_every_citation_of_another_skills_section_names_a_heading_it_has(self) -> None:
-        citation = re.compile(r'`\.\./([\w-]+)/SKILL\.md` describes under "([^"]+)"')
         cited = set()
         for citing in sorted((ROOT / "skills").rglob("*.md")):
             prose = " ".join(citing.read_text().split())
-            for skill, heading in citation.findall(prose):
+            for skill, heading in SECTION_CITATION.findall(prose):
                 cited.add((skill, heading))
                 target = (ROOT / "skills" / skill / "SKILL.md").read_text()
-                headings = re.findall(r"^## (.+)$", target, re.MULTILINE)
                 with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
-                    self.assertIn(heading, headings)
+                    self.assertIn(heading, HEADING.findall(target))
         self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
+
+    def test_a_citation_resolves_to_a_heading_at_any_level_but_not_to_prose(self) -> None:
+        skill = "# Skill\n\n## Section\n\n### Subsection\n\nProse that mentions ## Elsewhere.\n"
+        headings = HEADING.findall(skill)
+        for heading, resolves in (
+            ("Section", True),
+            ("Subsection", True),
+            ("Elsewhere", False),
+            ("Missing", False),
+        ):
+            citing = f'as `../review-pr/SKILL.md` describes under\n"{heading}".'
+            [(skill_name, cited)] = SECTION_CITATION.findall(" ".join(citing.split()))
+            with self.subTest(heading=heading):
+                self.assertEqual(("review-pr", heading), (skill_name, cited))
+                self.assertEqual(resolves, cited in headings)
 
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:
