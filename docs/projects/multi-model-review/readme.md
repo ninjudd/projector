@@ -56,12 +56,15 @@ one loop.
 Projector identifies a reviewer by its model, not its account. Within the
 reviewer's account, a reviewer is the model ID that every review marker
 already records, such as `claude-opus-5-5` or `gpt-5.5`. Each model keeps its
-own lock, state file, scratch worktree, and collision check, and it settles
-only the finding threads it opened. The same model twice, on one machine or
-two, still collides. A different model is a second opinion and never
-collides. One rule over GitHub's state decides the sign-off: a head is signed
-off when every model with a verdict on it is clean, no model is still
-reviewing it, and no Projector finding thread is open. Every `publish`
+own lock, state file, scratch worktree, and collision check. On the review
+side, each model re-checks the findings it opened, and adopts the findings of
+a model that has stopped reviewing the pull request, so no finding goes
+without a re-check. The fix loop still answers every finding from every
+model. The same model twice, on one machine or two, still collides. A
+different model is a second opinion and never collides. One rule over
+GitHub's state decides the sign-off: a head is signed off when every model
+with a verdict on it is clean, no model is still reviewing it, and no
+Projector finding thread is open. Every `publish`
 applies that rule after it submits, so the last model to finish sets the
 draft state. Before `publish` marks a draft ready, it waits a bounded time
 for a model that reviewed an earlier head to start on this one.
@@ -94,11 +97,13 @@ another account is a cross-author review, which moves GitHub's
 `reviewDecision` by itself.
 
 A model upgraded in the middle of a pull request is a new reviewer. A loop
-restarted on `claude-opus-5-6` reviews later heads under that ID. The old
-ID's verdicts stop counting once the head moves, because the sign-off reads
-only verdicts on the current head. Its open finding threads keep holding the
-sign-off until someone settles them: the old model, you, or the new model
-when you tell it to.
+restarted on `claude-opus-5-6` reviews later heads under that ID. The old ID
+owes the next head, or the next answer on its findings, and posts nothing, so
+once `review.peer_wait` has passed it has stopped. The new ID, or any other
+model still reviewing, then adopts the old ID's findings and re-checks them
+as § 2.8 describes. The first adoption reply records the stop on GitHub, and
+from then on the old ID's verdicts no longer count, even one on the current
+head.
 
 ### 2.2 The flow on a new head
 
@@ -106,8 +111,12 @@ Each model runs its own loop, with its own watcher, subagents, and loop id.
 One model's review of one head runs like this:
 
 1. The loop's watcher reports `NEW PR`, `NEW HEAD`, or `RESPONDED`, as today.
-   `watch-prs.sh` takes `--model`, so a reply on another model's finding
-   thread is not a `RESPONDED` for this loop.
+   A `RESPONDED` reaches every model's loop, whichever model's finding the
+   author answered. Before it re-reviews, the subagent runs
+   `project review census <number> --wait --json`, and it re-reviews only
+   when its model's newest verdict on the head requests changes, or when an
+   answered thread is its own or one it may now adopt (§ 2.8). Otherwise it
+   reports that the answer belongs to another model and stops.
 2. The subagent runs `project review setup <number> --model <model-id>`.
    Setup takes this model's lock, writes this model's state file, and creates
    this model's scratch worktree, at the paths in § 2.4. Before it posts, it
@@ -117,13 +126,17 @@ One model's review of one head runs like this:
    comment and says to delete it if that session has stopped. Setup then
    posts the start comment, whose marker now names the model, and records
    when the review began on this head.
-3. The subagent reviews the head as `review-pr` describes. It settles the
-   finding threads its own model opened, and the threads that name no model,
-   which earlier releases opened. It leaves another model's threads to that
-   model.
+3. The subagent reviews the head as `review-pr` describes. It re-checks every
+   finding thread that census marks as its own: the ones its model opened,
+   the ones it adopted, and the ones that name no model, which earlier
+   releases opened. It also re-checks each thread census says it may adopt,
+   and settles an open one, or a fix that does not hold, with
+   `project review adopt` (§ 2.8). It leaves the threads of a model that is
+   still reviewing to that model.
 4. The subagent runs `project review publish`. Publish checks the head, runs
-   the collision check for this model only, counts this model's threads for
-   the verdict, and submits the review. Each finding marker carries `model=`.
+   the collision check for this model only, counts the threads census marks
+   `mine` for the verdict, and submits the review. Each finding marker carries
+   `model=`.
 5. Publish reads the account's verdicts, the start comments, and every
    finding thread, and applies the sign-off rule in § 2.3. When the rule says
    to sign off a draft, publish first runs the peer wait.
@@ -142,16 +155,19 @@ reviewer account's Projector verdicts on the pull request, its start comments,
 and every Projector finding thread. A start comment is live unless its model
 has a verdict on the comment's `sha=` submitted after the comment was
 created, or the comment is more than a day old, the age at which a lock is
-stale. For each model, the verdict that counts is its newest one on the
-current head, and a model is reviewing the head while its start comment on
-that head is live.
+stale. A model is reviewing the head while its start comment on that head is
+live. A model is recorded as stopped while an adoption reply that names it
+(§ 2.8) is newer than anything it has posted since. The rule leaves the
+verdicts of a recorded-stopped model out, because the model that adopted its
+findings now speaks for them. For every other model, the verdict that counts
+is its newest one on the current head.
 
 | Result | When | Draft state on a self-review |
 | --- | --- | --- |
-| `changes-requested` | Any model's newest verdict on the head requests changes. | Draft. |
-| `waiting` | No model requests changes, and either a model is reviewing the head or a Projector finding thread is open. | Left as it is. |
-| `clean` | At least one model has a verdict on the head, every model's newest verdict on it is clean, no model is reviewing it, and no Projector finding thread is open. | Ready, after the peer wait. |
-| `unreviewed` | No model has a verdict on the head. | Never the result of a publish. |
+| `changes-requested` | Any counted model's newest verdict on the head requests changes. | Draft. |
+| `waiting` | No counted model requests changes, and either a model is reviewing the head or a Projector finding thread is open. | Left as it is. |
+| `clean` | At least one counted model has a verdict on the head, every counted model's newest verdict on it is clean, no model is reviewing it, and no Projector finding thread is open. | Ready, after the peer wait. |
+| `unreviewed` | No counted model has a verdict on the head. | Never the result of a publish. |
 
 A live start comment on an older head does not hold the rule. Its model is
 either moving to the current head, which the peer wait covers, or stopped,
@@ -162,18 +178,20 @@ one.
 model finishes. A pull request that is already ready stays ready while a new
 head is reviewed, as it does today until a review requests changes.
 
-An open finding thread holds the sign-off whichever model opened it. A
-finding that a model posted and then stopped reviewing, such as one `fix-pr`
-declined, keeps the pull request in draft until someone settles it.
+An open finding thread holds the sign-off whichever model opened it. When the
+model that opened it stops reviewing, another model adopts the thread and
+settles it, as § 2.8 describes, so a finding never waits on a loop that is
+gone.
 
 #### The peer wait
 
 The rule sees only what is on GitHub, and a loop that has not noticed a push
 yet has posted nothing for the new head. So before publish marks a draft
-ready, or posts an approval, it looks for peers. A peer is another model with
-a verdict on an earlier head of this pull request, or with a live start
-comment on another head. A peer is pending when it has neither a verdict nor
-a live start comment on the current head.
+ready, or posts an approval, it looks for peers. A peer is another model,
+not recorded as stopped, with a verdict on an earlier head of this pull
+request, or with a live start comment on another head. A peer is pending when
+it has neither a verdict nor a live start comment on the current head. Once a
+model's findings are adopted, no publish waits for it again until it posts.
 
 Publish waits for pending peers until `review.peer_wait` seconds after this
 review began on the head, re-reading the start comments and verdicts every 15
@@ -216,6 +234,7 @@ The markers name the model:
 | --- | --- |
 | Start comment | `<!-- projector-start v=1 sha=<full-sha> model=<model-id> -->`. A start comment without `model=` is read by the model its first line names, `model <model-id>`, which every start comment carries. |
 | Finding | `<!-- projector-finding v=1 priority=<P1\|P2> sha=<full-sha> model=<model-id> -->`. A finding without `model=` belongs to every model. |
+| Verify reply | `<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`. An adoption reply adds `adopted-from=<model-id>`, the model whose finding it takes over. |
 | Review | Unchanged, because it already carries `model=`. A verdict whose marker names no model collides with every model. |
 
 Local state moves under the model, in the review state directory:
@@ -241,10 +260,22 @@ pull request on this machine, and it refuses, listing the models, when there
 are several. State that an earlier release wrote is not read, so a review set
 up before the upgrade runs `setup` again.
 
-`project review census` gives each thread its `model`, or `null`, and `owned`,
-which is true for a thread this review settles. Its count, which the review
-body prints, covers the owned threads. When other models have threads, the
-count adds them on a second clause:
+`project review census` gives each thread these fields, by the rules in
+§ 2.8:
+
+| Field | Value |
+| --- | --- |
+| `model` | The model that opened the thread, or `null` when its marker names none. |
+| `verifier` | The model that re-checks it now, or `null` when the model that opened it has stopped and no model still reviewing has adopted it. |
+| `mine` | `true` when this model is the verifier, or the thread names no model. |
+| `adopt` | `now` when this model may adopt it, `wait` when its verifier owes a review whose `review.peer_wait` window is still open, or `no`. |
+| `adopt_at` | With `wait`, when the window closes. |
+| `answered` | `true` when the author's reply is newer than the verifier's last verify reply on the thread. |
+
+With `--wait`, census waits, re-reading every 15 seconds, until no answered
+thread is at `wait`. The count, which the review body prints, covers the
+threads marked `mine`. When other models have threads, the count adds them on
+a second clause:
 
 ```
 4 finding threads from claude-opus-5-5: 4 resolved, 0 open. Other models: 2 threads, 1 open
@@ -272,12 +303,13 @@ does: `--reviewer`, then `review.username`, then the authenticated user.
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`, by the rule in § 2.3. |
-| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict adds `review`, `url`, and `at`. A start comment adds `comment` and `since`. |
-| `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` when the thread names none. |
+| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict adds `review`, `url`, and `at`. A start comment adds `comment` and `since`. A stopped model adds `adopted_by`. |
+| `open_threads` | Each open Projector finding thread's `path`, `line`, `model`, or `null` when the thread names none, and `verifier`. |
 
 `pending` is a model whose only verdicts or start comments are on earlier
 heads. It does not change `signoff`, which depends only on the current head,
-so `status` and the rule never disagree.
+so `status` and the rule never disagree. `stopped` is a model recorded as
+stopped, as § 2.3 defines it.
 
 A new configuration key bounds the wait:
 
@@ -307,9 +339,10 @@ The site reads no start comments or threads, so it never shows `waiting`.
 | Reader | After this change |
 | --- | --- |
 | Draft state | `publish` sets it by the rule in § 2.3, as § 2.2 describes. |
-| `fix-pr`'s clean test | "A clean verdict names its current head" becomes "`project review status <number>` reports `clean`". When nothing is outstanding but the head is not signed off, `fix-pr` reports what `status` names, such as `gpt-5.5` still reviewing or a finding only `gpt-5.5` can settle. A Projector loop that runs on Codex is one of those models. The external reviewers `fix-pr` names, such as Codex's own GitHub reviewer, post from their own accounts and stay outside the rule. |
-| `start-fix-loop`'s watcher | No change. It announces each review by its id, so each model's review is one `REVIEW` line. `DRAFT` follows the draft state, which the rule sets, and `VERDICT` follows GitHub's `reviewDecision`. |
-| `start-review-loop`'s watcher | `--model <model-id>`. An author's reply counts as an answer only on a finding thread that names this model or names none. It strips a bracketed variant from both IDs before it compares them. |
+| `fix-pr`'s outstanding work | No change. `fix-pr` fixes or declines every unresolved finding, from every model, as § 2.8 sets out. |
+| `fix-pr`'s clean test | "A clean verdict names its current head" becomes "`project review status <number>` reports `clean`". When nothing is outstanding but the head is not signed off, `fix-pr` reports what `status` names, such as `gpt-5.5` still reviewing. A Projector loop that runs on Codex is one of those models. The external reviewers `fix-pr` names, such as Codex's own GitHub reviewer, post from their own accounts and stay outside the rule. |
+| `start-fix-loop`'s watcher | No change. It reports every unresolved thread as `FINDING`, whichever model opened it, and announces each review by its id, so each model's review is one `REVIEW` line. `DRAFT` follows the draft state, which the rule sets, and `VERDICT` follows GitHub's `reviewDecision`. |
+| `start-review-loop`'s watcher | No change to the script. It reports an answer on any model's finding thread to every model's loop. Each loop's subagent decides from `project review census --wait` whether the answer is its to act on, as § 2.2 says. |
 | Summary page header | Built from `models`, as below. |
 | Reviews index | Another pull request in flight adds a badge from each head's `status`. `status` keeps its meaning, so the badge needs no change. |
 | Summaries | No change. There is one summary per head. Each model's review updates the newest summary, as `review-pr` already does when the newest version comes from another session, and its flags come from every open finding thread. |
@@ -358,18 +391,112 @@ for a peer. It waits only when the pull request is a draft.
 
 | File | Change |
 | --- | --- |
-| `src/projector/review.py` | `identity()` and `model_key()`. `Paths` takes the model and puts the state, lock, request, and worktree paths under it. A resolver picks the model for commands after setup. `start_comment()` writes `model=`. `start_comments()` lists them with their model, SHA, and time, and applies the live rule. `setup` refuses another session's live start comment by the same model and records `head_started_at`. `move` updates it. `verdict_marker()` also returns the model. `check_collision` compares identities. `census` gives each thread its `model` and `owned` and counts owned threads. `publish` writes `model=` into each finding marker, applies `signoff()` with the peer wait, records `model` in the loop's record, and reports the sign-off. `status()` returns the object in § 2.4. The layout comment at the top of the module describes the new paths. |
-| `src/projector/cli.py` | `--model` on `move`, `census`, `release`, `publish`, and `gate`. `review status <number>` with `--reviewer` and `--json`. `publish` reads `review.peer_wait`. |
+| `src/projector/review.py` | `identity()` and `model_key()`. `Paths` takes the model and puts the state, lock, request, and worktree paths under it. A resolver picks the model for commands after setup. `start_comment()` writes `model=`. `start_comments()` lists them with their model, SHA, and time, and applies the live rule. `setup` refuses another session's live start comment by the same model and records `head_started_at`. `move` updates it. `verdict_marker()` also returns the model. `check_collision` compares identities. `activity()` reads when each model last posted and whether it owes a review, and `verifier()` applies the rules in § 2.8, for `census`, `adopt`, and `signoff()`. `census` gives each thread the fields in § 2.4, counts the threads marked `mine`, and waits with `--wait`. `adopt()` runs the steps in § 2.8. `publish` writes `model=` into each finding marker, applies `signoff()` with the peer wait, records `model` in the loop's record, and reports the sign-off. `status()` returns the object in § 2.4. The layout comment at the top of the module describes the new paths. |
+| `src/projector/cli.py` | `--model` on `move`, `census`, `release`, `publish`, and `gate`. `census --wait`. `review adopt <number> <thread-id>` with `--result` and `--body`. `review status <number>` with `--reviewer` and `--json`. `publish`, `census`, and `adopt` read `review.peer_wait`. |
 | `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker`, groups each head's verdicts by model, and gives `status`, `url`, and `models`. |
 | `site/src/globals.d.ts`, `site/src/summary.ts` | The `models` field and the header text in § 2.5. |
 | `site/assets/summary.js` | Rebuilt with `npm run build`. |
-| `skills/review-pr/SKILL.md` | A section on reviewing as one model among several: the identity, the collision check per model, settling only your own model's threads, and the sign-off rule in place of "draft means changes are needed". The labels section gives the start and finding markers their `model=`. The leftover start comment rule compares the comment's model. Run `publish` with a timeout of at least `review.peer_wait` plus two minutes. |
-| `skills/start-review-loop/SKILL.md` | Pass `--model` to every `project review` command and to the watcher. Find the last reviewed SHA from this model's verdicts. The collision paragraph says another loop of the same model. Give each model's loop its own id, such as `<repo>-review-<model-key>`, because two loops that write one record can lose an entry. |
-| `skills/start-review-loop/scripts/watch-prs.sh` | `--model`, as § 2.5 describes. |
-| `skills/fix-pr/SKILL.md` | The clean test and report in § 2.5. |
+| `skills/review-pr/SKILL.md` | A section on reviewing as one model among several: the identity, the collision check per model, which threads you re-check and when you adopt one with `project review adopt`, and the sign-off rule in place of "draft means changes are needed". The labels section gives the start, finding, and verify markers their `model=`, and the adoption reply its `adopted-from=`. The leftover start comment rule compares the comment's model. Run `publish`, `adopt`, and `census --wait` with a timeout of at least `review.peer_wait` plus two minutes. |
+| `skills/start-review-loop/SKILL.md` | Pass `--model` to every `project review` command. On `RESPONDED`, run `census --wait` first and re-review only as § 2.2 says. Find the last reviewed SHA from this model's verdicts. The collision paragraph says another loop of the same model. Give each model's loop its own id, such as `<repo>-review-<model-key>`, because two loops that write one record can lose an entry. |
+| `skills/fix-pr/SKILL.md` | The clean test and report in § 2.5. A sentence that every unresolved finding is outstanding, whichever model opened it, and that which model re-checks it is the review's concern, not the fix's. |
 | `skills/start-fix-loop/SKILL.md` | `DRAFT` clears when every reviewing model signs off, not when one loop does. |
-| `docs/cli.md` | The review section, with the per-model state, `--model`, the collision check, the peer wait, and `review status`. The `review.peer_wait` row. The header text for several models. |
+| `docs/cli.md` | The review section, with the per-model state, `--model`, the collision check, the peer wait, `census --wait`, `review adopt`, and `review status`. The `review.peer_wait` row. The header text for several models. |
 | `tests/test_review.py`, `tests/test_site.py`, `tests/test_watchers.py` | The tests in § 4. |
+
+### 2.8 Who re-checks a finding
+
+Two kinds of loop act on a finding, and this plan changes only one of them.
+The fix loop answers every finding, from every model, exactly as it does
+today. The review side re-checks findings at each head, and that work is
+split among the models so that two models still reviewing never touch each
+other's findings, and a finding whose model has stopped still gets
+re-checked.
+
+| Who | Which findings | What it does |
+| --- | --- | --- |
+| The fix loop (`fix-pr`, run by `start-fix-loop`) | Every unresolved finding, from every model, plus body-only findings and standing change requests, as today | Fixes and pushes, or declines with a reply. Its watcher reports each unresolved thread as `FINDING`, whichever model opened it. |
+| The model that opened a finding, while it is still reviewing the pull request | Its own findings, open or resolved | Re-checks each one at every head: resolves a fix that holds, reopens one that does not, and accepts or keeps a decline. |
+| The model that adopts a finding | The findings of a model that has stopped reviewing the pull request | The same re-check, with a reply that names the adopting model. |
+| Every model | Findings that name no model, which earlier releases posted | The same re-check, as today. |
+
+Which model re-checks a finding never hides it from the fix loop. And an open
+finding holds the sign-off, whichever model opened it, until it is settled.
+
+#### When a model has stopped
+
+A model has stopped when it owes the pull request a review and has posted
+nothing within `review.peer_wait` seconds of when it began to owe it. Posting
+means a start comment, a verdict, or a verify reply on the pull request. A
+model with a live start comment has not stopped. A model owes a review in two
+cases:
+
+- **A new head.** It has a verdict on an earlier head and none on the current
+  head. It began to owe the head when the adopting review began on it, the
+  moment the peer wait also counts from.
+- **An answer.** An author's reply on a finding it re-checks is newer than
+  anything the model has posted. It began to owe the answer when the reply
+  was posted.
+
+A model whose verdict names the current head can still owe an answer, so a
+loop that stopped just after its verdict is found too.
+
+#### Which model re-checks a finding
+
+The verifier of a finding is, in order:
+
+1. The model that opened it, unless that model has stopped.
+2. Otherwise, the model whose adoption reply on the thread came first, among
+   models that have not stopped.
+3. Otherwise, no one yet. Any model still reviewing the pull request may
+   adopt it.
+
+So when two models adopt the same finding, the first adoption reply wins, and
+the other model leaves the thread alone. When the opener comes back, by
+posting a start comment or a verdict, rule 1 hands its findings back to it.
+It re-checks them as its own, its verdicts count again, and the adopter
+leaves them alone. The opener may reopen a finding the adopter accepted,
+because the finding is its own to judge. When an adopter stops in turn, rule
+2 passes the finding to the next model whose adoption reply is on the
+thread, or rule 3 lets a model still reviewing adopt it.
+
+#### Adopting a finding
+
+A review re-checks every thread that census marks `adopt: now` by reading it,
+exactly as it re-checks its own. A resolved fix that still holds needs
+nothing more. When a thread needs an action, a decline to accept or keep or a
+fix that does not hold, the review runs one command, so that the wait, the
+claim, and the check that the claim won happen in one place:
+
+```sh
+project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file>
+```
+
+1. It reads the thread and every model's posts on the pull request. It
+   refuses when the thread's verifier owes no review, or has posted since it
+   began to owe one, or when a model that has not stopped adopted the thread
+   first.
+2. When the verifier's window is still open, it waits for the window to
+   close, re-reading every 15 seconds. It refuses if the verifier posts in the
+   meantime.
+3. It posts the verify reply. The marker carries `model=` and
+   `adopted-from=`, and the first line names both models: "Re-checked by
+   `gpt-5.5` for `claude-opus-5-5`, which has stopped reviewing this pull
+   request." The body file supplies the rest, as for any verify reply.
+4. It reads the thread again. When an earlier adoption reply from a model
+   that has not stopped is there, it deletes its own reply and reports which
+   model re-checks the thread. Otherwise it applies the result: it resolves
+   the thread for `fixed`, `accepted`, or `withdrawn`, unresolves it for
+   `reopened`, and leaves it open for `kept`.
+
+Every finding a model adopts counts toward its own census from then on, so
+its verdict reflects the adopted findings it keeps open.
+
+The adoption reply records the stop on GitHub. A model whose `review.peer_wait`
+window has closed is stopped for the review that adopts its finding. From
+then on every reader, the sign-off rule included, treats the model as stopped
+while an adoption reply names it in `adopted-from=` and is newer than
+anything it has posted. The wait therefore decides once, in the review that
+adopts, and every later reader agrees with it without a clock.
 
 ## 3. Why this design
 
@@ -395,10 +522,9 @@ for a peer. It waits only when the pull request is a draft.
     it.
 
   The exact ID costs something on an upgrade, when a restarted loop becomes
-  a new reviewer. § 2.1 bounds that cost: the old verdicts stop counting when
-  the head moves, and the peer wait for the old ID ends at its deadline. Two
-  loops on two versions of one model are two reviewers, and stopping one loop
-  ends that.
+  a new reviewer. § 2.1 bounds that cost: the old ID stops, its findings are
+  adopted, and its verdicts stop counting. Two loops on two versions of one
+  model are two reviewers, and stopping one loop ends that.
 - **Remove only a bracketed variant.** A context-window variant such as
   `[1m]` runs the same model, so a session that switches it would otherwise
   become a second reviewer. Anything more, such as dropping provider
@@ -408,19 +534,46 @@ for a peer. It waits only when the pull request is a draft.
   into a refusal, and one worktree path per head lets a second setup delete
   the first model's worktree. Keying by loop id instead would let one model
   run twice on one machine, which the lock exists to stop.
-- **Let each model settle only its own findings.** An opinion is separate
-  only when another model cannot withdraw its findings, and when its clean
-  verdict does not wait on findings it did not make. Shared settlement,
-  today's behavior, lets two models resolve and reopen each other's thread on
-  every head. A thread that names no model belongs to every model, so a pull
-  request whose findings predate the release that adds `model=` keeps them
-  verified.
-- **Hold the sign-off on any open finding.** A clean verdict requires its
-  model's threads to be settled, and that alone would let a model that stopped
-  reviewing leave a declined finding open behind another model's clean
-  verdict. Today a finding stays open until someone settles it, and an open
-  disagreement is your merge decision. This rule keeps that guarantee across
-  models.
+- **Let a model re-check its own findings while it reviews, and adopt a
+  stopped model's.** An opinion is separate only when another model cannot
+  withdraw its findings, and when its clean verdict does not wait on findings
+  it did not make. A finding is only safe when some review re-checks it at
+  every head: a fix that does not hold has to be reopened, and a decline has
+  to be weighed. Adoption gives both. Two models still reviewing never touch
+  each other's findings, and a finding whose model has stopped passes to a
+  model that is still reviewing. These alternatives were rejected:
+  - **Shared re-checking**, today's behavior, which lets two models resolve
+    and reopen each other's thread on every head.
+  - **Only the opener re-checks.** A model that stops leaves its findings with
+    no re-check. A fix that does not hold is never reopened, and a decline it
+    would have accepted holds the sign-off forever.
+  - **Leaving a stopped model's findings to you.** It turns every stopped loop
+    into a chore, and a resolved finding gives you nothing to notice.
+
+  A thread that names no model belongs to every model, so a pull request
+  whose findings predate the release that adds `model=` keeps them
+  re-checked.
+- **Decide a stop once and record it on GitHub.** Whether a model has stopped
+  depends on a clock, and every model reads that clock from its own start.
+  Letting each reader decide would let two readers disagree about whether a
+  verdict counts. The adoption reply decides it once, with `adopted-from=`,
+  and every later reader reads the record. A peer that comes back cancels the
+  record by posting, and needs no other step.
+- **Let the first adoption reply win, and claim inside one command.** Two
+  models still reviewing can both find the same stopped model's thread at
+  once. `project review adopt` posts the claim, reads the thread again, and
+  acts only when its claim came first, so two crossing claims leave one
+  action and one reply. Choosing the adopter by a fixed order, such as the
+  lowest model ID, was rejected. Every model would have to agree on which
+  models are still reviewing, and each one judges that by its own clock.
+- **Give a returning model its findings back.** The model that raised a
+  finding is the best judge of whether a fix holds. An adoption that stuck
+  would keep a running model's findings in another model's hands, which is
+  what independence rules out.
+- **Hold the sign-off on any open finding.** A clean verdict requires only its
+  model's own threads to be settled. Today a finding stays open until someone
+  settles it, and an open disagreement is your merge decision. This rule keeps
+  that guarantee across models, and adoption keeps it from holding forever.
 - **Apply one rule after submitting, in every publish.** The hosts share
   nothing but GitHub, so no coordinator can decide. Applied after the submit,
   the rule runs last in the publish that finishes last, and that publish sees
@@ -457,13 +610,14 @@ for a peer. It waits only when the pull request is a draft.
   ungated approval from one model would erase another model's change
   request. A `COMMENT` changes nothing there, so a clean verdict that cannot
   approve comments, as it does today without `review.allow_approve`.
-- **Build the rule once and read it everywhere.** `signoff()` serves publish,
-  `project review status`, and through `status`, `fix-pr`. The site reuses
-  `verdict_marker()` and the per-model grouping. The fix loop's watcher reads
-  the draft state that the rule sets, so it needs no copy. The one piece
-  outside Python is the bracketed-variant normalization in `watch-prs.sh`'s
-  `jq`, because the watchers run no Python. A test pins both copies to the
-  same examples.
+- **Build the rules once and read them everywhere.** `signoff()` serves
+  publish, `project review status`, and through `status`, `fix-pr`.
+  `verifier()` serves `census`, `adopt`, and `signoff()`. The site reuses
+  `verdict_marker()` and the per-model grouping. Neither watcher gets a copy:
+  the fix loop's watcher reads the draft state that the rule sets, and the
+  review loop's watcher reports every answer and lets `census --wait` decide
+  which loop acts on it. Filtering answers by model in the watcher's `jq` was
+  rejected, because it would need the adoption rules in a second language.
 - **Catch the same model at setup.** Today two machines running one model
   find each other only at publish, after both reviews ran. The live start
   comment shows the duplicate before the second review starts.
@@ -491,20 +645,29 @@ The tests run in temporary Git repositories against the fake GitHub in
 | 3 | Post a live start comment by `claude-opus-5-5` that this machine's state does not record, then set up as `claude-opus-5-5`. | Setup refuses and names the comment. As `gpt-5.5` it succeeds. It also succeeds when the comment is more than a day old, or when its model has a newer verdict on its SHA. |
 | 4 | Publish as `claude-opus-5-5` under a loop when the account has a verdict on H by `gpt-5.5` that the loop did not publish. | Publishes. A verdict by `claude-opus-5-5[1m]`, or one whose marker names no model, refuses as another loop. |
 | 5 | Run `publish` without `--model` while two models have state for the pull request. | Refuses and lists both. With one model it proceeds. |
-| 6 | Publish `clean` as `claude-opus-5-5` while a finding is open. | Publishes when the finding names `gpt-5.5`, and the census has its second clause. Refuses when it names `claude-opus-5-5`, and when it names no model. |
+| 6 | Publish `clean` as `claude-opus-5-5` while a finding is open. | Publishes when the finding names `gpt-5.5` and `gpt-5.5` is still reviewing, and the census has its second clause. Refuses when it names `claude-opus-5-5`, when it names no model, and when `claude-opus-5-5` adopted it. |
 | 7 | Publish a finding. | Its marker ends with `model=<model-id> -->`. |
 | 8 | Publish on a self-review in each case of the table in § 2.3. | Draft for any changes-requested verdict on H. Left as it was while another model is reviewing H or has an open finding. Ready when every model is clean. A start comment whose model has a newer verdict on its SHA is not live, and a live one on an older head does not hold the rule. |
 | 9 | Publish `clean` on a draft with a `gpt-5.5` verdict on an earlier head and nothing on H. | Publish waits. A start comment posted during the wait leaves the draft. A verdict posted during the wait joins the rule. Nothing by the deadline marks it ready. A review older than the deadline, `review.peer_wait = 0`, and a pull request that is already ready do not wait. A string, a negative number, or `true` refuses and names the key. |
 | 10 | Publish `clean` as two models on H, once with the second model submitting before the first applies the rule, and once after. | Ready either way. With one of them requesting changes, a draft either way. |
 | 11 | Publish on another author's pull request with `review.allow_approve = true`. | A clean verdict while another model requests changes or is reviewing posts a `COMMENT`. The last model to go clean posts an `APPROVE`. The draft state does not change. |
 | 12 | Run `project review status`. | The text in § 2.4, and with `--json` each field in its table. A model with only earlier-head activity shows `pending` and leaves `signoff` alone. |
-| 13 | Run `watch-prs.sh --model claude-opus-5-5`. | An author's reply on a `gpt-5.5` finding is not a response. A reply on a `claude-opus-5-5[1m]` finding, or on one that names no model, is. |
+| 13 | Answer a `gpt-5.5` finding while `gpt-5.5` is still reviewing, then run `project review census --wait --json` as `claude-opus-5-5`. | `watch-prs.sh` reports `RESPONDED` to both loops, as today. Census returns once `gpt-5.5` posts, with the thread `adopt: no`, so `claude-opus-5-5` does not re-review. An answer on a `claude-opus-5-5[1m]` finding, or on one that names no model, is `mine` and `answered`, so it re-reviews. |
 | 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header line in § 2.5. |
-| 15 | By hand, run a Claude Code review loop and a Codex review loop on a scratch pull request in a scratch repository. | Both review each head without a collision. A finding from one model keeps the pull request in draft after the other model's clean verdict. After the fix, both go clean and the pull request is ready. The implementing pull request's Testing section records these steps. |
+| 15 | By hand, run a Claude Code review loop and a Codex review loop on a scratch pull request in a scratch repository. | Both review each head without a collision. A finding from one model keeps the pull request in draft after the other model's clean verdict. After the fix, both go clean and the pull request is ready. Then stop the Codex loop, push a fix that does not hold for one of its findings, and the Claude loop reopens that finding as an adoption. The implementing pull request's Testing section records these steps. |
+| 16 | Review H as `claude-opus-5-5` while `gpt-5.5` has a verdict on an earlier head, a declined open finding, and nothing on H. Run `adopt --result accepted` on that finding. | Census marks the thread `adopt: wait` until the window closes, then `now`. `adopt` waits out the window, posts a reply whose marker carries `model=claude-opus-5-5 adopted-from=gpt-5.5` and whose first line names both models, and resolves the thread. Census then marks it `mine`, and `status` shows `gpt-5.5` as `stopped`. On a resolved finding whose fix does not hold, `adopt --result reopened` unresolves it. |
+| 17 | Run `adopt` while `gpt-5.5` has a live start comment on H, or have `gpt-5.5` post a start comment, verdict, or verify reply during the wait. | `adopt` refuses and leaves the thread and its replies unchanged. Census marks the thread `adopt: no`. |
+| 18 | Answer a finding of `gpt-5.5`, whose newest verdict on H requests changes, and let `gpt-5.5` post nothing. | `census --wait` returns when the window after the answer closes, with the thread `adopt: now`. After `claude-opus-5-5` adopts it, `gpt-5.5` is recorded as stopped, and its changes-requested verdict on H no longer counts in the rule. |
+| 19 | Run `adopt` from two models on one thread so that both replies post before either reads the thread again. | The second run finds the first reply, deletes its own, and changes nothing else. Census names the first model as the verifier, and the second model's census marks the thread `adopt: no`. |
+| 20 | After an adoption, have `gpt-5.5` post a start comment. Then let it stop again. | Census names `gpt-5.5` the verifier again, the adopter's census marks the thread `adopt: no`, and `gpt-5.5`'s verdicts count again. Once `gpt-5.5` has stopped again, the earlier adopter is the verifier with no new reply. |
+| 21 | Let the adopter stop in turn. | A third model's `adopt` posts a reply with `adopted-from=` naming the adopter, and becomes the verifier. |
+| 22 | Run `watch-threads.sh` on a pull request with unresolved findings from two models still reviewing and from one that has stopped. | It reports a `FINDING` for each thread, whichever model opened it. |
 
-Criteria 1, 4, 6, 8, and 10 fail before the change: the second setup refuses
-on the lock, the collision check refuses the other model, the census counts
-every thread, and the last publish sets the draft state.
+Criteria 1, 4, 6, 8, 10, and 16 to 21 fail before the change: the second
+setup refuses on the lock, the collision check refuses the other model, the
+census counts every thread, the last publish sets the draft state, and
+nothing adopts a finding. Criterion 22 passes before and after the change. It
+pins that the fix loop still reports every finding.
 
 ## 5. Cost
 
@@ -519,8 +682,14 @@ every thread, and the last publish sets the draft state.
 - **`project review status`** makes four requests: the pull request, its
   reviews, its issue comments, and its threads. `fix-pr` runs it once for each
   report.
-- **The watchers** make no new requests. `watch-prs.sh` filters the threads it
-  already fetches.
+- **An answer on a finding** reaches every model's loop, and each one runs
+  `census --wait` once, three requests each 15 seconds while it waits. The
+  wait ends when the verifier posts, and at most `review.peer_wait` after the
+  answer.
+- **An adoption** waits at most what is left of the stopped model's window,
+  then posts one reply, reads the thread again, and resolves or unresolves
+  it. Once the stop is recorded, no later review waits for that model.
+- **The watchers** make no new requests, and neither script changes.
 - **The site build** makes no new requests, because it already reads each
   pull request's reviews.
 - **A machine that runs several models** keeps one scratch worktree for each
@@ -556,15 +725,6 @@ None blocks implementation. These are deferred on purpose:
   review usually takes longer than a second loop needs to notice the pull
   request and post its start comment. The operator decides whether to add the
   key, if a first head is ever signed off before a second model starts.
-- **One verdict replacing another after an upgrade.** When a loop changes model
-  between a changes-requested verdict and a re-review of the same head, the
-  old model's verdict counts until the head moves. Pushing, or running the old
-  model once more, settles it. Marking a verdict as replacing another waits
-  until this happens often enough to matter.
-- **A model settling a stopped model's findings by itself.** A finding whose
-  model stopped reviewing waits for you, or for a model you tell to settle it.
-  Doing that without being told would let one model overrule another, which
-  this plan exists to prevent.
 - **Per-model detail on the Reviews index.** The badge in flight shows each
   head's `status`. Naming the models there waits until that badge lands.
 
@@ -585,11 +745,14 @@ Reading the code settled these points, beyond those § 1 names:
   Projector review of each head, whichever model wrote it, and the summary
   page's header shows its verdict.
 - `watch-prs.sh` counts an author's reply on any open Projector finding
-  thread as an answer, so one model's thread would send `RESPONDED` to every
-  model's loop.
+  thread as an answer, so an answer on one model's finding sends `RESPONDED`
+  to every model's loop. The plan keeps that and lets `census --wait` decide
+  which loop acts.
 - `watch-threads.sh` keys `REVIEW` by review id, `DRAFT` by head, and
-  `VERDICT` by the reviewed SHA and author. A second model adds lines but no
-  wrong ones.
+  `VERDICT` by the reviewed SHA and author, and it reports every unresolved
+  thread as `FINDING` without reading its marker. `fix-pr` treats every
+  unresolved thread as outstanding. A second model adds lines but no wrong
+  ones, and no finding leaves the fix loop's view.
 - A second machine that runs a review loop as the same account and the same
   model already trips the collision check in this repository. This plan keeps
   that behavior and catches it earlier, at setup.
