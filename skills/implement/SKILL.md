@@ -161,10 +161,10 @@ body too, and it is the wrong body; replace it as rule 3 of
 
 A stack is a chain of pull requests, each based on the branch of the one
 below it, that GitHub records as one stack. Make and keep one with
-`gh stack`, the GitHub CLI extension that
-`../gh-stack/SKILL.md` describes; that file is the reference for every
-`gh stack` command named here. `fix-pr` and `start-fix-loop` find a stack's
-layers, and fall back when `gh stack` cannot help, as this section describes.
+`gh stack`, the GitHub CLI extension that `../gh-stack/SKILL.md` describes;
+that file is the reference for every `gh stack` command named here. `fix-pr`
+and `start-fix-loop` find and update a stack's layers, and fall back when
+`gh stack` cannot help, as this section describes.
 
 - **Create it.** Plan the layers from the bottom up, make them with
   `gh stack init` and `gh stack add`, and open them all as drafts with
@@ -175,10 +175,16 @@ layers, and fall back when `gh stack` cannot help, as this section describes.
   a stack with `gh stack link` and their numbers, bottom first.
 - **Carry a fix up it.** After a fix on a lower layer, run
   `gh stack rebase --upstack` and then `gh stack push` from that layer, and
-  after a layer merges, run `gh stack sync`. `gh stack` keeps a stack current
-  by rebasing it, so these rewrite the layers above and push each branch with
-  `--force-with-lease`. In a checkout that does not track the stack yet,
-  `gh stack checkout <number>` sets it up from GitHub.
+  after a layer merges, run `gh stack sync`. In a checkout that does not
+  track the stack yet, `gh stack checkout <number>` sets it up from GitHub.
+- **Update it by rebasing.** `gh stack` keeps a stack current by rebasing
+  its layers and pushing each branch with `--force-with-lease`, and it has
+  no option to merge instead. Inside a stack, that rebase is how a layer
+  takes in the layer below it and the default branch alike: when a layer
+  falls behind or conflicts with its base, run `gh stack rebase` and then
+  `gh stack push`, and resolve a conflict the rebase stops on as
+  `../gh-stack/SKILL.md` describes under "Handle rebase conflicts". Never
+  merge a base into a layer of a stack `gh stack` works on.
 - **Find its layers.** Ask GitHub which stack holds a pull request:
 
   ```sh
@@ -205,8 +211,11 @@ pull requests' base branches:
 - **Create it** from the bottom up when `gh stack` is missing or exits 9:
   push each layer's branch with `git push -u origin <branch>`, and open it
   with `gh pr create --draft --base <branch of the layer below> --head <branch>`.
-- **Carry a fix up it** by rebasing each layer above onto the one below it,
-  in order, and pushing each with `git push --force-with-lease`.
+- **Update it by merging**, as `fix-pr` updates any branch: carry a fix up
+  by merging each layer into the one above it, from the bottom up, and take
+  in the default branch by merging it into the bottom layer and carrying
+  that up the same way. A merge needs no force-push, so review threads stay
+  anchored to their commits.
 
 Tell the user at most once why the chain is not a stack: that
 `gh extension install github/gh-stack` would make it one when the extension
