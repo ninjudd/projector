@@ -720,7 +720,8 @@ class FileHeaderTests(SiteRepoCase):
             "overview": {"summary": [], "cards": []},
             "groups": [{"id": "all", "title": "All", "files": [
                 {"path": p, "collapsed": False,
-                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
+                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1},
+                                {"kind": "verify", "text": "The whole file."}]} if p == "src/app#1.py" else
                     {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
                     else {})}
                 for p in HEADER_FILES]}],
@@ -806,6 +807,10 @@ class FileHeaderTests(SiteRepoCase):
                                                 '<td class="nte"><input type="checkbox" class="nbox note-box"'),
                         "a new file has one line-number column, and a concern's checkbox sits with its text")
         self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its gutter keeps its width")
+        self.assertIn('<table class="diff fnotes"><colgroup><col class="lncol"><col class="lncol"><col></colgroup>'
+                      '<tr class="noterow verify"><td class="ngut" colspan="2"><span class="chip verify">verified</span></td>'
+                      '<td class="nte"><span class="ntext">The whole file.</span></td></tr></table>', html,
+                      "a note on the whole file sits above the diff in the diff's own columns")
 
 
 class SummarySidebarTests(unittest.TestCase):

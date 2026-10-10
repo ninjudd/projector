@@ -109,15 +109,18 @@
             function numbers(l) {
                 return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
             }
+            const tableClass = `diff${sides === 1 ? ' oneside' : ''}`;
+            // Each note is a row: its tag in the line-number gutter, its text where the code starts.
+            function noteRow(c) {
+                return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
+                    `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
+            }
             function notesAt(l) {
                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
-                const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
-                // Each note is a row: its tag in the line-number gutter, its text where the code starts.
-                return found.map(function (c) {
-                    return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
-                        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
-                }).join('');
+                return keys.flatMap(function (k) { return atLine[k] ?? []; }).map(noteRow).join('');
             }
+            // The notes on the whole file sit above its diff, in the diff's own columns.
+            const topNotes = loose.length > 0 ? `<table class="${tableClass} fnotes">${columns}${loose.map(noteRow).join('')}</table>` : '';
             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
             if (f.new === true)
                 badges += '<span class="badge new">new</span>';
@@ -138,7 +141,7 @@
                     rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
                     rows.push(notesAt(l));
                 });
-                return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
+                return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
             }).join('') || '<p class="fnote">No content changes.</p>';
             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
                 '<div class="fsentinel" aria-hidden="true"></div>' +
@@ -157,7 +160,7 @@
                 '</span>' +
                 '</header>' +
                 (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
-                notesList(loose, 'fnotes', f.path) +
+                topNotes +
                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
                 '</article>';
         }
