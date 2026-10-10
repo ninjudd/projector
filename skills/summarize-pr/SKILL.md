@@ -267,7 +267,7 @@ fails, or that names another repository, so one bad summary costs one
 summary rather than the deployment. The site's Reviews section lists
 every summary at `reviews/`, serves each pull request's newest head at
 `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
-older heads from each page. The summary on the ref is the durable copy: to
+older heads and every pull request in the same stack from each page. The summary on the ref is the durable copy: to
 update a summary later, fetch it with
 `git fetch origin refs/projector/summaries` and start from it rather than
 from a fresh `init`. A summary that an older release stored there as

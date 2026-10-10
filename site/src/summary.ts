@@ -210,12 +210,33 @@ function renderSummary(data: SummaryData): void {
     '</details>';
   }
 
+  // Every published head, newest first, one line each with when it was
+  // published in the reader's own time zone, in a list that starts closed.
   function headsList(): string {
     const heads = data.heads ?? [];
     if (heads.length < 2) return '';
-    return '<div class="prmeta">Versions: ' + heads.map(function (h) {
-      return h.current ? `<b class="mono">${short(h.head)}</b>` : `<a href="${esc(h.url)}">${short(h.head)}</a>`;
-    }).join(' · ') + '</div>';
+    const rows = heads.map(function (h) {
+      const when = h.at !== undefined
+        ? `<span class="vwhen">${esc(new Date(h.at * 1000).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>`
+        : '';
+      const row = `<span class="mono">${short(h.head)}</span>${when}`;
+      return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
+    }).join('');
+    return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
+  }
+
+  // The pull requests stacked with this one, one row each, this one marked; a
+  // pull request alone shows its title instead. A pull request in the stack
+  // with no summary on the site links to GitHub.
+  function stackList(): string {
+    const stack = data.stack ?? [];
+    if (stack.length < 2) return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
+    return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+      const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+      if (s.current) return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
+      const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
+      return `<li><a href="${esc(href)}" title="${esc(s.title)}">${row}</a></li>`;
+    }).join('') + '</ul>';
   }
 
   function projectsList(): string {
@@ -239,12 +260,10 @@ function renderSummary(data: SummaryData): void {
       `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
         `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
-        `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}` +
-          `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>` +
-          `<div class="prmeta">${ext(`${repoUrl}/commit/${pr.head}`, short(pr.head))} → ${esc(baseRef ?? 'base')} · ${ext(`${prUrl}/files`, 'files')}</div>${headsList()}${projectsList()}</div>` +
+        `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
         `<div class="extra">${extra}</div>` +
         `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
-        `<ol>${nav}</ol></nav></aside>` +
+        `<ol>${nav}</ol>${headsList()}</nav></aside>` +
       `<main>${renderFilesPane()}<div class="overview" id="overview">${renderOverview()}</div>` +
         `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
         `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +

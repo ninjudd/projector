@@ -127,8 +127,13 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[list[dict], list[str]]:
-    """Build every summary that can be built; report and skip the rest."""
+def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+                    lookup=None) -> tuple[list[dict], list[str]]:
+    """Build every summary that can be built; report and skip the rest.
+
+    Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
+    `lookup`, and each page lists the pull requests in its stack.
+    """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
               if not path.with_name("summary.json").is_file()]
@@ -162,14 +167,19 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[
             skip(path, exc)
             continue
         by_pr.setdefault(number, []).append((summary_time(path), payload))
+    for versions in by_pr.values():
+        versions.sort(key=lambda v: v[0], reverse=True)
+    prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
+    bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
-        versions.sort(key=lambda v: v[0], reverse=True)
         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
                  for when, p in versions]
+        stack = stack_rows(int(number), bases, prs, base)
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads])
+            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads],
+                           stack=stack)
             folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -184,9 +194,40 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None) -> tuple[
             page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
-                        "heads": len(versions), "updated": versions[0][0],
+                        "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),
                         "projects": [p["name"] for p in latest["projects"]]})
     return entries, failures
+
+
+def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
+    """Every pull request in `number`'s stack, from the one on the default branch up, or [] when it stands alone.
+
+    The stack holds the pull requests beneath `number` and every pull request
+    stacked above any of them, so a branch in the stack shows its siblings
+    too; each pull request's own branches follow it, lowest number first.
+    A pull request with a summary links to its review, and one without, known
+    only as a base, has no title or link here. `bases` maps a pull request to
+    the one beneath it, as `stack_bases` returns it.
+    """
+    bottom, seen = number, {number}
+    while bases.get(bottom) is not None and bases[bottom] not in seen:
+        bottom = bases[bottom]
+        seen.add(bottom)
+    above: dict[int, list[int]] = {}
+    for top, beneath in bases.items():
+        above.setdefault(beneath, []).append(top)
+    order: list[int] = []
+    pending = [bottom]
+    while pending:
+        current = pending.pop()
+        if current in order:
+            continue
+        order.append(current)
+        pending.extend(sorted(above.get(current, []), reverse=True))
+    if len(order) < 2:
+        return []
+    return [{"number": n, "title": (prs.get(n) or {}).get("title") or "",
+             "url": f"{base}reviews/{n}/" if n in prs else "", "current": n == number} for n in order]
 
 
 def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
@@ -459,14 +500,14 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     files = collect_files(repo_root, projects_dir, out) if repo_root else []
     assign_routes(docs, described)
     link = project_linker(described, base)
-    built = build_summaries(summaries, out, base, link) if summaries and summaries.is_dir() else ([], [])
+    built = build_summaries(summaries, out, base, link, trunk, lookup) if summaries and summaries.is_dir() \
+        else ([], [])
     entries, failures = built
     for project in described:
         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
-    bases = stack_bases(entries, trunk, lookup)
     manifest = {
         "repo": repo,
         "base": base,
@@ -481,7 +522,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
         "reviews": [
             {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
              "heads": e["heads"], "projects": e["projects"],
-             "stackedOn": bases.get(e["number"]),
+             "stackedOn": e["stackedOn"],
              "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
             for e in entries
         ],
