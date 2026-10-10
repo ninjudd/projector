@@ -64,10 +64,10 @@
             const k = kindOf(c);
             return `<span class="chip ${k}">${CHIPS[k] ?? k}</span>`;
         }
-        function notesList(checks, cls, scope) {
+        function notesList(checks, scope) {
             if (checks.length === 0)
                 return '';
-            return `<ul class="notes ${cls}">` + checks.map(function (c) {
+            return '<ul class="notes">' + checks.map(function (c) {
                 const box = noteBox(c, scope);
                 return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
             }).join('') + '</ul>';
@@ -170,7 +170,7 @@
             const gid = esc(g.id);
             const intro = (g.intro ?? []).map(block).join('');
             const checks = g.checks ?? [];
-            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Notes</h4>${notesList(checks, `group:${g.id}`)}</div>` : '';
             const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
             return `<section class="group" id="${gid}" data-gid="${gid}">` +
                 '<div class="gsentinel" aria-hidden="true"></div>' +
