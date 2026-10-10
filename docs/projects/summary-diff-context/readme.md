@@ -56,14 +56,21 @@ unreadable head keeps the `head/` entries an earlier publish wrote.
 `<number>/<head>/head/<path>` for each file of the page's diff. For each file
 it finds, it:
 
-1. Decodes the bytes as UTF-8 with replacement, as the diff text is, and splits
-   them into lines on `\n`, dropping the empty string after a final newline.
+1. Decodes the bytes as UTF-8 with replacement, so a file that is not UTF-8
+   cannot stop the build. It replaces each `\r\n` with `\n` and splits the
+   text into lines on `\n`, dropping the empty string after a final newline.
+   The replacement matches the diff, which `gh` reads from the compare API and
+   `build_summaries` reads from `diff.patch` in Python's text mode. Text mode
+   turns `\r\n` into `\n`, so without the replacement every line of a CRLF
+   file would fail step 2.
 2. Checks every context and added line of every hunk against the line with the
    same new-side number. On any mismatch it drops the file's context and prints
    a `::warning::` naming the file, so a wrong blob never shows wrong lines.
-3. Writes the bytes once, to `reviews/blobs/<id>.txt` in the site, where `<id>`
-   is the Git blob id of the content. Two heads or two pull requests with the
-   same file content share one file.
+3. Writes the decoded text, with each `\r\n` replaced, once as UTF-8 to
+   `reviews/blobs/<id>.txt` in the site, where `<id>` is the Git blob id of the
+   stored bytes. The page splits that text on `\n`, so it shows exactly the
+   lines the build checked. Two heads or two pull requests with the same file
+   content share one file.
 4. Computes the file's gaps and adds `context` to the file in the page data.
 
 The page data gains, on each file that has stored content:
@@ -173,8 +180,9 @@ controls stay usable for a retry. A file without `context` draws no expander.
    pure-deletion hunk (`newLines` 0), a last hunk that reaches the end of the
    file (no gap below), a file whose last line has no newline, and CRLF lines.
 3. A build test proves that a blob whose lines disagree with the diff gives the
-   file no `context` and prints the warning, and that two heads with the same
-   file content write one `reviews/blobs/<id>.txt`.
+   file no `context` and prints the warning; that a CRLF file keeps its
+   `context`, and its served text has no `\r` before a newline; and that two
+   heads with the same file content write one `reviews/blobs/<id>.txt`.
 4. A page test, run under node against the compiled renderer as the site tests
    already do, proves that a file with `context` draws one expander per gap with
    the controls § 2.3 lists, and a file without `context` draws none.
