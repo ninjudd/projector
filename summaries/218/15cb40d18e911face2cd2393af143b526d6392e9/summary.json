@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Proposed projects plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 218,
+  "title": "Plan showing projects proposed in open pull requests",
+  "head": "15cb40d18e911face2cd2393af143b526d6392e9",
+  "headRef": "spec-proposed-projects",
+  "base": "bdd92cd947747892c979b202feaa6db4acad375d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has a <b>Projects</b> page that lists every plan under <code>docs/projects/</code> on the default branch. Projector writes each new plan as a pull request so people review it before it merges, so while a plan is in review the Projects page, the site's search, and the links from review pages all leave it out. The plan's text is already on the site, though: each published summary stores its pull request's diff as <code>diff.patch</code>, and the diff of a new file holds every line of that file.",
+   "This pull request adds one plan, <code>proposed-projects</code>, at <code>status: ready</code> and <code>priority: next</code>. It changes no code. The plan has the site build do the following:",
+   "<ol><li><b>Find proposed plans.</b> For each open pull request, the build reads its newest summary and picks each <code>readme.md</code> that the diff adds as a new file under the projects directory.</li><li><b>Rebuild and parse them.</b> It rebuilds the file's text from the diff's added lines and parses it with the same code that <code>project list</code> runs.</li><li><b>Show them as proposed.</b> It lists each one on the Projects page in its status group with a <b>Proposed</b> badge, and opens its page at <code>projects/&lt;name&gt;/</code> with a banner that names the pull request.</li></ol>",
+   "The build reads only the summaries, so it makes no new GitHub request and shows nothing that the Reviews section does not already show. A plan already on the default branch always wins over a proposal, and the lowest pull request number wins a name that two pull requests propose."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summary</b>: the review page data that <code>project summary publish</code> stores on <code>refs/projector/summaries</code>, with the pull request's diff beside it.</li><li><b>Checkout</b>: the branch the site is built from, the default branch on a deploy.</li><li><b>Proposed project</b>: a plan that an open pull request's newest summary adds and the checkout lacks.</li><li><b>Nested project</b>: a project inside another project's folder, such as <code>alpha/beta</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, at <code>15cb40d</code>, requested changes with one finding. Step 9 of § 2.1 drops a proposed nested plan whose top-level folder has no project. It claims to mirror the checkout, but the checkout keeps such a plan on the site and only prints a warning. The flag on line 102 carries the finding.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The proposed-projects plan",
+   "kicker": "A ready plan for listing plans that open pull requests add",
+   "intro": [
+    "The plan is the whole change. Read it in order: § 1 says what the site misses today, § 2 gives the design step by step, § 3 gives the reasons and the rejected names and sources, and § 4 lists the tests the implementing pull request must add.",
+    "Because the plan is at <code>ready</code>, it claims that someone can implement it without asking further questions. Check each claim it makes about the current code, since an implementer will build on them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/proposed-projects/readme.md",
+     "note": "The new plan. It names the functions it changes in <code>src/projector/site/__init__.py</code>, <code>src/projector/summary.py</code>, <code>src/projector/core.py</code>, <code>src/projector/cli.py</code>, and <code>site/src/site.ts</code>.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 59,
+       "text": "§ 2.1 is the build's algorithm. Today <code>build_summaries</code> links each summary to projects while it reads the summaries, and asks GitHub for each pull request's state afterwards. The plan reorders that: read, ask for states, find proposed plans, then link over both lists."
+      },
+      {
+       "kind": "verify",
+       "line": 67,
+       "text": "Step 2 only moves an existing call. I read <code>build_summaries</code>: it calls <code>status_lookup</code> once for each pull request, after linking, and the <code>statuses</code> test in <code>tests/test_site.py</code> asserts one call per pull request. Nothing before linking needs a route, so <code>assign_routes</code> can also run after the proposed projects join the list."
+      },
+      {
+       "kind": "flag",
+       "line": 102,
+       "text": "Step 9 drops a proposed nested plan whose top-level folder holds no project, and § 7 says the checkout does the same. It does not: <code>site_projects</code> only warns about <code>missing-plan</code>, and a site built from a checkout with <code>omega/x/readme.md</code> and no <code>omega/readme.md</code> lists <code>omega/x</code>. With this step, such a plan is hidden while proposed and appears once merged. The review asks to remove the step and its § 4 row, and to correct § 7."
+      },
+      {
+       "kind": "context",
+       "line": 106,
+       "text": "Step 10 does not say whether it skips Markdown under a hidden folder, such as <code>gamma/.notes/x.md</code>. The checkout skips those through <code>pages_under</code>. The review lists this as a suggestion, not a blocker."
+      },
+      {
+       "kind": "context",
+       "line": 153,
+       "text": "§ 2.3 keeps the word in one constant, <code>PROPOSED</code>, and adds a <code>badge proposed</code> link to the pull request's review page wherever the site lists the project."
+      },
+      {
+       "kind": "context",
+       "line": 304,
+       "text": "Proposed content is served as Markdown only. <code>showHtml</code> loads an HTML page in an <code>iframe</code> on the site's own origin without a <code>sandbox</code> attribute, so an unmerged page's script could read the rest of the site."
+      },
+      {
+       "kind": "verify",
+       "line": 451,
+       "text": "I read <code>parse_diff</code> in <code>src/projector/summary.py</code>: it sets <code>new</code> from <code>new file mode</code>, keeps every added line, and records <code>\\ No newline at end of file</code> as a meta line, so <code>new_file_text</code> can rebuild a new file from its output."
+      },
+      {
+       "kind": "context",
+       "line": 464,
+       "text": "This is the claim the flag on line 102 corrects. <code>invalid-project</code> plans are left out, and <code>README.md</code> is not loaded as a project, but nested projects under a <code>missing-plan</code> folder stay on the site."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
