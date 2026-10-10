@@ -342,9 +342,19 @@ function statusHtml(state, review) {
                 return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
             }).join('') + '</ul>';
         }
+        // The header, as the page's statement of how well the head was checked,
+        // also links the full review a clean incremental review builds on.
         function reviewStatus() {
             const status = statusHtml(pr.state, data.review);
-            return status !== '' ? ` · ${status}` : '';
+            if (status === '')
+                return '';
+            const review = data.review;
+            const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
+            if (from === undefined)
+                return ` · ${status}`;
+            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+            const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+            return ` · ${status} · ${link}`;
         }
         function renderPage() {
             const nav = data.groups.map(function (g, i) {

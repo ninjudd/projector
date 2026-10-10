@@ -53,9 +53,13 @@ type PullState = 'open' | 'merged' | 'closed';
 
 /**
  * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
- * Projector review names the head.
+ * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
+ * head of the full review it builds on, and that review's page, or null when the build found none.
  */
-type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+type ReviewStatus =
+  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
+  | { status: 'changes-requested'; url: string }
+  | { status: 'unreviewed' };
 
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
