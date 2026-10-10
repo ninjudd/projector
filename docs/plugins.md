@@ -52,15 +52,23 @@ requests by base branch and tells you once, and `fix-pr` and
 with `gh extension install github/gh-stack` to get real stacks.
 
 GitHub's own `gh-stack` skill teaches an agent the extension's commands.
-Projector does not copy it. In Claude Code, the `projector` plugin depends on
-a `gh-stack` plugin that the Projector marketplace serves from
-[`github/gh-stack`](https://github.com/github/gh-stack) unmodified, so
-installing `projector` installs it too, and you can invoke it as
-`/gh-stack:gh-stack`. Where upstream's skill and Projector's workflow
+Projector does not copy it. Both hosts' Projector marketplaces serve a
+`gh-stack` plugin that holds upstream's skill from
+[`github/gh-stack`](https://github.com/github/gh-stack) unmodified. In
+Claude Code, the `projector` plugin depends on it, so installing `projector`
+installs it too, and you invoke it as `/gh-stack:gh-stack`. Codex has no
+plugin dependencies, so there you add it as a plugin of its own, as
+[Install for Codex](#install-for-codex) shows; Codex lists it as
+`gh-stack:gh-stack`. Where upstream's skill and Projector's workflow
 differ, `implement` says which rules win, such as drafting every layer and
-never merging. The marketplace entry in `.claude-plugin/marketplace.json`
-pins upstream to a tag and its commit, so a newer upstream skill reaches you
-only when a Projector release moves that `ref` and `sha`.
+never merging. Projector's skills work without upstream's skill, because
+they name the `gh stack` commands they run.
+
+Both marketplace entries, in `.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`, pin upstream to one tag, its commit, and
+the matching `version`, so a newer upstream skill reaches you only when a
+Projector release moves all three in both files. A packaging test fails when
+the two entries disagree.
 
 ## Install with one command
 
@@ -85,6 +93,19 @@ and every `project` command warns on stderr when a newer release is out (see
 installer. Set `PROJECTOR_REF` to install a particular release, such as
 `v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
 
+The installer also installs or moves the `gh-stack` plugin on each host,
+since `claude plugin update` neither installs a dependency a plugin newly
+declares nor moves one already installed. A marketplace that does not serve
+`gh-stack` yet leaves Projector installed and prints a `gh-stack` warning.
+The `all` target, the default, also installs the `gh stack` extension with
+`gh extension install github/gh-stack` when `gh` is installed and the
+extension is not, and runs `gh extension upgrade stack` when the installed
+extension is older than the release the marketplace pins. It leaves an
+extension that provides `gh stack` from another owner alone, prints a
+`skipped` row when `gh` is missing, and never fails the install over the
+extension. `status` adds a `stack-` row comparing the extension with the
+pin.
+
 ## Install only the CLI
 
 `pipx` installs an isolated `project` from the newest release's source
@@ -104,10 +125,23 @@ claude plugin marketplace add ninjudd/projector --scope user
 claude plugin install projector@projector --scope user
 ```
 
+The install also installs the `gh-stack` plugin that `projector` depends on.
 Invoke a skill with the plugin namespace, for example:
 
 ```text
 /projector:spec a safer deploy workflow
+```
+
+To update by hand, refresh the marketplace and update both plugins.
+`claude plugin update projector@projector` moves only Projector, and
+Projector fails to load while `gh-stack` is missing, so install `gh-stack`
+when you do not have it yet:
+
+```sh
+claude plugin marketplace update projector
+claude plugin update projector@projector
+claude plugin install gh-stack@projector --scope user   # when it is missing
+claude plugin update gh-stack@projector
 ```
 
 Validate a checkout before publishing it:
@@ -124,6 +158,7 @@ Add the same repository as a Codex marketplace and install the plugin:
 ```sh
 codex plugin marketplace add ninjudd/projector
 codex plugin add projector@projector
+codex plugin add gh-stack@projector
 ```
 
 Invoke a skill directly, for example:
@@ -135,12 +170,11 @@ $spec a safer deploy workflow
 The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
 install-surface metadata; it does not wrap or rewrite skill instructions.
 
-Codex has no plugin dependencies, so installing Projector for Codex does not
-install GitHub's `gh-stack` skill. Projector's skills work without it: they
-name the `gh stack` commands they run, and `gh stack <command> --help`
-covers the flags. To give Codex upstream's skill as well, add the
-`skills/gh-stack` directory of
-[`github/gh-stack`](https://github.com/github/gh-stack) to Codex as a skill.
+Codex has no plugin dependencies, so `gh-stack@projector` is a plugin of its
+own there, and the last command above installs it. Projector's skills work
+without it. To update both, run `codex plugin marketplace upgrade projector`
+and then both `codex plugin add` commands again, since `add` installs a
+plugin again from the marketplace when it is already there.
 
 ## Reach every session through the repository
 
@@ -326,9 +360,22 @@ snapshot before it can see the new version:
 
 ```sh
 claude plugin update projector@projector
+claude plugin update gh-stack@projector
 codex plugin marketplace upgrade
 codex plugin add projector@projector
+codex plugin add gh-stack@projector
 ```
+
+A release that first ships the `gh-stack` dependency leaves Projector unable
+to load in Claude Code for anyone who updates only `projector@projector`,
+because `update` does not install the new dependency. Run
+`claude plugin install gh-stack@projector --scope user` once, or
+`project upgrade`, which does it for you.
+
+Taking a newer upstream `gh-stack` is a deliberate change of its own: set
+the same `ref`, `sha`, and `version` on the `gh-stack` entry in both
+marketplace files, and read upstream's new skill against the rules in
+`implement`'s "Stack dependent work" section.
 
 ## Work without MCP
 

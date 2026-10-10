@@ -162,8 +162,9 @@ body too, and it is the wrong body; replace it as
 A stack is a chain of pull requests, each based on the branch of the one
 below it, that GitHub records as one stack. Make and keep one with
 `gh stack`, the GitHub CLI extension. GitHub's own `gh-stack` skill is the
-reference for its commands; in Claude Code, the Projector plugin installs it
-as the `gh-stack` plugin. Where the skill is not installed,
+reference for its commands; Projector's marketplace serves it as the
+`gh-stack` plugin, which Claude Code installs with Projector and Projector's
+installer adds for Codex. Where the skill is not installed,
 `gh stack <command> --help` covers the flags. `fix-pr` and `start-fix-loop`
 find and update a stack's layers, and fall back when `gh stack` cannot help,
 as this section describes.
@@ -180,10 +181,12 @@ differ, these rules win:
   requests as drafts. Never pass `--open` to `submit` or `link`: it marks
   every layer ready for review, the existing ones included, and only a
   review loop's clean verdict marks a layer ready.
-- **Replace the body `submit` writes.** It is the commit message,
-  hard-wrapped, plus a stack footer and no `## Testing` section, and a
-  squash merge would keep it. Write each layer's body as the hand-over above
-  describes and set it with `gh pr edit <number> --body-file <file>`.
+- **Replace the title and body `submit` writes.** The body is a "Stack
+  created with GitHub Stacks CLI" footer, after the hard-wrapped commit body
+  when the layer has one commit, with no `## Testing` section, and a squash
+  merge would keep it. A layer of several commits gets its branch name as its
+  title. Write each layer's title and body as the hand-over above describes
+  and set them with `gh pr edit <number> --title <title> --body-file <file>`.
 - **Never merge.** Never run `gh stack merge` or `gh pr merge`, whatever the
   skill says about merging. The merge is the user's checkpoint.
 

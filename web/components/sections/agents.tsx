@@ -75,7 +75,7 @@ export function Agents() {
         <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
         <Code>summarize-pr</Code>, which summarizes the changes in a large pull request as a guided page for
         its reviewers; and <Code>write</Code>, which writes or revises any prose so that it follows
-        Projector&rsquo;s writing guide. In Claude Code it also installs GitHub&rsquo;s <Code>gh-stack</Code>{" "}
+        Projector&rsquo;s writing guide. Its marketplace also serves GitHub&rsquo;s <Code>gh-stack</Code>{" "}
         skill, for splitting a large change into a chain of dependent pull requests.{" "}
         <a
           href={DOCS.plugins}
