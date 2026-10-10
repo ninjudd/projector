@@ -10,15 +10,16 @@ same code: every stack of pull requests that carries out part of the project,
 each under the headers of its segments, then the project's other pages and
 the footer row, beside the plan.
 
-This plan builds on [`stack-header`](../stack-header/readme.md), the plan
-#216 merged, and on its amendment, which lets one stack span several
-projects. Under the amendment, each pull request records one project or none.
-In GitHub's order, a stack gets a header at its bottom layer and at each layer
-that names a different project from the layer below it, and a layer that
-names no project joins the segment below it. The stack stays one group, with
-a header per segment. This plan uses the amendment's working names, a stack's
-`segments`, each a `header` and its `members`, and takes the names the
-amendment settles. It is implemented after `stack-header`'s implementation.
+This plan depends on [`stack-header`](../stack-header/readme.md), which #216
+merged, as amended by #226, whose § 8 lets one stack carry several projects.
+Under the amendment, each pull request records one project or none, and the
+build splits each stack into segments, one for each run of layers that carry
+the same project. A layer with no project, or with a project the site lacks,
+joins the current segment, and a project that comes back after a different
+one starts a new segment. The stack stays one group, with a header per
+segment. This plan uses the amendment's names: `stack_segments`, each page's
+`segments`, `StackSegment`, and `stackSegmentsHtml`. It is implemented after
+`stack-header`'s implementation, amendment included.
 
 A list of the plan's sections in the sidebar, and how a nested project's
 sidebar reaches its siblings, are left to the draft plan
@@ -270,12 +271,13 @@ project's pages.
 
 `stack-header` already works out, in `build_summaries` in
 `src/projector/site/__init__.py`, each stack's members, through `find_stacks`,
-before it writes a page. Under its amendment, each stack's `segments` list,
-in GitHub's order, holds each segment's `header` and its `members`: the
-numbers of its pull requests, from the bottom layer up, members without a
-summary included. Every member's summary page carries its stack's segments.
-Each entry also carries `stack`, the number of the first review in its stack
-on the index, or None when it is alone there. The entries come in the Reviews
+and its segments, through `stack_segments`, before it writes a page. Every
+page of the stack carries them as `segments`, bottom first, each a `header`
+and its `members`: the numbers of its pull requests, bottom first, members
+without a summary included. Every member is in exactly one segment, and a
+pull request alone has one. Each entry carries `header`, its own segment's
+header, and `stack`, the number of the first review in its stack on the
+index, or None when it is alone there. The entries come in the Reviews
 index's order: newest stack first, each stack's layers together.
 
 This plan adds one field to each entry and replaces one field of each
@@ -288,13 +290,13 @@ project:
    segments names, the function appends the entry's `segments` to that
    project's list, once per stack.
 3. `build_site` sets each project's `stacks` from that result, or `[]`, in
-   place of today's `reviews`.
+   place of the `reviews` list that `stack-header` keeps for this page.
 
 A project in `site.json` changes like this:
 
 | Field | Value | Meaning |
 | --- | --- | --- |
-| `stacks` | `[[{"header": {…}, "members": [303]}, {"header": {…}, "members": [304]}], [{"header": {…}, "members": [212]}]]` | Every stack that holds a segment of this project, newest first. Each is its segments as every member's summary page carries them. `[]` when no segment names the project. |
+| `stacks` | `[[{"header": {…}, "members": [303]}, {"header": {…}, "members": [304]}], [{"header": {…}, "members": [212]}]]` | Every stack that holds a segment this project heads, newest first. Each is its `segments`, a `StackSegment[]`, as every member's page carries them. `[]` when no segment names the project. |
 | `reviews` | Removed | Its one reader, the review line, goes. |
 
 A stack's rows take their titles from `site.json`'s `reviews`, so each pull
@@ -303,14 +305,14 @@ request's title is written once.
 ### 2.5 One renderer draws both sidebars
 
 The site's pages load `summary.js` first, for the helpers at its top, such as
-`esc`, `creditHtml`, and `stackHeaderHtml`. The sidebar's pieces move there,
-and both pages call them:
+`esc`, `creditHtml`, `stackHeaderHtml`, and `stackSegmentsHtml`. The
+sidebar's other pieces move there, and both pages call them:
 
 | Helper | Draws | Called by |
 | --- | --- | --- |
-| `stackHeaderHtml(header, current)` | One segment's header content, as `stack-header` defines it: a link for a project, a `<span>` for a title. It gains `current`: when true, it draws a `<span>` for a project too. | The Reviews index, the summary sidebar, the project sidebar |
-| `stackListHtml(rows, repo)` | One `<ul class="stack" aria-label="Pull requests in this stack">` of `.srow` rows: a current row as a highlighted `<li aria-current="page">`, every other row as a link, to GitHub when its `url` is empty. Today this is the summary page's `stackList`. | Through `sideNavHtml` |
-| `sideNavHtml(nav)` | The whole sidebar: `<nav class="nav">` named by `nav.label`, then the `.prblock`, holding one `<div class="stackgroup">` per stack with a `<div class="stackhead">` and a `stackListHtml` per segment, or `nav.empty` when there is none, then `nav.middle`, then the `.navfoot` row with `creditHtml()` and `nav.foot`. A header that names `nav.current` gets the class `current`, and the first such header gets `aria-current="page"`. | `renderPage` on a summary page, `projectNav` on a project page |
+| `stackHeaderHtml(header, current)` | One segment's header, as `stack-header` defines it: a link for a project, a `<span>` for a title. It gains `current`: when true, it draws a `<span>` for a project too. | The Reviews index, and both sidebars through `stackSegmentsHtml` |
+| `stackSegmentsHtml(segments, rows, current, mark)` | One stack, as `stack-header` defines it: for each segment, its `<div class="stackhead">` and a `<ul class="stack">` of its members' rows. It gains `current` and `mark`: a header that names the project `current` gets the class `current` and draws through `stackHeaderHtml` as current, and when `mark` is true, the first such header also gets `aria-current="page"`. | `sideNavHtml`, once per stack |
+| `sideNavHtml(nav)` | The whole sidebar: `<nav class="nav">` named by `nav.label`, then the `.prblock`, holding one `<div class="stackgroup">` per stack drawn by `stackSegmentsHtml`, or `nav.empty` when there is none, then `nav.middle`, then the `.navfoot` row with `creditHtml()` and `nav.foot`. It passes `mark` as true until a stack has drawn a current header, so the sidebar holds one `aria-current`. | `renderPage` on a summary page, `projectNav` on a project page |
 | `titleRowHtml(eyebrow, title, sub)` | The title row: `<header class="top">` holding `<div class="eyebrow">` and the `<h1>`, then `<div class="sub">` when `sub` is not empty. Today `renderPage` writes this inline. | `renderPage` on a summary page, with the "…" menu as `sub`, and `showProjectFile` on a project page, with no `sub` |
 | `ICON`, `HISTORY_ICON` | The 20-unit stroked icon frame and the history icon | `headsList` on a summary page, the project sidebar's footer, and the site bar's icons, which today keep a copy of `ICON` in `site.ts` |
 
@@ -319,15 +321,16 @@ and both pages call them:
 | Field | Summary page | Project page |
 | --- | --- | --- |
 | `label` | `Sections` | `Project` |
-| `stacks` | One stack: the page data's segments, each with its rows | The project's stacks, each segment with its rows |
+| `stacks` | One stack: the page data's `segments`, with the page data's `stack` as its rows | The project's `stacks`, with rows that `projectNav` builds from `site.json`'s `reviews` |
 | `current` | `""`: no header is current | This project's name on its readme, and `""` on any other page |
 | `empty` | `""` | The project's own header, then the line `No reviews of this project.` |
 | `middle` | The Overview and Files tabs, and the numbered sections | The pages (§ 2.3), in `<div class="navpages">`, or `""` |
 | `foot` | `headsList()`, the versions list | The history link |
 
 The summary page draws what the amended `stack-header` draws. Only the code
-that draws it moves. A stack row's type, `StackRow`, is
-`{number, title, url, current?}`, which the page data already holds.
+that frames it moves. A stack row's type, `StackRow`, is
+`{number, title, url, current?}`, which the page data's `stack` already
+holds.
 
 The style rules stay where they reach only what they style:
 
@@ -401,8 +404,8 @@ meets two conditions, which this plan does not design:
   `path`, `files`, and `stacks` from the record, and `site.projects` for the
   nested projects under its folder.
 - **Its segments carry its name.** `project_stacks` files a stack under each
-  `project` its segments' headers name. `stack-header` turns a `project` that
-  names a plan the site lacks into a title header, so `proposed-projects`
+  `project` its segments' headers name. `stack_segments` treats a `project`
+  that names a plan the site lacks as no project, so `proposed-projects`
   decides when a proposed project's name counts as one the site has.
 
 ### 2.8 Files that change
@@ -410,9 +413,9 @@ meets two conditions, which this plan does not design:
 | File | Change |
 | --- | --- |
 | `src/projector/site/__init__.py` | `build_summaries` gives each entry `segments`. A new `project_stacks`. `build_site` writes each project's `stacks` in place of `reviews`. |
-| `site/src/summary.ts` | `ICON` and `HISTORY_ICON` move to the shared helpers, beside a new `titleRowHtml`, `stackListHtml`, and `sideNavHtml`. `stackHeaderHtml` gains `current`. `renderPage` draws its title row with `titleRowHtml` and its sidebar with `sideNavHtml`, and `stackList` goes. |
+| `site/src/summary.ts` | `ICON` and `HISTORY_ICON` move to the shared helpers, beside a new `titleRowHtml` and `sideNavHtml`. `stackHeaderHtml` gains `current`, and `stackSegmentsHtml` gains `current` and `mark`. `renderPage` draws its title row with `titleRowHtml` and its sidebar with `sideNavHtml`. |
 | `site/src/site.ts` | `projectNav`. `frame` takes `top` and `nav` and draws the layout in § 2.2. `showPage` and `showDocument` pass them through, `showHtml` passes `nav`, and `showDocument` removes the body's first `<h1>` on a page with a title row. `showProjectFile` draws the title row and calls `projectNav`, and stops building the top-level tree, a Markdown page's head, and the review line. `tree` marks its outer list `sidetree`. The copy of `ICON` goes. |
-| `site/src/globals.d.ts` | `StackRow` and `SideNav`. `stacks` replaces `reviews` in `SiteProject`, as a list of stacks, each a list of the amended `stack-header`'s segments. |
+| `site/src/globals.d.ts` | `StackRow` and `SideNav`. `stacks` replaces `reviews` in `SiteProject`, as a `StackSegment[][]`. |
 | `site/assets/summary.css` | The rules in § 2.5: the current header, the divider between stacks, the empty line, and the history link |
 | `site/assets/site.css` | `.sitemain > .side` and `.sidetree` in place of `.sitemain .side`. `.sitemain.withnav` drops `.sitemain`'s width and padding and holds its `sidebody` to 880 pixels. `.top .eyebrow .badge` sets `line-height: 1`. `.nav .navpages` draws the pages under a divider at 13.5 pixels. The `.plist` rules go. |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/` |
@@ -467,7 +470,7 @@ meets two conditions, which this plan does not design:
     rows are one shared component, so a status would change both sidebars. A
     later change can add one to both.
 - **A stack shows whole on the page of every project it carries out.** Under
-  the amended `stack-header`, one stack can hold segments of several
+  `stack-header` as #226 amends it, one stack can hold segments of several
   projects, and a summary's sidebar shows the whole stack with every
   segment's header. The project page shows the same thing, so a stack looks
   the same wherever it appears, and each project's page finds every stack
@@ -527,8 +530,9 @@ meets two conditions, which this plan does not design:
   summary page. This repository's longest plans run to 500 to 800 lines, and
   a project's stacks run to a few rows, so the stacks would be out of reach
   below the plan.
-- **One renderer.** `sideNavHtml`, `stackListHtml`, and `stackHeaderHtml`
-  draw both sidebars, and `projectNav` only gathers the project's data.
+- **One renderer.** `sideNavHtml`, `stackSegmentsHtml`, and
+  `stackHeaderHtml` draw both sidebars, and `projectNav` only gathers the
+  project's data.
   Without them, `site.ts` would draw a second copy of the rows, the header,
   and the footer, and the two sidebars would drift. Rejected: a project
   sidebar written in `site.ts` that copies the summary's markup.
@@ -628,11 +632,11 @@ loads `summary.js`, so the moved helpers add nothing to load.
 
 ## 6. Rollout
 
-1. `stack-header`'s implementation merges, with its amendment. That plan
-   merged in #216, and the amendment that splits a stack into segments is in
-   review. `find_stacks`, each stack's `segments`, and `stackHeaderHtml` are
-   this plan's inputs. Before then, this plan takes the names the amendment
-   settles in place of its working names.
+1. #226, the amendment to `stack-header` that splits a stack into segments,
+   merges, and then `stack-header`'s implementation, amendment included.
+   That plan merged in #216. `find_stacks`, `stack_segments`, each page's
+   `segments`, `StackSegment`, `stackHeaderHtml`, and `stackSegmentsHtml` are
+   this plan's inputs.
 2. This plan is implemented in one pull request. `site.json`'s `stacks`, the
    page that reads it, and the compiled scripts ship together, because a
    build copies the CLI's own assets.
