@@ -1,0 +1,267 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 793f923..feaf3d0 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -604,6 +604,12 @@ unassigned group. `summary publish` fetches the pull request's diff, checks
+ that the summary builds against it, commits the summary and the diff to the
+ hidden ref without touching the checkout, and starts the repository's site
+ workflow.
++Publishes that run at the same time, as a review loop's subagents run them,
++each land. A publish whose push loses the race for the ref fetches the ref
++again, rebuilds its commit on the new tip, keeping every other publisher's
++summaries, and pushes again, up to five pushes in all. It says how many
++times it retried. Any other push failure, such as a refused login, fails at
++once.
+ Pass `--diff` to publish a diff you produced instead of fetching one; it must
+ run from the summary's `pr.base` to its `pr.head`, because every later deploy
+ serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 20cf579..2996cf8 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -253,12 +253,16 @@ add them yourself.
+ that does not build. It then commits the summary and that diff to
+ `summaries/<number>/<head>/` on the ref, as `summary.json` and `diff.patch`,
+ without touching the checkout, and sends a `repository_dispatch` event that
+-starts the workflow. It fetches from the compare API, which serves pull
+-requests past the 300-file limit of `gh pr diff`, so pass `--diff` only when
+-`publish` reports that GitHub could not serve the diff. The file is then the
+-local `git diff` from step 3, since the compare call there fails with
+-`publish`'s. It must be the diff from the summary's `pr.base` to its `pr.head`,
+-because every later deploy serves the stored diff as it is. Because the diff is
++starts the workflow. Publishes that run at the same time, as a review loop's
++subagents run them, each land. A publish whose push loses the race for the
++ref fetches the ref again, rebuilds its commit on the new tip, and pushes
++again, up to five pushes in all. `publish` fetches the diff from the compare
++API, which serves pull requests past the 300-file limit of `gh pr diff`, so
++pass `--diff` only when `publish` reports that GitHub could not serve the
++diff. The file is then the local `git diff` from step 3, since the compare
++call there fails with `publish`'s. It must be the diff from the summary's
++`pr.base` to its `pr.head`, because every later deploy serves the stored diff
++as it is. Because the diff is
+ stored, the site deploy asks GitHub for nothing: it checks each summary against
+ its stored diff and writes each page's data beside it, and the page loads
+ that data when it opens. The deploy reports and skips any summary that still
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 2e6772c..e01df50 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -15,11 +15,13 @@
+ from html.parser import HTMLParser
+ import json
+ import os
++import random
+ import re
+ import shlex
+ import subprocess
+ import sys
+ import tempfile
++import time
+ from pathlib import Path
+ from urllib.parse import urlparse
+ 
+@@ -31,6 +33,14 @@
+ DISPATCH_EVENT = "projector-summaries"
+ PAGES_ROOT = "summaries"
+ DIFF_FILE = "diff.patch"
++# Publishes running at once, as a review loop's subagents run them, race to
++# move the summaries ref, so a push that loses is rebuilt on the new tip and
++# tried again, up to this many pushes in all.
++PUSH_ATTEMPTS = 5
++# What git prints when a push lost that race: the ref moved since the fetch, or
++# the server could not lock or update it while another push held it. A hook or
++# permission refusal says "rejected" too, so that word alone is not one of them.
++PUSH_RACE_SIGNS = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
+ # The name older releases stored each summary under. The site shows no summary
+ # from this file. It reports each one with no summary.json beside it, so the
+ # repository knows to republish it, and dates a republished summary by this file.
+@@ -903,19 +913,40 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
+         return commit
+     local = tracking_ref(remote, ref)
+-    parent = fetch_ref(remote, ref)
+-    seeded = False
+-    if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+-        parent = seed_from_legacy(remote)
+-        seeded = bool(parent)
+-    tree = summary_tree(parent, folder, summary, diff)
+-    if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+-        print(f"{ref} already has this summary; nothing to publish")
+-        return None
+-    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+-    git("push", "--quiet", remote, f"{commit}:{ref}")
++    tip = fetch_ref(remote, ref)
++    seed = None
++    for attempt in range(PUSH_ATTEMPTS):
++        parent = tip
++        if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
++            if seed is None:
++                seed = seed_from_legacy(remote)
++            parent = seed
++        tree = summary_tree(parent, folder, summary, diff)
++        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
++            print(f"{ref} already has this summary; nothing to publish")
++            return None
++        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
++        try:
++            git("push", "--quiet", remote, f"{commit}:{ref}")
++            break
++        except SummaryError as error:
++            if attempt + 1 == PUSH_ATTEMPTS:
++                raise
++            raced = any(sign in str(error) for sign in PUSH_RACE_SIGNS)
++            if raced:
++                time.sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
++            moved = fetch_ref(remote, ref)
++            # While the ref has not moved, the push lost no race unless git says
++            # so, so a refused login or a dropped connection fails now rather
++            # than after every attempt. A failed refetch leaves nothing to
++            # build on.
++            if (tip and not moved) or (moved == tip and not raced):
++                raise
++            tip = moved
++    seeded = bool(seed) and parent == seed
+     git("update-ref", local, commit)
+-    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}")
++    retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
++    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}{retried}")
+     if seeded:
+         print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
+               "once every site reads the new ref")
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index d824eb1..3c14243 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -7,7 +7,7 @@
+ import tempfile
+ import unittest
+ from unittest import mock
+-from contextlib import redirect_stderr, redirect_stdout
++from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
+ from pathlib import Path
+ 
+ from projector import cli, site, summary
+@@ -447,19 +447,118 @@ def setUp(self) -> None:
+         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+         self.summary_path = tmp / "summary.json"
+         self.dispatches: list[str] = []
++        self.sleeps: list[float] = []
++        self.output = ""
+ 
+-    def publish(self, head: str, **kwargs: object) -> object:
++    def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
++        """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`."""
+         data = make_summary(GOOD_GROUPS)
+         data["pr"]["head"] = head
+-        self.summary_path.write_text(json.dumps(data))
++        path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
++        path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+-        os.chdir(self.repo)
++        os.chdir(repo or self.repo)
++        out = io.StringIO()
+         try:
+             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
+-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
+-                return summary.publish(self.summary_path, "origin", **kwargs)
++                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
++                 mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out):
++                return summary.publish(path, "origin", **kwargs)
+         finally:
+             os.chdir(cwd)
++            if not repo:
++                self.output = out.getvalue()
++
++    def other_publisher(self) -> Path:
++        """A second clone of the remote, committing as someone else, as another review loop subagent would."""
++        other = self.remote.with_name("other")
++        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(other))
++        for key, value in (("user.name", "Other"), ("user.email", "other@example.com"), ("commit.gpgsign", "false")):
++            run(other, "git", "config", key, value)
++        return other
++
++    def racing(self, head: str) -> tuple[AbstractContextManager[object], list[object]]:
++        """Patch git so another clone publishes `head` just before this clone's first push; the list gets its commit."""
++        other = self.other_publisher()
++        real = summary.git
++        theirs: list[object] = []
++
++        def git(*args: str, **kwargs: object) -> str:
++            if args[0] == "push" and not theirs:
++                theirs.append(None)
++                theirs[0] = self.publish(head, repo=other)
++            return real(*args, **kwargs)
++        return mock.patch.object(summary, "git", side_effect=git), theirs
++
++    def test_a_publish_that_loses_the_race_for_the_ref_rebuilds_on_the_new_tip(self) -> None:
++        first = self.publish("d" * 40)
++        race, theirs = self.racing("e" * 40)
++
++        with race:
++            mine = self.publish("c" * 40)
++
++        self.assertEqual(mine, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
++        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine),
++                         "the retry builds on the other publisher's commit")
++        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", theirs[0]))
++        files = self.ref_files()
++        for head in ("c", "d", "e"):
++            self.assertIn(f"summaries/7/{head * 40}/summary.json", files, "no publisher's summary is dropped")
++        self.assertEqual(1, len(self.sleeps))
++        self.assertIn("after 1 retry because another publish moved the ref", self.output)
++        self.assertEqual(["owner/repo"] * 3, self.dispatches)
++
++    def test_a_publish_finds_its_summary_already_pushed_after_losing_the_race(self) -> None:
++        race, theirs = self.racing("c" * 40)
++
++        with race:
++            self.assertIsNone(self.publish("c" * 40))
++
++        self.assertEqual(theirs[0], run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
++        self.assertIn("already has this summary; nothing to publish", self.output)
++        self.assertEqual(["owner/repo"], self.dispatches, "only the publish that pushed dispatches")
++
++    def counting_pushes(self, failure: str = "") -> tuple[AbstractContextManager[object], list[tuple[str, ...]]]:
++        """Patch git to count pushes, failing each with `failure` when it is given."""
++        real = summary.git
++        pushes: list[tuple[str, ...]] = []
++
++        def git(*args: str, **kwargs: object) -> str:
++            if args[0] == "push":
++                pushes.append(args)
++                if failure:
++                    raise summary.SummaryError(failure)
++            return real(*args, **kwargs)
++        return mock.patch.object(summary, "git", side_effect=git), pushes
++
++    def test_a_push_the_remote_refuses_fails_without_retrying(self) -> None:
++        first = self.publish("d" * 40)
++        hook = self.remote / "hooks" / "pre-receive"
++        hook.write_text("#!/bin/sh\necho no pushes today >&2\nexit 1\n")
++        hook.chmod(0o755)
++        # A global core.hooksPath would otherwise send the remote's hooks elsewhere.
++        run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
++        counted, pushes = self.counting_pushes()
++
++        with counted, self.assertRaisesRegex(summary.SummaryError, "pre-receive hook declined"):
++            self.publish("c" * 40)
++
++        self.assertEqual(1, len(pushes), "a refusal that leaves the ref in place is not a race")
++        self.assertEqual([], self.sleeps)
++        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
++        self.assertEqual(["owner/repo"], self.dispatches)
++
++    def test_a_push_that_keeps_losing_the_race_gives_up(self) -> None:
++        counted, pushes = self.counting_pushes(
++            "git push failed: error: cannot lock ref 'refs/projector/summaries': reference already exists")
++
++        with counted, self.assertRaisesRegex(summary.SummaryError, "cannot lock ref"):
++            self.publish("c" * 40)
++
++        self.assertEqual(summary.PUSH_ATTEMPTS, len(pushes))
++        self.assertEqual(summary.PUSH_ATTEMPTS - 1, len(self.sleeps))
++        self.assertLess(sum(self.sleeps), 15, "the retries stay brief")
++        self.assertEqual([], self.dispatches)
+ 
+     def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
+         diff_file = self.summary_path.with_name("pr.diff")

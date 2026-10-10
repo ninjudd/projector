@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "name": "Summary Publish Retry",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 193,
+  "title": "Retry a summary publish that loses the race for the summaries ref",
+  "head": "5289ac16f9d1f9de4c07813084937e20e142dd06",
+  "headRef": "summary-publish-retry",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project summary publish</code> stores each pull request's summary on a hidden Git ref, <code>refs/projector/summaries</code>, which the repository's Projector site reads. To add a summary, <code>publish</code> fetches that ref, builds a commit with the new summary on top of the tip, and pushes the commit. A review loop runs one subagent per pull request, so several publishes can run at the same moment.",
+   "Before this change, <code>publish</code> pushed once. When another publish moved the ref between the fetch and the push, git refused the push, and nothing was written until someone reran the command. Now <code>publish</code> fetches the ref again, rebuilds its commit on the new tip, and pushes again, up to five times. The push is never forced, because a forced push would drop the summary that the other publisher just added.",
+   "<ul><li><b>When it retries.</b> It retries when git's error names a race, such as <code>fetch first</code> or <code>cannot lock ref</code>, or when the refetched tip moved. A push the remote refuses for another reason, such as a hook or a permission check, fails after one push.</li><li><b>How long it waits.</b> After an error that names a race, it waits 0.5, 1, 2, then 4 seconds, each plus up to 0.25 seconds of random jitter. That is under nine seconds in all.</li><li><b>When the other publish already holds this summary.</b> It prints <code>already has this summary; nothing to publish</code> and returns, as a single publish already did.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of this head is clean, with no finding threads. It lists two suggestions in its body: a push that lands just before the connection drops ends as <code>nothing to publish</code> with no site dispatch, and a short line in the <code>summarize-pr</code> rewrap.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Summaries ref.</b> <code>refs/projector/summaries</code>, a hidden ref that is not a branch. It holds one folder per pull request head.</li><li><b>Tip.</b> The commit the ref points at.</li><li><b>Race sign.</b> A phrase in git's push error that means another push moved or held the ref, listed in <code>PUSH_RACE_SIGNS</code>.</li><li><b>Legacy seed.</b> A history that carries summaries from the older <code>refs/projector/walkthroughs</code> ref. A publish builds it only when the summaries ref does not exist yet.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "retry",
+   "title": "The publish retry loop",
+   "kicker": "How publish rebuilds and pushes again after it loses the race for the ref",
+   "intro": [
+    "The single fetch, build, and push in <code>publish</code> is now a loop of up to <code>PUSH_ATTEMPTS</code> passes. Each pass builds the summary's tree on the latest known tip, so a retry keeps every summary that other publishers added. A failed push goes on to the next pass only when the failure looks like a race. Any other failure raises at once, so a refused login does not spend nine seconds before it fails.",
+    "<ol><li><b>Build.</b> Take the tip as the parent. Use the legacy seed only when the ref does not exist. Write the tree. Return early when the parent already holds this exact tree.</li><li><b>Push.</b> Push the new commit without force. On success, leave the loop.</li><li><b>Decide.</b> On failure, raise if this was the last pass. Otherwise wait if git's message names a race, then fetch the ref again. Raise if the refetch failed while a tip existed, or if the tip did not move and git named no race. Otherwise go to the next pass with the refetched tip.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>PUSH_ATTEMPTS</code> and <code>PUSH_RACE_SIGNS</code>, and turns the push in <code>publish</code> into the retry loop.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 43,
+       "text": "The list leaves out the word <code>rejected</code> on purpose. Git prints <code>rejected</code> for a hook or permission refusal too, and those failures should not retry. A refusal that GitHub words in some other way still retries when the ref moved, because the loop also checks the refetched tip."
+      },
+      {
+       "kind": "verify",
+       "line": 922,
+       "text": "The legacy seed is built at most once. <code>seed</code> starts as <code>None</code> and is computed only then. On line 946, <code>seeded</code> is true only when the pushed commit's parent is the seed, so a retry that builds on another publisher's tip reports no carry-over. Checked by reading the loop."
+      },
+      {
+       "kind": "verify",
+       "line": 935,
+       "text": "Git's rejection for this race contains <code>fetch first</code>. With that phrase removed from <code>PUSH_RACE_SIGNS</code>, the lost-race test fails, because the retry no longer waits."
+      },
+      {
+       "kind": "verify",
+       "line": 943,
+       "text": "A refusal that leaves the ref in place fails after one push. With the <code>moved == tip and not raced</code> condition removed, the pre-receive hook test fails."
+      },
+      {
+       "kind": "context",
+       "line": 925,
+       "text": "On a retry, this check also catches a push that landed on the server just before the connection dropped. The refetch returns this run's own commit, so <code>publish</code> prints <code>nothing to publish</code>, returns <code>None</code>, and sends no site dispatch. A manual rerun at the base ends the same way. The review lists this as a suggestion: end the loop when the refetched tip equals the commit this run pushed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests against a real bare remote",
+   "kicker": "Four cases that race a second clone or fake the push error",
+   "intro": [
+    "The tests push to a temporary bare repository and patch <code>time.sleep</code> to record each wait. Two helpers set up a race. <code>racing</code> runs a full publish from a second clone just before this clone's first push. <code>counting_pushes</code> counts pushes and can fail each one with a fixed message."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py",
+     "note": "Adds the race helpers and four <code>publish</code> cases: a lost race, the same summary pushed first, a hook refusal, and a lock that never clears.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 540,
+       "text": "The test sets <code>core.hooksPath</code> on the bare remote. A global <code>core.hooksPath</code> on the test machine would otherwise make git look for the remote's hooks in that directory, and the pre-receive hook would never run."
+      },
+      {
+       "kind": "verify",
+       "line": 493,
+       "text": "The lost-race case asserts that the pushed commit's parent is the other publisher's commit, and that all three summaries are on the ref. It ran and passed in the full suite at this head: 458 tests, OK, one skip."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Docs and the summarize-pr skill",
+   "kicker": "Tell readers that concurrent publishes each land",
+   "intro": [
+    "The <code>summary publish</code> section of the CLI reference and the publish section of the <code>summarize-pr</code> skill each gain a few sentences. They say that a publish that loses the race fetches again, rebuilds on the new tip, and pushes up to five times in all."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds the retry behavior to the <code>summary publish</code> paragraph."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Adds the retry behavior and rewraps the paragraph around it.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 265,
+       "text": "The rewrap stops on this line, so one short line sits before the paragraph continues at the old width. It renders the same, and the review lists it as a suggestion."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
