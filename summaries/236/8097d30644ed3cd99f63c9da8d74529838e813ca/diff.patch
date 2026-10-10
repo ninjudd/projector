@@ -1,0 +1,2167 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 47e58ed..25b7fde 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -622,7 +622,15 @@ project site workflow --write
+ ```
+ 
+ `summary init` writes a skeleton summary with every changed file in one
+-unassigned group. `summary publish` fetches the pull request's diff, checks
++unassigned group, an empty `name`, and a `project` of `null`, which means
++not decided yet. `summary publish` refuses a summary whose `project` is
++`null`, missing, or not a string, or whose `name` is empty or longer than 60
++characters, and says which field to set. Set `project` to the name of the
++one project the pull request carries out, as `project list` names it, or to
++`""` for none, and `name` to a short title for the stack. A project the
++checkout does not have yet publishes, because a pull request can add the
++plan it carries out. `site page` does not check either field.
++`summary publish` then fetches the pull request's diff, checks
+ that the summary builds against it, commits the summary and the diff to the
+ hidden ref without touching the checkout, and starts the repository's site
+ workflow. It commits the head's `linguist-generated` attributes beside them
+@@ -705,21 +713,48 @@ top-level project's folder: every supplemental file, subdirectory, and nested
+ project. **Reviews** lists the summaries, newest pull request first, each as
+ its pull request's number and title, the way a summary's sidebar lists its
+ stack, with its status and when its newest version was published, in your
+-time zone. A pull request is stacked when its base branch is another pull
+-request's head, and the pull requests of a stack are listed together where
+-the newest of them would be, from the one on the default branch up, close
+-together with a divider only below the stack. A summary that
+-did not record the pull request beneath it has it looked up with `gh` at
+-build time; when `gh` cannot answer, the review shows no stack. Two boxes
++time zone. The pull requests of a stack are listed together where the newest
++of them would be, from the bottom up, close together with a divider only
++below the stack. The build takes each stack from GitHub, which lists the
++repository's stacks in one paginated request, so a stack keeps its pull
++requests and their order after they merge, and keeps a layer whose base has
++moved to the default branch. A pull request in no GitHub stack, and every
++pull request when GitHub cannot list the stacks, is stacked when its base
++branch is another pull request's head. A summary that did not record the
++pull request beneath it has it looked up with `gh` at build time, and when
++`gh` cannot answer, that pull request shows no stack. A pull request chained
++by its base branch onto a member of a GitHub stack joins that stack, after
++its members. The build prints one line saying how it found the stacks, and
++never fails over them:
++
++```text
++stacks: read 19 GitHub stacks in 1 request
++stacks: GitHub's stacks could not be read, so every pull request sits on its base branch
++```
++
++Each stack opens with a header, and so does a pull request alone. A summary
++records the one project its pull request carries out as `project`, or `""`
++for none, and a short title for the stack as `name`. The build splits each
++stack into segments, one for each run of pull requests that carry out the
++same project, and heads each segment with the project's title, linked to its
++page. A pull request that names no project, a project the site has no page
++for, or no summary at all sits in the segment of the pull request before it,
++and a stack where none names a project has one header: the lowest `name` in
++the stack, in plain text, or else the title of its lowest pull request with
++a summary. A summary published before `project` existed takes the first
++project its `projects` list names that the site has, or else the one project
++whose files its diff changes, when exactly one does. Two boxes
+ above the list, **Open** and **Closed**, each with its count, choose which
+ pull requests it shows. A merged pull request counts as closed, and one whose
+ state `gh` could not tell counts as open. Only **Open** starts checked, and
+ the address records any other choice, as `?state=closed`,
+ `?state=open,closed`, or `?state=` for neither, so a copied link opens the
+-same list. A summary's sidebar lists
++same list. When the boxes hide every pull request of a segment, its header
++goes too. A summary's sidebar lists
+ every pull request in its stack, the ones beneath it and the ones above it,
+-one row each with its title, and highlights the current one; a pull request
+-with no stack is a stack of one, with its own row highlighted. Its older
++under its segments' headers, one row each with its title, and highlights the
++current one. A pull request with no summary on the site links to GitHub, and
++a pull request with no stack is a stack of one, with its own row highlighted. Its older
+ versions follow the sections. A summary's header shows the same status as its
+ row on Reviews: **Merged** or **Closed** once the pull request is, and until
+ then the verdict of the newest Projector review of its head, **Clean** or
+@@ -764,9 +799,10 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
+ `index/`.
+ Pass `--base` with the path the site is served under, such as `/projector/`
+ for a project site, so every page links to the others and to the shared
+-assets under `assets/`; it defaults to `/`. A review links to the projects
+-its diff changes, and to any its summary names in a `projects` list, and each
+-project page lists its reviews. A review page's header has a **…** menu with
++assets under `assets/`; it defaults to `/`. Each project page lists, newest
++first and by pull request title, the reviews in every stack segment it heads,
++including a pull request in that segment that names no project of its own.
++A review page's header has a **…** menu with
+ the pull request's conversation, files, and compare views on GitHub. Each file
+ card's header has one too: **View diff on GitHub**, **View file on GitHub**,
+ and, for a file in a project's folder, **View project**, which opens that
+@@ -834,7 +870,9 @@ in its status group with a **Proposed** badge that links the pull request's
+ review. Each of its pages opens with a banner that names the pull request,
+ its title and status, and the head the site shows, and its GitHub links
+ point at that head. Typing `proposed` in the filter lists the proposed
+-projects, and search marks their pages with the badge. A plan that does not
++projects, and search marks their pages with the badge. A stack segment whose
++pull requests carry out a proposed project is headed by that project, linked
++to its proposed page, which lists the segment's reviews. A plan that does not
+ load is left out with a `::warning title=Proposed project skipped::` line
+ that names the pull request. When two open pull requests propose one name,
+ the lower number's plan is shown, and the banner names the other. The build
+diff --git a/docs/projects/stack-header/readme.md b/docs/projects/stack-header/readme.md
+index 5bba6a3..aa479ad 100644
+--- a/docs/projects/stack-header/readme.md
++++ b/docs/projects/stack-header/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Head each stack with one project or a title
+@@ -190,9 +190,13 @@ in no GitHub stack is the normal case and adds nothing to the line:
+ ```text
+ stacks: read 16 GitHub stacks in 1 request
+ stacks: read 16 GitHub stacks in 1 request; left out 1 stack with no number, whose pull requests sit on their base branches
+-stacks: GitHub's stacks could not be read (HTTP 404), so every pull request sits on its base branch
++stacks: GitHub's stacks could not be read, so every pull request sits on its base branch
+ ```
+ 
++The lookup returns None when GitHub cannot answer, as step 1 says, so the
++last line does not say why. `gh api repos/OWNER/NAME/stacks` shows the
++reason.
++
+ A GitHub stack's number is its key while the build groups it. The index,
+ every sidebar, and the header take their members from the same stack, so a
+ merged stack shows as one group under **Closed**, and in each of its pull
+@@ -739,6 +743,10 @@ The site's scripts read the shape through these names:
+ | `stackHeaderHtml(header)` | The shared helpers at the top of `site/src/summary.ts` | One segment's header: an `<a href>` around the escaped title for a project, a `<span>` for a title |
+ | `stackSegmentsHtml(segments, rows)` | The same shared helpers | The sidebar's stack: for each segment, its header from `stackHeaderHtml`, then a `<ul class="stack">` of its members' rows in order. `rows` is the page data's `stack`, or the page's own row for a pull request alone. |
+ 
++A row of the page data's `stack` for a member without a summary on the site
++carries the pull request's page on GitHub as its `url`, so
++`stackSegmentsHtml` links every row without knowing the repository.
++
+ The Reviews index reads the flat rows of `site.json`, which arrive in stack
+ order. `reviewsTable` starts a new segment wherever a row's `header` differs
+ from the header of the row it drew above it in the same stack. Two segments
+diff --git a/site/assets/site.css b/site/assets/site.css
+index b0ed4b3..682a05c 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -143,18 +143,29 @@ table.tbl.projects td.owner { color: var(--muted); }
+    with a divider only below the stack. Every cell sits on its row's first
+    baseline, so the status and the time line up with the title. No link in the
+    table is underlined. On a phone the time is left out and the status may
+-   wrap, so the title keeps room. */
++   wrap, so the title keeps room. Each segment of a stack opens with its
++   header across all three columns, in the text's own case, with no divider
++   beneath it, so it reads as the title of the rows below; its text starts
++   where a row's number does. A segment the stack continues below draws no
++   divider either. */
+ table.tbl.reviews { table-layout: fixed; }
+ table.tbl.reviews col.status { width: 11.5em; }
+ table.tbl.reviews col.date { width: 13em; }
+ table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }
+ table.tbl.reviews td.pr { padding: 1px 1px 0; }
+-table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }
++table.tbl.reviews tr.stackhead th { padding: 6px 1px 0; border-bottom: 0; font-size: 15px; font-weight: 600; line-height: 1.35; text-transform: none; letter-spacing: normal; color: var(--text); }
++table.tbl.reviews tr.stackhead th > * { display: block; padding: 8px 9px 4px; border-radius: 6px; overflow-wrap: anywhere; color: inherit; }
++table.tbl.reviews tr.stackhead th > a:hover { background: var(--surface-2); }
+ table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
++table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }
+ table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
+ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
++/* On a phone the time's column stays at no width rather than leaving the
++   table, since each segment's header spans it and would otherwise give it
++   the room the titles need. */
+ @media (max-width: 640px) {
+-  table.tbl.reviews .date { display: none; }
++  table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }
++  table.tbl.reviews col.date { width: 0; }
+   table.tbl.reviews col.status { width: 7.5em; }
+   table.tbl.reviews td.status { white-space: normal; }
+ }
+diff --git a/site/assets/site.js b/site/assets/site.js
+index ee115c6..71415fe 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -406,7 +406,7 @@
+                 `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
+                 (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
+                     const r = reviewFor(n);
+-                    return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
++                    return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.title)}` : ''}</a>`;
+                 }).join(' · ') + '</div>' : '')
+                 : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
+         showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
+@@ -449,23 +449,43 @@
+             `<td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
+             `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
+     }
+-    // The reviews in site.json's order, each stack's rows together in one table
+-    // body, with a divider only below it. Every column but the pull request's has
+-    // a set width, so checking a box never moves one.
++    function sameHeader(a, b) {
++        return a.project === b.project && a.title === b.title && a.url === b.url;
++    }
++    // The reviews in site.json's order, each stack's rows together, with a
++    // divider only below the stack. Each segment of a stack is a table body
++    // that opens with its header, and a new segment starts wherever a row's
++    // header differs from the row drawn above it. Every body of a stack but the
++    // last is `continued`, and draws no divider. Every column but the pull
++    // request's has a set width, so checking a box never moves one.
+     function reviewsTable(reviews) {
+-        const bodies = [];
++        const stacks = [];
+         reviews.forEach(function (r) {
+-            const last = bodies[bodies.length - 1];
++            const last = stacks[stacks.length - 1];
+             if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack)
+                 last.push(r);
+             else
+-                bodies.push([r]);
++                stacks.push([r]);
++        });
++        const bodies = stacks.map(function (rows) {
++            const segments = [];
++            rows.forEach(function (r) {
++                const last = segments[segments.length - 1];
++                if (last !== undefined && sameHeader(last.header, r.header))
++                    last.rows.push(r);
++                else
++                    segments.push({ header: r.header, rows: [r] });
++            });
++            return segments.map(function (segment, i) {
++                return `<tbody${i < segments.length - 1 ? ' class="continued"' : ''}>` +
++                    `<tr class="stackhead"><th colspan="3" scope="rowgroup">${stackHeaderHtml(segment.header)}</th></tr>` +
++                    `${segment.rows.map(reviewRow).join('')}</tbody>`;
++            }).join('');
+         });
+         return '<div class="tblwrap"><table class="tbl reviews">' +
+             '<colgroup><col><col class="status"><col class="date"></colgroup>' +
+             '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
+-            bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
+-            '</table></div>';
++            bodies.join('') + '</table></div>';
+     }
+     // The reviews of open pull requests, closed ones, or both, as the boxes at
+     // the top say and the address records. A stack keeps the reviews it has left
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index bd352d8..ee6956a 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -115,14 +115,21 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
+ .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+ .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
+ .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+-.prblock .stack.projects + .stack { margin-top: 6px; }
+ .prblock .stack .srow { margin: 0 -6px; font-size: 12.5px; }
+ .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
+ .prblock .stack li.current .snum { color: var(--accent); }
+-/* A step up from the stack rows, so a project reads as the heading over its pull requests. */
+-.prblock .stack.projects .srow { grid-template-columns: 1fr; padding: 9px; font-size: 13.5px; }
++/* A segment's header, a step up from the stack rows so it reads as the
++   heading over its pull requests: a project's title, which links to the
++   project and gets a row's hover band, or a stack's title as plain text. Like
++   a row's title it shows at most three lines. Its room above and below is a
++   transparent border, since the clamp clips at the padding's edge and would
++   let a fourth line show through bottom padding, while the hover band fills
++   the border too. */
++.prblock .stackhead > * { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin: 0 -6px; padding: 0 9px; border-block: 9px solid transparent; border-radius: 6px; font-size: 13.5px; font-weight: 600; line-height: 1.35; color: var(--muted); text-decoration: none; }
++.prblock .stackhead > a:hover { background: var(--surface-2); color: var(--text); }
+ /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
+-.prblock .stack.projects:first-child { margin-top: -6px; }
++.prblock .stackhead:first-child { margin-top: -6px; }
++.prblock .stack + .stackhead { margin-top: 6px; }
+ .prbar { display: none; }
+ @media (max-width: 980px) {
+   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 8822943..6fe9f80 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -33,6 +33,28 @@ function statusHtml(state, review) {
+     const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+     return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
+ }
++// One stack segment's header: the project its pull requests carry out, linked
++// to the project's page, or the stack's title as plain text.
++function stackHeaderHtml(header) {
++    return header.url !== undefined ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
++}
++// A stack as a summary's sidebar lists it: each segment's header above a row
++// for each of its pull requests, the current one marked. `rows` has a row for
++// every member of the stack. A screen reader names a lone segment's list for
++// the stack, and each of several by its header.
++function stackSegmentsHtml(segments, rows) {
++    return segments.map(function (segment) {
++        const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
++        const items = segment.members.map(function (number) {
++            const s = rows.find(function (r) { return r.number === number; });
++            if (s === undefined)
++                return '';
++            const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
++            return s.current ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
++        }).join('');
++        return `<div class="stackhead">${stackHeaderHtml(segment.header)}</div><ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
++    }).join('');
++}
+ (function () {
+     // How many hidden lines one expand up or expand down reveals.
+     const STEP = 20;
+@@ -367,29 +389,11 @@ function statusHtml(state, review) {
+             const label = `Versions (${String(heads.length)})`;
+             return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
+         }
+-        // The pull requests stacked with this one, one row each, this one marked; a
+-        // pull request alone is a stack of one. A pull request in the stack with no
+-        // summary on the site links to GitHub.
++        // The pull requests stacked with this one under their segments' headers; a
++        // pull request alone is a stack of one.
+         function stackList() {
+             const listed = data.stack ?? [];
+-            const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
+-            return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+-                const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+-                if (s.current)
+-                    return `<li class="srow current" aria-current="page">${row}</li>`;
+-                const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
+-                return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
+-            }).join('') + '</ul>';
+-        }
+-        // The projects the pull request touches, as rows like the stack's, each
+-        // title across the whole row.
+-        function projectsList() {
+-            const projects = data.projects ?? [];
+-            if (projects.length === 0)
+-                return '';
+-            return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
+-                return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+-            }).join('') + '</ul>';
++            return stackSegmentsHtml(data.segments, listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }]);
+         }
+         // The header, as the page's statement of how well the head was checked,
+         // also links the full review a clean incremental review builds on.
+@@ -410,7 +414,7 @@ function statusHtml(state, review) {
+                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+             }).join('');
+             const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
+-            const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
++            const title = esc(pr.title);
+             return '<div class="wrap">' +
+                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
+@@ -420,7 +424,7 @@ function statusHtml(state, review) {
+                     { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
+                 ])}</div></header>` +
+                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-                `<div class="prblock">${projectsList()}${stackList()}</div>` +
++                `<div class="prblock">${stackList()}</div>` +
+                 `<div class="extra">${extra}</div>` +
+                 `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
+                 `${headsList()}</div></nav></aside>` +
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 9a95ed4..007387c 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -91,6 +91,19 @@ type ReviewStatus =
+   | { status: 'changes-requested'; url: string }
+   | { status: 'unreviewed' };
+ 
++/** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
++interface StackHeader {
++  title: string;
++  project?: string;
++  url?: string;
++}
++
++/** A run of a stack's pull requests, bottom first, that carry out one project, or a whole stack that carries none. */
++interface StackSegment {
++  header: StackHeader;
++  members: number[];
++}
++
+ /** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+   name?: string;
+@@ -111,9 +124,15 @@ interface SummaryData {
+   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
+   /** Every published head of the pull request, newest first; `at` is when it was published, in Unix seconds. */
+   heads?: { head: string; url: string; current: boolean; at?: number }[];
+-  /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
++  /**
++   * Every pull request in this one's stack, bottom first; absent or empty when it stands alone. One without a
++   * summary on the site has no title, and its `url` is its page on GitHub.
++   */
+   stack?: { number: number; title: string; url: string; current: boolean }[];
+-  projects?: { name: string; title: string; url: string }[];
++  /** The stack's segments, bottom first, every member of the stack in one. A pull request alone has one. */
++  segments: StackSegment[];
++  /** The header of the segment this pull request is in. */
++  header: StackHeader;
+   /** The newest Projector review of this head; absent when the build could not ask GitHub. */
+   review?: ReviewStatus;
+   generatedAt?: string;
+@@ -152,8 +171,9 @@ interface SiteProject {
+ /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
+ interface SiteReview {
+   number: number;
+-  name: string;
+   title: string;
++  /** The header of the stack segment this review is in. */
++  header: StackHeader;
+   heads: number;
+   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
+   stack: number | null;
+diff --git a/site/src/site.ts b/site/src/site.ts
+index 1e5856d..4daea57 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -408,7 +408,7 @@
+         `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
+         (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
+           const r = reviewFor(n);
+-          return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.name !== '' ? r.name : r.title)}` : ''}</a>`;
++          return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.title)}` : ''}</a>`;
+         }).join(' · ') + '</div>' : '')
+         : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
+     showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
+@@ -457,21 +457,40 @@
+       `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
+   }
+ 
+-  // The reviews in site.json's order, each stack's rows together in one table
+-  // body, with a divider only below it. Every column but the pull request's has
+-  // a set width, so checking a box never moves one.
++  function sameHeader(a: StackHeader, b: StackHeader): boolean {
++    return a.project === b.project && a.title === b.title && a.url === b.url;
++  }
++
++  // The reviews in site.json's order, each stack's rows together, with a
++  // divider only below the stack. Each segment of a stack is a table body
++  // that opens with its header, and a new segment starts wherever a row's
++  // header differs from the row drawn above it. Every body of a stack but the
++  // last is `continued`, and draws no divider. Every column but the pull
++  // request's has a set width, so checking a box never moves one.
+   function reviewsTable(reviews: SiteReview[]): string {
+-    const bodies: SiteReview[][] = [];
++    const stacks: SiteReview[][] = [];
+     reviews.forEach(function (r) {
+-      const last = bodies[bodies.length - 1];
++      const last = stacks[stacks.length - 1];
+       if (last !== undefined && r.stack !== null && last[0]?.stack === r.stack) last.push(r);
+-      else bodies.push([r]);
++      else stacks.push([r]);
++    });
++    const bodies = stacks.map(function (rows) {
++      const segments: { header: StackHeader; rows: SiteReview[] }[] = [];
++      rows.forEach(function (r) {
++        const last = segments[segments.length - 1];
++        if (last !== undefined && sameHeader(last.header, r.header)) last.rows.push(r);
++        else segments.push({ header: r.header, rows: [r] });
++      });
++      return segments.map(function (segment, i) {
++        return `<tbody${i < segments.length - 1 ? ' class="continued"' : ''}>` +
++          `<tr class="stackhead"><th colspan="3" scope="rowgroup">${stackHeaderHtml(segment.header)}</th></tr>` +
++          `${segment.rows.map(reviewRow).join('')}</tbody>`;
++      }).join('');
+     });
+     return '<div class="tblwrap"><table class="tbl reviews">' +
+       '<colgroup><col><col class="status"><col class="date"></colgroup>' +
+       '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
+-      bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
+-      '</table></div>';
++      bodies.join('') + '</table></div>';
+   }
+ 
+   // The reviews of open pull requests, closed ones, or both, as the boxes at
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 9a7c914..b65f142 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -33,6 +33,29 @@ function statusHtml(state: PullState | undefined, review: ReviewStatus | undefin
+   return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
+ }
+ 
++// One stack segment's header: the project its pull requests carry out, linked
++// to the project's page, or the stack's title as plain text.
++function stackHeaderHtml(header: StackHeader): string {
++  return header.url !== undefined ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
++}
++
++// A stack as a summary's sidebar lists it: each segment's header above a row
++// for each of its pull requests, the current one marked. `rows` has a row for
++// every member of the stack. A screen reader names a lone segment's list for
++// the stack, and each of several by its header.
++function stackSegmentsHtml(segments: StackSegment[], rows: NonNullable<SummaryData['stack']>): string {
++  return segments.map(function (segment) {
++    const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
++    const items = segment.members.map(function (number) {
++      const s = rows.find(function (r) { return r.number === number; });
++      if (s === undefined) return '';
++      const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
++      return s.current ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
++    }).join('');
++    return `<div class="stackhead">${stackHeaderHtml(segment.header)}</div><ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
++  }).join('');
++}
++
+ (function (): void {
+ // How many hidden lines one expand up or expand down reveals.
+ const STEP = 20;
+@@ -370,28 +393,11 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+     return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
+   }
+ 
+-  // The pull requests stacked with this one, one row each, this one marked; a
+-  // pull request alone is a stack of one. A pull request in the stack with no
+-  // summary on the site links to GitHub.
++  // The pull requests stacked with this one under their segments' headers; a
++  // pull request alone is a stack of one.
+   function stackList(): string {
+     const listed = data.stack ?? [];
+-    const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
+-    return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+-      const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+-      if (s.current) return `<li class="srow current" aria-current="page">${row}</li>`;
+-      const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
+-      return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
+-    }).join('') + '</ul>';
+-  }
+-
+-  // The projects the pull request touches, as rows like the stack's, each
+-  // title across the whole row.
+-  function projectsList(): string {
+-    const projects = data.projects ?? [];
+-    if (projects.length === 0) return '';
+-    return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
+-      return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+-    }).join('') + '</ul>';
++    return stackSegmentsHtml(data.segments, listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }]);
+   }
+ 
+   // The header, as the page's statement of how well the head was checked,
+@@ -412,7 +418,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+       return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+     }).join('');
+     const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
+-    const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
++    const title = esc(pr.title);
+     return '<div class="wrap">' +
+       `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+       `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
+@@ -422,7 +428,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+           { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
+         ])}</div></header>` +
+       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-        `<div class="prblock">${projectsList()}${stackList()}</div>` +
++        `<div class="prblock">${stackList()}</div>` +
+         `<div class="extra">${extra}</div>` +
+         `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
+         `${headsList()}</div></nav></aside>` +
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 5f9487e..df67276 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -104,6 +104,37 @@ push to, or approve the pull request unless the user asks.
+      earlier review rounds settled, and what the pull request leaves for
+      later.
+ 
++   Then make the two choices the site heads the pull request's stack with,
++   `project` and `name`. `init` leaves `project` as `null`, and `publish`
++   refuses it until you choose. Each summary records its own choices, and
++   copies no other layer's:
++
++   1. **Choose the project the change is about.** List the candidates with
++      `project list --json`, and look at the plan files the diff changes.
++      The pull request's body and branch often name the plan. When the
++      change touches several plans, choose the plan it adds or the plan
++      whose status it changes. A plan touched only in passing, such as by a
++      link fix or a rename across every plan, is not the change's project.
++      For a pull request in a stack, choose the project this layer carries
++      out, which it may not edit. That is usually the project of the layer
++      beneath. A layer that starts the work of another plan records that
++      plan, and the site starts a new header there.
++      `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's
++      pull requests on GitHub, and the summaries ref holds what each
++      summarized layer chose. When that request answers 404 or fails, follow
++      the summary's `pr.basePr` down the stack instead, as the site falls
++      back to base branches. Record the project's name as `project list`
++      gives it, such as `"stack-header"` or `"payments/invoices"`, or `""`
++      when no single plan is the subject.
++   2. **Name the whole stack.** Set `name` to two to six words in sentence
++      case that name the work, such as `Stack header plan` or
++      `Summary publish retry`, at most 60 characters. Do not write a
++      sentence, and do not copy the pull request's title. When no layer
++      names a project, the site shows the lowest layer's `name` as the
++      stack's title, so on the bottom layer of a stack, name the work of the
++      whole stack as far as you know it. To change a stack's title, publish
++      the bottom layer's summary again.
++
+ ## Write for someone new to the code
+ 
+ Follow the writing guide in `../writing.md` when you write every intro, note
+@@ -346,6 +377,10 @@ starting a new one, and skip step 1.
+ 2. Read the new commits and any new review threads, then revise the summary:
+    set `pr.head`, move new files into groups, drop files that left the diff,
+    and rewrite every note, check and overview card the change made untrue.
++   Make the two choices at the end of step 4 of "Build the summary" again: a
++   summary published before summaries recorded a project has no `project`,
++   and `publish` refuses it until you set one, and a `name` must still title
++   the stack in at most 60 characters.
+    Move each note that has a `line` to where its code sits in the new diff,
+    using step 1's diff, and remove a note whose code is gone: `build` checks
+    only that a line is still in its file's diff, not that it still holds the
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index 365dcc5..b236dc8 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -6,7 +6,8 @@ it. The summary is JSON:
+ ```json
+ {
+   "version": 1,
+-  "name": "Card Name Check Summary",
++  "name": "Card name check",
++  "project": "payments/card-checks",
+   "pr": {
+     "repo": "owner/name",
+     "number": 2062,
+@@ -47,10 +48,19 @@ it. The summary is JSON:
+ 
+ ## Fields
+ 
+-- `name` labels the summary in a project's list of reviews on the site.
+-  Make it a short name for the change, not a sentence. The page, its
+-  browser tab, and its row on the Reviews index take the pull request's
+-  title.
++- `project` is the one project the pull request carries out as a layer of
++  its stack, by the name `project list` gives it, or `""` when it carries
++  none. `init` writes `null`, which means not decided yet, and `publish`
++  refuses `null`. The site heads each run of a stack's pull requests that
++  carry one project with that project's title, linked to its page, and puts
++  a pull request that names no project, or one the site has no page for,
++  under the header of the pull request before it. Choose it as step 4 of
++  `SKILL.md`'s "Build the summary" describes.
++- `name` is the title of the work the stack does, or of the pull request
++  alone: two to six words in sentence case, at most 60 characters, which
++  `publish` checks. The site shows the lowest layer's `name` as the stack's
++  header when no layer names a project. The page, its browser tab, and its
++  row on the Reviews index take the pull request's title.
+ - `pr.head` is the commit the page describes. `build` stops when the pull
+   request has moved past it, unless `--at-head` asks for that head exactly.
+ - `pr.base` is the merge base the diff is taken from. `init` records it; the
+@@ -104,10 +114,11 @@ it. The summary is JSON:
+ 
+ ## HTML in text fields
+ 
+-Every text field except `name`, `pr` and the file paths is inserted as HTML,
+-so write `<code>`, `<b>` and links directly and escape a literal `<` as
+-`&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
+-page, because a Pages site deploys whatever summary is on its ref: the tags
++Every text field except `name`, `project`, `pr` and the file paths is
++inserted as HTML, so write `<code>`, `<b>` and links directly and escape a
++literal `<` as `&lt;`. `build` rebuilds that HTML from an allowlist before
++it reaches the page, because a Pages site deploys whatever summary is on its
++ref: the tags
+ `a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
+ `span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
+ classes below; and `href` only for `http`, `https` and `#` links. Anything
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index d9a1526..1ce93a0 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1035,6 +1035,13 @@ def pr_status(number: int) -> Optional[dict]:
+         except summary.SummaryError:
+             return None
+ 
++    # Stacks GitHub cannot list come from base branches instead.
++    def repo_stacks() -> Optional[tuple[list, int]]:
++        try:
++            return summary.repo_stacks(repo)
++        except summary.SummaryError:
++            return None
++
+     entries, failures, proposed = site.build_site(
+         out,
+         summaries=summaries,
+@@ -1047,6 +1054,7 @@ def pr_status(number: int) -> Optional[dict]:
+         base=base,
+         lookup=base_pr if repo else None,
+         status_lookup=pr_status if repo else None,
++        stacks_lookup=repo_stacks if repo else None,
+     )
+     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
+             f"{len(entries)} reviews, {len(failures)} reviews skipped")
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 2bc2992..88dd219 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -103,7 +103,7 @@ def copy_assets(out: Path) -> None:
+ 
+ def pr_title(payload: dict) -> str:
+     """The pull request's own title, which heads its summary page."""
+-    return payload["pr"].get("title") or payload.get("name") or f"#{payload['pr']['number']}"
++    return payload["pr"]["title"]
+ 
+ 
+ def write_page(out: Path, payload: dict) -> None:
+@@ -114,7 +114,11 @@ def write_page(out: Path, payload: dict) -> None:
+ 
+ 
+ def build_page(summary: dict, out: Path, diff: str | None = None, at_head: bool = False, extra: dict | None = None) -> dict:
++    """A page for `summary` alone, with no site around it: a stack of one, headed as a site with no projects heads it."""
+     payload = prepare_page(summary, diff=diff, at_head=at_head, extra=extra)
++    number = payload["pr"]["number"]
++    segments = stack_segments([number], {number: payload}, {}, {})
++    payload.update(segments=segments, header=segments[0]["header"])
+     write_page(out, payload)
+     return payload
+ 
+@@ -272,14 +276,19 @@ def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict
+ 
+ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None, trunk: str = "main",
+                     lookup=None, repo_root: Path | None = None, status_lookup=None,
+-                    projects_dir: str | None = None) -> tuple[list[dict], list[str], list[dict]]:
++                    projects_dir: str | None = None, stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+     The entries come in the order the Reviews index lists them, as
+-    `stack_groups` puts them, from `stack_bases` with `trunk` and `lookup`.
+-    Each carries `stack`, the number of the first review in its stack, or
+-    None when no other review is in it, and each page lists the pull
+-    requests in its stack. A file is
++    `stack_groups` puts them, with each stack's members from `find_stacks`,
++    given `trunk`, `lookup`, and `stacks_lookup`. Each carries `stack`, the
++    number of the first review in its stack, or None when no other review is
++    in it, and each page lists the pull requests in its stack. `described`
++    holds the projects the site has pages for. Each summary is linked to the
++    one it carries out, as `project_linker` decides, and each stack is split
++    into segments by `stack_segments`. Every page of a stack carries its
++    `segments`, and every page and entry the `header` of the segment its pull
++    request is in. A file is
+     generated as the `attributes.json` that `publish` stored beside a summary
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+     its .gitattributes. A file whose head copy `publish` stored beside its
+@@ -349,23 +358,35 @@ def skip(path: Path, reason: object) -> None:
+     # the summary starts this build, so the reviews include the verdict on the
+     # head the summary describes.
+     asked = {number: status_lookup(int(number)) if status_lookup is not None else None for number in by_pr}
+-    proposed = proposed_projects({int(n): versions[0][1] for n, versions in by_pr.items()},
+-                                 {int(n): status for n, status in asked.items()}, described, repo_root,
++    newest = {int(number): versions[0][1] for number, versions in by_pr.items()}
++    proposed = proposed_projects(newest, {int(n): status for n, status in asked.items()}, described, repo_root,
+                                  projects_dir, out) if repo_root is not None and projects_dir is not None else []
+     link = project_linker(described + proposed, base)
+-    prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
+-    bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
++    headers = {p["name"]: project_header(p, base) for p in described + proposed}
++    owned = {}
++    for number, versions in by_pr.items():
++        projects = [link(summary, payload) for _, payload, summary in versions]
++        owned[int(number)] = projects[0]
++    prs = {number: payload["pr"] for number, payload in newest.items()}
++    members = find_stacks(prs, trunk, lookup, stacks_lookup)
++    segmented: dict[tuple[int, ...], list[dict]] = {}
++    for stack in members.values():
++        if tuple(stack) not in segmented:
++            segmented[tuple(stack)] = stack_segments(stack, newest, owned, headers)
+     entries = []
+     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
++        pull = int(number)
+         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
+                  for when, p, _ in versions]
+-        stack = stack_rows(int(number), bases, prs, base)
++        stack = stack_rows(pull, members[pull], prs, base)
++        segments = segmented[tuple(members[pull])]
++        header = next(s["header"] for s in segments if pull in s["members"])
+         status = asked[number]
+         statuses = review_statuses(status["reviews"]) if status is not None else None
+-        for _, payload, summary in versions:
+-            payload["projects"] = link(summary, payload)
++        for _, payload, _ in versions:
+             head = payload["pr"]["head"]
+-            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
++            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
++                           header=header, defaultBranch=trunk)
+             if status is not None:
+                 payload["pr"]["state"] = status["state"]
+                 if "base" in status:
+@@ -380,16 +401,15 @@ def skip(path: Path, reason: object) -> None:
+                      src=f"{base}reviews/{number}/{head}/data.json"), encoding="utf-8")
+             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
+         latest = versions[0][1]
+-        newest = latest["pr"]["head"]
++        newest_head = latest["pr"]["head"]
+         (out / "reviews" / number / "index.html").write_text(
+             page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
+-                 src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
+-        entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
+-                        "review": latest.get("review"), "heads": len(versions), "updated": versions[0][0],
+-                        "projects": [p["name"] for p in latest["projects"]]})
++                 src=f"{base}reviews/{number}/{newest_head}/data.json"), encoding="utf-8")
++        entries.append({"number": pull, "header": header, "pr": latest["pr"], "review": latest.get("review"),
++                        "heads": len(versions), "updated": versions[0][0]})
+     by_number = {e["number"]: e for e in entries}
+     ordered = []
+-    for group in stack_groups(bases, prs):
++    for group in stack_groups(members, prs):
+         for number in group:
+             ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
+     return ordered, failures, proposed
+@@ -478,59 +498,153 @@ def proposed_projects(newest: dict[int, dict], statuses: dict[int, dict | None],
+     return proposed
+ 
+ 
+-def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
++def stack_groups(members: dict[int, list[int]], prs: dict[int, dict]) -> list[list[int]]:
+     """The pull requests in `prs`, which have reviews, in the order the Reviews index lists them, one list per stack.
+ 
+     The index lists the newest pull request first, and a stack sits where its
+-    newest pull request would, its pull requests together in `stack_rows`
+-    order, from the one on the default branch up. A pull request in a stack
+-    without a review here, known only as a base, is left out, and one alone
+-    is a stack of its own.
++    newest pull request would, its pull requests together in the order
++    `find_stacks` gives them in `members`, from the bottom up. A pull request
++    in a stack without a review here is left out, and one alone is a stack of
++    its own.
+     """
+     placed: set[int] = set()
+     groups = []
+     for number in sorted(prs, reverse=True):
+         if number in placed:
+             continue
+-        rows = [row["number"] for row in stack_rows(number, bases, prs)] or [number]
+-        group = [n for n in rows if n in prs and n not in placed]
++        group = [n for n in members[number] if n in prs and n not in placed]
+         placed.update(group)
+         groups.append(group)
+     return groups
+ 
+ 
+-def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
+-    """Every pull request in `number`'s stack, from the one on the default branch up, or [] when it stands alone.
++def stack_rows(number: int, stack: list[int], prs: dict[int, dict], base: str = "/") -> list[dict]:
++    """A row for each pull request in `stack`, `number`'s, as `find_stacks` gives it, or [] when `number` stands alone.
+ 
+-    The stack holds the pull requests beneath `number` and every pull request
+-    stacked above any of them, so a branch in the stack shows its siblings
+-    too; each pull request's own branches follow it, lowest number first.
+-    A pull request with a summary links to its review, and one without, known
+-    only as a base, has no title or link here. `bases` maps a pull request to
+-    the one beneath it, as `stack_bases` returns it.
++    A pull request with a summary links to its review, and one without, such
++    as a merged layer summarized nowhere, links to itself on GitHub and has no
++    title here.
+     """
+-    bottom, seen = number, {number}
+-    while bases.get(bottom) is not None and bases[bottom] not in seen:
+-        bottom = bases[bottom]
+-        seen.add(bottom)
+-    above: dict[int, list[int]] = {}
+-    for top, beneath in bases.items():
+-        above.setdefault(beneath, []).append(top)
+-    order: list[int] = []
+-    pending = [bottom]
+-    while pending:
+-        current = pending.pop()
+-        if current in order:
+-            continue
+-        order.append(current)
+-        pending.extend(sorted(above.get(current, []), reverse=True))
+-    if len(order) < 2:
++    if len(stack) < 2:
+         return []
++    repo = prs[number]["repo"]
+     return [{"number": n, "title": (prs.get(n) or {}).get("title") or "",
+-             "url": f"{base}reviews/{n}/" if n in prs else "", "current": n == number} for n in order]
+-
+-
+-def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
++             "url": f"{base}reviews/{n}/" if n in prs else f"https://github.com/{repo}/pull/{n}",
++             "current": n == number} for n in stack]
++
++
++def find_stacks(prs: dict[int, dict], trunk: str, lookup=None, stacks_lookup=None) -> dict[int, list[int]]:
++    """Every member of each pull request's stack, bottom first, for each pull request in `prs`: [number] alone for one in none.
++
++    `stacks_lookup` returns GitHub's stacks and how many requests read them,
++    as `summary.repo_stacks` does, or None when GitHub cannot answer, as when
++    it is missing. Within a GitHub stack, each member sits on the member
++    before it in GitHub's order, merged and closed members included, and its
++    base branch does not count. Every other pull request in `prs` sits on the
++    one `stack_bases` finds with `trunk` and `lookup`, so one chained by hand
++    onto a GitHub stack's member joins that stack. A stack holds the pull
++    requests beneath a pull request and every one above any of them. From
++    each pull request the walk takes its successor in its own GitHub stack
++    first, then its other branches, lowest number first, so a GitHub stack's
++    members stay together in GitHub's order. A member without a summary stays
++    in the stack.
++
++    It prints one line saying how the stacks were found.
++    """
++    answer = stacks_lookup() if stacks_lookup is not None else None
++    beneath: dict[int, int] = {}
++    successor: dict[int, int] = {}
++    settled: set[int] = set()
++    if answer is None:
++        print("stacks: GitHub's stacks could not be read, so every pull request sits on its base branch")
++    else:
++        listed, requests = answer
++        stacks, note = github_stacks(listed, requests)
++        print(f"stacks: {note}")
++        for stack in stacks:
++            settled.update(stack)
++            for lower, upper in zip(stack, stack[1:]):
++                beneath[upper] = lower
++                successor[lower] = upper
++    beneath.update(stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup, settled))
++    above: dict[int, list[int]] = {}
++    for upper, lower in beneath.items():
++        if successor.get(lower) != upper:
++            above.setdefault(lower, []).append(upper)
++    walks: dict[int, list[int]] = {}
++    members = {}
++    for number in prs:
++        bottom, seen = number, {number}
++        while beneath.get(bottom) is not None and beneath[bottom] not in seen:
++            bottom = beneath[bottom]
++            seen.add(bottom)
++        if bottom not in walks:
++            order: list[int] = []
++            pending = [bottom]
++            while pending:
++                current = pending.pop()
++                if current in order:
++                    continue
++                order.append(current)
++                pending.extend(sorted(above.get(current, []), reverse=True))
++                if current in successor:
++                    pending.append(successor[current])
++            walks[bottom] = order
++        members[number] = walks[bottom]
++    return members
++
++
++def github_stacks(listed: list, requests: int) -> tuple[list[list[int]], str]:
++    """The pull request numbers of each stack GitHub `listed`, bottom first, and a note on what was read.
++
++    The build reads only a stack's `number` and its `pull_requests`' numbers,
++    in their order. A stack without an integer number or a list of pull
++    requests is left out, and so is a member without an integer number. A
++    pull request in two stacks belongs to the one with the higher number, and
++    the other closes the gap it leaves.
++    """
++    def number_of(item: object) -> int | None:
++        value = item.get("number") if isinstance(item, dict) else None
++        return value if isinstance(value, int) and not isinstance(value, bool) else None
++
++    readable: list[tuple[int, list[int]]] = []
++    unnumbered = unlisted = members_left = 0
++    for stack in listed:
++        pulls = stack.get("pull_requests") if isinstance(stack, dict) else None
++        if number_of(stack) is None:
++            unnumbered += 1
++        elif not isinstance(pulls, list):
++            unlisted += 1
++        else:
++            numbers = [number_of(pull) for pull in pulls]
++            members_left += numbers.count(None)
++            readable.append((number_of(stack), [n for n in numbers if n is not None]))
++    claimed: set[int] = set()
++    stacks = []
++    for _, numbers in sorted(readable, key=lambda s: -s[0]):
++        kept = []
++        for n in numbers:
++            if n not in claimed:
++                claimed.add(n)
++                kept.append(n)
++        stacks.append(kept)
++    parts = [f"read {counted(len(listed), 'GitHub stack')} in {counted(requests, 'request')}"]
++    if unnumbered:
++        parts.append(f"left out {counted(unnumbered, 'stack')} with no number, whose pull requests sit on their "
++                     "base branches")
++    if unlisted:
++        parts.append(f"left out {counted(unlisted, 'stack')} with no list of pull requests")
++    if members_left:
++        parts.append(f"left out {counted(members_left, 'stack member')} with no number")
++    return stacks, "; ".join(parts)
++
++
++def counted(n: int, noun: str) -> str:
++    return f"{n} {noun}{'' if n == 1 else 's'}"
++
++
++def stack_bases(entries: list[dict], trunk: str, lookup=None,
++                settled: set[int] | frozenset[int] = frozenset()) -> dict[int, int]:
+     """For each stacked pull request, the number of the pull request beneath it.
+ 
+     A pull request is stacked only when its base branch is another pull
+@@ -539,14 +653,15 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+     whose summary records that branch as its `headRef`, else the `basePr` the
+     summary recorded, else what `lookup` finds for the branch, asked once per
+     branch. Skipping the default branch only saves a lookup that would find
+-    nothing.
++    nothing. A pull request in `settled`, which GitHub's stacks already
++    place, gets no base and costs no lookup.
+     """
+     by_branch = {e["pr"]["headRef"]: e["number"] for e in entries if e["pr"].get("headRef")}
+     looked_up: dict[str, int | None] = {}
+     bases = {}
+     for entry in entries:
+         base_ref = entry["pr"].get("baseRef") or ""
+-        if not base_ref or base_ref == trunk:
++        if not base_ref or base_ref == trunk or entry["number"] in settled:
+             continue
+         beneath = by_branch.get(base_ref) or entry["pr"].get("basePr")
+         if beneath is None and lookup is not None:
+@@ -558,6 +673,37 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
+     return bases
+ 
+ 
++def stack_segments(members: list[int], newest: dict[int, dict], owned: dict[int, str | None],
++                   headers: dict[str, dict]) -> list[dict]:
++    """A stack's segments, bottom first: each a run of `members` that carry one project, with that project's header.
++
++    `members` is the whole stack, bottom first, as `find_stacks` gives it,
++    members without a summary included. `newest` holds each summarized
++    member's newest page, `owned` each one's own project from
++    `project_linker`, and `headers` each project's header, as
++    `project_header` makes it. The first segment starts at the bottom, under
++    the first project any member names. A member that names another project
++    starts a segment, and one that names the same project, or none, joins the
++    segment of the member before it. A stack where no member names a project
++    is one segment, headed by the first `name` a member's summary gives, or
++    else the title of its first member with a summary.
++    """
++    first = next((owned[n] for n in members if owned.get(n)), None)
++    if first is None:
++        named = [newest[n]["name"] for n in members if n in newest and newest[n]["name"]]
++        title = named[0] if named else next(newest[n]["pr"]["title"] for n in members if n in newest)
++        return [{"header": {"title": title}, "members": list(members)}]
++    segments = [{"header": headers[first], "members": []}]
++    current = first
++    for number in members:
++        project = owned.get(number)
++        if project and project != current:
++            current = project
++            segments.append({"header": headers[project], "members": []})
++        segments[-1]["members"].append(number)
++    return segments
++
++
+ def copy_content(repo_root: Path, path: Path, out: Path) -> str:
+     """Copy one file under out/content, returning its repository path."""
+     relative = path.relative_to(repo_root).as_posix()
+@@ -651,13 +797,23 @@ def collect_files(repo_root: Path, projects_dir: Path | None, out: Path) -> list
+     return copied
+ 
+ 
++def project_header(project: dict, base: str) -> dict:
++    """The header of a stack segment that carries out `project`, linked to its page on the site."""
++    return {"project": project["name"], "title": project["title"], "url": f"{base}projects/{project['name']}/"}
++
++
+ def project_linker(described: list[dict], base: str):
+-    """Link a review to every project whose files its diff changes, or that its summary names.
++    """Find the one project a summary carries out, among the projects in `described`, which have pages on the site.
+ 
++    A summary's `project` names it when the site has that project, and a
++    `project` of "" or one the site lacks names none. A summary published
++    before the field existed, with no `project` or a null one, takes the
++    first project its `projects` list names that the site has, or else the
++    one project that owns files its diff changes, when exactly one does.
+     Each changed file in a project's folder also gets that project as its
+-    `project`: the deepest one, so a nested project owns its own files. Only
+-    a project in `described` has a page on the site, so a file in any other
+-    project's folder, such as one the pull request adds, gets none.
++    `project`: the deepest one, so a nested project owns its own files. A
++    file in any other project's folder, such as one the pull request adds,
++    gets none.
+     """
+     by_name = {p["name"]: p for p in described}
+     folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"]) for p in described), key=lambda f: -len(f[0]))
+@@ -665,16 +821,21 @@ def project_linker(described: list[dict], base: str):
+     def page_of(name: str) -> dict:
+         return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
+ 
+-    def link(summary: dict, payload: dict) -> list[dict]:
+-        named = summary.get("projects")
+-        names = [n for n in named if isinstance(n, str) and n in by_name] if isinstance(named, list) else []
++    def link(summary: dict, payload: dict) -> str | None:
++        owners = set()
+         for f in payload["files"]:
+             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
+             if owner:
+                 f["project"] = page_of(owner)
+-                if owner not in names:
+-                    names.append(owner)
+-        return [page_of(n) for n in names]
++                owners.add(owner)
++        chosen = summary.get("project")
++        if isinstance(chosen, str):
++            return chosen if chosen in by_name else None
++        named = summary.get("projects")
++        known = [n for n in named if isinstance(n, str) and n in by_name] if isinstance(named, list) else []
++        if known:
++            return known[0]
++        return owners.pop() if len(owners) == 1 else None
+ 
+     return link
+ 
+@@ -808,12 +969,13 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+ def review_row(entry: dict) -> dict:
+     """A review's row on the Reviews index, in site.json.
+ 
+-    `title` is the one its page has, `pr_title`'s. `updated` is when its
+-    newest head was published, in UTC. `state` and `review` are its pull
+-    request's and its newest head's, as its page carries them, and are left
+-    out when the build could not ask GitHub.
++    `title` is the one its page has, `pr_title`'s, and `header` the header
++    of its stack segment. `updated` is when its newest head was published, in
++    UTC. `state` and `review` are its pull request's and its newest head's,
++    as its page carries them, and are left out when the build could not ask
++    GitHub.
+     """
+-    row = {"number": entry["number"], "name": entry["name"], "title": pr_title(entry),
++    row = {"number": entry["number"], "title": pr_title(entry), "header": entry["header"],
+            "heads": entry["heads"], "stack": entry["stack"],
+            "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")}
+@@ -827,19 +989,22 @@ def review_row(entry: dict) -> dict:
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+-               trunk: str | None = None, lookup=None,
+-               status_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
++               trunk: str | None = None, lookup=None, status_lookup=None,
++               stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+     `trunk` the default branch a pull request that is not stacked is based on.
+-    `lookup` finds the pull request whose head is a branch, for a summary that
+-    did not record the one it is stacked on. `status_lookup` returns a pull
+-    request's state, reviews, and whether it is a fork's, or None when it
+-    cannot ask, for each summary's file links and review status and for the
+-    projects open pull requests propose. `projects_dir` is the configured
+-    projects directory, which a pull request can propose the first plan of.
+-    Returns the reviews, the summaries skipped, and the proposed projects.
++    `stacks_lookup` returns GitHub's stacks, or None when it cannot ask, and
++    `lookup` finds the pull request whose head is a branch, for a summary in
++    no GitHub stack that did not record the one it is stacked on.
++    `status_lookup` returns a pull request's state, reviews, and whether it
++    is a fork's, or None when it cannot ask, for each summary's file links and
++    review status and for the projects open pull requests propose.
++    `projects_dir` is the configured projects directory, which a pull request
++    can propose the first plan of. Each project, proposed ones included,
++    lists the reviews whose stack segment it heads. Returns the reviews, the
++    summaries skipped, and the proposed projects.
+     """
+     trunk = trunk or branch
+     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
+@@ -854,13 +1019,14 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     projects_path = projects_dir.relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and projects_dir.is_relative_to(repo_root) else None
+     built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
+-                            status_lookup=status_lookup, projects_dir=projects_path) \
++                            status_lookup=status_lookup, projects_dir=projects_path, stacks_lookup=stacks_lookup) \
+         if summaries and summaries.is_dir() else ([], [], [])
+     entries, failures, proposed = built
+     described = sorted(described + proposed, key=lambda p: p["name"])
+     assign_routes(docs, described)
+     for project in described:
+-        project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
++        project["reviews"] = sorted((e["number"] for e in entries if e["header"].get("project") == project["name"]),
++                                    reverse=True)
+     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
+     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index d46b4f3..fd5b693 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -39,6 +39,11 @@
+ # changed file a summary page can expand, and the largest file it stores.
+ HEAD_DIR = "head"
+ CONTEXT_MAX_BYTES = 1024 * 1024
++# The longest `name` `publish` accepts. The site shows a summary's name as its
++# stack's title, so it must fit a header.
++NAME_MAX = 60
++# The REST API version the stacks endpoint is documented under.
++STACKS_API_VERSION = "2026-03-10"
+ # Publishes running at once, as a review loop's subagents run them, race to
+ # move the summaries ref, so a push that loses is rebuilt on the new tip and
+ # tried again, up to this many pushes in all.
+@@ -747,6 +752,23 @@ def pr_status(repo: str, number: int) -> dict:
+             "reviews": [r for page in found for r in page["reviews"]]}
+ 
+ 
++def repo_stacks(repo: str) -> tuple[list, int]:
++    """Every stack of pull requests GitHub records for `repo`, as its stacks API lists them, and how many requests that took.
++
++    One paginated request reads them all, 100 to a page. It raises when any
++    page fails or is not a list, so GitHub answers for every stack or for none.
++    """
++    output = gh("api", "--paginate", "-H", f"X-GitHub-Api-Version: {STACKS_API_VERSION}",
++                f"repos/{repo}/stacks?per_page=100", "--jq", "@json")
++    try:
++        pages = [json.loads(page) for page in output.splitlines() if page.strip()]
++    except ValueError as error:
++        raise SummaryError(f"GitHub's list of {repo}'s stacks is not JSON: {error}") from error
++    if not pages or not all(isinstance(page, list) for page in pages):
++        raise SummaryError(f"GitHub's list of {repo}'s stacks is not a list")
++    return [stack for page in pages for stack in page], len(pages)
++
++
+ def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
+     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
+     meta = {
+@@ -995,8 +1017,9 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False,
+         generated = generated_attributes([f["path"] for f in files], str(pr["head"]), str(pr["repo"]), root)
+     classify(files, generated)
+     overview, groups = sanitized(summary)
++    name = summary.get("name")
+     payload = {
+-        "name": summary.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
++        "name": name if isinstance(name, str) else "",
+         "pr": pr,
+         "overview": overview,
+         "groups": groups,
+@@ -1122,6 +1145,27 @@ def summary_pr(summary: dict) -> dict:
+     return pr
+ 
+ 
++def require_stack_choices(summary: dict) -> None:
++    """Refuse a summary that has not chosen its project, or whose `name` cannot head its stack.
++
++    `init` writes a null `project`, so a summary nobody chose a project for
++    never publishes as one that carries none. The project need not be one
++    this checkout has, because a pull request can add the plan it carries out.
++    """
++    project = summary.get("project")
++    if not isinstance(project, str):
++        found = "summary has no `project`" if "project" not in summary else \
++            f"summary's `project` is {json.dumps(project)}"
++        raise SummaryError(f"the {found}; set it to the name of the one project this pull request carries out, as "
++                           "`project list` names it, or to \"\" when it carries none")
++    name = summary.get("name")
++    if not isinstance(name, str) or not name.strip():
++        raise SummaryError(f"the summary's `name` is empty; set it to two to six words that name the work of the "
++                           f"whole stack, at most {NAME_MAX} characters")
++    if len(name) > NAME_MAX:
++        raise SummaryError(f"the summary's `name` is {len(name)} characters; shorten it to at most {NAME_MAX}")
++
++
+ def push_decision(repo: str) -> tuple[str | None, str]:
+     """The URL of the site `publish` pushes a summary to `repo` for, or None and why the summary stays local.
+ 
+@@ -1197,6 +1241,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+     """
+     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+     pr = summary_pr(summary)
++    require_stack_choices(summary)
+     slug = repo_slug(git("remote", "get-url", remote))
+     if slug and slug.lower() != pr["repo"].lower():
+         raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+@@ -1453,6 +1498,7 @@ def init(repo: str, number: int, summary_path: str, diff_path: str | None = None
+     summary = {
+         "version": SUMMARY_VERSION,
+         "name": "",
++        "project": None,
+         "pr": meta,
+         "overview": {"summary": [], "cards": []},
+         "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 7cf1bfe..fd01e55 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -44,11 +44,13 @@ def setUp(self) -> None:
+             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+             (self.repo / path).write_text(text)
+         self.out = Path(tempfile.mkdtemp()) / "site"
+-        # A build that knows its repository asks GitHub for each pull request's
+-        # state and reviews. No test reaches GitHub; one that needs them supplies them.
+-        offline = mock.patch.object(summary, "pr_status", side_effect=summary.SummaryError("gh api failed: offline"))
+-        offline.start()
+-        self.addCleanup(offline.stop)
++        # A build that knows its repository asks GitHub for its stacks and for each
++        # pull request's state and reviews. No test reaches GitHub; one that needs
++        # them supplies them.
++        for name in ("pr_status", "repo_stacks"):
++            offline = mock.patch.object(summary, name, side_effect=summary.SummaryError("gh api failed: offline"))
++            offline.start()
++            self.addCleanup(offline.stop)
+ 
+ 
+ class SiteBuildTests(SiteRepoCase):
+@@ -243,6 +245,30 @@ def test_a_failed_lookup_stops_the_deploy_rather_than_assuming_it_is_safe(self)
+ -old = 1
+ +new = 2
+ """
++BOTH_DIFF = """diff --git a/docs/projects/alpha/readme.md b/docs/projects/alpha/readme.md
++index 1111111..2222222 100644
++--- a/docs/projects/alpha/readme.md
+++++ b/docs/projects/alpha/readme.md
++@@ -1,1 +1,1 @@
++-old
+++new
++diff --git a/docs/projects/alpha/beta/readme.md b/docs/projects/alpha/beta/readme.md
++index 1111111..2222222 100644
++--- a/docs/projects/alpha/beta/readme.md
+++++ b/docs/projects/alpha/beta/readme.md
++@@ -1,1 +1,1 @@
++-old
+++new
++"""
++
++
++def github_stack(number: int, *pulls: int, merged: bool = False) -> dict:
++    """A stack as GitHub's stacks API lists it, with its pull requests bottom first."""
++    return {"number": number, "open": not merged, "base": {"ref": "main"},
++            "pull_requests": [{"number": n, "state": "closed" if merged else "open", "draft": False,
++                               "merged_at": "2026-10-10T12:00:00Z" if merged else None,
++                               "head": {"ref": f"feature-{n}", "sha": f"{n:040x}"}} for n in pulls]}
++
+ 
+ # Without a doctype a browser lays the page out in quirks mode, and without the
+ # viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
+@@ -251,22 +277,26 @@ def test_a_failed_lookup_stops_the_deploy_rather_than_assuming_it_is_safe(self)
+ 
+ 
+ class SiteContentTests(SiteRepoCase):
+-    def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
++    def publish(self, number: int, head: str, project: object = ..., name: str | None = None,
++                projects: list[str] | None = None, diff: str = PLAN_DIFF, **pr: str) -> None:
++        """Publish a summary of `number` at `head`, which records `project`, or none at all when it is `...`,
++        as a summary published before the field existed does."""
+         data = {
+             "version": 1,
+-            "name": f"Summary {number}",
++            "name": f"Summary {number}" if name is None else name,
+             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
+                    "base": "b" * 40, "baseRef": "main", **pr},
+             "overview": {"summary": [], "cards": []},
+-            "groups": [{"id": "all", "title": "All",
+-                        "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
++            "groups": [{"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}],
+         }
++        if project is not ...:
++            data["project"] = project
+         if projects is not None:
+             data["projects"] = projects
+         folder = self.summaries / str(number) / head
+         folder.mkdir(parents=True)
+         (folder / "summary.json").write_text(json.dumps(data))
+-        (folder / "diff.patch").write_text(PLAN_DIFF)
++        (folder / "diff.patch").write_text(diff)
+ 
+     def setUp(self) -> None:
+         super().setUp()
+@@ -275,19 +305,48 @@ def setUp(self) -> None:
+         hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
+         hidden.parent.mkdir()
+         self.repo = Path(shutil.move(str(self.repo), str(hidden)))
+-        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
++        self.reset()
+         (self.repo / "docs/images").mkdir(parents=True)
+         (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
+         (self.repo / "docs/.hidden").write_text("not served")
+ 
+-    def build(self) -> dict:
+-        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+-             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++    def reset(self) -> None:
++        """Start over with no summaries and no site built."""
++        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
++        self.out = Path(tempfile.mkdtemp()) / "site"
++
++    def build(self, github: list[dict] | None = None) -> dict:
++        """Build the site and return its site.json, with GitHub listing the stacks in `github`, or unable to list
++        them when it is None. The build's output is in `self.printed`. A build of summaries says how it found
++        their stacks in exactly one line, with no warning about them."""
++        printed = io.StringIO()
++        listed = mock.patch.object(summary, "repo_stacks", return_value=(github, 1)) if github is not None \
++            else nullcontext()
++        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), listed, \
++             redirect_stdout(printed), redirect_stderr(printed):
+             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+                              "--summaries", str(self.summaries)])
+         self.assertEqual(0, code)
++        self.printed = printed.getvalue()
++        lines = self.printed.splitlines()
++        self.assertEqual(int(self.summaries.is_dir()), sum(line.startswith("stacks: ") for line in lines), self.printed)
++        self.assertEqual([], [line for line in lines if "::warning" in line and "stack" in line.lower()])
++        self.assertNotIn("different projects", self.printed)
+         return json.loads((self.out / "site.json").read_text())
+ 
++    def data(self, number: int) -> dict:
++        """The data of pull request `number`'s page, which has one head."""
++        return json.loads(next((self.out / "reviews" / str(number)).glob("*/data.json")).read_text())
++
++    def sidebars(self) -> dict[int, list[int]]:
++        """The pull requests each review's sidebar lists in its stack, with [] for one alone."""
++        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
++        return {r["number"]: [row["number"] for row in self.data(r["number"])["stack"]] for r in reviews}
++
++    def groups(self) -> list[tuple[int, int | None]]:
++        """Each review on the Reviews index, in its order, with the number its stack is grouped under."""
++        return [(r["number"], r["stack"]) for r in json.loads((self.out / "site.json").read_text())["reviews"]]
++
+     def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, list[int]], list[str]]:
+         """The pull requests in each review's stack, as its page lists them, and the head branches the build asked GitHub about."""
+         asked: list[str] = []
+@@ -460,9 +519,9 @@ def stack(number: int, head: str) -> list[dict]:
+         self.assertEqual({"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": False}, rows[0])
+         self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(11, "e" * 40)], "the top sees the whole stack")
+         self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(9, "c" * 40)], "the bottom sees the whole stack")
+-        self.assertEqual([{"number": 7, "title": "", "url": "", "current": False},
++        self.assertEqual([{"number": 7, "title": "", "url": "https://github.com/owner/example/pull/7", "current": False},
+                           {"number": 13, "title": "Change 13", "url": "/reviews/13/", "current": True}],
+-                         stack(13, "a" * 40), "a pull request with no summary has no title or link")
++                         stack(13, "a" * 40), "a pull request with no summary has no title, and links to GitHub")
+         self.assertEqual([], stack(20, "b" * 40), "a pull request alone has no stack")
+ 
+     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
+@@ -525,12 +584,13 @@ def pr_status(repo: str, number: int) -> dict:
+                          "each row carries what its newest head's page does")
+ 
+     def test_the_reviews_index_titles_each_review_as_its_page_does(self) -> None:
+-        self.publish(9, "c" * 40)
++        self.publish(9, "c" * 40, project="")
+ 
+         reviews = self.build()["reviews"]
+ 
+-        self.assertEqual([(9, "Change 9", "Summary 9")], [(r["number"], r["title"], r["name"]) for r in reviews],
+-                         "the pull request's title, not the summary's name")
++        self.assertEqual([(9, "Change 9", {"title": "Summary 9"})], [(r["number"], r["title"], r["header"]) for r in reviews],
++                         "the pull request's title, under the summary's name as its stack's title")
++        self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
+ 
+     def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
+         self.publish(9, "c" * 40)
+@@ -540,15 +600,18 @@ def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
+         self.assertNotIn("state", review)
+         self.assertNotIn("review", review)
+ 
+-    def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+-        self.publish(9, "c" * 40)
++    def test_a_review_is_headed_by_the_project_it_records_and_listed_on_its_page(self) -> None:
++        self.publish(9, "c" * 40, project="alpha/beta")
+ 
+         manifest = self.build()
+ 
+-        reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
+-        self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
+-        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+-        self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
++        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
++        self.assertEqual({"alpha": [], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]},
++                         "the recorded project, not the one whose plan the diff changes")
++        data = self.data(9)
++        self.assertEqual((beta, [{"header": beta, "members": [9]}]), (data["header"], data["segments"]))
++        self.assertEqual([beta], [r["header"] for r in manifest["reviews"]])
++        self.assertNotIn("projects", data)
+         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
+ 
+     def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
+@@ -563,15 +626,30 @@ def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width
+         for page in pages:
+             self.assertTrue(page.read_text().startswith(STANDARDS_HEAD), page.relative_to(self.out))
+ 
+-    def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
+-        self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
+-
+-        manifest = self.build()
+-
+-        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+-        self.assertEqual(["alpha/beta", "alpha"], [p["name"] for p in data["projects"]],
+-                         "named projects first, unknown names dropped, then the ones the diff touches")
+-        self.assertEqual({"alpha": [9], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]})
++    def test_a_pull_request_alone_is_headed_by_its_own_project_or_its_title(self) -> None:
++        alpha = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
++        titled = {"title": "Summary 9"}
++        # PLAN_DIFF changes alpha's plan, and BOTH_DIFF alpha's and alpha/beta's.
++        for case, published, header in (
++                ("a project the site has", {"project": "alpha"}, alpha),
++                ("a project the site lacks", {"project": "no-such-project"}, titled),
++                ("no project, while the diff changes alpha's plan", {"project": ""}, titled),
++                ("an older summary whose diff changes one project's files", {}, alpha),
++                ("an older summary whose projects list names one the site has",
++                 {"projects": ["no-such-project", "alpha/beta"]}, beta),
++                ("a null project, read as an older summary's", {"project": None}, alpha),
++                ("an older summary whose diff changes two projects' files", {"diff": BOTH_DIFF}, titled)):
++            with self.subTest(case):
++                self.reset()
++                self.publish(9, "c" * 40, **published)
++
++                manifest = self.build()
++
++                self.assertEqual(header, self.data(9)["header"])
++                self.assertEqual([{"header": header, "members": [9]}], self.data(9)["segments"], "one segment")
++                self.assertEqual({"alpha": [9] if header is alpha else [], "alpha/beta": [9] if header is beta else []},
++                                 {p["name"]: p["reviews"] for p in manifest["projects"]})
+ 
+     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
+         manifest = self.build()
+@@ -597,6 +675,239 @@ def test_the_search_index_covers_every_served_document(self) -> None:
+         self.assertIn("Build alpha", alpha["text"])
+         self.assertTrue((self.out / "search" / "index.html").is_file())
+ 
++    # Stacks GitHub lists
++
++    def test_a_github_stack_keeps_a_layer_whose_base_moved_to_the_default_branch(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10")
++
++        self.build([github_stack(30, 9, 10)])
++
++        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
++        self.assertEqual([(9, 9), (10, 9)], self.groups())
++        self.assertIn("stacks: read 1 GitHub stack in 1 request\n", self.printed)
++
++    def test_github_decides_its_members_whatever_their_base_branches_say(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-14")
++        self.publish(14, "c" * 40, headRef="feature-14")
++
++        self.build([github_stack(30, 9, 10)])
++
++        self.assertEqual({9: [9, 10], 10: [9, 10], 14: []}, self.sidebars())
++
++    def test_a_merged_github_stack_stays_one_group_under_closed(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10")
++
++        merged = {"state": "merged", "base": None, "reviews": []}
++        with mock.patch.object(summary, "pr_status", return_value=merged):
++            reviews = self.build([github_stack(30, 9, 10, merged=True)])["reviews"]
++
++        self.assertEqual([(9, 9, "merged"), (10, 9, "merged")], [(r["number"], r["stack"], r["state"]) for r in reviews])
++        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
++
++    def test_a_github_stack_member_without_a_summary_stays_in_the_sidebar(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++
++        self.build([github_stack(30, 9, 11)])
++
++        self.assertEqual([{"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": True},
++                          {"number": 11, "title": "", "url": "https://github.com/owner/example/pull/11", "current": False}],
++                         self.data(9)["stack"])
++        self.assertEqual([(9, None)], self.groups(), "the index's group holds the reviews alone")
++
++    def test_a_pull_request_chained_by_hand_joins_a_github_stack_after_its_members(self) -> None:
++        for beneath in (10, 9):
++            with self.subTest(based_on=beneath):
++                self.reset()
++                self.publish(9, "a" * 40, headRef="feature-9")
++                self.publish(10, "b" * 40, headRef="feature-10")
++                self.publish(15, "c" * 40, headRef="feature-15", baseRef=f"feature-{beneath}")
++
++                self.build([github_stack(30, 9, 10)])
++
++                self.assertEqual({9: [9, 10, 15], 10: [9, 10, 15], 15: [9, 10, 15]}, self.sidebars())
++                self.assertEqual([(9, 9), (10, 9), (15, 9)], self.groups())
++
++    def test_a_branch_between_two_github_stacks_joins_neither(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10")
++        self.publish(20, "c" * 40, headRef="feature-20", baseRef="feature-10")
++        self.publish(21, "d" * 40, headRef="feature-21", baseRef="feature-20")
++
++        self.build([github_stack(30, 9, 10), github_stack(40, 20, 21)])
++
++        self.assertEqual({9: [9, 10], 10: [9, 10], 20: [20, 21], 21: [20, 21]}, self.sidebars())
++
++    def test_a_pull_request_in_no_github_stack_sits_on_its_base_branch(self) -> None:
++        self.publish(12, "a" * 40, headRef="feature-12", baseRef="feature-13")
++        self.publish(13, "b" * 40, headRef="feature-13")
++
++        self.build([github_stack(30, 1, 2)])
++
++        self.assertEqual({12: [13, 12], 13: [13, 12]}, self.sidebars())
++
++    def test_a_stack_or_member_github_lists_without_a_number_is_left_out_and_counted(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-9")
++        self.publish(20, "c" * 40, headRef="feature-20")
++        self.publish(21, "d" * 40, headRef="feature-21")
++        unnumbered = github_stack(30, 10, 9)
++        del unnumbered["number"]
++        unlisted = github_stack(31)
++        del unlisted["pull_requests"]
++        partial = github_stack(40, 20, 99, 21)
++        partial["pull_requests"][1]["number"] = "99"
++
++        self.build([unnumbered, unlisted, partial])
++
++        self.assertEqual({9: [9, 10], 10: [9, 10], 20: [20, 21], 21: [20, 21]}, self.sidebars(),
++                         "the unnumbered stack's pull requests sit on their base branches, and the gap closes")
++        self.assertIn("stacks: read 3 GitHub stacks in 1 request; left out 1 stack with no number, whose pull requests "
++                      "sit on their base branches; left out 1 stack with no list of pull requests; left out 1 stack "
++                      "member with no number\n", self.printed)
++
++    def test_a_pull_request_in_two_github_stacks_belongs_to_the_higher_one(self) -> None:
++        for number, head in ((9, "a"), (10, "b"), (11, "c"), (12, "d")):
++            self.publish(number, head * 40, headRef=f"feature-{number}")
++
++        self.build([github_stack(30, 9, 10, 11), github_stack(40, 10, 12)])
++
++        self.assertEqual({9: [9, 11], 10: [10, 12], 11: [9, 11], 12: [10, 12]}, self.sidebars())
++
++    # Stacks GitHub cannot list
++
++    def test_without_github_s_stacks_every_pull_request_sits_on_its_base_branch(self) -> None:
++        self.publish(9, "a" * 40, headRef="feature-9")
++        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-9")
++
++        self.build()
++
++        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
++        self.assertIn("stacks: GitHub's stacks could not be read, so every pull request sits on its base branch\n",
++                      self.printed)
++
++    def test_a_base_branch_github_cannot_look_up_leaves_only_its_own_pull_request_alone(self) -> None:
++        self.publish(12, "a" * 40, headRef="feature-12", baseRef="feature-13")
++        self.publish(17, "b" * 40, headRef="feature-17", baseRef="feature-16")
++
++        def lookup(*args: str) -> str | None:
++            head = next(a for a in args if a.startswith("head=")).split(":", 1)[1]
++            if head == "feature-16":
++                raise summary.SummaryError("gh api failed: HTTP 502")
++            return {"feature-13": "13\n"}.get(head, "\n")
++
++        with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
++            self.build()
++
++        self.assertEqual({12: [13, 12], 17: []}, self.sidebars())
++
++    # Headers
++
++    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
++
++    def layered(self, *projects: object, github: bool = True, merged: bool = False) -> dict:
++        """Build a stack of #9 and up, each layer based on the one beneath, that record `projects` bottom first;
++        return site.json. GitHub lists the stack unless `github` is false, and reports it merged when `merged`."""
++        numbers = range(9, 9 + len(projects))
++        for number, project in zip(numbers, projects):
++            self.publish(number, f"{number:040x}", project, headRef=f"feature-{number}",
++                         **({"baseRef": f"feature-{number - 1}"} if number > 9 else {}))
++        status = {"state": "merged" if merged else "open", "base": None, "reviews": []}
++        with mock.patch.object(summary, "pr_status", return_value=status):
++            return self.build([github_stack(30, *numbers, merged=merged)] if github else None)
++
++    def assert_segments(self, manifest: dict, expected: list[tuple[dict, list[int]]]) -> None:
++        """Every page of the stack carries `expected` as its segments, and every page and row the header of its own."""
++        segments = [{"header": header, "members": members} for header, members in expected]
++        own = {n: header for header, members in expected for n in members}
++        for row in manifest["reviews"]:
++            data = self.data(row["number"])
++            self.assertEqual(segments, data["segments"], row["number"])
++            self.assertEqual(own[row["number"]], data["header"], row["number"])
++            self.assertEqual(own[row["number"]], row["header"], row["number"])
++
++    def test_a_layer_with_no_project_sits_under_the_project_of_the_layer_beneath(self) -> None:
++        manifest = self.layered("alpha", "")
++
++        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
++        self.assertEqual([10, 9], next(p["reviews"] for p in manifest["projects"] if p["name"] == "alpha"))
++
++    def test_a_merged_stack_keeps_the_header_of_its_bottom_layer(self) -> None:
++        manifest = self.layered("alpha", "", merged=True)
++
++        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
++
++    def test_a_stack_splits_into_a_segment_for_each_run_of_layers_that_carry_one_project(self) -> None:
++        alpha, beta = self.ALPHA, self.BETA
++        for projects, expected in (
++                (("alpha", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
++                (("alpha", "", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
++                (("", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
++                (("alpha", "no-such-project", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
++                (("alpha", "", "alpha"), [(alpha, [9, 10, 11])]),
++                (("alpha", "alpha/beta", "alpha"), [(alpha, [9]), (beta, [10]), (alpha, [11])]),
++                (("alpha", "alpha/beta"), [(alpha, [9]), (beta, [10])])):
++            with self.subTest(projects=projects):
++                self.reset()
++                manifest = self.layered(*projects)
++
++                self.assert_segments(manifest, expected)
++                reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
++                self.assertEqual({"alpha": sorted((n for h, m in expected if h is alpha for n in m), reverse=True),
++                                  "alpha/beta": sorted((n for h, m in expected if h is beta for n in m), reverse=True)},
++                                 reviews, "a project lists every member of each segment it heads, newest first")
++
++    def test_a_stack_found_from_base_branches_splits_as_a_github_stack_does(self) -> None:
++        self.assert_segments(self.layered("alpha", "alpha/beta", github=False), [(self.ALPHA, [9]), (self.BETA, [10])])
++
++    def test_a_merged_stack_of_two_projects_keeps_both_segments(self) -> None:
++        manifest = self.layered("alpha", "alpha/beta", merged=True)
++
++        self.assert_segments(manifest, [(self.ALPHA, [9]), (self.BETA, [10])])
++        self.assertEqual(["merged", "merged"], [r["state"] for r in manifest["reviews"]])
++
++    def test_a_member_without_a_summary_joins_the_segment_beneath_it(self) -> None:
++        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
++        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
++
++        manifest = self.build([github_stack(30, 9, 11, 10)])
++
++        self.assert_segments(manifest, [(self.ALPHA, [9, 11]), (self.BETA, [10])])
++        self.assertEqual([9, 11, 10], [row["number"] for row in self.data(9)["stack"]])
++
++    def test_a_pull_request_chained_by_hand_joins_the_segment_drawn_above_it(self) -> None:
++        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
++        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
++        self.publish(15, "c" * 40, "", headRef="feature-15", baseRef="feature-9")
++
++        manifest = self.build([github_stack(30, 9, 10)])
++
++        self.assertEqual([9, 10, 15], [row["number"] for row in self.data(15)["stack"]])
++        self.assert_segments(manifest, [(self.ALPHA, [9]), (self.BETA, [10, 15])])
++
++    def test_a_stack_with_no_project_is_titled_by_its_lowest_name(self) -> None:
++        for names, title in ((("", "Second layer's title"), "Second layer's title"), (("", ""), "Change 9")):
++            with self.subTest(names=names):
++                self.reset()
++                for number, name in zip((9, 10), names):
++                    self.publish(number, f"{number:040x}", "", name, headRef=f"feature-{number}")
++
++                manifest = self.build([github_stack(30, 9, 10)])
++
++                self.assert_segments(manifest, [({"title": title}, [9, 10])])
++
++    def test_every_row_carries_its_header_and_no_name_or_projects(self) -> None:
++        self.publish(9, "a" * 40, "alpha", projects=["alpha/beta"])
++        self.publish(10, "b" * 40, "")
++
++        reviews = self.build()["reviews"]
++
++        self.assertEqual([(10, {"title": "Summary 10"}), (9, self.ALPHA)], [(r["number"], r["header"]) for r in reviews])
++        self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
++
+ 
+ def new_file_diff(path: str, content: str | bytes) -> str:
+     """The diff that adds `path` with `content`: its lines, or a binary file's one line."""
+@@ -690,6 +1001,23 @@ def test_an_open_pull_request_proposes_the_plan_its_diff_adds_at_the_address_it_
+                          data["files"][0]["project"])
+         self.assertIn("2 projects, 1 proposed project, 1 reviews, 0 reviews skipped", self.out_text)
+ 
++    def test_a_stack_segment_that_carries_out_a_proposed_project_is_headed_by_its_proposed_page(self) -> None:
++        self.publish(9, {"gamma/readme.md": GAMMA})
++        upper = self.publish(10, {"alpha/more.md": "# More\n"})
++        path = self.summaries / "10" / upper / "summary.json"
++        data = json.loads(path.read_text())
++        data["project"] = "gamma"
++        data["pr"]["baseRef"] = "change-9"
++        path.write_text(json.dumps(data))
++
++        manifest = self.build()
++
++        gamma = {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"}
++        self.assertEqual([(9, gamma), (10, gamma)], [(r["number"], r["header"]) for r in manifest["reviews"]],
++                         "the bottom layer's diff proposes gamma, and the upper layer records it")
++        self.assertEqual([10, 9], self.project(manifest, "gamma")["reviews"])
++        self.assertEqual([], self.project(manifest, "alpha")["reviews"])
++
+     def test_a_merged_or_closed_pull_request_proposes_nothing(self) -> None:
+         self.publish(9, {"gamma/readme.md": GAMMA})
+         for state in ("merged", "closed"):
+@@ -1340,7 +1668,7 @@ def draw(self, reviews: list[dict], search: str = "", toggles: tuple[tuple[str,
+         """
+         stub = self.STUB.replace("SEARCH", json.dumps(search)) + \
+             f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
+-        functions = ("stateOf", "listedStates", "reviewRow", "reviewsTable", "showReviews")
++        functions = ("stateOf", "listedStates", "reviewRow", "sameHeader", "reviewsTable", "showReviews")
+         program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
+             "\nshowReviews();"
+             "\nconst opened = boxes.map(function (b) { return [b.value, b.checked]; });"
+@@ -1353,30 +1681,49 @@ def draw(self, reviews: list[dict], search: str = "", toggles: tuple[tuple[str,
+         return json.loads(node(program))
+ 
+     @staticmethod
+-    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
+-        """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
+-        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1,
+-               "stack": stack, "updated": "2023-11-14T22:21:40Z"}
++    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None,
++               header: dict | None = None) -> dict:
++        """A row of site.json's reviews, under `header`, or else its stack's title; without a `state`, GitHub
++        could not be asked."""
++        row = {"number": number, "title": f"Change {number}", "heads": 1, "stack": stack,
++               "header": header or {"title": f"Stack {stack or number}"}, "updated": "2023-11-14T22:21:40Z"}
+         if state is not None:
+             row["state"] = state
+             row["review"] = review or {"status": "unreviewed"}
+         return row
+ 
+     def bodies(self, html: str) -> list[list[int]]:
+-        """The pull requests in each table body of the list, one body for each stack and for each review alone.
++        """The pull requests in each stack the list draws, one for each review alone too.
+ 
+-        Each row is its pull request's number and title, drawn as a stack's
+-        row in a summary's sidebar is.
++        Each segment of a stack is a table body that opens with its header
++        row, and every body of a stack but its last is `continued`. Each row
++        is its pull request's number and title, drawn as a stack's row in a
++        summary's sidebar is.
+         """
+-        found = []
+-        for rows in re.findall(r'<tbody>(.*?)</tbody>', html):
++        return [[n for segment in stack for n in segment] for stack in self.stacks(html)]
++
++    def stacks(self, html: str) -> list[list[list[int]]]:
++        """The pull requests in each segment of each stack the list draws."""
++        found: list[list[list[int]]] = [[]]
++        for continued, head, rows in re.findall(
++                r'<tbody( class="continued")?><tr class="stackhead"><th colspan="3" scope="rowgroup">(.*?)</th></tr>'
++                r'(.*?)</tbody>', html):
++            self.assertRegex(head, r'^(<a href="[^"]*">[^<]*</a>|<span>[^<]*</span>)$')
+             numbers = [int(n) for n in re.findall(
+                 r'<tr><td class="pr"><a class="srow" href="/reviews/(\d+)/"><span class="snum">#\1</span>'
+                 r'<span class="stitle">Change \1</span></a></td>', rows)]
+             self.assertEqual(rows.count("<tr>"), len(numbers), rows)
+-            found.append(numbers)
++            found[-1].append(numbers)
++            if not continued:
++                found.append([])
++        self.assertEqual(html.count("<tbody"), sum(len(stack) for stack in found), html)
++        self.assertEqual([], found.pop(), "the last body ends its stack")
+         return found
+ 
++    def heads(self, html: str) -> list[str]:
++        """Each table body's header, as drawn."""
++        return re.findall(r'<tr class="stackhead"><th colspan="3" scope="rowgroup">(.*?)</th></tr>', html)
++
+     def test_open_reviews_are_listed_first_and_each_box_changes_the_list_and_the_address(self) -> None:
+         reviews = [self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
+                    self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open"), self.review(8)]
+@@ -1445,6 +1792,68 @@ def test_a_stack_draws_no_divider_between_its_rows_and_no_link_is_underlined(sel
+         self.assertIn("table.tbl.reviews { table-layout: fixed; }", css, "checking a box never moves a column")
+         self.assertIn("table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }", css)
+ 
++    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
++
++    def test_each_stack_and_review_alone_opens_with_its_header(self) -> None:
++        drawn = self.draw([self.review(10, 9, "open", header=self.ALPHA), self.review(11, 9, "open", header=self.ALPHA),
++                           self.review(8, None, "open", header={"title": "Fix loop stack subagent name"})])
++        html = drawn["steps"][0]["list"]
++
++        self.assertEqual([[[10, 11]], [[8]]], self.stacks(html))
++        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Fix loop stack subagent name</span>"],
++                         self.heads(html), "a project's header links to it, and a title's is plain text")
++
++    def test_a_header_stays_above_the_rows_a_box_leaves(self) -> None:
++        drawn = self.draw([self.review(9, 9, "merged", header=self.ALPHA), self.review(10, 9, "open", header=self.ALPHA)])
++
++        self.assertEqual([[[10]]], self.stacks(drawn["steps"][0]["list"]))
++        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>'], self.heads(drawn["steps"][0]["list"]))
++
++    def test_a_stack_of_two_segments_draws_a_body_for_each_and_one_divider(self) -> None:
++        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "open", header=self.ALPHA),
++                           self.review(11, 9, "open", header=self.BETA)])
++        html = drawn["steps"][0]["list"]
++
++        self.assertEqual([[[9, 10], [11]]], self.stacks(html))
++        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', '<a href="/projects/alpha/beta/">Finish beta</a>'],
++                         self.heads(html))
++        self.assertEqual(1, html.count('<tbody class="continued">'))
++        css = (SITE_JS.parent / "site.css").read_text()
++        self.assertIn("table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }", css,
++                      "a segment the stack continues below draws no divider")
++        self.assertNotIn("tr:first-child td", css, "the header row takes the body's top padding")
++        self.assertRegex(css, r"table\.tbl\.reviews tr\.stackhead th \{ padding: 6px [^;]*; border-bottom: 0;")
++
++    def test_segments_on_either_side_of_hidden_rows_share_a_header_when_they_name_one_project(self) -> None:
++        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "merged", header=self.BETA),
++                           self.review(11, 9, "open", header=self.ALPHA)])
++
++        self.assertEqual([[[9, 11]]], self.stacks(drawn["steps"][0]["list"]))
++
++    def test_the_last_segment_drawn_ends_the_stack_when_the_boxes_hide_the_rest(self) -> None:
++        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "merged", header=self.BETA)])
++        html = drawn["steps"][0]["list"]
++
++        self.assertEqual([[[9]]], self.stacks(html))
++        self.assertNotIn("continued", html)
++
++    def test_on_a_phone_the_hidden_time_column_takes_no_width_from_the_titles(self) -> None:
++        # A header spans all three columns, so a column left out of the table
++        # entirely would come back as one with no set width and take the room
++        # the titles need.
++        css = (SITE_JS.parent / "site.css").read_text()
++        phone = re.search(r"@media \(max-width: 640px\) \{(.*?)\n\}", css, re.S)
++        assert phone is not None
++        self.assertIn("table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }", phone.group(1))
++        self.assertIn("table.tbl.reviews col.date { width: 0; }", phone.group(1))
++        self.assertNotIn("col.date { display: none", css)
++
++    def test_a_header_s_title_is_escaped(self) -> None:
++        drawn = self.draw([self.review(9, None, "open", header={"title": "<script>alert(1)</script>"})])
++
++        self.assertEqual(["<span>&lt;script&gt;alert(1)&lt;/script&gt;</span>"], self.heads(drawn["steps"][0]["list"]))
++
+ 
+ @unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
+ class SharedHelperTests(unittest.TestCase):
+@@ -1897,17 +2306,55 @@ def test_the_overview_card_holds_only_what_the_summary_wrote(self) -> None:
+                       "the page adds no reading guide of its own")
+ 
+     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+-    def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
+-        html = rendered_summary(self.build())
++    def test_the_sidebar_heads_the_stack_with_its_project_linked_to_its_page(self) -> None:
++        data = self.build()
++        data["segments"][0]["header"] = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++        html = rendered_summary(data)
++
++        self.assertIn('<div class="prblock"><div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
++                      '<ul class="stack" aria-label="Pull requests in this stack"><li class="srow current" '
++                      'aria-current="page"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul></div>',
++                      html)
++        self.assertNotIn("stack projects", html)
++
++    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
++    def test_the_sidebar_heads_a_stack_with_no_project_with_its_title_unlinked(self) -> None:
++        data = self.build()
++        self.assertEqual({"title": "Summary 9"}, data["header"], "its diff changes two projects' files")
++
++        self.assertIn('<div class="prblock"><div class="stackhead"><span>Summary 9</span></div><ul class="stack"',
++                      rendered_summary(data))
++
++    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
++    def test_the_sidebar_escapes_a_header_s_title(self) -> None:
++        data = self.build()
++        data["segments"][0]["header"] = {"title": "<script>alert(1)</script>"}
++
++        self.assertIn('<div class="stackhead"><span>&lt;script&gt;alert(1)&lt;/script&gt;</span></div>',
++                      rendered_summary(data))
++
++    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
++    def test_the_sidebar_heads_each_segment_of_the_stack(self) -> None:
++        data = self.build()
++        alpha = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
++        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
++        data["segments"] = [{"header": alpha, "members": [7, 9]}, {"header": beta, "members": [11]}]
++        data["stack"] = [{"number": 7, "title": "Change 7", "url": "/reviews/7/", "current": False},
++                         {"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": True},
++                         {"number": 11, "title": "", "url": "https://github.com/owner/example/pull/11", "current": False}]
++        html = rendered_summary(data)
+ 
+-        projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
+-        self.assertIsNotNone(projects, "the projects list is missing")
+-        self.assertEqual('<li><a class="srow" href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
+-                         '<li><a class="srow" href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
+-                         projects.group(1), "each project's title fills its row, with nothing before it")
+-        self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
+-                        "the projects come first in the sidebar")
+-        self.assertNotIn("Projects:", html)
++        self.assertIn('<div class="prblock">'
++                      '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
++                      '<ul class="stack" aria-label="Pull requests for Build alpha">'
++                      '<li><a class="srow" href="/reviews/7/"><span class="snum">#7</span><span class="stitle">Change 7'
++                      '</span></a></li><li class="srow current" aria-current="page"><span class="snum">#9</span>'
++                      '<span class="stitle">Change 9</span></li></ul>'
++                      '<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>'
++                      '<ul class="stack" aria-label="Pull requests for Finish beta">'
++                      '<li><a class="srow" href="https://github.com/owner/example/pull/11"><span class="snum">#11</span>'
++                      '<span class="stitle"></span></a></li></ul></div>', html,
++                      "each segment's header, then its rows in order, the current one marked in its own segment")
+ 
+     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
+     def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 9df2169..b5d204d 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -52,6 +52,7 @@ def make_summary(groups: list[dict]) -> dict:
+     return {
+         "version": 1,
+         "name": "Core Summary",
++        "project": "",
+         "pr": {"repo": "owner/repo", "number": 7, "title": "Change the core", "head": "a" * 40, "base": "b" * 40, "baseRef": "main"},
+         "overview": {"summary": ["It changes <code>Check</code>."], "cards": []},
+         "groups": groups,
+@@ -286,6 +287,107 @@ def test_default_build_refuses_a_moved_head(self) -> None:
+                 site.build_page(make_summary(GOOD_GROUPS), Path(tempfile.mkdtemp()))
+ 
+ 
++class StackChoiceTests(unittest.TestCase):
++    """The project and title a summary records for its stack, from `init` to a page built alone."""
++
++    def test_init_leaves_the_project_undecided(self) -> None:
++        tmp = Path(tempfile.mkdtemp())
++        (tmp / "pr.diff").write_text(DIFF)
++
++        with mock.patch.object(summary, "pr_metadata", return_value=make_summary([])["pr"]), \
++             redirect_stdout(io.StringIO()):
++            code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary",
++                             str(tmp / "summary.json"), "--diff", str(tmp / "pr.diff")])
++
++        self.assertEqual(0, code)
++        skeleton = json.loads((tmp / "summary.json").read_text())
++        self.assertEqual(("", None), (skeleton["name"], skeleton["project"]), "publish refuses the skeleton as it is")
++
++    def page(self, **fields: object) -> dict:
++        data = make_summary(GOOD_GROUPS) | fields
++        with mock.patch.object(summary, "fetch_diff", return_value=DIFF):
++            return site.build_page(data, Path(tempfile.mkdtemp()), at_head=True)
++
++    def test_a_page_built_alone_is_headed_by_its_name_whatever_its_project(self) -> None:
++        for project in (None, "", "alpha"):
++            with self.subTest(project=project):
++                payload = self.page(project=project, name="Core work")
++                self.assertEqual({"title": "Core work"}, payload["header"], "a page alone has no site's projects")
++                self.assertEqual([{"header": {"title": "Core work"}, "members": [7]}], payload["segments"])
++
++    def test_a_page_built_alone_without_a_name_is_headed_by_its_title(self) -> None:
++        payload = self.page(name="")
++
++        self.assertEqual({"title": "Change the core"}, payload["header"])
++        self.assertEqual("", payload["name"], "the page keeps the name as written")
++
++
++def fake_gh(stdout: str, stderr: str = "", code: int = 0) -> tuple[dict[str, str], Path]:
++    """An environment whose PATH finds a `gh` that prints `stdout` and `stderr` and exits with `code`,
++    and the file where it writes each argument it is given, one to a line."""
++    folder = Path(tempfile.mkdtemp())
++    (folder / "out").write_text(stdout)
++    (folder / "err").write_text(stderr)
++    script = folder / "gh"
++    script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{folder}/args"\ncat "{folder}/out"\n'
++                      f'cat "{folder}/err" >&2\nexit {code}\n')
++    script.chmod(0o755)
++    return {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}, folder / "args"
++
++
++class RepoStacksTests(unittest.TestCase):
++    """The repository's stacks on GitHub, read for the site build."""
++
++    def build_lookup(self) -> object:
++        """The stacks lookup `build_checkout` hands the site build for owner/repo."""
++        handed: dict = {}
++
++        def build_site(out: Path, **kwargs: object) -> tuple[list, list, list]:
++            handed.update(kwargs)
++            return [], [], []
++
++        with mock.patch.object(site, "build_site", side_effect=build_site):
++            cli.build_checkout(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), None, "/", "owner/repo")
++        return handed["stacks_lookup"]
++
++    def test_one_paginated_request_reads_every_page(self) -> None:
++        pages = [[{"number": 40, "pull_requests": [{"number": 9}, {"number": 10}]}],
++                 [{"number": 30, "pull_requests": [{"number": 6}]}]]
++        env, args = fake_gh("".join(json.dumps(page) + "\n" for page in pages))
++        lookup = self.build_lookup()
++
++        with mock.patch.dict(os.environ, env):
++            listed = summary.repo_stacks("owner/repo")
++            looked_up = lookup()
++
++        self.assertEqual((pages[0] + pages[1], 2), listed, "every stack from both pages, and how many requests")
++        self.assertEqual(listed, looked_up)
++        self.assertEqual(["api", "--paginate", "-H", "X-GitHub-Api-Version: 2026-03-10",
++                          "repos/owner/repo/stacks?per_page=100", "--jq", "@json"], args.read_text().splitlines())
++
++    def test_a_listing_github_cannot_give_whole_leaves_the_build_none(self) -> None:
++        page = json.dumps([{"number": 40, "pull_requests": [{"number": 9}]}])
++        lookup = self.build_lookup()
++        for case, answer in (
++                ("a host without the endpoint", ('{"message": "Not Found"}', "gh: Not Found (HTTP 404)", 1)),
++                ("a failure on the second page", (page + "\n", "gh: Server Error (HTTP 502)", 1)),
++                ("a network error", ("", "error connecting to api.github.com", 1)),
++                ("an answer that is not a list", ('{"message": "Moved Permanently"}\n', "", 0)),
++                ("an answer that is not JSON", ("<html>\n", "", 0)),
++                ("no answer at all", ("", "", 0))):
++            env, _ = fake_gh(*answer)
++            with self.subTest(case), mock.patch.dict(os.environ, env):
++                with self.assertRaises(summary.SummaryError):
++                    summary.repo_stacks("owner/repo")
++                self.assertIsNone(lookup())
++
++    def test_a_build_without_gh_has_no_stacks(self) -> None:
++        lookup = self.build_lookup()
++
++        with mock.patch.dict(os.environ, {"PATH": tempfile.mkdtemp()}):
++            self.assertIsNone(lookup())
++
++
+ class SiteTests(unittest.TestCase):
+     def write_summary(self, root: Path, head: str, name: str) -> Path:
+         data = make_summary(GOOD_GROUPS)
+@@ -313,8 +415,9 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+                       (built_site / "reviews" / "7" / "index.html").read_text(), "the newest head, rendered in place")
+         index = (built_site / "index.html").read_text()
+         listed = json.loads((built_site / "site.json").read_text())["reviews"]
+-        self.assertEqual([(7, "New", "1970-01-01T00:03:20Z", 2)],
+-                         [(w["number"], w["name"], w["updated"], w["heads"]) for w in listed], "dated by the newest head")
++        self.assertEqual([(7, {"title": "New"}, "1970-01-01T00:03:20Z", 2)],
++                         [(w["number"], w["header"], w["updated"], w["heads"]) for w in listed],
++                         "dated by the newest head, and headed by its name")
+         self.assertTrue((built_site / ".nojekyll").exists())
+         page = (built_site / "reviews" / "7" / ("a" * 40) / "index.html").read_text()
+         self.assertNotIn("summary-data", page)
+@@ -487,16 +590,23 @@ def setUp(self) -> None:
+         self.output = ""
+         self.err = ""
+ 
+-    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, **kwargs: object) -> object:
++    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, fields: dict | None = None,
++                **kwargs: object) -> object:
+         """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
+         and its warnings in `self.err`.
+ 
+         GitHub serves `diff` as the pull request's, and a diff other than DIFF gets a summary of one group.
++        `fields` replaces the summary's own, and a field given as `...` is left out.
+         """
+         groups = GOOD_GROUPS if diff == DIFF else [
+             {"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]
+         data = make_summary(groups)
+         data["pr"]["head"] = head
++        for key, value in (fields or {}).items():
++            if value is ...:
++                del data[key]
++            else:
++                data[key] = value
+         path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
+         path.write_text(json.dumps(data))
+         cwd = os.getcwd()
+@@ -776,6 +886,37 @@ def test_refuses_a_summary_for_another_repository(self) -> None:
+         with self.assertRaisesRegex(summary.SummaryError, "origin is someone/else, but the summary is for owner/repo"):
+             self.publish("a" * 40)
+ 
++    def test_refuses_a_summary_that_has_not_chosen_its_project(self) -> None:
++        first = self.publish("d" * 40)
++
++        for value, found in ((None, "the summary's `project` is null"), (..., "the summary has no `project`"),
++                             (7, "the summary's `project` is 7")):
++            with self.subTest(project=value), self.assertRaisesRegex(
++                    summary.SummaryError, f"{found}; set it to the name of the one project this pull request "
++                                          "carries out, as `project list` names it, or to \"\" when it carries none"):
++                self.publish("c" * 40, fields={"project": value})
++
++        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
++
++    def test_refuses_a_name_too_short_or_too_long_to_title_a_stack(self) -> None:
++        first = self.publish("d" * 40)
++
++        for name, said in (("", "`name` is empty; set it to two to six words that name the work of the whole stack, "
++                                "at most 60 characters"),
++                           ("   ", "`name` is empty"),
++                           ("x" * 61, "`name` is 61 characters; shorten it to at most 60")):
++            with self.subTest(name=name), self.assertRaisesRegex(summary.SummaryError, said):
++                self.publish("c" * 40, fields={"name": name})
++
++        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
++        self.assertIsNotNone(self.publish("c" * 40, fields={"name": "x" * 60}), "60 characters fit")
++
++    def test_publishes_a_project_the_checkout_does_not_have_yet(self) -> None:
++        # A spec pull request records the plan it adds, which its base lacks until it merges.
++        commit = self.publish("c" * 40, fields={"project": "a-plan-this-pull-request-adds"})
++
++        self.assertEqual(commit, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
++
+     def test_stores_the_heads_attributes_beside_the_diff_when_the_checkout_has_the_head(self) -> None:
+         (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\ngen/** -linguist-generated\n")
+         run(self.repo, "git", "add", ".gitattributes")

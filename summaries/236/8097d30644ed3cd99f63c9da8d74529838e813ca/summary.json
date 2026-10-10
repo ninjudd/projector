@@ -1,0 +1,231 @@
+{
+ "version": 1,
+ "name": "Stack segment headers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 236,
+  "title": "Head each stack segment with its project or a title",
+  "head": "8097d30644ed3cd99f63c9da8d74529838e813ca",
+  "headRef": "stack-header",
+  "base": "599be22213f316cc388221acba0ac78d5a19be8c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has a <b>Reviews</b> index that lists every pull request with a published summary, and a summary page for each one whose sidebar lists the pull requests in its <b>stack</b>, the chain of dependent pull requests it belongs to. Neither page said what a stack is for. The site did link reviews to projects, but by which plan files a diff touched, so a rename linked to every plan it edited and the upper layers of a stack that implemented a plan linked to nothing.",
+   "This pull request carries out the <code>stack-header</code> plan. Each summary now records the one project its pull request carries out, and its <code>name</code> becomes the stack's title. The build takes each stack's members from GitHub's stacks API, splits each stack into <b>segments</b>, one for each run of layers that carry the same project, and draws a header above each segment on both pages. A project header links to the project's page. A stack with no project gets one plain-text title header.",
+   "<ol><li><b>A summary records its choice.</b> <code>project</code> is a project name, or <code>\"\"</code> for none. <code>summary publish</code> refuses a <code>null</code> or missing <code>project</code>, and a <code>name</code> that is empty or longer than 60 characters.</li><li><b>The build finds each stack once.</b> One paginated request lists the repository's GitHub stacks. A pull request in no GitHub stack, and every pull request when GitHub cannot answer, sits on the pull request whose head branch is its base branch, as before.</li><li><b>The build splits each stack into segments.</b> A layer that names no project joins the segment of the layer before it, so a refactor at the bottom of a stack does not hide the project above it.</li><li><b>Both pages draw the headers.</b> The index draws each segment as its own table body under a header row, and the sidebar draws a header above each segment's rows.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests that build on one another, bottom first. A pull request alone is a stack of one.</li><li><b>GitHub stack</b>: a stack GitHub records, as the <code>gh stack</code> CLI makes it. It keeps its members and their order after they merge.</li><li><b>Segment</b>: a run of a stack's layers that carry the same project, drawn under one header.</li><li><b>Header</b>: <code>{project, title, url}</code> for a project, or <code>{title}</code> for a stack that carries none.</li></ul>"
+   },
+   {
+    "id": "segments",
+    "title": "How layers become segments",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Projects, bottom first</th><th>Segments</th></tr></thead><tbody><tr><td>A, A, B</td><td>A: layers 1 and 2. B: layer 3.</td></tr><tr><td>A, <code>\"\"</code>, B</td><td>A: layers 1 and 2. B: layer 3.</td></tr><tr><td><code>\"\"</code>, A, B</td><td>A: layers 1 and 2. B: layer 3.</td></tr><tr><td>A, B, A</td><td>A: layer 1. B: layer 2. A: layer 3.</td></tr><tr><td><code>\"\"</code>, <code>\"\"</code></td><td>One title segment.</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "record",
+   "title": "A summary records its project and its stack's title",
+   "kicker": "The new summary field, and the checks publish runs on it",
+   "intro": [
+    "The site cannot tell from a diff which plan a change carries out, so the summarizing agent now records that choice. <code>summary init</code> writes <code>\"project\": null</code>, which means not decided yet, and <code>summary publish</code> refuses it until the agent sets a project name or <code>\"\"</code>. The summary's <code>name</code>, which every summary already has, becomes the stack's title, capped at 60 characters so it fits a header.",
+    "<code>publish</code> does not check that the project exists in the checkout. A pull request that adds a plan records that plan, and the default branch lacks it until the pull request merges."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>repo_stacks</code>, the one paginated stacks request, and <code>require_stack_choices</code>, which <code>publish</code> runs first.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 755,
+       "text": "<code>repo_stacks</code> raises <code>SummaryError</code> on a 404, on a failed later page, on output that is not JSON, on a page that is not a list, and on empty output, so GitHub answers for every stack or for none. <code>test_a_listing_github_cannot_give_whole_leaves_the_build_none</code> runs each case against a fake <code>gh</code>, and the suite passes at this head."
+      },
+      {
+       "kind": "context",
+       "line": 1022,
+       "text": "<code>prepare_page</code> no longer invents a name such as <code>repo#7 summary</code>. An empty <code>name</code> stays empty, so the build can fall back to the pull request's title for a stack's header."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Covers <code>init</code>, the publish refusals, a project the checkout lacks, a page built alone, and <code>repo_stacks</code> against a fake <code>gh</code>."
+    }
+   ]
+  },
+  {
+   "id": "stacks",
+   "title": "The build takes stacks from GitHub and splits them into segments",
+   "kicker": "Who is in each stack, in what order, and under which header",
+   "intro": [
+    "Before this change, the build found stacks only from base branches: a pull request sat on the pull request whose head branch was its base. That loses a layer once its base moves to the default branch, and it breaks a merged stack apart. Now <code>find_stacks</code> asks GitHub first.",
+    "<ol><li><b>Inside a GitHub stack, GitHub decides.</b> Each member sits on the member before it in GitHub's order, merged members included, whatever its base branch says.</li><li><b>Everywhere else, base branches decide.</b> A pull request chained by hand onto a GitHub stack's member joins that stack, after its members.</li><li><b>One line reports it.</b> The build prints one <code>stacks:</code> line and never fails or warns over stacks.</li></ol>",
+    "<code>stack_segments</code> then splits each stack's members, including members without a summary, into segments. Each pull request's page, entry, and <code>site.json</code> row carry the header of its segment, and each project page lists the reviews in the segments it heads."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The index, the sidebar, and the headers all read the one <code>members</code> map that <code>find_stacks</code> returns, so they cannot disagree about who is in a stack."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>find_stacks</code>, <code>github_stacks</code>, <code>stack_segments</code>, and <code>project_header</code>, and narrows <code>project_linker</code> to one project.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 590,
+       "text": "The walk pushes a member's GitHub successor onto the stack last, so it is visited first, and a GitHub stack's members stay together in GitHub's order before any branch joined by hand. I traced it for #15 based on #9's branch in a stack of #9 and #10, which gives #9, #10, #15, as <code>test_a_pull_request_chained_by_hand_joins_a_github_stack_after_its_members</code> asserts."
+      },
+      {
+       "kind": "verify",
+       "line": 622,
+       "text": "A pull request listed in two GitHub stacks stays in the higher-numbered one, and the lower stack closes the gap. Stacks 30 (#9, #10, #11) and 40 (#10, #12) give #9, #11 and #10, #12, which the suite checks."
+      },
+      {
+       "kind": "verify",
+       "line": 676,
+       "text": "<code>stack_segments</code> matches the plan's table: a layer with no project joins the segment before it, or the first segment at the bottom, and a project that comes back after another starts a new segment. Traced for <code>alpha</code>, <code>alpha/beta</code>, <code>alpha</code>, which gives three segments."
+      },
+      {
+       "kind": "context",
+       "line": 831,
+       "text": "A summary published before <code>project</code> existed falls back to the first known name in its <code>projects</code> list, then to the one project whose files its diff changes. A diff that touches two projects gets a title header."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>build_checkout</code> hands the build a stacks lookup that returns None whenever <code>repo_stacks</code> fails, as the existing <code>pr_status</code> lookup does."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Build tests for every row of the plan's stack and header tables, and node tests for the index and sidebar markup.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 843,
+       "text": "Each subtest builds a three-layer stack from the recorded projects and checks every page's <code>segments</code>, every page's and row's <code>header</code>, and each project's <code>reviews</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "pages",
+   "title": "The index and the sidebar draw a header above each segment",
+   "kicker": "Shared header helpers, the index's table bodies, and the CSS",
+   "intro": [
+    "Both pages load <code>summary.js</code>, so the two new helpers live at its top. <code>stackHeaderHtml</code> draws one header: a link for a project, a <code>&lt;span&gt;</code> for a title. <code>stackSegmentsHtml</code> draws the sidebar's stack, a header above each segment's rows, and replaces the old list of project rows.",
+    "On the index, <code>reviewsTable</code> groups the rows into stacks as before, then starts a new table body wherever a row's header differs from the row above it. Every body but a stack's last has <code>class=\"continued\"</code> and draws no divider, so the stack still reads as one group."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code> print no findings and leave the committed JavaScript unchanged. A site built from this repository's summaries draws the #219 and #222 stack as two bodies with one divider in headless Chromium, in both themes, at 1200 and 375 pixels, with no horizontal scroll on the phone."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>stackHeaderHtml</code> and <code>stackSegmentsHtml</code>, and drops <code>projectsList</code> and the page title's <code>name</code> fallback.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 48,
+       "text": "A stack of one segment keeps the label <code>Pull requests in this stack</code>. With several, each list is labeled with its header's title, so a screen reader names the project each list belongs to."
+      }
+     ]
+    },
+    {
+     "path": "site/src/site.ts",
+     "note": "<code>reviewsTable</code> draws a table body per segment, and a project page lists its reviews by pull request title.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 485,
+       "text": "Segments come from comparing the rows drawn. When the <b>Open</b> and <b>Closed</b> boxes hide a whole segment, the segments on either side merge under one header if they name the same project."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds <code>StackHeader</code> and <code>StackSegment</code>. <code>segments</code> and <code>header</code> replace <code>projects</code> and <code>name</code>."
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Styles the index's header row and the <code>continued</code> bodies, and keeps the hidden time column at zero width on a phone.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 168,
+       "text": "The header cell spans all three columns. Without a zero width, the hidden time column would keep its width on a phone and squeeze the titles."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "<code>.prblock .stackhead</code> replaces the old project-row rules, with a three-line clamp and room above every header but the first."
+    },
+    {
+     "path": "site/assets/site.js"
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The skill, the CLI reference, and the plan",
+   "kicker": "How an agent makes the two choices, and what the docs now say",
+   "intro": [
+    "<code>summarize-pr</code> now tells the agent to choose <code>project</code> and <code>name</code> at the end of step 4 of \"Build the summary\", and again in step 2 of the update steps, because a summary published before this change has no <code>project</code> and <code>publish</code> refuses it. Each layer records its own choice and copies no other layer's."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "The two choices: the project the change is about, and two to six words naming the stack's work."
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "note": "Documents <code>project</code> and the title meaning of <code>name</code>."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes stacks from GitHub, the fallback, the <code>stacks:</code> line, segments, and project pages.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 735,
+       "text": "This paragraph says a pull request with no project sits in the segment of the pull request before it. The lowest pull request has none before it and joins the first segment, as plan § 8.1 says. The review lists this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/stack-header/readme.md",
+     "note": "Moves the plan to <code>in-progress</code> at priority <code>now</code>, and settles two details in § 2.2 and § 8.2.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "Every acceptance row in §§ 4 and 8.5 has a passing test, and the body records the browser check. The <code>implement</code> skill says to finish the plan in the same change when every criterion is proven. The review lists marking it <code>completed</code> as a suggestion."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "project": "stack-header"
+}
