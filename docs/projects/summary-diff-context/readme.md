@@ -45,6 +45,11 @@ A file is eligible when all of these hold:
 - Its head tree entry is a regular file, mode `100644` or `100755`. A symlink
   or a submodule is skipped.
 - Its blob is at most `CONTEXT_MAX_BYTES`, 1 MiB.
+- It is not a `.gitattributes` file. The deploy checks out the summaries ref
+  with `git worktree add`, and `project site serve` reads it with
+  `git archive`. Both apply a stored `.gitattributes` to the files stored
+  beside it, where `eol`, `working-tree-encoding`, and `ident` change their
+  bytes and `export-ignore` drops them from the archive.
 
 When the head cannot be read, publish prints why on stderr, as it does for
 attributes, and writes no `head/` entries. A republish of the same head with an
@@ -161,6 +166,11 @@ controls stay usable for a retry. A file without `context` draws no expander.
   diff must equal the stored line at its number. That catches a wrong or
   missing blob before a reader sees shifted lines, at the cost of one pass over
   lines the build already parsed.
+- **Store no `.gitattributes`.** Without one, no attribute on the summaries
+  ref can change a stored file's bytes or drop it from an archive, and the only
+  cost is that a changed `.gitattributes` has no context to expand. Rejected:
+  reading each stored file from the ref with `git cat-file`, which needs the
+  ref where `build_summaries` takes a directory.
 - **Serve each blob once by its Git id.** Successive heads of one pull request
   share most of their files, so keying by content keeps the site from growing
   with every push. Using Git's own id makes a served file traceable to the
@@ -179,8 +189,9 @@ controls stay usable for a retry. A file without `context` draws no expander.
 
 1. Publish tests, in temporary Git repositories, prove that `head/` entries
    point at the head's blobs and add no new objects; that new, deleted,
-   symlinked, submodule, and oversized files get none; that a head fetched from
-   the remote works; and that an unreadable head writes none and says why.
+   symlinked, submodule, oversized, and `.gitattributes` files get none; that
+   a head fetched from the remote works; and that an unreadable head writes
+   none and says why.
 2. Gap tests prove the computed gaps and `oldStart` for: a first hunk at line 1
    (no gap above), two adjacent hunks (no gap between), a pure-addition hunk, a
    pure-deletion hunk (`newLines` 0), a last hunk that reaches the end of the
