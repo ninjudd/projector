@@ -360,7 +360,6 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
         data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
         self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
-        self.assertEqual("/reviews/", data["indexUrl"])
         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
 
     def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:

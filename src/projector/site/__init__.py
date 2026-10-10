@@ -94,10 +94,15 @@ def copy_assets(out: Path) -> None:
         (out / asset).write_bytes((ASSETS / asset).read_bytes())
 
 
+def pr_title(payload: dict) -> str:
+    """The pull request's own title, which heads its summary page."""
+    return payload["pr"].get("title") or payload.get("name") or f"#{payload['pr']['number']}"
+
+
 def write_page(out: Path, payload: dict) -> None:
     """A standalone page, with its data embedded and the renderer beside it."""
     out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
+    (out / "index.html").write_text(page(pr_title(payload), payload), encoding="utf-8")
     copy_assets(out)
 
 
@@ -178,20 +183,19 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
         stack = stack_rows(int(number), bases, prs, base)
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads],
-                           stack=stack)
+            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack)
             folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             (folder / "data.json").write_text(data, encoding="utf-8")
             (folder / "index.html").write_text(
-                page(payload["name"], payload, embed=False, assets=f"{base}assets/", site_base=base,
+                page(pr_title(payload), payload, embed=False, assets=f"{base}assets/", site_base=base,
                      src=f"{base}reviews/{number}/{head}/data.json"), encoding="utf-8")
             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
         latest = versions[0][1]
         newest = latest["pr"]["head"]
         (out / "reviews" / number / "index.html").write_text(
-            page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
+            page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
                         "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),

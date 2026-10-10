@@ -59,7 +59,6 @@ interface SummaryData {
   /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
   stack?: { number: number; title: string; url: string; current: boolean }[];
   projects?: { name: string; title: string; url: string }[];
-  indexUrl?: string;
   generatedAt?: string;
 }
 

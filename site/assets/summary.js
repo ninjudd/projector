@@ -172,18 +172,17 @@
             const summary = (o.summary ?? []).map(block).join('');
             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
                 '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
-            const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
-                [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated'], [num(s.docs), 'documentation lines']];
-            out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
+            const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
+                [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
+            out += '<div class="card stats" id="files"><div class="statgrid">' +
                 tiles.map(function (t) { return `<div class="stat-tile"><div class="v">${t[0]}</div><div class="l">${t[1]}</div></div>`; }).join('') +
-                '</div></div>';
+                '</div></div>' + renderFilesPane();
             const cards = o.cards ?? [];
             if (cards.length > 0) {
                 out += '<div class="twocol">' + cards.map(function (c) {
                     return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
                 }).join('') + '</div>';
             }
-            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
             return out;
         }
         // Every file in the diff, by path, each linking to its card; the files the
@@ -197,7 +196,7 @@
             function row(f) {
                 const [dir, base] = splitPath(f.path);
                 const mark = f.new === true ? '<span class="badge new">new</span>' : f.deleted === true ? '<span class="badge deleted">deleted</span>' : '';
-                return `<li><a class="fjump" href="#${f.id}" data-fid="${f.id}" title="${esc(f.path)}">` +
+                return `<li><a class="fjump" href="#${f.id}" data-fid="${f.id}" title="${esc(f.path)}"><span class="fcheck" aria-hidden="true"></span>` +
                     `<span class="fpath"><span class="dir">${esc(dir)}</span><span class="base">${esc(base)}</span></span><span class="fbadge">${mark}</span>` +
                     `<span class="stat"><span class="plus">+${num(f.adds)}</span> <span class="minus">−${num(f.dels)}</span></span></a></li>`;
             }
@@ -207,11 +206,11 @@
             const open = rows.filter(function (r) { return !r.collapsed; });
             const closed = rows.filter(function (r) { return r.collapsed; });
             const count = (n) => `${num(n)} file${n === 1 ? '' : 's'}`;
-            return '<details class="card filespane" id="files" open>' +
+            return '<details class="card filespane" open>' +
                 `<summary><span class="chev" aria-hidden="true"></span><h3>Files changed</h3><span class="fcount">${count(rows.length)}</span></summary>` +
                 (open.length > 0 ? list(open) : '') +
                 (closed.length > 0
-                    ? `<details class="fcollapsed"><summary><span class="chev" aria-hidden="true"></span>Collapsed in the diff: generated, test, and docs files · ${count(closed.length)}</summary>${list(closed)}</details>`
+                    ? `<details class="fcollapsed"><summary><span class="chev" aria-hidden="true"></span><b>Generated, test, and docs</b>${count(closed.length)}</summary>${list(closed)}</details>`
                     : '') +
                 '</details>';
         }
@@ -257,20 +256,17 @@
             const nav = data.groups.map(function (g, i) {
                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
             }).join('');
-            const extra = '<a href="#files">Files changed</a><a href="#overview">Overview</a>' + (data.overview?.cards ?? []).filter(function (c) { return c.id !== undefined && c.id !== ''; }).map(function (c) {
-                return `<a href="#${esc(c.id)}">${c.title}</a>`;
-            }).join('');
-            const title = esc(data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
+            const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
+            const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
             return '<div class="wrap">' +
                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
                 `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
-                `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+                `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
-                `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
+                `<div class="prblock">${stackList()}${projectsList()}</div>` +
                 `<div class="extra">${extra}</div>` +
-                `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
                 `<ol>${nav}</ol>${headsList()}</nav></aside>` +
-                `<main>${renderFilesPane()}<div class="overview" id="overview">${renderOverview()}</div>` +
+                `<main><div class="overview" id="overview">${renderOverview()}</div>` +
                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
                 `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
                 '</main></div></div>';
@@ -296,22 +292,12 @@
         }
         catch { /* without storage the state lasts only this visit */ } }
         const groups = Array.from(document.querySelectorAll('.group'));
-        const progressEl = document.getElementById('progress-count');
-        const barEl = document.getElementById('progress-bar');
         function refreshProgress() {
-            let done = 0;
             groups.forEach(function (g) {
-                const isDone = g.classList.contains('done');
-                if (isDone)
-                    done++;
                 const dot = document.querySelector(`.ncheck[data-gid="${g.dataset.gid ?? ''}"]`);
                 if (dot !== null)
-                    dot.classList.toggle('done', isDone);
+                    dot.classList.toggle('done', g.classList.contains('done'));
             });
-            if (progressEl !== null)
-                progressEl.textContent = `${String(done)} / ${String(groups.length)}`;
-            if (barEl !== null)
-                barEl.style.width = `${String(groups.length > 0 ? (100 * done / groups.length) : 0)}%`;
         }
         function filesOf(g) { return Array.from(g.querySelectorAll('.file')); }
         function fileBox(f) {

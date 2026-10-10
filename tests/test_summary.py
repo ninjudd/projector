@@ -138,7 +138,7 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(0, code, err)
         html = (site / "index.html").read_text()
-        self.assertTrue(html.startswith("<title>Core Summary</title>"))
+        self.assertTrue(html.startswith("<title>Change the core</title>"))
         self.assertTrue((site / "summary.js").is_file())
         self.assertTrue((site / "summary.css").is_file())
         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
@@ -286,7 +286,6 @@ class SiteTests(unittest.TestCase):
         self.assertIn('src="/assets/site.js"', page)
         self.assertIn('<meta charset="utf-8">', page)
         data = json.loads((built_site / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
-        self.assertEqual("/reviews/", data["indexUrl"])
         self.assertEqual(["/reviews/7/" + "c" * 40 + "/", "/reviews/7/" + "a" * 40 + "/"], [h["url"] for h in data["heads"]])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
