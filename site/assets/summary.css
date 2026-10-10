@@ -264,7 +264,7 @@ input.nbox { cursor: pointer; }
 .moremenu a:focus-visible { outline-offset: -2px; }
 .freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
 .freviewed input { accent-color: var(--ok); margin: 0; }
-.fnote { margin: 0; padding: 13px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
+.fnote { margin: 0; padding: 13px 14px; font-size: 15px; line-height: 1.55; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
 .fnotes { border-bottom: 1px solid var(--border); }
 .file.collapsed .fnote, .file.collapsed .fnotes { border-bottom: 0; }
 .file.collapsed .fnote + .fnotes { border-top: 1px solid var(--border); }
