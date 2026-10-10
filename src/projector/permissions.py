@@ -81,21 +81,22 @@ def read_user_file(path: Path, environ: Mapping[str, str] = os.environ) -> tuple
         return "", f"could not be read ({error.strerror})"
 
 
-def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ) -> list[FileAction]:
+def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ,
+                  hint: bool = True) -> list[FileAction]:
     """Add the publish rules for Claude Code, and for Codex where Codex is installed.
 
     Without `apply`, a file that lacks the rules is only reported, with how to
-    add them.
+    add them unless `hint` is false.
     """
 
-    actions = [allow_in_claude(apply, environ)]
-    codex = allow_in_codex(apply, environ)
+    actions = [allow_in_claude(apply, environ, hint)]
+    codex = allow_in_codex(apply, environ, hint)
     if codex is not None:
         actions.append(codex)
     return actions
 
 
-def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ) -> FileAction:
+def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ, hint: bool = True) -> FileAction:
     """Add the rules to `permissions.allow` in the user's Claude Code settings.
 
     Everything else in the file is kept, and a file linked into a dotfiles
@@ -132,9 +133,9 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ)
     if not apply:
         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
                                         "mode can refuse a review loop's clean review of your own pull request or "
-                                        "the publish of a summary, unless the repository's own settings allow it; "
-                                        "run `project init` yourself in a terminal, or pass --publish-rule, to add "
-                                        "them")
+                                        "the publish of a summary, unless the repository's own settings allow it"
+                                        + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                           "add them" if hint else ""))
     allow.extend(missing)
     try:
         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
@@ -144,7 +145,8 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ)
     return FileAction(name, "updated" if existed else "created")
 
 
-def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ) -> Optional[FileAction]:
+def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
+                   hint: bool = True) -> Optional[FileAction]:
     """Write Projector's rules file into Codex's rules directory, or None where Codex is not installed.
 
     Codex is taken to be installed when its configuration directory exists, so
@@ -170,8 +172,9 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ) 
         return FileAction(name, "unchanged")
     if not apply:
         return FileAction(name, "kept", f"{name} lacks Projector's rule, without which Codex's approval reviewer "
-                                        f"can refuse {COMMANDS}; run `project init` yourself in a terminal, or "
-                                        "pass --publish-rule, to add it")
+                                        f"can refuse {COMMANDS}"
+                                        + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                           "add it" if hint else ""))
     try:
         write_through(path, CODEX_RULES)
     except OSError as error:

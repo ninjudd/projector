@@ -36,20 +36,31 @@ nothing open.
 
 1. Read repository instructions, `../review-pr/SKILL.md`, and applicable
    review or GitHub workflow skills.
-2. Resolve the repository, checked-out branch, the operator's open pull
+2. Run `project review rules` once. It reads the user's own Claude Code
+   settings and Codex rules, writes nothing, and exits 1 when either lacks the
+   rules that allow `project review publish` and `project summary publish`.
+   On exit 1, tell the user once, before the first review, that the host's
+   automatic approval, such as Claude Code's auto mode or Codex's approval
+   reviewer, can refuse the loop's publishes, a summary on another author's
+   pull request especially. Say that running `project init` themselves in a
+   terminal adds the rules. Do not run `init` to add them yourself, because
+   `init` adds them only for a person. Then continue: the repository's own
+   settings can still allow the commands, so a missing rule means a publish
+   can be refused, not that it will be.
+3. Resolve the repository, checked-out branch, the operator's open pull
    requests, any the user assigned, and the total open count:
 
    ```sh
    gh pr list --author <operator> --state open --limit 200
    ```
 
-3. Fetch each pull request's base SHA, head SHA, state, reviews, and
+4. Fetch each pull request's base SHA, head SHA, state, reviews, and
    thread-aware review threads. Say how many operator pull requests are tracked
    out of the repository total.
-4. Determine the last reviewed SHA from durable GitHub state or the current
+5. Determine the last reviewed SHA from durable GitHub state or the current
    conversation. Review any current head without a completed exact-head review
    immediately; do not baseline it away.
-5. Write the tracked set to a durable tracked file, one `owner/repo#number`
+6. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
    is the watcher's whole scope and the record of the set. The watcher
    appends the operator's pull requests itself; append one the user assigns,
@@ -60,7 +71,7 @@ nothing open.
    `project review` command. The record of which reviews this loop published
    lives under that id in the review state directory, where `project review
    publish` keeps it.
-6. Seed the state file with only the SHAs already reviewed, then run one
+7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
    ```sh
@@ -71,7 +82,7 @@ nothing open.
    It refuses to start, naming the line, on an entry that is not
    `owner/repo#number` or a number that names no pull request, and it
    distinguishes a lookup that failed for network or auth reasons from a
-   missing pull request. Every head you found unreviewed in step 4 must come
+   missing pull request. Every head you found unreviewed in step 5 must come
    back as `NEW PR`; one that does not is a pull request missing from the
    file. The pass records those heads as announced, so the running watcher
    will not repeat them; review them from this output. Then run the same
@@ -139,6 +150,12 @@ reads the new head against that history instead of rediscovering it.
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies on
   them.
+- A subagent whose publish the host refused reports the refusal and stops
+  that publish; it never retries a refused publish in another form, as
+  `../review-pr/SKILL.md` and `../summarize-pr/SKILL.md` say. Tell the user
+  once for the loop, not once per pull request, that the host's automatic
+  approval refused a publish and that running `project init` in a terminal
+  adds the rules. Then keep reviewing.
 
 The loop's record decides the collision check `project review publish` runs
 before it submits. An id in the record is this loop's own, and a second one on

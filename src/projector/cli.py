@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import review, site, summary
+from . import permissions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
@@ -460,6 +460,9 @@ def parser() -> argparse.ArgumentParser:
     review_gate = review_commands.add_parser(
         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
     )
+    add_output(review_commands.add_parser(
+        "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+    ))
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
@@ -792,7 +795,43 @@ def run_prepare(root: Path, command: str) -> None:
 NOT_HOSTED = 3
 
 
+def review_rules(json_output: bool) -> int:
+    """`review rules`: whether the user's settings allow both publish commands, exiting 1 when one may not.
+
+    It asks `allow_publish` only to report, so it writes nothing, and a review
+    loop can run it before its first publish rather than learn of a refusal on
+    one pull request mid-loop. The rules belong in the person's own settings,
+    which only a person at a terminal adds, so the closing line asks for them
+    rather than naming a command an agent could run.
+    """
+
+    # Without the hint, a missing rule's note names no command, since the
+    # agent that runs this check must not add the rules itself.
+    files = allow_publish(apply=False, hint=False)
+    allowed = all(entry.action == "unchanged" for entry in files)
+    if json_output:
+        print(json.dumps({"allowed": allowed,
+                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
+                                    for entry in files]}, indent=2))
+    else:
+        for entry in files:
+            print(f"{'allows' if entry.action == 'unchanged' else 'lacks'} {entry.path}")
+    # The file lines first, so the reasons below them read in order on a terminal or in one captured stream.
+    sys.stdout.flush()
+    for entry in files:
+        if entry.note:
+            print(f"project: {entry.note}", file=sys.stderr)
+    if not allowed:
+        print(f"project: without these rules, the host's automatic approval can refuse {permissions.COMMANDS}, "
+              "unless the repository's own or managed settings allow them; ask the user to run `project init` "
+              "in a terminal, or to add the rules above, and do not run `project init --publish-rule` to add them "
+              "yourself", file=sys.stderr)
+    return 0 if allowed else 1
+
+
 def run_review(arguments: argparse.Namespace) -> int:
+    if arguments.review_command == "rules":
+        return review_rules(arguments.json_output)
     root = review.state_dir(arguments.state_dir)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
