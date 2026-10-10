@@ -90,11 +90,25 @@ is the same reviewer run twice.
 | `claude-opus-5-5` and `gpt-5.5` | No | Two opinions. |
 | `claude-opus-5-5` and `claude-opus-5-6` | No | Two opinions. |
 
-The identity holds within one account. The collision check, the sign-off,
-and thread ownership read only the reviews and threads the reviewer's own
-account posted, as the collision check does today. A Projector review from
-another account is a cross-author review, which moves GitHub's
-`reviewDecision` by itself.
+The identity holds within one account, so a reviewer is an account and a
+model. Verdicts and findings have different scopes:
+
+- **Verdicts and start comments come from the reviewer's own account.** The
+  collision check and the sign-off rule read only those, as the collision
+  check does today. A Projector verdict from another account is a
+  cross-author review, which moves GitHub's `reviewDecision` by itself.
+- **Finding threads come from every account.** The sign-off rule and the
+  census read every Projector finding thread on the pull request, keyed on the
+  finding marker and never on a login, as `census` reads them today. Any open
+  one holds the sign-off. A finding from another account is re-checked by the
+  account and model that opened it while that reviewer is still reviewing,
+  judged from that account's own posts, and adopted by a model of this
+  account once it has stopped, by the rules in § 2.8.
+
+The one change from today is who re-checks another account's finding. Today
+the operator's loop settles it as its own. After this change the operator's
+loop leaves it to the reviewer that opened it while that reviewer is still
+running, and adopts it when that reviewer stops.
 
 A model upgraded in the middle of a pull request is a new reviewer. A loop
 restarted on `claude-opus-5-6` reviews later heads under that ID. The old ID
@@ -152,7 +166,8 @@ draft state it sets is final.
 
 `signoff()` in `src/projector/review.py` reads three things from GitHub: the
 reviewer account's Projector verdicts on the pull request, its start comments,
-and every Projector finding thread. A start comment is live unless its model
+and every Projector finding thread from any account, the scopes § 2.1 sets.
+A start comment is live unless its model
 has a verdict on the comment's `sha=` submitted after the comment was
 created, or the comment is more than a day old, the age at which a lock is
 stale. A model is reviewing the head while its start comment on that head is
@@ -444,7 +459,9 @@ loop that stopped just after its verdict is found too.
 
 The verifier of a finding is, in order:
 
-1. The model that opened it, unless that model has stopped.
+1. The model that opened it, under the account that opened it, unless that
+   reviewer has stopped. Its posts are read from that account, so a finding
+   from another account follows the same rule.
 2. Otherwise, the model whose adoption reply on the thread came first, among
    models that have not stopped.
 3. Otherwise, no one yet. Any model still reviewing the pull request may
@@ -662,12 +679,13 @@ The tests run in temporary Git repositories against the fake GitHub in
 | 20 | After an adoption, have `gpt-5.5` post a start comment. Then let it stop again. | Census names `gpt-5.5` the verifier again, the adopter's census marks the thread `adopt: no`, and `gpt-5.5`'s verdicts count again. Once `gpt-5.5` has stopped again, the earlier adopter is the verifier with no new reply. |
 | 21 | Let the adopter stop in turn. | A third model's `adopt` posts a reply with `adopted-from=` naming the adopter, and becomes the verifier. |
 | 22 | Run `watch-threads.sh` on a pull request with unresolved findings from two models still reviewing and from one that has stopped. | It reports a `FINDING` for each thread, whichever model opened it. |
+| 23 | Leave a Projector finding from another account open on a self-review, then publish `clean`. | The sign-off is `waiting`, and the pull request stays a draft. Another account's verdicts on H do not change the rule. While that account's model is still reviewing, census marks the finding `adopt: no`. Once it has stopped, census marks it `adopt: now`, and `adopt` takes it over. |
 
-Criteria 1, 4, 6, 8, 10, and 16 to 21 fail before the change: the second
+Criteria 1, 4, 6, 8, 10, 16 to 21, and 23 fail before the change: the second
 setup refuses on the lock, the collision check refuses the other model, the
-census counts every thread, the last publish sets the draft state, and
-nothing adopts a finding. Criterion 22 passes before and after the change. It
-pins that the fix loop still reports every finding.
+census counts every thread as the operator's to settle, the last publish sets
+the draft state, and nothing adopts a finding. Criterion 22 passes before and
+after the change. It pins that the fix loop still reports every finding.
 
 ## 5. Cost
 
