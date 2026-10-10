@@ -178,6 +178,12 @@ refused `setup` releases it. A lock older than a day is stale and cleared;
 `project review release <number>` clears one left by a session that stopped,
 and only when no review of that pull request is running.
 
+Under `start-review-loop`, run `project review interdiff <number>` next. A head
+that changed little since the loop's last full review can get an incremental
+review in place of steps 5 to 7, as
+[Review a minimal push incrementally](#review-a-minimal-push-incrementally)
+describes. Every other head continues here.
+
 5. Inspect the head by the method in `method.md`, next to this file: state
    the change's intent, sort the changed files, run the passes, follow every
    changed definition to the code that depends on it, and verify each
@@ -281,6 +287,144 @@ its `sha=` with the verdict that preceded it.
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
 
+## Review a minimal push incrementally
+
+An incremental review reads only the change since a review loop's last full
+review of the pull request, and publishes a short clean verdict on the new
+head that names the full review it builds on. It is a verdict like any other,
+so draft state, the site's header, and `fix-pr` read it as they read a full
+review. Only a loop's own full review can carry one, so a review run by hand
+is always full.
+
+After `setup`, run:
+
+```sh
+project review interdiff <number> [--json]
+```
+
+It finds this loop's last full review of the pull request and measures the
+pull request's own change since that review's head, whether the author pushed
+a commit, merged the base branch, rebased, or rewrote a commit. It leaves out
+what the base brought in. Where the author resolved a conflict, the patch
+removes the conflict region, with the base's side, the original lines, and the
+reviewed head's side between diff3 markers, and adds the resolution. It prints
+the earlier full review, how the head moved, the counts, any conflicted paths,
+and the patch. It exits 0 only when the rules that need no judgment all hold:
+
+- `review.incremental` is not `false`, and a loop runs the review.
+- The head is trusted.
+- The loop's record holds a clean full review of the pull request, and the
+  newest verdict in it is clean and names another head.
+- That full review is on GitHub, and its marker names the Projector version,
+  model, and effort this run would write.
+- No finding thread is open.
+- The change can be measured, and it touches no binary file, symlink, or
+  submodule.
+- When the merge base moved since the full review, a `project review gate`
+  run on this head has exited 0.
+
+The gate rule is checked last. When it is the only rule that fails, the
+refusal ends `(needs_gate)`, and `--json` sets `needs_gate`, so you read the
+change before you spend the gate on it. Any other non-zero exit means a full
+review: continue at step 5 above, on the same setup. That includes the exit
+from a `project` too old to know `interdiff`.
+
+On exit 0, or when only the gate remains, read every line of the patch, and
+the code around each hunk at the head where you need context. Then ask one
+question: would the full method, with its gate, focused tests, and reading
+outward from each changed definition, catch something this read cannot? The
+review is incremental only when the answer is no. Run the full review when the
+answer is yes, when a hunk reworks code an earlier finding thread was about,
+or when you are unsure. A needless full review costs a minute or two. A wrong
+incremental review signs off a change that no pass read. A problem the read
+finds goes to the full review, which verifies it and files it as a thread.
+
+These kinds of change usually qualify:
+
+- **Presentation.** A value in a stylesheet that changes only how something
+  looks: spacing, a size, a color, a border, or a font. A change to which
+  elements a rule selects, to whether content shows, or to whether it can be
+  clicked is not presentation.
+- **Prose.** Comments, docstrings, and documentation text. A command, a code
+  sample, a link target, or a configuration value in documentation is not
+  prose, because a reader runs or follows it. Text an agent follows as
+  instructions, such as a skill's `SKILL.md`, `AGENTS.md`, or `CLAUDE.md`, is
+  not prose either, because it changes what the agent does. A string inside
+  code, such as a label or an error message, is code, because a test or a
+  caller can match it.
+- **Formatting.** Whitespace and line wrapping that the file's language
+  ignores. Indentation in Python or YAML is not formatting.
+
+Prose qualifies only when a full review would pass it, so read it the two ways
+a full review does. Read it as `method.md` § 2 reads documentation: against
+the code it describes at the head, for accuracy, broken references, and
+contradictions. Read each added or changed comment and docstring against
+`../guidelines.md` § 1 as well. A comment that misstates the code is a
+correctness finding there, and one that narrates the code beneath it, excuses
+complexity, or asserts that a decision is correct is a written-rules finding.
+
+How the head moved, the `kind` that `interdiff` prints, also guides the
+decision:
+
+- **A pushed commit (`push`), a clean merge (`merge`), or a clean rebase
+  (`rebase`)** is the usual incremental case. The patch holds only the pull
+  request's own change.
+- **A rewrite in place (`rewrite`)**, such as an amended or squashed commit,
+  reads like a pushed commit. `unchanged_commits` says whether any reviewed
+  commit's content changed or only its message did.
+- **A retarget (`retarget`)** moved the merge base without a merge, as when a
+  stacked pull request is retargeted onto the default branch after the one
+  beneath it merges. The patch then holds whatever the pull request's diff
+  gained, such as the merged parent's commits that GitHub now shows in it.
+  Read those like any other hunk.
+- **A resolved conflict**, listed under `conflicts`, usually needs a full
+  review, because the resolution combines two changes that no review read
+  together. Review it incrementally only when every resolved hunk is trivial,
+  such as two edits to one stylesheet value, both sides adding independent
+  lines, or a version string.
+
+When the read decides for an incremental review and the gate is what remains,
+run `project review gate <number>`, and go on only when it exits 0. Where
+`review.gate` is unset, `gate` refuses, and the head gets a full review.
+
+Then write the body: a few sentences on what changed and what you checked
+about it, at most 600 characters once its placeholders are filled. Leave out
+the intent paragraph, the census, the coverage line, disclosures,
+`Suggestions`, and the list of checks, because the full review already says
+them. Publish it:
+
+```sh
+project review publish <number> --incremental --body <file>
+```
+
+`publish` checks the lock and the head as for any review, applies the rules
+again to the live state, and runs the collision check. It writes the
+signature line, both markers, and a lead that links the full review and states
+the size of the change, how the head moved, and any conflict the author
+resolved, so none of them is typed. It posts a `COMMENT`, even where
+`review.allow_approve` is `true`, because an incremental review vouches only
+that the change since a reviewed head needed nothing more. On a self-review it
+then marks the pull request ready, as any clean verdict does, and on another
+author's pull request it ends the body with "A human approval is what
+remains." It refuses, exiting 1 and keeping the lock so you can run the full
+review on the same setup, when:
+
+- a rule fails, such as a thread opened since `interdiff` ran;
+- the head moved since `setup`, in which case run
+  `project review move <number>` and start again at `interdiff`;
+- the body is empty, longer than 600 characters once filled, or holds a
+  signature line, a marker comment, or `{census}`;
+- you pass `--threads`, `--covered`, `--second-verdict`, or
+  `--verdict changes-requested`.
+
+Then summarize the new head as
+[Summarize the pull request](#summarize-the-pull-request) says, and report as
+[Publish one review](#publish-one-review) says, naming the head of the full
+review the incremental review builds on.
+
+A full review of a head that `interdiff` measured may read its new range from
+the patch `interdiff` printed: the change since the last full review.
+
 ## Label every review and finding
 
 The operator authors the pull request and posts the review, so nothing about
@@ -343,6 +487,23 @@ The body follows the order `method.md` § 7 gives: the signature line and
 marker, the intent paragraph, the census, the coverage line, any disclosures,
 a `Suggestions` list of P3 items when there are any, and on a clean head what
 was checked.
+
+**An incremental review adds one line.** Its signature line carries
+`incremental from <short-sha>` between the verdict word and the duration, and
+the line directly after its marker names the full review it builds on:
+
+```
+<!-- projector-incremental v=1 from=<full-sha> kind=<push|merge|retarget|rebase|rewrite> insertions=<n> deletions=<n> files=<n> conflicts=<n> -->
+```
+
+`from=` is the head of that full review, `kind=` is how the head moved since
+it, the counts are the change's size, and `conflicts=` is how many files the
+author resolved a conflict in. Its review marker keeps the grammar above, with
+`verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files the change
+touches, so everything that reads a verdict reads it. A lead linking the full
+review follows the two lines, and then the reviewer's short body, as
+[Review a minimal push incrementally](#review-a-minimal-push-incrementally)
+describes. `publish --incremental` writes all of it except that body.
 
 **Every inline finding opens with a marker:**
 
@@ -548,8 +709,9 @@ steps, so a run that fails partway exits non-zero and running it again
 finishes that review instead of posting a second one.
 
 Report the review as done only after `publish` exits 0. Report the SHA, the
-verdict, the review id, how many threads it opened, and the summary's URL when
-the next section publishes one. Before a `clean` verdict, settle every
+verdict, the review id, how many threads it opened, the head of the full
+review an incremental review builds on, and the summary's URL when the next
+section publishes one. Before a `clean` verdict, settle every
 earlier finding first; `publish` refuses one while a finding is open. Never
 resolve another reviewer's thread, resolve a finding you have not verified at
 this head, claim a newer SHA was reviewed, or merge.
