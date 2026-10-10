@@ -582,12 +582,13 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
 def review_row(entry: dict) -> dict:
     """A review's row on the Reviews index, in site.json.
 
-    `updated` is when its newest head was published, in UTC. `state` and
-    `review` are its pull request's and its newest head's, as its page
-    carries them, and are left out when the build could not ask GitHub.
+    `title` is the one its page has, `pr_title`'s. `updated` is when its
+    newest head was published, in UTC. `state` and `review` are its pull
+    request's and its newest head's, as its page carries them, and are left
+    out when the build could not ask GitHub.
     """
-    row = {"number": entry["number"], "name": entry["name"], "title": entry["pr"]["title"],
-           "heads": entry["heads"], "projects": entry["projects"], "stack": entry["stack"],
+    row = {"number": entry["number"], "name": entry["name"], "title": pr_title(entry),
+           "heads": entry["heads"], "stack": entry["stack"],
            "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
            .strftime("%Y-%m-%dT%H:%M:%SZ")}
     if entry["pr"].get("state") is not None:

@@ -103,19 +103,24 @@ a.rstatus:hover { text-decoration: underline; }
 .versions li.current { background: var(--surface-2); color: var(--text); font-weight: 600; }
 .versions .mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
 .versions .vwhen { white-space: nowrap; }
+/* A pull request as a row: its number, then its title beside the number's
+   line, and a band behind the row on hover. The sidebar's stack draws its rows
+   this way, and so does the site's Reviews index. The number's track is wide
+   enough for a four-digit number at any size, so every row's title starts at
+   the same place, and the number is a step smaller than the title. */
+.srow { display: grid; grid-template-columns: 2.9em 1fr; gap: 6px; align-items: baseline; padding: 8px 9px; border-radius: 6px; line-height: 1.35; color: var(--muted); text-decoration: none; }
+a.srow:hover { background: var(--surface-2); color: var(--text); }
+.snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .prblock .stack.projects + .stack { margin-top: 6px; }
-/* Wide enough for a four-digit number, so every row's title starts at the same place. */
-.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: 36px 1fr; gap: 6px; align-items: baseline; padding: 8px 9px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
-.prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
+.prblock .stack .srow { margin: 0 -6px; font-size: 12.5px; }
 .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
-.prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
 /* A step up from the stack rows, so a project reads as the heading over its pull requests. */
-.prblock .stack.projects li > a { grid-template-columns: 1fr; padding: 9px; font-size: 13.5px; }
+.prblock .stack.projects .srow { grid-template-columns: 1fr; padding: 9px; font-size: 13.5px; }
 /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
 .prblock .stack.projects:first-child { margin-top: -6px; }
-.prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prbar { display: none; }
 @media (max-width: 980px) {
   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -125,7 +130,6 @@ a.rstatus:hover { text-decoration: underline; }
 .nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
 .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
-.prblock a { display: inline; padding: 0; }
 .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .nav .ntitle { overflow-wrap: anywhere; }
 .nav .ncheck, .ftree .fcheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }

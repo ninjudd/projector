@@ -109,7 +109,6 @@ interface SiteReview {
   name: string;
   title: string;
   heads: number;
-  projects: string[];
   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
   stack: number | null;
   /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */

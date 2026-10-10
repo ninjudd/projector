@@ -327,9 +327,9 @@ function statusHtml(state, review) {
             return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
                 const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
                 if (s.current)
-                    return `<li class="current" aria-current="page">${row}</li>`;
+                    return `<li class="srow current" aria-current="page">${row}</li>`;
                 const href = s.url !== '' ? s.url : `${repoUrl}/pull/${String(s.number)}`;
-                return `<li><a href="${esc(href)}">${row}</a></li>`;
+                return `<li><a class="srow" href="${esc(href)}">${row}</a></li>`;
             }).join('') + '</ul>';
         }
         // The projects the pull request touches, as rows like the stack's, each
@@ -339,7 +339,7 @@ function statusHtml(state, review) {
             if (projects.length === 0)
                 return '';
             return '<ul class="stack projects" aria-label="Projects this pull request changes">' + projects.map(function (p) {
-                return `<li><a href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+                return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
             }).join('') + '</ul>';
         }
         function reviewStatus() {
