@@ -303,7 +303,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
         skip(path, f"the site reads summary.json, not {LEGACY_SUMMARY_FILE}; run `project upgrade`, then republish it "
                    "with `project summary publish`")
 
-    by_pr: dict[str, list[tuple[int, dict]]] = {}
+    by_pr: dict[str, list[tuple[int, dict, dict]]] = {}
     absolute = root.resolve()
     written: dict[str, int] = {}
     for path in summaries:
