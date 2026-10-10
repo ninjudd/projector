@@ -630,20 +630,22 @@ function statusHtml(state, review) {
             badge.textContent = open > 0 ? `${String(open)} of ${String(boxes.length)} open` : `${String(total)} note${total === 1 ? '' : 's'}`;
             badge.classList.toggle('open', open > 0);
         }
-        document.querySelectorAll('.note-box').forEach(function (box) {
-            const nid = box.dataset.nid ?? '';
-            const item = box.closest('li, tr');
-            box.checked = get('n:' + nid) === '1';
-            if (item !== null)
-                item.classList.toggle('checked', box.checked);
-            box.addEventListener('change', function () {
-                set('n:' + nid, box.checked);
-                if (item !== null)
-                    item.classList.toggle('checked', box.checked);
-                const f = box.closest('.file');
-                if (f !== null)
-                    refreshNoteBadge(f);
-            });
+        // A concern note's box shows the state stored for it, and one listener
+        // stores every change, so the boxes a collapsed file draws again keep both.
+        function showNoteState(box) {
+            box.checked = get('n:' + (box.dataset.nid ?? '')) === '1';
+            box.closest('li, tr')?.classList.toggle('checked', box.checked);
+        }
+        document.querySelectorAll('.note-box').forEach(showNoteState);
+        document.addEventListener('change', function (ev) {
+            const box = ev.target;
+            if (!(box instanceof HTMLInputElement) || !box.classList.contains('note-box'))
+                return;
+            set('n:' + (box.dataset.nid ?? ''), box.checked);
+            box.closest('li, tr')?.classList.toggle('checked', box.checked);
+            const f = box.closest('.file');
+            if (f !== null)
+                refreshNoteBadge(f);
         });
         document.querySelectorAll('.file').forEach(refreshNoteBadge);
         document.querySelectorAll('.copypath').forEach(function (b) {
@@ -1149,6 +1151,8 @@ function statusHtml(state, review) {
             const refocus = focusVisible(collapse);
             const before = (collapse.closest('tr') ?? collapse).getBoundingClientRect().top;
             body.innerHTML = view.bodyHtml;
+            body.querySelectorAll('.note-box').forEach(showNoteState);
+            refreshNoteBadge(file);
             delete file.dataset.expanded;
             delete file.dataset.hl;
             highlightFile(file);
