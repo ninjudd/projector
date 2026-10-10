@@ -607,7 +607,12 @@ unassigned group. `summary publish` fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
 workflow. It commits the head's `linguist-generated` attributes beside them
-as `attributes.json`, as [Generated files](#generated-files) describes.
+as `attributes.json`, as [Generated files](#generated-files) describes. It
+also commits, under `head/` beside them, the head's version of each changed
+file whose diff hides some of its lines: a file that is neither new nor
+deleted, whose diff has a hunk, and whose entry in the head is a regular file
+of at most 1 MiB that is not a `.gitattributes` file. Each is a tree entry
+naming the blob the head already has, so the ref gains no file content.
 Publishes that run at the same time, as a review loop's subagents run them,
 each land. A publish whose push loses the race for the ref fetches the ref
 again, rebuilds its commit on the new tip, keeping every other publisher's
@@ -771,6 +776,14 @@ whether it is. For summaries it builds every
 for no diff, and skips and reports any summary that fails or has no stored diff.
 It marks generated files by the `attributes.json` beside a summary, or by the
 checkout's `.gitattributes` for a summary stored without one.
+It checks each file stored under `head/` against every context and added
+line of the file's diff, and drops one that disagrees with a
+`::warning title=Context dropped::` line. It serves each file that passes
+once, at `reviews/blobs/<id>.txt` under the site's base, where `<id>` is the
+file's Git blob id, with each CRLF line ending turned into LF. The file's
+entry in the page's `data.json` gets a `context` naming that address, the
+file's line count, and each run of lines its hunks leave hidden. The build
+prints how many files it served this way and their total size.
 It reads only `summary.json`, so it also reports each summary stored only as
 `spec.json`, the name older releases wrote. To show such a summary, publish it
 again with a current release, as
@@ -900,7 +913,7 @@ place of its checkout's. When the checkout lacks the head, `publish` first
 fetches it from the remote it publishes to. The fetch adds the commit's
 objects and rewrites `FETCH_HEAD`, and changes no branch or tag. When the
 remote cannot serve the head either, `publish` says so and stores no
-attributes. A summary stored without them, as every summary an earlier
+attributes and no files under `head/`. A summary stored without them, as every summary an earlier
 release published was, takes its attributes from the default branch when the
 site builds.
 

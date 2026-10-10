@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: in-progress
+priority: now
 ---
 
 # Expand the hidden lines around a summary's diff hunks
@@ -32,10 +32,10 @@ reader expands one of its gaps.
 `summary publish` already writes `summary.json`, `diff.patch`, and
 `attributes.json` under `summaries/<number>/<head>/` on
 `refs/projector/summaries`, and already fetches the head when the checkout
-lacks it (`publish_attributes` in `src/projector/summary.py`). It now also
+lacks it (`readable_head` in `src/projector/summary.py`). It now also
 writes `summaries/<number>/<head>/head/<path>` for each eligible file: an index
-entry that points at the head tree's existing blob, so the summaries ref gains
-tree entries and no new file content.
+entry, mode `100644`, that points at the head tree's existing blob, so the
+summaries ref gains tree entries and no new file content.
 
 A file is eligible when all of these hold:
 
@@ -73,10 +73,19 @@ it finds, it:
    a `::warning::` naming the file, so a wrong blob never shows wrong lines.
 3. Writes the decoded text, with each `\r\n` replaced, once as UTF-8 to
    `reviews/blobs/<id>.txt` in the site, where `<id>` is the Git blob id of the
-   stored bytes. The page splits that text on `\n`, so it shows exactly the
-   lines the build checked. Two heads or two pull requests with the same file
-   content share one file.
+   stored bytes: SHA-256 when the head's id has 64 digits, as in a SHA-256
+   repository, and SHA-1 otherwise. The page splits that text on `\n`, so it
+   shows exactly the lines the build checked. Two heads or two pull requests
+   with the same file content share one file.
 4. Computes the file's gaps and adds `context` to the file in the page data.
+   A file whose hunks leave no gap gets no `context`, and the build writes no
+   blob for it.
+
+The build reads a stored file only when it is a regular file of at most
+`CONTEXT_MAX_BYTES` whose real path stays inside the summary's `head/`
+folder. Anyone who can push the summaries ref writes the diff that names the
+path, so a path that leads out of `head/` through `..` or a symlink reads
+nothing, and the deploy cannot serve a file from outside the ref.
 
 The page data gains, on each file that has stored content:
 
@@ -149,7 +158,7 @@ controls stay usable for a retry. A file without `context` draws no expander.
 
 | File | Change |
 | --- | --- |
-| `src/projector/summary.py` | `parse_diff` keeps the hunk numbers. A shared helper makes the head readable, fetching it once, for both `publish_attributes` and the new head-file listing. `summary_tree` takes index entries by blob id. `CONTEXT_MAX_BYTES`. |
+| `src/projector/summary.py` | `parse_diff` keeps the hunk numbers. A shared helper, `readable_head`, makes the head readable, fetching it once, for both the attributes and the new head-file listing, `head_blobs`. `summary_tree` takes index entries by blob id. `CONTEXT_MAX_BYTES`. |
 | `src/projector/site/__init__.py` | `build_summaries` reads `head/`, checks and writes the blobs, and adds `context`. |
 | `site/src/summary.ts`, `site/src/globals.d.ts`, `site/assets/summary.css` | Expander rows, the lazy fetch, row insertion, and the `context` and hunk-number types. |
 | `site/assets/summary.js` | Rebuilt with `npm --prefix site run build`. |
@@ -189,8 +198,8 @@ controls stay usable for a retry. A file without `context` draws no expander.
 - **Reuse what the page and publish already have.** The page's `hl`,
   `splitLines`, `numbers`, `markTokens`, and `esc` render the new rows;
   publish's head fetch and `summary_tree` write the entries. The head fetch
-  moves out of `publish_attributes` into a helper both callers use, so a
-  publish fetches the head at most once.
+  lives in `readable_head`, which the attributes and the head-file listing
+  both use, so a publish fetches the head at most once.
 - **Twenty lines a click, as GitHub does.** Readers already know the control.
 
 ## 4. Acceptance criteria
@@ -259,3 +268,10 @@ them.
   it wrongly. The stored file would let a later change fix that.
 - **Pruning the summaries ref.** Every published head keeps its entries, as its
   summary and diff do today.
+
+## 8. Implementation state
+
+Rollout step 1, the data, is built. Criterion 1 holds in `PublishTests` in
+`tests/test_summary.py`, and criteria 2 and 3 in `HunkGapTests` and
+`ContextBuildTests` in `tests/test_site.py`. Step 2, the page, remains, with
+criteria 4 to 6 and the browser checks of criterion 5.
