@@ -215,15 +215,18 @@ headers before it writes any page:
      whose folder holds the files its diff changes, when exactly one project
      does. The deepest project owns each file, as `project_linker` already
      assigns it. Otherwise the summary has no project.
-3. For each group, `stack_segments` splits the members into segments in group
-   order, as § 8.1 describes, and gives each segment its header:
+3. For each stack, `stack_segments` takes every member that `find_stacks`
+   gives, members without a summary included, rather than the group. It
+   splits them into segments in that order, as § 8.1 describes, and gives
+   each segment its header:
    - A segment of members that carry a project gives
      `{"project": <name>, "title": <the plan's title>, "url": "<base>projects/<name>/"}`.
    - A stack whose members carry no project is one segment. The first member
      with a non-empty `name` gives it `{"title": <name>}`.
-   - Without a `name` either, the first member's pull request title gives
-     `{"title": <pr.title>}`. `validate` requires that title, so every
-     segment has a header.
+   - Without a `name` either, the pull request title of the first member with
+     a summary gives `{"title": <pr.title>}`. The group holds at least that
+     member, and `validate` requires its title, so every segment has a
+     header.
 4. Layers that name different projects are normal, and each starts its own
    segment (§ 8), so the build prints nothing about them.
 5. It writes into the data of every page of every pull request in the group,
@@ -388,7 +391,7 @@ rules in `site/assets/summary.css`. The build still reads a summary's
 | --- | --- |
 | `src/projector/summary.py` | `repo_stacks` lists the repository's stacks. `init` writes `"project": null`. `publish` checks `project` and `name` against `NAME_MAX` and says what to set. `prepare_page` stops setting a default `name`. |
 | `src/projector/cli.py` | `build_checkout` passes `stacks_lookup`, which returns None when `repo_stacks` fails. |
-| `src/projector/site/__init__.py` | `build_site` and `build_summaries` take `stacks_lookup`. `find_stacks` works out each stack's members once, and `stack_groups` and `stack_rows` read them. `project_linker` returns a summary's own project. A new `stack_segments` takes a group's members and returns its segments, each with its header (§ 8.2). `build_summaries` computes the groups before it writes pages, writes `segments` and `header` in place of each entry's `projects`, and prints the note about stacks. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
+| `src/projector/site/__init__.py` | `build_site` and `build_summaries` take `stacks_lookup`. `find_stacks` works out each stack's members once, and `stack_groups` and `stack_rows` read them. `project_linker` returns a summary's own project. A new `stack_segments` takes every member of a stack from `find_stacks`, members without a summary included, and returns its segments, each with its header (§ 8.2). `build_summaries` computes the groups before it writes pages, writes `segments` and `header` in place of each entry's `projects`, and prints the note about stacks. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
 | `site/src/summary.ts` | `stackHeaderHtml` draws one segment's header, and `stackSegmentsHtml` draws the sidebar's stack, a header above each segment's rows (§ 8.2). They replace `projectsList`. The page title drops its `name` fallback. |
 | `site/src/site.ts` | `reviewsTable` draws each segment as a table body that starts with its header row (§ 8.3). A project page lists its reviews by pull request title. |
 | `site/src/globals.d.ts` | `StackHeader` and `StackSegment` types. `segments` and `header` replace `projects` in `SummaryData`, and `header` replaces `name` in `SiteReview`. |
@@ -530,7 +533,7 @@ Headers:
 | Build a summary with no `project` whose diff changes one project's files | That project's header |
 | Build a summary with no `project` whose `projects` list is `["no-such-project", "alpha/beta"]` | alpha/beta's header |
 | Build a summary with no `project` whose diff changes files in both projects | A title header |
-| Build a stack with no project whose bottom layer's `name` is empty | The next layer's `name`. With every `name` empty, the first layer's pull request title. |
+| Build a stack with no project whose bottom layer's `name` is empty | The next layer's `name`. With every `name` empty, the pull request title of the first layer with a summary. |
 | Read `site.json` | Every row has `header`, and none has `name` or `projects` |
 | Read a project's `reviews` in `site.json` | Every review in a segment whose header is that project, newest first, and no other |
 | Build one summary with `project site page` | The page's header is `{"title": <name>}` |
@@ -675,8 +678,8 @@ member whose project the site lacks all name no project.
 3. A member that names the current segment's project, or no project, joins
    the current segment.
 4. A stack where no member names a project is one segment, with the title
-   header of § 2.3, step 3: the lowest non-empty `name`, else the first
-   member's pull request title.
+   header of § 2.3, step 3: the lowest non-empty `name`, else the pull
+   request title of the first member with a summary.
 
 A member with no project therefore joins the segment of the member before it
 in the stack's order from § 2.2, or the first segment when it is the bottom
@@ -699,10 +702,11 @@ and every member is in exactly one segment.
 
 ### 8.2 The data both pages read
 
-`stack_segments` in `src/projector/site/__init__.py` takes a group's members
-and returns the stack's segments, each with its header. No separate function
-decides one header for a whole stack. Every page of the stack carries the
-segments as `segments`:
+`stack_segments` in `src/projector/site/__init__.py` takes every member of a
+stack, in the order `find_stacks` gives them, members without a summary
+included. It returns the stack's segments, each with its header. No separate
+function decides one header for a whole stack. Every page of the stack
+carries the segments as `segments`:
 
 ```json
 "segments": [
