@@ -6,8 +6,8 @@ priority: next
 # Head each stack with one project or a title
 
 Every stack of pull requests on the site, a pull request alone included, shows
-one header above its rows: the project it carries out, linked to that
-project's page, or a short title in plain text when it has none.
+a header above its rows for each project it carries out, linked to that
+project's page, or one short title in plain text when it carries none (§ 8).
 
 ## 1. Problem
 
@@ -52,11 +52,12 @@ Each summary records the one project its stack carries out, or none, and a
 short title for the stack. The site build takes each stack's pull requests
 and their order from GitHub's stacks. For a pull request that GitHub puts in
 no stack, and for every pull request when GitHub cannot answer, it falls back
-to base branches, as it does today, and never fails. It decides one header
-per stack from its layers' summaries, lowest layer first: the first project
-the site has a page for, else the first title. The Reviews index draws that
-header above each stack's rows, and a summary page's sidebar draws it above
-its stack list in place of the project rows. A project header links to the
+to base branches, as it does today, and never fails. It splits each stack
+into segments, one for each run of layers that carry the same project, and
+gives each segment a header (§ 8). A stack whose layers name no project has
+one title header. The Reviews index draws each header above its segment's
+rows, and a summary page's sidebar draws each above its segment's part of the
+stack list, in place of the project rows. A project header links to the
 project's page. A title header is plain text. A merged stack stays one stack.
 A summary published before the change gets its header by a fixed rule from
 the fields it already has, so nothing needs to be published again.
@@ -68,10 +69,10 @@ stack's title:
 
 | Field | Value | Meaning |
 | --- | --- | --- |
-| `project` | A project's canonical name, such as `"stack-header"` or `"payments/invoices"` | The one project this pull request's stack carries out: the plan the stack adds, specs, implements, or completes. |
-| `project` | `""` | This pull request names no project. The stack takes the project of its lowest layer that names one (§ 2.3, step 3), and has none when no layer names one. |
+| `project` | A project's canonical name, such as `"stack-header"` or `"payments/invoices"` | The one project this pull request carries out as a layer of its stack: the plan it adds, specs, implements, or completes. Other layers of the stack can carry other projects (§ 8). |
+| `project` | `""` | This pull request names no project. It sits under the header of the nearest layer beneath it that names one, or of the lowest layer that names one when none beneath does (§ 8.1). The stack has a title header when no layer names one. |
 | `project` | `null`, or no `project` key | Not decided yet. `init` writes `null`, and `publish` refuses it. The build reads a summary published before the field existed by the rule in § 2.3, step 2. |
-| `name` | A short title, at most 60 characters | The title of the work the stack does, or the work of the pull request alone. The site shows it as the stack's header when the stack has no project. |
+| `name` | A short title, at most 60 characters | The title of the work the stack does, or the work of the pull request alone. The site shows it as the stack's header when no layer of the stack names a project. |
 
 `summarize-pr` fills both fields in step 4 of "Build the summary". Each
 summary records its own choices, and copies no other layer's:
@@ -82,18 +83,21 @@ summary records its own choices, and copies no other layer's:
    several plans, choose the plan it adds or the plan whose status it changes.
    A plan touched only in passing, such as by a link fix or a rename across
    every plan, is not the change's project. For a pull request in a stack,
-   choose the stack's project, which this layer may not edit.
-   `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's pull
-   requests on GitHub, and the summaries ref holds what each summarized layer
-   chose. When that request answers 404 or fails, follow the summary's
-   `pr.basePr` down the stack instead, as the build falls back to base
-   branches. When no single plan is the subject, record `""`.
+   choose the project this layer carries out, which it may not edit. That is
+   usually the project of the layer beneath. A layer that starts the work of
+   another plan records that plan, and the site starts a new header there
+   (§ 8). `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the
+   stack's pull requests on GitHub, and the summaries ref holds what each
+   summarized layer chose. When that request answers 404 or fails, follow the
+   summary's `pr.basePr` down the stack instead, as the build falls back to
+   base branches. When no single plan is the subject, record `""`.
 2. **Name the whole stack.** Write two to six words in sentence case that name
    the work, such as `Stack header plan` or `Summary publish retry`. Do not
-   write a sentence, and do not copy the pull request's title. The site shows
-   the lowest layer's `name`, so on the bottom layer of a stack, name the work
-   of the whole stack as far as you know it. To change a stack's title,
-   publish the bottom layer's summary again.
+   write a sentence, and do not copy the pull request's title. When no layer
+   names a project, the site shows the lowest layer's `name`, so on the
+   bottom layer of a stack, name the work of the whole stack as far as you
+   know it. To change a stack's title, publish the bottom layer's summary
+   again.
 
 An update makes the same two choices. `review-pr`, and the skill's "Update
 the page when the pull request moves" section, start from the newest summary
@@ -194,10 +198,10 @@ every sidebar, and the header take their members from the same stack, so a
 merged stack shows as one group under **Closed**, and in each of its pull
 requests' sidebars, in GitHub's order.
 
-### 2.3 The build decides one header per stack
+### 2.3 The build decides each stack's headers
 
 `build_summaries` in `src/projector/site/__init__.py` decides each stack's
-header before it writes any page:
+headers before it writes any page:
 
 1. It reads each pull request's newest summary, as it does today, and takes
    each stack's members, bottom first, from § 2.2. The members with a summary
@@ -211,31 +215,33 @@ header before it writes any page:
      whose folder holds the files its diff changes, when exactly one project
      does. The deepest project owns each file, as `project_linker` already
      assigns it. Otherwise the summary has no project.
-3. For each group, it takes the header from the members in group order:
-   - The first member with a project gives
+3. For each group, `stack_segments` splits the members into segments in group
+   order, as § 8.1 describes, and gives each segment its header:
+   - A segment of members that carry a project gives
      `{"project": <name>, "title": <the plan's title>, "url": "<base>projects/<name>/"}`.
-   - Without one, the first member with a non-empty `name` gives
-     `{"title": <name>}`.
-   - Without either, the first member's pull request title gives
-     `{"title": <pr.title>}`. `validate` requires that title, so every stack
-     has a header.
-4. When a member after the header's member records a different project, the
-   build prints
-   `::warning title=Stack project::#<n> records <project>, but its stack takes <header project> from #<m>`
-   and continues.
-5. It writes `header` into the data of every page of every pull request in the
-   group, every head included, and into each entry. `review_row` copies it into
-   the pull request's row of `site.json`.
+   - A stack whose members carry no project is one segment. The first member
+     with a non-empty `name` gives it `{"title": <name>}`.
+   - Without a `name` either, the first member's pull request title gives
+     `{"title": <pr.title>}`. `validate` requires that title, so every
+     segment has a header.
+4. Layers that name different projects are normal, and each starts its own
+   segment (§ 8), so the build prints nothing about them.
+5. It writes into the data of every page of every pull request in the group,
+   every head included, the stack's `segments` and the `header` of the
+   segment that the page's pull request is in (§ 8.2). Each entry carries
+   that `header` too, and `review_row` copies it into the pull request's row
+   of `site.json`.
 6. `build_site` lists, on each project's page, the reviews whose header is
    that project, newest first.
 
-A pull request that stands alone is a group of one, so its header comes from
-its own summary by the same steps. `build_page`, which `project site page`
-uses to build one summary with no site around it, gives that page the header
-of a site with no projects: `{"title": <name>}`, or the pull request's title
-when `name` is empty.
+A pull request that stands alone is a group of one, so its one segment and
+its header come from its own summary by the same steps. `build_page`, which
+`project site page` uses to build one summary with no site around it, gives
+that page one segment with the header of a site with no projects:
+`{"title": <name>}`, or the pull request's title when `name` is empty.
 
-A page's `data.json` and a row of `site.json` carry the header as one of these:
+A page's `data.json`, a row of `site.json`, and each of a page's `segments`
+carry a header as one of these:
 
 ```json
 "header": {"project": "stack-header", "title": "Head each stack with one project or a title", "url": "/projects/stack-header/"}
@@ -248,16 +254,20 @@ A page's `data.json` and a row of `site.json` carry the header as one of these:
 | Field | Present when | Value |
 | --- | --- | --- |
 | `title` | Always | The project's title, from its plan's first heading, or the stack's title |
-| `project` | The stack has a project | The project's canonical name |
-| `url` | The stack has a project | The project's page, under the site's base path |
+| `project` | The segment has a project | The project's canonical name |
+| `url` | The segment has a project | The project's page, under the site's base path |
 
 ### 2.4 The index and the sidebar draw the header
 
 The site's pages load `summary.js` for the helpers at its top, such as `esc`
-and `statusHtml`. A new helper there, `stackHeaderHtml`, draws the header's
-content for both pages. For a project it returns an `<a href>` to `url`
-around the escaped title. Otherwise it returns a `<span>` around the escaped
-title.
+and `statusHtml`. A new helper there, `stackHeaderHtml`, draws the content of
+one segment's header for both pages. For a project it returns an `<a href>`
+to `url` around the escaped title. Otherwise it returns a `<span>` around the
+escaped title.
+
+The examples in this section show stacks of one segment, which is every
+stack whose layers carry one project or none. A stack with several segments
+draws a header above each, as § 8.3 shows.
 
 **Reviews index.** `reviewsTable` in `site/src/site.ts` starts each stack's
 table body with a header row, for a pull request alone too:
@@ -358,9 +368,9 @@ request's sidebar still lists every layer of its stack.
 
 | Reader | Today | After the change |
 | --- | --- | --- |
-| Summary page sidebar | One `.stack.projects` row per entry in the page data's `projects` | One header, from `header` |
-| Reviews index | Each row's pull request number and title, with no project and no `name` | Unchanged rows, under a header row that carries the stack's project or title |
-| Project page's list of reviews | The reviews whose `projects` include the project, each as `#N` and its `name`, or its title when `name` is empty | The reviews whose `header` is the project, each as `#N` and the pull request's title |
+| Summary page sidebar | One `.stack.projects` row per entry in the page data's `projects` | One header per segment, from `segments` (§ 8.2) |
+| Reviews index | Each row's pull request number and title, with no project and no `name` | Unchanged rows, under a header row for each segment, from each row's `header` (§ 8.2) |
+| Project page's list of reviews | The reviews whose `projects` include the project, each as `#N` and its `name`, or its title when `name` is empty | The reviews whose `header` is the project, which are the members of the segments the project heads, each as `#N` and the pull request's title |
 | Page `<title>` and the summary's `h1` | The pull request's title, falling back to `name` | The pull request's title. `validate` requires it, so the fallback never runs, and the change removes it from `pr_title` and `renderPage`. |
 | A file card's **View project** link | The deepest project whose folder holds the file | Unchanged. It says where the file lives, not what the stack is for. |
 | Search | Indexes the docs and the project files | Unchanged. It reads neither field. |
@@ -378,11 +388,11 @@ rules in `site/assets/summary.css`. The build still reads a summary's
 | --- | --- |
 | `src/projector/summary.py` | `repo_stacks` lists the repository's stacks. `init` writes `"project": null`. `publish` checks `project` and `name` against `NAME_MAX` and says what to set. `prepare_page` stops setting a default `name`. |
 | `src/projector/cli.py` | `build_checkout` passes `stacks_lookup`, which returns None when `repo_stacks` fails. |
-| `src/projector/site/__init__.py` | `build_site` and `build_summaries` take `stacks_lookup`. `find_stacks` works out each stack's members once, and `stack_groups` and `stack_rows` read them. `project_linker` returns a summary's own project. A new `stack_header` takes a group's members and returns its header. `build_summaries` computes the groups before it writes pages, writes `header` in place of each entry's `projects`, prints the note about stacks, and warns about a stack whose layers disagree. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
-| `site/src/summary.ts` | `stackHeaderHtml`. The sidebar's header replaces `projectsList`. The page title drops its `name` fallback. |
-| `site/src/site.ts` | `reviewsTable` starts each body with its header row. A project page lists its reviews by pull request title. |
-| `site/src/globals.d.ts` | A `StackHeader` type. `header` replaces `projects` in `SummaryData`, and replaces `name` in `SiteReview`. |
-| `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals, takes the body's top padding in place of the `tbody tr:first-child td` rule, and adds no divider. |
+| `src/projector/site/__init__.py` | `build_site` and `build_summaries` take `stacks_lookup`. `find_stacks` works out each stack's members once, and `stack_groups` and `stack_rows` read them. `project_linker` returns a summary's own project. A new `stack_segments` takes a group's members and returns its segments, each with its header (§ 8.2). `build_summaries` computes the groups before it writes pages, writes `segments` and `header` in place of each entry's `projects`, and prints the note about stacks. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
+| `site/src/summary.ts` | `stackHeaderHtml` draws one segment's header, and `stackSegmentsHtml` draws the sidebar's stack, a header above each segment's rows (§ 8.2). They replace `projectsList`. The page title drops its `name` fallback. |
+| `site/src/site.ts` | `reviewsTable` draws each segment as a table body that starts with its header row (§ 8.3). A project page lists its reviews by pull request title. |
+| `site/src/globals.d.ts` | `StackHeader` and `StackSegment` types. `segments` and `header` replace `projects` in `SummaryData`, and `header` replaces `name` in `SiteReview`. |
+| `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules, with room above every header but the first. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals, takes the body's top padding in place of the `tbody tr:first-child td` rule, and adds no divider. A segment's body that the stack continues below draws no divider (§ 8.3). |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
 | `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the two choices in § 2.1, in both "Build the summary" and step 2 of "Update the page when the pull request moves". |
 | `docs/cli.md` | Stacks from GitHub and the fallback to base branches, the Reviews index, the sidebar, and the project pages, as § 2.2, § 2.4, and § 2.5 describe them. |
@@ -418,13 +428,14 @@ rules in `site/assets/summary.css`. The build still reads a summary's
     answer. The site has to build on every host Projector supports, and a
     repository without stacks is normal, so one plain note says what
     happened.
-- **Each layer records its own choice, and the lowest decides.** GitHub's
-  stack keeps every layer, merged ones included, so every build reads every
-  layer's summary. No layer has to copy another to keep the header steady
-  through a merge. Taking the lowest layer that has a project makes the choice
-  predictable, and the warning makes a disagreement visible. Nothing
-  overwrites a layer's project with another layer's `""`, so a refactor at the
-  bottom of a stack never hides the project above it. Rejected:
+- **Each layer records its own choice, and the build reads every layer.**
+  GitHub's stack keeps every layer, merged ones included, so every build reads
+  every layer's summary. No layer has to copy another to keep the headers
+  steady through a merge. Each run of layers that carry one project gets its
+  own header, so layers that name different projects need no reconciling
+  (§ 8). Nothing overwrites a layer's project with another layer's `""`, so a
+  refactor at the bottom of a stack never hides the project above it.
+  Rejected:
   - Copying the layer beneath when a summary is written. It keeps a stack
     found from base branches steady after its bottom merges, but GitHub's
     stack already does that, and a stack found from base branches can take
@@ -436,15 +447,14 @@ rules in `site/assets/summary.css`. The build still reads a summary's
     to write it. A stack found from base branches has no number, so the
     record would cover only some stacks. Reading the members' summaries
     covers both kinds.
-  - A majority vote among the layers. A reader cannot predict it, and two
-    layers that disagree tie.
-  - The top layer's choice. A stack with two branches on one pull request has
-    two tops.
+  - One project for the whole stack, whichever layer chooses it. § 8.4 says
+    why.
 - **A layer with no project does not hide one above it.** A stack often opens
-  with a refactor that the plan's work needs but the plan never names.
-  Skipping members with no project gives that stack its project. Skipping a
-  project the site lacks does the same for a plan that a pull request adds
-  before it merges.
+  with a refactor that the plan's work needs but the plan never names. A
+  member with no project joins a neighboring segment rather than heading one
+  (§ 8.1), so that stack opens under its project's header. Treating a project
+  the site lacks as no project does the same for a plan that a pull request
+  adds before it merges.
 - **`name` becomes the title, rather than a new field.** Every published
   summary already has a short `name`, and the skill already writes one, so a
   summary published before the change has a title without being published
@@ -512,9 +522,9 @@ Headers:
 | Do | Expect |
 | --- | --- |
 | Build a stack whose bottom layer records `alpha` and whose upper layer records `""` | Both pages and both `site.json` rows carry alpha's header, with `url` `/projects/alpha/` |
-| Build a stack whose bottom layer records `""` and whose second layer records `alpha` | The header is alpha's |
+| Build a stack whose bottom layer records `""` and whose second layer records `alpha` | One segment, whose header is alpha's |
 | Build a merged GitHub stack whose bottom layer records `alpha` | Every layer's page and row carry alpha's header |
-| Build a stack whose layers record `alpha`, then `alpha/beta` | The header is alpha's, and the build prints one `::warning title=Stack project::` line naming the upper layer |
+| Build a stack whose layers record `alpha`, then `alpha/beta` | Two segments, alpha's then alpha/beta's, and no warning (§ 8.5) |
 | Build a summary that records `no-such-project` | A title header from its `name` |
 | Build a summary that records `""` while its diff changes alpha's plan | A title header, and alpha's `reviews` leaves it out |
 | Build a summary with no `project` whose diff changes one project's files | That project's header |
@@ -522,7 +532,7 @@ Headers:
 | Build a summary with no `project` whose diff changes files in both projects | A title header |
 | Build a stack with no project whose bottom layer's `name` is empty | The next layer's `name`. With every `name` empty, the first layer's pull request title. |
 | Read `site.json` | Every row has `header`, and none has `name` or `projects` |
-| Read a project's `reviews` in `site.json` | Every review in a stack whose header is that project, newest first, and no other |
+| Read a project's `reviews` in `site.json` | Every review in a segment whose header is that project, newest first, and no other |
 | Build one summary with `project site page` | The page's header is `{"title": <name>}` |
 
 Publish tests in `tests/test_summary.py` run in a temporary Git repository:
@@ -565,12 +575,13 @@ against the change.
 
 In a browser, the implementing pull request checks `project site serve` on
 this repository's summaries ref, in the light and dark themes, at full width
-and at 375 pixels. Each stack on Reviews has a left-aligned header above its
-rows. The merged stack of #196 and #197 is one group under **Closed**, and
-each of their sidebars lists both. Each summary's sidebar has one header above
-its stack. A project header opens the project's page, and clicking a title
-header does nothing. A 60-character title fits in three lines of the sidebar.
-The pull request's Testing section records these steps.
+and at 375 pixels. Each segment of a stack on Reviews has a left-aligned
+header above its rows. The merged stack of #196 and #197 is one group under
+**Closed**, and each of their sidebars lists both. Each summary's sidebar has
+a header above each segment of its stack. A project header opens the
+project's page, and clicking a title header does nothing. A 60-character
+title fits in three lines of the sidebar. The pull request's Testing section
+records these steps.
 
 ## 5. Cost
 
@@ -638,3 +649,239 @@ The GitHub stacks come from `gh api` on the same day:
 - **The endpoint answers 404 for a stack it does not have**, with a
   `documentation_url` at `docs.github.com/rest/pulls/stacks`. It answers with
   or without the `X-GitHub-Api-Version: 2026-03-10` header.
+
+## 8. A stack can carry several projects
+
+A stack can carry more than one project. One layer finishes a plan and the
+next starts another, or a plan's work stacks on a layer that belongs to a
+different plan. Each pull request still records one project or none
+(§ 2.1), and no pull request names several. The build splits each stack into
+segments, one for each run of layers that carry the same project, and gives
+each segment its own header. The stack stays one group on the Reviews index
+and in the sidebar, in its order from § 2.2. This replaces one header per
+stack, which had to pick one project and hide the others.
+
+### 8.1 A stack splits into segments
+
+`stack_segments` walks the stack's members bottom first, as `find_stacks`
+gives them, each with the project that § 2.3, step 2 resolves for it. A
+member without a summary on the site, a member that records `""`, and a
+member whose project the site lacks all name no project.
+
+1. The first segment starts at the bottom member. Its project is the first
+   project that any member names.
+2. Each later member that names a project other than the current segment's
+   starts a new segment with that project.
+3. A member that names the current segment's project, or no project, joins
+   the current segment.
+4. A stack where no member names a project is one segment, with the title
+   header of § 2.3, step 3: the lowest non-empty `name`, else the first
+   member's pull request title.
+
+A member with no project therefore joins the segment of the nearest member
+beneath it that names a project, or the first segment when none beneath does.
+A project that comes back after a different one starts a new segment.
+Segments never merge across another project, so they keep the stack's order,
+and every member is in exactly one segment.
+
+| Projects, bottom first | Segments |
+| --- | --- |
+| A, A, B | A: layers 1 and 2. B: layer 3. |
+| A, `""`, B | A: layers 1 and 2. B: layer 3. |
+| `""`, A, B | A: layers 1 and 2. B: layer 3. |
+| A, `""`, A | A: layers 1 to 3. |
+| A, B, A | A: layer 1. B: layer 2. A: layer 3. |
+| `""`, `""` | One title segment: layers 1 and 2. |
+
+### 8.2 The data both pages read
+
+`stack_segments` in `src/projector/site/__init__.py` takes a group's members
+and returns the stack's segments, each with its header. No separate function
+decides one header for a whole stack. Every page of the stack carries the
+segments as `segments`:
+
+```json
+"segments": [
+  {"header": {"project": "proposed-projects", "title": "Show projects proposed in open pull requests", "url": "/projects/proposed-projects/"}, "members": [301, 302]},
+  {"header": {"project": "stack-header", "title": "Head each stack with one project or a title", "url": "/projects/stack-header/"}, "members": [303]}
+]
+```
+
+| Field | Value |
+| --- | --- |
+| `segments` | The stack's segments, bottom first. A pull request alone has one. |
+| `segments[].header` | The segment's header, in the shape that § 2.3 gives |
+| `segments[].members` | The numbers of the segment's pull requests, bottom first, members without a summary included |
+
+Each pull request's `header`, on its pages, on its entry, and in its row of
+`site.json`, is the header of the segment it is in. A project's page lists
+the reviews whose `header` is that project (§ 2.3, step 6). It therefore
+lists every member of every segment the project heads, a member with no
+project of its own included.
+
+The site's scripts read the shape through these names:
+
+| Name | Where | What it is |
+| --- | --- | --- |
+| `StackHeader` | `site/src/globals.d.ts` | `{ title: string; project?: string; url?: string }`, the shape that § 2.3 gives |
+| `StackSegment` | `site/src/globals.d.ts` | `{ header: StackHeader; members: number[] }`. `SummaryData.segments` is a `StackSegment[]`. |
+| `stackHeaderHtml(header)` | The shared helpers at the top of `site/src/summary.ts` | One segment's header: an `<a href>` around the escaped title for a project, a `<span>` for a title |
+| `stackSegmentsHtml(segments, rows)` | The same shared helpers | The sidebar's stack: for each segment, its header from `stackHeaderHtml`, then a `<ul class="stack">` of its members' rows in order. `rows` is the page data's `stack`, or the page's own row for a pull request alone. |
+
+The Reviews index reads the flat rows of `site.json`, which arrive in stack
+order. `reviewsTable` starts a new segment wherever a row's `header` differs
+from the header of the row it drew above it in the same stack. Two segments
+next to each other always name different projects, so with every row shown,
+that gives exactly the segments in `segments`.
+
+### 8.3 What the reader sees
+
+**Reviews index.** Each segment is its own `<tbody>`, opening with its header
+row, so the header's `scope="rowgroup"` covers its own rows only. Every
+segment's body but the last one the index draws for the stack has
+`class="continued"` and draws no divider. The stack still reads as one group,
+with one divider below it:
+
+```html
+<tbody class="continued">
+  <tr class="stackhead"><th colspan="3" scope="rowgroup"><a href="/projects/proposed-projects/">Show projects proposed in open pull requests</a></th></tr>
+  <tr>…#301…</tr>
+  <tr>…#302…</tr>
+</tbody>
+<tbody>
+  <tr class="stackhead"><th colspan="3" scope="rowgroup"><a href="/projects/stack-header/">Head each stack with one project or a title</a></th></tr>
+  <tr>…#303…</tr>
+</tbody>
+```
+
+```text
+ Pull request                                            Status              Updated
+ ─────────────────────────────────────────────────────────────────────────────────────
+ Show projects proposed in open pull requests            ← link to proposed-projects
+ #301  Read proposed plans from summaries                Clean               …
+ #302  Rebuild the site when a PR closes                 Unreviewed          …
+ Head each stack with one project or a title             ← link to stack-header
+ #303  Record each summary's project                     Changes requested   …
+ ─────────────────────────────────────────────────────────────────────────────────────
+ Fix loop stack subagent name                            ← plain text
+ #298  Name the fix loop's subagent after its stack      Clean               …
+ ─────────────────────────────────────────────────────────────────────────────────────
+```
+
+The **Open** and **Closed** boxes can hide every row of a segment. The index
+then leaves that segment out. Because the index compares the rows it draws,
+the segments on either side of a hidden one share one header when they name
+the same project.
+
+**Summary sidebar.** `stackSegmentsHtml` draws a header above each segment's
+part of the stack list, and the current pull request's row is highlighted in
+its own segment:
+
+```html
+<div class="prblock">
+  <div class="stackhead"><a href="/projects/proposed-projects/">Show projects proposed in open pull requests</a></div>
+  <ul class="stack" aria-label="Pull requests for Show projects proposed in open pull requests">…#301 #302…</ul>
+  <div class="stackhead"><a href="/projects/stack-header/">Head each stack with one project or a title</a></div>
+  <ul class="stack" aria-label="Pull requests for Head each stack with one project or a title">…#303…</ul>
+</div>
+```
+
+```text
+ ┌──────────────────────────────────┐
+ │ Show projects proposed in open   │  ← link to proposed-projects
+ │ pull requests                    │
+ │ #301  Read proposed plans from   │
+ │       summaries                  │
+ │ #302  Rebuild the site when a PR │  ← this page, highlighted
+ │       closes                     │
+ │ Head each stack with one project │  ← link to stack-header
+ │ or a title                       │
+ │ #303  Record each summary's      │
+ │       project                    │
+ │                                  │
+ │ Overview  Files                  │
+ │ ──────────────────────────────── │
+ │ 1  …                             │
+ └──────────────────────────────────┘
+```
+
+`.prblock .stackhead` pulls the first header up toward the box's top edge, as
+§ 2.4 says, and `.prblock .stack + .stackhead` puts 6 pixels above every
+later one, so a segment's header stands apart from the rows above it.
+`table.tbl.reviews tbody.continued tr:last-child td` draws no divider and no
+bottom padding.
+
+A stack whose layers carry one project, or none, has one segment and looks as
+§ 2.4 shows.
+
+### 8.4 Why segments
+
+- **Each pull request still names one project.** A pull request is one
+  change, and the summarizing agent can say which plan it carries out. A list
+  of projects on one pull request is what § 1 found going wrong.
+- **One header per run of layers, not one per stack.** A stack that finishes
+  one plan and starts another is realistic. One header per stack has to pick
+  one project and hide the rest, and it needs a warning on every such stack.
+  A header above each run shows each project over the layers that carry it.
+  Layers that name different projects are what segments are for, so the build
+  warns about nothing.
+- **A segment for each run, in stack order.** The stack's order is the order
+  the work lands in, so segments follow it. Rejected: merging the runs of one
+  project into one segment, which would take layers out of the stack's order,
+  or put one header over rows that another project's rows separate.
+- **A layer with no project joins a neighbor.** A refactor that carries no
+  plan belongs with the work around it. Giving it a title segment between two
+  project segments would put a title in a stack that has projects, and give
+  `name` a second job. A stack that opens with such a refactor opens under
+  its first project's header, as § 3 says.
+- **`segments` in a page's data, `header` in each row of `site.json`.** The
+  sidebar draws one stack, members without a summary included, so it reads
+  `segments`. The index draws flat rows that its boxes can hide, so each row
+  carries its segment's header, and the index compares neighboring rows. Both
+  come from one `stack_segments` call, so they agree.
+- **Rejected: one header that lists every project**, such as `A · B`. It hides
+  which layer belongs to which project.
+- **Rejected: the bottom layer's project as the header, with a badge on each
+  layer that names another.** A project that is not the bottom layer's shows
+  only as a badge, which is easy to miss.
+- **Rejected: one project for the whole stack**, chosen by its lowest layer,
+  by a majority of its layers, or by its top layer. Each hides every other
+  project the stack carries. A majority also ties between two layers, and a
+  stack with two branches on one pull request has two tops.
+
+### 8.5 Acceptance criteria
+
+Build tests in `tests/test_site.py` use the setup of § 4, where `alpha` and
+`alpha/beta` are projects the site has. Each builds a GitHub stack unless the
+row says otherwise:
+
+| Do | Expect |
+| --- | --- |
+| Build a stack of #9, #10, #11 that records `alpha`, `alpha`, `alpha/beta` | `segments` holds alpha's segment with #9 and #10, then alpha/beta's with #11. Each page's and row's `header` is its segment's. alpha's `reviews` lists #10 and #9, and alpha/beta's lists #11. |
+| Build a stack that records `alpha`, `""`, `alpha/beta` | alpha's segment holds #9 and #10, and alpha/beta's holds #11 |
+| Build a stack that records `""`, `alpha`, `alpha/beta` | alpha's segment holds #9 and #10, and alpha/beta's holds #11 |
+| Build a stack that records `alpha`, `no-such-project`, `alpha/beta` | alpha's segment holds #9 and #10 |
+| Build a stack that records `alpha`, `""`, `alpha` | One segment, alpha's, with all three |
+| Build a stack that records `alpha`, `alpha/beta`, `alpha` | Three segments: alpha's with #9, alpha/beta's with #10, and alpha's with #11. alpha's `reviews` lists #11 and #9. |
+| Build a stack that records `""` and `""`, whose bottom layer's `name` is empty | One title segment, with the second layer's `name` |
+| Build a GitHub stack of #9, #11, #10, where #11 has no summary, #9 records `alpha`, and #10 records `alpha/beta` | #11 is in alpha's segment, and #9's sidebar lists it under alpha's header |
+| Build, with `stacks_lookup` returning None, a stack from base branches of #9 and #10 that records `alpha`, `alpha/beta` | The same two segments that a GitHub stack gives |
+| Build a merged GitHub stack that records `alpha`, `alpha/beta` | Two segments, under **Closed**, and each merged page's sidebar draws both headers |
+| Build a pull request alone | One segment |
+| Read the build's output for every row above | No `::warning::` and no line about layers that name different projects |
+
+Page tests run under node against the compiled renderer:
+
+| Do | Expect |
+| --- | --- |
+| Render a page whose `segments` hold two segments | Two `<div class="stackhead">`, each followed by a `<ul class="stack">` of its members' rows in order, and the current row highlighted in its own segment |
+| Draw the Reviews index with a stack of two segments | Two table bodies, the first with `class="continued"`, each starting with its header row, and one divider, below the second |
+| Draw the index with rows whose headers are alpha's, alpha/beta's, and alpha's, where the boxes hide the middle row | One body, under alpha's header, holding the first and third rows |
+| Draw the index with a stack whose last segment's rows are all hidden | The segment before it is the stack's last body, without `continued`, and draws the divider |
+| Render segments whose header title holds `<script>` | The text is escaped, on the sidebar and on the index |
+
+The rows of § 4 for a stack of one segment still hold, with the row for
+`alpha` then `alpha/beta` and the row for a project's `reviews` as amended
+above. In the browser check of § 4, a stack with two segments shows two
+left-aligned headers on Reviews and in each member's sidebar, each linked to
+its project.
