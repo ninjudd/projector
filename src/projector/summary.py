@@ -647,6 +647,15 @@ def base_pr(repo: str, base_ref: str) -> int | None:
     return int(found) if found and found.strip().isdigit() else None
 
 
+def pr_reviews(repo: str, number: int) -> list[dict]:
+    """Every submitted review of pull request `number`: its `body`, its page as `url`, its time as `at`, and its
+    author's relation to the repository as `association`, GitHub's `author_association`."""
+    rows = gh("api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+              "--jq", ".[] | select(.submitted_at != null) "
+                      "| {body, url: .html_url, at: .submitted_at, association: .author_association} | @json")
+    return [json.loads(row) for row in rows.splitlines() if row.strip()]
+
+
 def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
     meta = {

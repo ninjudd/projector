@@ -683,7 +683,13 @@ that did not record the number has it looked up with `gh` at build time;
 when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
 every pull request in its stack, the ones beneath it and the ones above it,
 one row each with its title, and highlights the current one; its older
-versions follow the sections. **Docs** renders `README.md`
+versions follow the sections. A summary's header shows the verdict of the
+newest Projector review of its head, **Clean** or **Changes requested**,
+linked to that review on GitHub, or **Unreviewed** when no Projector review
+names the head. A review counts only when its author owns the repository,
+belongs to its organization, or collaborates on it, because anyone can review
+a public repository's pull request. The build reads the reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
@@ -732,7 +738,7 @@ composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
 `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
-for nothing, and skips and reports any summary that fails or has no stored diff.
+for no diff, and skips and reports any summary that fails or has no stored diff.
 It marks generated files by the `attributes.json` beside a summary, or by the
 checkout's `.gitattributes` for a summary stored without one.
 It reads only `summary.json`, so it also reports each summary stored only as

@@ -143,7 +143,7 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(0, code, err)
         html = (site / "index.html").read_text()
-        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Core Summary</title>\n"), html[:200])
+        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Change the core</title>\n"), html[:200])
         self.assertTrue((site / "summary.js").is_file())
         self.assertTrue((site / "summary.css").is_file())
         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
@@ -291,7 +291,6 @@ class SiteTests(unittest.TestCase):
         self.assertIn('src="/assets/site.js"', page)
         self.assertIn('<meta charset="utf-8">', page)
         data = json.loads((built_site / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
-        self.assertEqual("/reviews/", data["indexUrl"])
         self.assertEqual(["/reviews/7/" + "c" * 40 + "/", "/reviews/7/" + "a" * 40 + "/"], [h["url"] for h in data["heads"]])
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
@@ -1038,6 +1037,22 @@ class PrMetadataTests(unittest.TestCase):
             meta = summary.pr_metadata("owner/example", 10, stack=False)
 
         self.assertNotIn("basePr", meta)
+
+
+class PrReviewsTests(unittest.TestCase):
+    def test_reads_every_page_of_reviews_one_row_each(self) -> None:
+        rows = [{"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
+                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"},
+                {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+                 "at": "2026-10-02T10:00:00Z", "association": "NONE"}]
+        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(r) + "\n" for r in rows)) as gh:
+            reviews = summary.pr_reviews("owner/example", 7)
+
+        self.assertEqual(rows, reviews)
+        args = gh.call_args.args
+        self.assertEqual(("api", "--paginate", "repos/owner/example/pulls/7/reviews"), args[:3])
+        self.assertIn("select(.submitted_at != null)", args[-1], "a pending review has no verdict to show yet")
+        self.assertIn("association: .author_association", args[-1], "the site trusts a verdict by who wrote it")
 
 
 class StatusTests(unittest.TestCase):

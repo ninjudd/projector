@@ -9,8 +9,11 @@
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
-/* On a summary page the bar scrolls away; the summary's own headers stick. */
-.sitebar.scrolls { position: static; }
+/* On a summary page the bar scrolls away; the summary's own headers stick. Its
+   ends line up with the summary's 1440px .wrap: the site name over the sidebar,
+   and the search box over Compare. */
+.sitebar.scrolls { position: static; padding-inline: max(16px, calc((100% - 1440px) / 2 + 16px)); }
+.sitebar.scrolls .menuspace { display: none; }
 .sitename {
   display: inline-flex; align-items: center; gap: 10px;
   font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text); text-decoration: none;
@@ -135,7 +138,7 @@ table.tbl.reviews .stack::before { content: "↳ "; }
 .plist { margin-top: 10px; font-size: 14px; }
 .plist b { color: var(--muted); font-weight: 600; margin-right: 6px; }
 
-.sitesearch { margin-left: auto; }
+.sitesearch { margin: 0 0 0 auto; display: flex; }
 .sitesearch input {
   width: 12rem; max-width: 40vw; padding: 5px 10px; font: inherit; font-size: 14px;
   color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;

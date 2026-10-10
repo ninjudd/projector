@@ -43,6 +43,11 @@ class SiteRepoCase(unittest.TestCase):
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
+        # A build that knows its repository asks GitHub for each pull request's
+        # reviews. No test reaches GitHub; one that needs reviews supplies them.
+        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
+        offline.start()
+        self.addCleanup(offline.stop)
 
 
 class SiteBuildTests(SiteRepoCase):
@@ -327,6 +332,77 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
+    def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
+        asked: list[tuple[str, int]] = []
+
+        def pr_reviews(repo: str, number: int) -> list[dict]:
+            asked.append((repo, number))
+            if reviews is None:
+                raise summary.SummaryError("gh api failed: offline")
+            return reviews
+
+        self.publish(9, "c" * 40)
+        self.publish(9, "d" * 40)
+        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
+            self.build()
+        self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
+        return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
+                for head in ("c" * 40, "d" * 40)}
+
+    def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:
+        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                  projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+
+    def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
+        marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
+        statuses = self.statuses([
+            projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
+            {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z", "association": "OWNER"},
+            {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
+             "at": "2026-10-03T10:00:00Z", "association": "OWNER"},
+            {"body": None, "url": review_url(4), "at": "2026-10-04T10:00:00Z", "association": "OWNER"},
+        ])
+
+        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
+
+    def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
+        # Anyone can review a public repository's pull request, and GitHub
+        # shows a marker line as nothing, so a forged one must not count.
+        statuses = self.statuses([
+            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+            projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2, association="NONE"),
+            projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 3, association="CONTRIBUTOR"),
+            projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
+        ])
+
+        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
+                         statuses)
+
+    def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
+        statuses = self.statuses([
+            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, association="MEMBER"),
+            projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 2, association="COLLABORATOR"),
+        ])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+
+    def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
+        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
+                                  projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                  projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 3),
+                                  projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4)])
+
+        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
+                          "d": {"status": "clean", "url": review_url(4)}}, statuses)
+
+    def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
+        self.assertEqual({"c": None, "d": None}, self.statuses(None))
+
     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
         self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
@@ -365,7 +441,6 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
         data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
         self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
-        self.assertEqual("/reviews/", data["indexUrl"])
         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
 
     def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
@@ -579,17 +654,24 @@ class SummarySidebarTests(unittest.TestCase):
         # The sidebar is sticky on a wide screen, so a list taller than the
         # window has no other way to reach its last sections. On a narrow
         # screen it sits above the content and scrolls with the page.
+        # The sidebar holds the list's box and the credit under it, so the
+        # sidebar is what fits the window, and the box takes what the credit
+        # leaves.
         css = (SITE_JS.parent / "summary.css").read_text()
+        side = re.search(r"^\.layout > \.side \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(side, "summary.css has no .layout > .side rule")
+        self.assertRegex(side.group(1), r"max-height: calc\(100vh\b")
+        self.assertRegex(side.group(1), r"display: flex; flex-direction: column;")
         wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
-        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
         self.assertRegex(wide.group(1), r"overflow-y: auto")
         # A scroll the list cannot take passes to the page, which is what pins
         # the sidebar and brings a long list's last sections into the window.
         self.assertNotIn("overscroll-behavior", wide.group(1))
-        narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
+        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; max-height: none; \} (.*) \}$",
+                           css, re.M)
         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
-        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
+        self.assertIn(".side .nav { overflow: visible; }", narrow.group(1))
 
     def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()
@@ -607,12 +689,37 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertTrue(stack, "summary.css has no .stack rule")
         self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
 
-    def test_a_stack_row_shows_its_whole_title(self) -> None:
+    def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
         css = (SITE_JS.parent / "summary.css").read_text()
         title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
-        self.assertNotIn("line-clamp", title.group(1))
+        self.assertIn("-webkit-line-clamp: 3;", title.group(1))
+        # Every title has the same weight, because bold text is wider, and a
+        # current row in a different weight could wrap onto more lines than
+        # the same title in another row.
+        self.assertIn("font-weight: 600;", title.group(1))
+        current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
+        self.assertNotIn("font-weight", current.group(1))
+        current_title = re.search(r"^\.prblock \.stack li\.current \.stitle \{", css, re.M)
+        self.assertIsNone(current_title, "the current row's title is styled like every other title")
+
+
+def review_url(review_id: int) -> str:
+    return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
+
+
+def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
+    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
+
+    `association` is the author's relation to the repository, as GitHub's
+    `author_association` gives it.
+    """
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
+              f"sha={head} findings=0 seconds=60 covered=2/2 -->")
+    return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
+            "url": review_url(review_id), "at": at, "association": association}
 
 
 def served_summary(number: int, head: str) -> dict:

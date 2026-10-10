@@ -91,8 +91,9 @@ push to, or approve the pull request unless the user asks.
      that line in the diff. A note about one file goes on that file. Only a
      note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
-     collapsed unless a file's `collapsed` says otherwise. A file the
-     repository marks `linguist-generated` in `.gitattributes` counts as
+     collapsed unless a file's `collapsed` says otherwise, and the page's
+     **Files changed** list keeps them in a closed list of their own. A file
+     the repository marks `linguist-generated` in `.gitattributes` counts as
      generated, as on GitHub; `format.md` says how. Give the files a
      reviewer must read a one-line `note` that says what the file is for and
      what changed in it, not a list of the names it defines.
@@ -268,7 +269,7 @@ could not serve the diff. The file is then the local `git diff` from step 3,
 since the compare call there fails with `publish`'s. It must be the diff from
 the summary's `pr.base` to its `pr.head`, because every later deploy serves
 the stored diff as it is. Because the diff is
-stored, the site deploy asks GitHub for nothing: it checks each summary against
+stored, the site deploy asks GitHub for no diff: it checks each summary against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any summary that still
 fails, or that names another repository, so one bad summary costs one

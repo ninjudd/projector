@@ -991,6 +991,13 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         except summary.SummaryError:
             return None
 
+    # A review that cannot be asked about shows no status, rather than unreviewed.
+    def pr_reviews(number: int) -> Optional[list[dict]]:
+        try:
+            return summary.pr_reviews(repo, number)
+        except summary.SummaryError:
+            return None
+
     entries, failures = site.build_site(
         out,
         summaries=summaries,
@@ -1002,6 +1009,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         trunk=trunk_branch(root),
         base=base,
         lookup=base_pr if repo else None,
+        review_lookup=pr_reviews if repo else None,
     )
     return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
 
