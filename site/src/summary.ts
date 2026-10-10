@@ -27,9 +27,11 @@ function renderSummary(data: SummaryData): void {
     return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
   }
   // A file on the pull request's head branch, which always shows its current
-  // version; a summary that did not record the branch links the head it describes.
+  // version. A merged or closed pull request's branch is usually deleted, so its
+  // files, and those of a summary that did not record its branch, link the head.
   function blobUrl(path: string): string {
-    const ref = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
+    const live = pr.state !== 'merged' && pr.state !== 'closed';
+    const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
     return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
   }
   // The build checks every file a group names against the diff.

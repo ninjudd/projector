@@ -14,7 +14,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -44,8 +44,8 @@ class SiteRepoCase(unittest.TestCase):
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
         # A build that knows its repository asks GitHub for each pull request's
-        # reviews. No test reaches GitHub; one that needs reviews supplies them.
-        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
+        # state and reviews. No test reaches GitHub; one that needs them supplies them.
+        offline = mock.patch.object(summary, "pr_status", side_effect=summary.SummaryError("gh api failed: offline"))
         offline.start()
         self.addCleanup(offline.stop)
 
@@ -336,15 +336,15 @@ class SiteContentTests(SiteRepoCase):
         """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
         asked: list[tuple[str, int]] = []
 
-        def pr_reviews(repo: str, number: int) -> list[dict]:
+        def pr_status(repo: str, number: int) -> dict:
             asked.append((repo, number))
             if reviews is None:
                 raise summary.SummaryError("gh api failed: offline")
-            return reviews
+            return {"state": "open", "reviews": reviews}
 
         self.publish(9, "c" * 40)
         self.publish(9, "d" * 40)
-        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
+        with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             self.build()
         self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
         return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
@@ -705,8 +705,11 @@ def rendered_summary(data: dict) -> str:
 class FileHeaderTests(SiteRepoCase):
     """Each file card's header links to its diff, to the file on the head branch, and to its project."""
 
-    def build(self, **pr: str) -> dict:
-        """The data the site build writes for pull request 9, which changes HEADER_FILES."""
+    def build(self, state: str | None = None, **pr: str) -> dict:
+        """The data the site build writes for pull request 9, which changes HEADER_FILES.
+
+        GitHub reports the pull request as `state`, or cannot be asked when it is None.
+        """
         summaries = Path(tempfile.mkdtemp()) / "summaries"
         folder = summaries / "9" / ("c" * 40)
         folder.mkdir(parents=True)
@@ -723,7 +726,9 @@ class FileHeaderTests(SiteRepoCase):
                 for p in HEADER_FILES]}],
         }))
         (folder / "diff.patch").write_text(HEADER_DIFF)
-        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
+        status = mock.patch.object(summary, "pr_status", return_value={"state": state, "reviews": []}) \
+            if state is not None else nullcontext()
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
                              "--summaries", str(summaries)])
@@ -768,6 +773,19 @@ class FileHeaderTests(SiteRepoCase):
         self.assertIn('href="https://github.com/owner/example/blob/feature/header-links/src/app%231.py"',
                       header("src/app#1.py"), "each path segment is encoded and the branch keeps its slash")
         self.assertNotIn(">PR</a>", html)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes(self) -> None:
+        # GitHub usually deletes a merged or closed pull request's branch, and
+        # its head commit stays reachable, so those link the head.
+        branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
+        at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
+        for state, expected in (("open", branch), ("merged", at_head), ("closed", at_head), (None, branch)):
+            with self.subTest(state=state):
+                data = self.build(state=state, headRef="feature/header-links")
+                self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
+                self.assertIn(f'href="{expected}"', rendered_summary(data))
+                shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
@@ -852,7 +870,7 @@ def review_url(review_id: int) -> str:
 
 
 def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
-    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
+    """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
 
     `association` is the author's relation to the repository, as GitHub's
     `author_association` gives it.

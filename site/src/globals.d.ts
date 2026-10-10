@@ -51,7 +51,8 @@ interface SummaryGroup {
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
-  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string };
+  /** `state` is the pull request's state when the site was built; absent when the build could not ask GitHub. */
+  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string; state?: 'open' | 'merged' | 'closed' };
   files: SummaryFile[];
   groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };

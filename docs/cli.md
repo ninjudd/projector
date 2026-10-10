@@ -728,7 +728,9 @@ project page lists its reviews. Each file card's header links to the file's
 **Diff** on GitHub, to the **File** on the pull request's head branch, and, for
 a file in a project's folder, to that **Project** on the site. That is the
 deepest project the site has a page for, so a nested project owns its own
-files, not the project around it. `search/` searches every document the site
+files, not the project around it. Once the build finds the pull request merged
+or closed, the **File** link uses its head commit, because its branch is
+usually deleted then. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.

@@ -1039,20 +1039,29 @@ class PrMetadataTests(unittest.TestCase):
         self.assertNotIn("basePr", meta)
 
 
-class PrReviewsTests(unittest.TestCase):
-    def test_reads_every_page_of_reviews_one_row_each(self) -> None:
-        rows = [{"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
-                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"},
-                {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
-                 "at": "2026-10-02T10:00:00Z", "association": "NONE"}]
-        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(r) + "\n" for r in rows)) as gh:
-            reviews = summary.pr_reviews("owner/example", 7)
+class PrStatusTests(unittest.TestCase):
+    def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
+        first = {"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
+                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
+        second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+                  "at": "2026-10-02T10:00:00Z", "association": "NONE"}
+        pages = [{"state": "MERGED", "reviews": [first]}, {"state": "MERGED", "reviews": [second]}]
+        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
+            status = summary.pr_status("owner/example", 7)
 
-        self.assertEqual(rows, reviews)
+        self.assertEqual({"state": "merged", "reviews": [first, second]}, status)
         args = gh.call_args.args
-        self.assertEqual(("api", "--paginate", "repos/owner/example/pulls/7/reviews"), args[:3])
-        self.assertIn("select(.submitted_at != null)", args[-1], "a pending review has no verdict to show yet")
-        self.assertIn("association: .author_association", args[-1], "the site trusts a verdict by who wrote it")
+        self.assertEqual(("api", "graphql", "--paginate"), args[:3])
+        self.assertIn("owner=owner", args)
+        self.assertIn("name=example", args)
+        self.assertIn("number=7", args)
+        self.assertIn("select(.submittedAt != null)", args[-1], "a pending review has no verdict to show yet")
+        self.assertIn("association: .authorAssociation", args[-1], "the site trusts a verdict by who wrote it")
+
+    def test_an_answer_without_a_state_is_an_error(self) -> None:
+        with mock.patch.object(summary, "gh", return_value=""):
+            with self.assertRaisesRegex(summary.SummaryError, "no state for owner/example#7"):
+                summary.pr_status("owner/example", 7)
 
 
 class StatusTests(unittest.TestCase):
