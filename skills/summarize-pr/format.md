@@ -47,8 +47,10 @@ it. The summary is JSON:
 
 ## Fields
 
-- `name` is the page title: a short name for the change, not a sentence.
-  It becomes the browser tab and gallery title.
+- `name` labels the summary where the site lists reviews: in the Reviews
+  table and in a project's list of reviews. Make it a short name for the
+  change, not a sentence. The page and its browser tab take the pull
+  request's title, and use `name` only when that title is empty.
 - `pr.head` is the commit the page describes. `build` stops when the pull
   request has moved past it, unless `--at-head` asks for that head exactly.
 - `pr.base` is the merge base the diff is taken from. `init` records it; the
