@@ -29,10 +29,10 @@ import urllib.parse
 from importlib import resources
 from pathlib import Path
 
-from ..core import Project, title_from_text
+from ..core import Project, ProjectorError, project_from_text, title_from_text
 from ..review import MARKER
 from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
-                       prepare_page, stored_attributes)
+                       new_file_text, prepare_page, stored_attributes)
 
 
 
@@ -256,8 +256,9 @@ def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict
         f["context"] = {"url": f"{base}{BLOBS}/{blob}.txt", "lines": len(lines), "gaps": gaps}
 
 
-def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
-                    lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
+def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None, trunk: str = "main",
+                    lookup=None, repo_root: Path | None = None, status_lookup=None,
+                    projects_dir: str | None = None) -> tuple[list[dict], list[str], list[dict]]:
     """Build every summary that can be built; report and skip the rest.
 
     The entries come in the order the Reviews index lists them, as
@@ -279,7 +280,15 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     same way. Each page also carries `defaultBranch`, `trunk`, where a
     merged pull request's files now are when the branch it merged into is
     gone.
+
+    It asks `status_lookup` about each pull request before it links any
+    summary, finds the projects that open pull requests propose under
+    `projects_dir`, the projects directory's path in the repository, as
+    `proposed_projects` does, and links each summary to those and to
+    `described`, the checkout's projects. It returns the proposed projects
+    beside the entries and the failures.
     """
+    described = described or []
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
               if not path.with_name("summary.json").is_file()]
@@ -313,29 +322,34 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
             generated = stored_attributes(attributes) if attributes.is_file() else None
             payload = prepare_page(summary, diff=stored.read_text(encoding="utf-8"), at_head=True, root=repo_root,
                                    generated=generated)
-            payload["projects"] = link(summary, payload) if link else []
         except (SummaryError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
         add_context(payload, absolute / number / head / HEAD_DIR, out, base, written)
-        by_pr.setdefault(number, []).append((summary_time(path), payload))
+        by_pr.setdefault(number, []).append((summary_time(path), payload, summary))
     print(f"wrote {len(written)} head {'file' if len(written) == 1 else 'files'} for summary pages to expand, "
           f"{sum(written.values()):,} bytes, under {BLOBS}/")
     for versions in by_pr.values():
         versions.sort(key=lambda v: v[0], reverse=True)
+    # The review skill publishes its review before the summary, and publishing
+    # the summary starts this build, so the reviews include the verdict on the
+    # head the summary describes.
+    asked = {number: status_lookup(int(number)) if status_lookup is not None else None for number in by_pr}
+    proposed = proposed_projects({int(n): versions[0][1] for n, versions in by_pr.items()},
+                                 {int(n): status for n, status in asked.items()}, described, repo_root,
+                                 projects_dir, out) if repo_root is not None and projects_dir is not None else []
+    link = project_linker(described + proposed, base)
     prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}
     bases = stack_bases([{"number": number, "pr": pr} for number, pr in prs.items()], trunk, lookup)
     entries = []
     for number, versions in sorted(by_pr.items(), key=lambda kv: -int(kv[0])):
         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
-                 for when, p in versions]
+                 for when, p, _ in versions]
         stack = stack_rows(int(number), bases, prs, base)
-        # The review skill publishes its review before the summary, and publishing
-        # the summary starts this build, so the reviews include the verdict on the
-        # head the summary describes.
-        status = status_lookup(int(number)) if status_lookup is not None else None
+        status = asked[number]
         statuses = review_statuses(status["reviews"]) if status is not None else None
-        for _, payload in versions:
+        for _, payload, summary in versions:
+            payload["projects"] = link(summary, payload)
             head = payload["pr"]["head"]
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
             if status is not None:
@@ -364,7 +378,90 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     for group in stack_groups(bases, prs):
         for number in group:
             ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
-    return ordered, failures
+    return ordered, failures, proposed
+
+
+PLAN_FILE = "readme.md"
+
+
+def proposed_projects(newest: dict[int, dict], statuses: dict[int, dict | None], described: list[dict],
+                      repo_root: Path, projects_dir: str, out: Path) -> list[dict]:
+    """The projects open pull requests propose, described as `collect_projects` describes the checkout's, with `proposed`.
+
+    `newest` is each pull request's newest summary page, and `statuses` its
+    status from `summary.pr_status`, or None when GitHub could not be asked.
+    A pull request proposes each `<projects_dir>/<name>/readme.md` its diff
+    adds while it is open and its head branch is in this repository. One
+    whose status is unknown proposes nothing, and the build says how many it
+    left out. The checkout wins: a name it has as a project, or a path it
+    holds, is never proposed. A plan loads as a checkout's does, and one that
+    does not is skipped with a warning. When several pull requests propose
+    one name, the lowest number's plan is the project, and the others are its
+    `proposed.also`.
+
+    A proposed project's `files` are the other Markdown files the same diff
+    adds in its folder, outside hidden directories and deeper projects'
+    folders. They are Markdown alone, because the site renders Markdown
+    through DOMPurify but shows an HTML page as it is, on its own origin,
+    and a proposal has not been merged. Each plan and file is written under
+    out/content, beside the checkout's copies, and never over one.
+    """
+    plan_path = re.compile(re.escape(projects_dir.strip("/")) + r"/(.+)/" + re.escape(PLAN_FILE))
+    taken = {p["name"] for p in described}
+    found: dict[str, tuple[dict, dict, str]] = {}
+    unknown = 0
+    for number, payload in sorted(newest.items()):
+        plans = [(f, match.group(1)) for f in payload["files"]
+                 if f["new"] and (match := plan_path.fullmatch(f["path"])) is not None]
+        if not plans:
+            continue
+        status = statuses.get(number)
+        if status is None:
+            unknown += 1
+            continue
+        if status["state"] != "open" or status.get("fork") is not False:
+            continue
+        for f, name in plans:
+            if name in taken or (repo_root / f["path"]).exists():
+                continue
+            text = new_file_text(f) or ""
+            try:
+                project = project_from_text(text, name, repo_root / f["path"], Path(f["path"]))
+            except ProjectorError as error:
+                print(f"::warning title=Proposed project skipped::#{number} {error}")
+                continue
+            if name in found:
+                found[name][0]["proposed"]["also"].append(number)
+                continue
+            entry = project.public(repo_root)
+            entry["proposed"] = {"number": number, "head": payload["pr"]["head"], "also": []}
+            found[name] = (entry, payload, text)
+    if unknown:
+        many = unknown != 1
+        print(f"::warning title=Proposed projects left out::the status of {unknown} pull request{'s' if many else ''} "
+              f"that add{'' if many else 's'} a plan is unknown, because GitHub could not be asked, so "
+              f"{'their plans are' if many else 'its plan is'} not proposed")
+    folders = sorted(((p["path"].rpartition("/")[0] + "/", p["name"])
+                      for p in described + [entry for entry, _, _ in found.values()]), key=lambda f: -len(f[0]))
+    proposed = []
+    for name in sorted(found):
+        entry, payload, text = found[name]
+        write_content(out, entry["path"], text)
+        entry["files"] = []
+        for f in sorted(payload["files"], key=lambda f: f["path"]):
+            path = f["path"]
+            owner = next((owner for folder, owner in folders if path.startswith(folder)), None)
+            if owner != name or not f["new"] or not path.lower().endswith(".md") or path.endswith(f"/{PLAN_FILE}"):
+                continue
+            if hidden(repo_root, repo_root / path) or (repo_root / path).exists():
+                continue
+            page = new_file_text(f)
+            if page is None:
+                continue
+            write_content(out, path, page)
+            entry["files"].append({"path": path, "title": page_title(Path(path), page)})
+        proposed.append(entry)
+    return proposed
 
 
 def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
@@ -450,19 +547,26 @@ def stack_bases(entries: list[dict], trunk: str, lookup=None) -> dict[int, int]:
 def copy_content(repo_root: Path, path: Path, out: Path) -> str:
     """Copy one file under out/content, returning its repository path."""
     relative = path.relative_to(repo_root).as_posix()
+    write_content(out, relative, path.read_bytes())
+    return relative
+
+
+def write_content(out: Path, relative: str, content: str | bytes) -> None:
+    """Write the file at `relative` in the repository under out/content."""
     target = out / CONTENT / relative
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(path.read_bytes())
-    return relative
+    target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
 
 
 def is_page(path: Path) -> bool:
     return path.suffix.lower() in PAGES
 
 
-def page_title(path: Path) -> str:
-    """A Markdown file's first heading, or an HTML page's <title>; else its name."""
-    text = path.read_text(encoding="utf-8", errors="replace")
+def page_title(path: Path, text: str | None = None) -> str:
+    """A Markdown file's first heading, or an HTML page's <title>; else its name.
+    `text` is the file's text, read from `path` when not given."""
+    if text is None:
+        text = path.read_text(encoding="utf-8", errors="replace")
     fallback = path.parent.name if path.stem.lower() == "index" else path.stem
     if path.suffix.lower() == ".md":
         return title_from_text(text, fallback)
@@ -548,7 +652,8 @@ def project_linker(described: list[dict], base: str):
         return {"name": name, "title": by_name[name]["title"], "url": f"{base}projects/{name}/"}
 
     def link(summary: dict, payload: dict) -> list[dict]:
-        names = [n for n in summary.get("projects") or [] if n in by_name]
+        named = summary.get("projects")
+        names = [n for n in named if isinstance(n, str) and n in by_name] if isinstance(named, list) else []
         for f in payload["files"]:
             owner = next((name for folder, name in folders if f["path"].startswith(folder)), None)
             if owner:
@@ -575,15 +680,19 @@ def plain_text(markdown: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects: list[dict],
+def search_index(content: Path, readme: str | None, docs: list[dict], projects: list[dict],
                  projects_readme: str | None) -> list[dict]:
-    """One entry per served document: its site path, title, kind, and plain text."""
+    """One entry per served document: its site path, title, kind, and plain text, read from its copy under
+    `content`, and the number of the pull request that proposes it as `proposed`, for a proposed project's."""
     entries = []
 
-    def add(path: str, route: str, title: str, kind: str) -> None:
-        text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+    def add(path: str, route: str, title: str, kind: str, proposed: dict | None = None) -> None:
+        text = (content / path).read_text(encoding="utf-8", errors="replace")
         text = html_text(text) if path.lower().endswith(".html") else plain_text(text)
-        entries.append({"route": route, "title": title, "kind": kind, "text": text})
+        entry = {"route": route, "title": title, "kind": kind, "text": text}
+        if proposed is not None:
+            entry["proposed"] = proposed["number"]
+        entries.append(entry)
 
     if readme:
         add(readme, "docs/", "README", "doc")
@@ -592,9 +701,9 @@ def search_index(repo_root: Path, readme: str | None, docs: list[dict], projects
     if projects_readme:
         add(projects_readme, "projects/", "How projects work", "project")
     for project in projects:
-        add(project["path"], f"projects/{project['name']}/", project["title"], "project")
+        add(project["path"], f"projects/{project['name']}/", project["title"], "project", project.get("proposed"))
         for file in project["files"]:
-            add(file["path"], file["route"], file["title"], "project")
+            add(file["path"], file["route"], file["title"], "project", project.get("proposed"))
     return entries
 
 
@@ -700,15 +809,19 @@ def review_row(entry: dict) -> dict:
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
-               trunk: str | None = None, lookup=None, status_lookup=None) -> tuple[list[dict], list[str]]:
+               trunk: str | None = None, lookup=None,
+               status_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
     `trunk` the default branch a pull request that is not stacked is based on.
     `lookup` finds the pull request whose head is a branch, for a summary that
     did not record the one it is stacked on. `status_lookup` returns a pull
-    request's state and reviews, or None when it cannot ask, for each
-    summary's file links and review status.
+    request's state, reviews, and whether it is a fork's, or None when it
+    cannot ask, for each summary's file links and review status and for the
+    projects open pull requests propose. `projects_dir` is the configured
+    projects directory, which a pull request can propose the first plan of.
+    Returns the reviews, the summaries skipped, and the proposed projects.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -720,11 +833,14 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     readme, docs = collect_docs(repo_root, projects_dir, out) if repo_root else (None, [])
     described = collect_projects(repo_root, projects or [], projects_dir, out) if repo_root else []
     files = collect_files(repo_root, projects_dir, out) if repo_root else []
+    projects_path = projects_dir.relative_to(repo_root).as_posix() \
+        if repo_root and projects_dir and projects_dir.is_relative_to(repo_root) else None
+    built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
+                            status_lookup=status_lookup, projects_dir=projects_path) \
+        if summaries and summaries.is_dir() else ([], [], [])
+    entries, failures, proposed = built
+    described = sorted(described + proposed, key=lambda p: p["name"])
     assign_routes(docs, described)
-    link = project_linker(described, base)
-    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
-                            status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
-    entries, failures = built
     for project in described:
         project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
@@ -737,18 +853,18 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
         "content": CONTENT,
         "readme": readme,
         "docs": docs,
-        "projectsDir": projects_dir.relative_to(repo_root).as_posix() if repo_root and projects_dir and projects_dir.is_dir() else None,
+        "projectsDir": projects_path if described or (projects_dir and projects_dir.is_dir()) else None,
         "projects": described,
         "projectsReadme": projects_readme,
         "files": files,
         "reviews": [review_row(e) for e in entries],
     }
     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
-    index = search_index(repo_root, readme, docs, described, projects_readme) if repo_root else []
+    index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     shell = home_page(repo, base)
     for route in site_routes(docs, described):
         (out / route).mkdir(parents=True, exist_ok=True)
         (out / route / "index.html").write_text(shell, encoding="utf-8")
     (out / "404.html").write_text(shell, encoding="utf-8")
-    return entries, failures
+    return entries, failures, proposed

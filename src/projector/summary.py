@@ -360,6 +360,18 @@ def parse_diff(text: str) -> list[dict]:
     return files
 
 
+def new_file_text(f: dict) -> str | None:
+    """The whole text of a file the diff adds, from `parse_diff`'s hunks: its
+    added lines, each ending in a newline unless the diff marks the last as
+    having none. None for a file the diff does not add, and for one with no
+    hunks, which is empty or binary."""
+    if not f["new"] or not f["hunks"]:
+        return None
+    lines = [line for hunk in f["hunks"] for line in hunk["lines"]]
+    text = "\n".join(line[3] for line in lines if line[0] == "a")
+    return text if lines[-1][0] == "m" else text + "\n"
+
+
 def classify(files: list[dict], generated: dict[str, bool]) -> None:
     """Set each file's kind again, letting its `linguist-generated` value in `generated` say if it is generated."""
     for f in files:
@@ -700,6 +712,7 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       state
+      isCrossRepository
       baseRef { name }
       reviews(first: 100, after: $endCursor) {
         nodes { body url submittedAt authorAssociation }
@@ -711,24 +724,26 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
 
 
 def pr_status(repo: str, number: int) -> dict:
-    """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, and its submitted `reviews`.
+    """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, whether it is a `fork`'s,
+    and its submitted `reviews`.
 
     `base` is the name of the branch the pull request targets, or merged into,
-    or None once that branch is deleted. Each review has its `body`, its page
-    as `url`, its time as `at`, and its author's relation to the repository as
-    `association`, GitHub's `authorAssociation`. One query answers all three,
-    a page of reviews at a time.
+    or None once that branch is deleted. `fork` is True when its head branch
+    is in another repository, GitHub's `isCrossRepository`. Each review has
+    its `body`, its page as `url`, its time as `at`, and its author's relation
+    to the repository as `association`, GitHub's `authorAssociation`. One query
+    answers them all, a page of reviews at a time.
     """
     owner, name = repo.split("/", 1)
     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
                "-f", f"name={name}", "-F", f"number={number}",
-               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, reviews: [.reviews.nodes[] "
-                       "| select(.submittedAt != null) "
+               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, fork: .isCrossRepository, "
+                       "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
                        "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
     if not found or not found[0].get("state"):
         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
-    return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"),
+    return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"), "fork": found[0].get("fork") is True,
             "reviews": [r for page in found for r in page["reviews"]]}
 
 

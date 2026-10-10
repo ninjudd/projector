@@ -933,16 +933,18 @@ def run_summary(arguments: argparse.Namespace) -> int:
 SKIPPED_PLAN_ISSUES = {"invalid-project", "missing-plan", "wrong-entry-case"}
 
 
-def site_projects(root: Path) -> tuple[list, Optional[Path]]:
-    """The repository's projects for the site, without the plans that are broken.
+def site_projects(root: Path) -> tuple[list, Path]:
+    """The repository's projects for the site, without the plans that are broken, and its projects directory.
 
     A broken plan should cost only its own place on the site, not the other
     projects or the deploy that also carries the README, the docs, and the
-    summaries, so each one is skipped with a warning that names it.
+    summaries, so each one is skipped with a warning that names it. The
+    projects directory is the configured one even when the checkout lacks
+    it, since a pull request can propose the repository's first plan.
     """
     store = ProjectStore(root, root, configured_projects_dir(root))
     if not store.projects_dir.is_dir():
-        return [], None
+        return [], store.projects_dir
     projects, _ = store.readable_projects()
     for issue in store.check(instructions_enabled=False):
         if issue.code in SKIPPED_PLAN_ISSUES:
@@ -1000,7 +1002,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         except summary.SummaryError:
             return None
 
-    entries, failures = site.build_site(
+    entries, failures, proposed = site.build_site(
         out,
         summaries=summaries,
         repo_root=root,
@@ -1013,7 +1015,8 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         lookup=base_pr if repo else None,
         status_lookup=pr_status if repo else None,
     )
-    return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
+    return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
+            f"{len(entries)} reviews, {len(failures)} reviews skipped")
 
 
 def run_site_build(arguments: argparse.Namespace) -> int:

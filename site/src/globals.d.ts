@@ -92,6 +92,16 @@ interface SitePage {
   route: string;
 }
 
+/**
+ * The open pull request whose newest summary adds a proposed project's plan, the full SHA of that summary's head,
+ * and the other open pull requests whose newest summaries add a plan of the same name, lowest first.
+ */
+interface Proposal {
+  number: number;
+  head: string;
+  also: number[];
+}
+
 interface SiteProject {
   name: string;
   path: string;
@@ -101,6 +111,8 @@ interface SiteProject {
   owner?: string | null;
   files: SitePage[];
   reviews: number[];
+  /** Present only on a project an open pull request proposes, which is not in the checkout the site was built from. */
+  proposed?: Proposal;
 }
 
 /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
@@ -133,10 +145,11 @@ interface SiteData {
   reviews: SiteReview[];
 }
 
-/** One entry of search.json. */
+/** One entry of search.json; `proposed` is the pull request that proposes the page's project, if one does. */
 interface SearchEntry {
   route: string;
   title: string;
   kind: string;
   text: string;
+  proposed?: number;
 }
