@@ -1,0 +1,119 @@
+{
+ "version": 1,
+ "name": "Project page sidebar plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 219,
+  "title": "Plan giving each project page a summary's sidebar",
+  "head": "f7c3614a96ceaa02616a026430526d4318e91a52",
+  "headRef": "spec-project-page-nav",
+  "base": "daccae94ed181bc92331a3564c0359e801e62968",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has two kinds of page that show the same pull requests in different ways. A <b>summary page</b> describes one pull request and has a boxed sidebar at its left that lists the pull request's whole <b>stack</b>, the chain of dependent pull requests it belongs to, one row per pull request. A <b>project page</b> renders one plan from <code>docs/projects/</code> and lists the reviews that link to it as one flat line in its page head, such as <b>Reviews</b> <code>#212 Incremental review plan</code>.",
+   "The flat line shows no stacks, leaves out layers that have no summary, and scrolls away with the page head. A project with supplemental files also shows a separate tree of pages in a plain column at the window's left edge.",
+   "This pull request adds the plan <code>project-page-nav</code>, at status <code>ready</code> and priority <code>next</code>. It changes no code. The plan gives every page of a project the summary page's sidebar, drawn by the same code:",
+   "<ol><li><b>The header</b> is the project, and on the project's own readme it is the current page rather than a link.</li><li><b>The stacks</b> are every stack whose header is this project, newest first, with every layer listed bottom first, merged and closed layers included.</li><li><b>The pages</b> are the project's supplemental files and nested projects, which move out of the tree column.</li><li><b>The footer row</b> keeps Projector's credit, and its history icon links to the plan's commits on GitHub.</li></ol>",
+   "The page head loses its review line, and the page takes the summary page's 1,440-pixel frame, so the sidebar sits at the same left edge and width on both kinds of page. In the build, each project's <code>stacks</code> in <code>site.json</code> replaces its <code>reviews</code>.",
+   "The plan depends on <code>stack-header</code> (#216, merged as a plan, not yet implemented), which gives every stack exactly one header: the project its summaries record, or a short title. This plan reuses that header and the stack membership that <code>stack-header</code>'s <code>find_stacks</code> works out, and adds no request to GitHub. It leaves a list of the plan's sections in the sidebar to a follow-up plan."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests that build on one another, listed from the bottom layer up. A pull request alone is a stack of one.</li><li><b>Header</b>: what <code>stack-header</code> puts above a stack, either a project, linked to its page, or a plain-text title.</li><li><b>Entry</b>: one pull request's record in <code>build_summaries</code>, in the order the Reviews index lists them.</li><li><b>Members</b>: the pull request numbers a summary page's <code>stack</code> lists, including layers with no summary.</li><li><b>Tree column</b>: today's column of a project's pages, fixed to the window's left edge at 240 pixels.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>206c7fc</code>, found one blocking problem. The plan says the sidebar sits at the same place on both pages, but a summary page draws its title row above the grid, so its sidebar starts about 60 to 70 pixels lower than the plan's project sidebar. That finding is still open at <code>f7c3614</code>.</li><li><code>f7c3614</code> merges <code>main</code>, links <code>stack-header</code> as a merged plan, and leaves the sidebar's section list and the navigation between sibling projects to a follow-up plan. Its review found one more problem: one rewritten sentence in § 2.4 is not rewrapped to the plan's 80 columns.</li><li>The reviews checked the build, the renderer, the style scoping, and the test names against <code>main</code>. Those claims hold.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The project-page-nav plan",
+   "kicker": "One shared sidebar for project pages and summary pages, and the site.json field that feeds it",
+   "intro": [
+    "The plan has seven numbered sections. Section 1 shows what a project page lists today. Section 2 is the design: the page layout (2.2), what the sidebar shows (2.3), the build change (2.4), the shared renderer and its style rules (2.5), narrow screens and accessibility (2.6), and the interface a proposed project's page needs (2.7). Section 3 gives the reasons and the rejected alternatives, and section 4 lists the tests.",
+    "Three decisions carry the design. The project page takes the summary page's frame rather than drawing the sidebar inside the existing tree column. A stack appears only on the page of its header's project, so the project page always agrees with each member's own sidebar. And <code>stacks</code> stores pull request numbers only, so each row takes its title from <code>site.json</code>'s <code>reviews</code> and every title is written once."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan is at <code>ready</code>, which claims it can be implemented without further questions. It is implemented after <code>stack-header</code>, whose <code>header</code>, stack membership, and <code>stackHeaderHtml</code> it reads."
+    },
+    {
+     "kind": "context",
+     "text": "Two questions are left to a follow-up plan, <code>project-page-sections</code>: a list of the plan's sections in the sidebar, and how a nested project's sidebar reaches its sibling projects. Until then, a nested project's page reaches its parent through the breadcrumbs. The follow-up plan is not on <code>main</code> or in an open pull request yet."
+    },
+    {
+     "kind": "context",
+     "text": "The open plan <code>proposed-projects</code> (#218) still adds a <code>reviews</code> field and a review line for proposed projects, which this plan removes. Section 2.7 states what that plan must provide and leaves the rest to it."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/project-page-nav/readme.md",
+     "collapsed": false,
+     "note": "The new plan, at status <code>ready</code> and priority <code>next</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 121,
+       "text": "Section 2.2: with a sidebar, <code>frame</code> in <code>site/src/site.ts</code> draws the summary page's layout, a <code>.wrap.layout</code> grid of a 250-pixel sidebar and a content column, with a site bar that scrolls away. An HTML page keeps today's full-window frame and shows the sidebar in its collapsible column."
+      },
+      {
+       "kind": "verify",
+       "line": 209,
+       "text": "Taking each stack at the entry whose <code>stack</code> is None or its own number picks one entry per stack. In <code>build_summaries</code>, each entry's <code>stack</code> is its index group's first number, or None for a group of one, and <code>stack_rows</code> gives every member of a stack the same list from the bottom up. Checked by reading both functions on <code>main</code>."
+      },
+      {
+       "kind": "flag",
+       "line": 198,
+       "text": "This line is 124 characters long. This head added the names <code>find_stacks</code> and <code>stack_header</code> to the sentence without rewrapping it, and every other prose line in the plan wraps at 80 columns. The repository's <code>CLAUDE.md</code> says to match the wrapping around a Markdown edit."
+      },
+      {
+       "kind": "context",
+       "line": 220,
+       "text": "Section 2.4: <code>stacks</code> holds numbers only, newest stack first, and includes layers without a summary. A row for a number with no review in <code>site.json</code> links to the pull request on GitHub."
+      },
+      {
+       "kind": "context",
+       "line": 236,
+       "text": "Section 2.5: <code>sideNavHtml</code> draws both sidebars from a <code>SideNav</code> value. The summary page passes its tabs and sections as <code>middle</code> and its versions list as <code>foot</code>, and the project page passes its pages and the history link."
+      },
+      {
+       "kind": "verify",
+       "line": 264,
+       "text": "The scoping problem is real. <code>site.css</code> writes the tree column as <code>.sitemain .side</code>, which also matches a sidebar <code>aside.side</code> inside <code>main</code>, and <code>site.css</code> loads after <code>summary.css</code> in <code>home_page</code>. Checked by reading both stylesheets and the page shell."
+      },
+      {
+       "kind": "context",
+       "line": 314,
+       "text": "Section 2.7 deliberately leaves the proposed-project design to <code>proposed-projects</code>, naming only the record fields <code>projectNav</code> reads and how a stack is filed under a proposed project's name."
+      },
+      {
+       "kind": "flag",
+       "line": 339,
+       "text": "The sidebar does not sit at the same place on both pages. A summary page draws <code>header.top</code>, its title row, above <code>.layout</code>, so its sidebar starts about 60 to 70 pixels lower than the project sidebar in section 2.2. The browser check in section 4 at 1,440 pixels cannot pass as written. The plan should either draw the project's head above the grid or say that only the left edge and width match."
+      },
+      {
+       "kind": "verify",
+       "line": 343,
+       "text": "The 42-pixel figure holds. Every element is <code>border-box</code>, so the 240-pixel tree column with 16-pixel padding leaves 208 pixels, against the summary sidebar's 250-pixel grid column."
+      },
+      {
+       "kind": "context",
+       "line": 424,
+       "text": "Section 4 names build tests, node page tests against the compiled scripts, and style tests that parse the selectors. The last row of the page tests and the last row of the style tests already exist on <code>main</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
