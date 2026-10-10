@@ -1,0 +1,141 @@
+{
+ "version": 1,
+ "name": "Site deploy on pull request close",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 225,
+  "title": "Deploy the site when a pull request closes",
+  "head": "b20d9b5ef2c7d12f7c3799e83d63475560e78da4",
+  "headRef": "site-deploy-on-close",
+  "base": "814b9031d571c31619ceadb03d3e37172313cd3a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site is a GitHub Pages site that a repository's own workflow, <code>.github/workflows/projector-site.yml</code>, builds and deploys. Its Reviews index lists each pull request with a summary and shows whether it is open, merged, or closed. Until now the workflow deployed only when a summary was published, when a push to the default branch changed a watched path, or on demand. A pull request that merged or closed without touching a watched path started no deploy, so the Reviews index kept showing it as open.",
+   "This pull request adds a trigger: the workflow now also deploys when a pull request in the repository closes, merged or not. It uses <code>pull_request_target</code>, a GitHub event that runs the default branch's workflow on the default branch, so the deploy is allowed by the <code>github-pages</code> environment and never checks out the pull request's code. A pull request from a fork deploys nothing.",
+   "It implements § 2.4 of the <code>proposed-projects</code> plan, which needs this deploy so that a proposed plan leaves the site as soon as its pull request closes. The proposed projects themselves come in later pull requests, so the plan moves to <code>in-progress</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b><code>pull_request_target</code></b>: a pull request event that GitHub runs from the workflow file on the default branch, with the default branch checked out, rather than on the pull request's merge ref.</li><li><b>Concurrency group</b>: a name that GitHub uses to run one workflow run at a time. A newer waiting run replaces an older waiting one in the same group.</li><li><b>Workflow shape</b>: the exact text Projector writes for the site workflow, with only the action ref, branch, dispatch event, and watched paths free. <code>current</code> is today's text; <code>earlier</code> is one from <code>PREVIOUS_WORKFLOWS</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>b20d9b5</code>: clean, no finding threads.</li><li>One suggestion: the new warning names only <code>project init</code>, which leaves the workflow alone when <code>site.enabled = false</code>.</li><li>The full gate passed: 544 tests OK with one skip, <code>project check</code>, and both plugin validations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflow",
+   "title": "The workflow deploys when a pull request closes",
+   "kicker": "The new trigger, the fork guard, and the fork's own concurrency group",
+   "intro": [
+    "The generated workflow, the <code>WORKFLOW</code> template in <code>summary.py</code>, gains three lines of behavior. Each one answers a separate risk of running on a closed pull request.",
+    "<ol><li><b>The trigger.</b> <code>pull_request_target</code> with <code>types: [closed]</code> starts a run for every pull request that closes, merged or not. A plain <code>pull_request</code> trigger would run on <code>refs/pull/&lt;n&gt;/merge</code>, which the <code>github-pages</code> environment refuses, and the site action's checkout would build that pull request's tree as the site.</li><li><b>The fork guard.</b> The <code>publish</code> job's <code>if:</code> runs only when the pull request's head repository is this one. A fork's pull request, or one whose fork was deleted (its head repository is then null), skips the deploy.</li><li><b>The fork's concurrency group.</b> A fork's run takes <code>fork-&lt;run id&gt;</code> instead of <code>pages</code>. Without that, the skipped run would still join <code>pages</code>, where it could replace a real deploy that was waiting.</li></ol>",
+    "The permissions stay the four every other run has. This repository's own workflow differs from the template, because it runs the action from <code>main</code> and watches more paths, so it gets the same three changes by hand."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "No step reads the pull request's code. The site action checks out the default <code>GITHUB_REF</code> and <code>GITHUB_SHA</code>, which on <code>pull_request_target</code> are the default branch. The only event field in use, the head repository's name, appears only in expressions, never in a shell step."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "The new <code>WORKFLOW</code>, the previous one added to <code>PREVIOUS_WORKFLOWS</code>, and <code>workflow_shape</code>, which tells the current shape from an earlier one.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 94,
+       "text": "The doubled braces render as single ones: <code>workflow_text(\"v0\", \"main\")</code> produces <code>${{ … format('fork-{0}', github.run_id) … }}</code>, which <code>test_a_pull_request_in_the_repository_deploys_when_it_closes_and_a_forks_does_not</code> pins."
+      },
+      {
+       "kind": "verify",
+       "line": 162,
+       "text": "This entry equals <code>WORKFLOW</code> at the merge base byte for byte, compared directly against <code>git show</code> of the base, so a workflow the previous release wrote is still recognized and rewritten."
+      },
+      {
+       "kind": "context",
+       "line": 1350,
+       "text": "The current template is tried before the earlier ones. A file's watched paths are free in both, so a workflow with an older paths list but the new trigger counts as <code>current</code> and gets no warning; <code>project init</code> still rewrites it, because its text differs."
+      }
+     ]
+    },
+    {
+     "path": ".github/workflows/projector-site.yml",
+     "note": "This repository's own workflow, edited by hand with the same trigger, condition, and concurrency group as the template.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 23,
+       "text": "When the merge of this pull request starts a run on <code>pull_request_target</code>, the run checks this condition first. A skipped <code>publish</code> job for this repository's own pull request means the condition is wrong."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "check",
+   "title": "<code>project check</code> warns about an outdated workflow",
+   "kicker": "A warning that points a repository at the new shape",
+   "intro": [
+    "A repository picks up the new workflow when someone runs <code>project init</code>, which rewrites a workflow Projector wrote and keeps one edited by hand. To tell people that a refresh is due, <code>project check</code> now prints a <code>site-workflow-outdated</code> warning while the workflow is an earlier shape that Projector wrote.",
+    "Like the existing instructions warnings, it prints on stderr and never changes the exit code. A hand-edited workflow, such as this repository's, gets no warning, because Projector cannot tell what its owner meant."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>site_workflow_issues</code> reads the workflow, asks <code>workflow_shape</code> for its shape, and returns the warning only for <code>earlier</code>. <code>check</code> appends it to the store's issues.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1185,
+       "text": "In a repository with <code>site.enabled = false</code>, <code>project init</code> leaves the workflow alone, so the warning stays after someone follows its advice. <code>project site workflow --write</code> clears it, as the <code>docs/cli.md</code> table says. The review listed this as a suggestion, not a finding."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Tests for the trigger, the shapes, <code>project init</code> on every earlier shape, and the warning on every case the plan lists.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2019,
+       "text": "Ran in the full suite at this head: every earlier shape warns, and the current shape, a hand-edited workflow, and no workflow do not. Every case exits 0."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The new trigger and warning, described where readers look, and the plan's status",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/site.md</code> describe when the workflow runs, why it uses <code>pull_request_target</code>, and the new warning. The <code>proposed-projects</code> plan moves from <code>ready</code> to <code>in-progress</code> at priority <code>now</code>, because this pull request implements one of its sections."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The warning's code and fix under \"Validate projects\", and the closed-pull-request trigger under \"Build the Projector site\"."
+    },
+    {
+     "path": "docs/site.md",
+     "note": "The sample workflow and a paragraph on the new trigger."
+    },
+    {
+     "path": "docs/projects/proposed-projects/readme.md",
+     "note": "Status <code>in-progress</code> and priority <code>now</code>."
+    }
+   ]
+  }
+ ]
+}

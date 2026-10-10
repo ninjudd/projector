@@ -1,0 +1,410 @@
+diff --git a/.github/workflows/projector-site.yml b/.github/workflows/projector-site.yml
+index 560979b..a7e672f 100644
+--- a/.github/workflows/projector-site.yml
++++ b/.github/workflows/projector-site.yml
+@@ -7,6 +7,8 @@ on:
+     # Rebuild when the action or the site code changes too, since this site
+     # runs both from main.
+     paths: [README.md, 'docs/**', 'actions/site/**', 'src/projector/**', .projector.toml, .github/workflows/projector-site.yml]
++  pull_request_target:
++    types: [closed]
+   workflow_dispatch:
+ permissions:
+   contents: read
+@@ -14,10 +16,11 @@ permissions:
+   pages: write
+   id-token: write
+ concurrency:
+-  group: pages
++  group: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && format('fork-{0}', github.run_id) || 'pages' }}
+   cancel-in-progress: false
+ jobs:
+   publish:
++    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+     runs-on: ubuntu-latest
+     environment:
+       name: github-pages
+diff --git a/docs/cli.md b/docs/cli.md
+index a08bf1b..efac55c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -410,6 +410,22 @@ A path that resolves outside the repository reports only
+ `instructions-external`; `init` never writes there, so it is the one warning
+ `init` cannot clear.
+ 
++`check` also warns while the site workflow,
++`.github/workflows/projector-site.yml`, is an earlier shape that Projector
++wrote. That workflow does not deploy when a pull request closes, as
++[Build the Projector site](#build-the-projector-site) describes. A workflow
++edited by hand gets no warning.
++
++```console
++$ project check
++warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]
++Project plans are valid.
++```
++
++| Code | Condition | Fix |
++| --- | --- | --- |
++| `site-workflow-outdated` | the site workflow is an earlier shape Projector wrote | `project init`, or `project site workflow --write` |
++
+ ## Read configuration
+ 
+ Projector reads settings from `.projector.toml` files. Put a value in the file
+@@ -848,9 +864,24 @@ writes it with `--write`. `--write` refuses, exiting 1, to overwrite a
+ workflow edited by hand, and `--force` replaces it anyway. The workflow runs
+ when a summary is published, when a push to the default branch changes
+ `README.md`, `docs/`, a configured `projects.dir` outside `docs/`,
+-`.projector.toml`, or the workflow itself, and on demand; `--branch` names the
++`.projector.toml`, or the workflow itself, when a pull request in the
++repository closes, merged or not, and on demand; `--branch` names the
+ default branch when `origin` does not record it.
+ 
++A closed pull request deploys so that Reviews shows it as **Merged** or
++**Closed** right away, rather than as open until some later deploy. The
++workflow listens for `pull_request_target`, which GitHub runs from the
++default branch's workflow file, on the default branch. So the
++`github-pages` environment allows the deploy, and the action checks out the
++default branch, never the pull request's code. A pull request from a fork
++skips the deploy, and its run takes a concurrency group of its own, so it
++cannot replace a deploy waiting in the `pages` group. `project check` warns
++while the workflow is an earlier shape that Projector wrote, which does not
++deploy when a pull request closes; run `project init` to rewrite it. A
++workflow edited by hand gets no warning, because Projector cannot tell what
++its owner meant; compare it with `project site workflow` and add the trigger
++yourself.
++
+ ### Generated files
+ 
+ A summary page counts each changed file's lines as hand-written, test,
+diff --git a/docs/projects/proposed-projects/readme.md b/docs/projects/proposed-projects/readme.md
+index 9562016..95e60b6 100644
+--- a/docs/projects/proposed-projects/readme.md
++++ b/docs/projects/proposed-projects/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Show projects proposed in open pull requests
+diff --git a/docs/site.md b/docs/site.md
+index 52dcffa..480a4e5 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -13,7 +13,8 @@ from disk. Summaries sit
+ on hidden refs such as `refs/projector/summaries`, which are not branches,
+ so publishing one adds no branch, no pull request banner, and nothing to
+ anyone's clone. One workflow on the default branch builds and deploys the
+-site when a summary is published or `README.md` or `docs/` changes. Set a
++site when a summary is published, when `README.md` or `docs/` changes, and
++when a pull request closes. Set a
+ repository up once, with admin rights, from a checkout of it whose `origin`
+ is the GitHub repository:
+ 
+@@ -52,6 +53,8 @@ is the GitHub repository:
+      push:
+        branches: [main]
+        paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]
++     pull_request_target:
++       types: [closed]
+      workflow_dispatch:
+    permissions:
+      contents: read
+@@ -59,10 +62,11 @@ is the GitHub repository:
+      pages: write
+      id-token: write
+    concurrency:
+-     group: pages
++     group: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && format('fork-{0}', github.run_id) || 'pages' }}
+      cancel-in-progress: false
+    jobs:
+      publish:
++       if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        environment:
+          name: github-pages
+@@ -76,6 +80,16 @@ is the GitHub repository:
+    deploys the site right away, and `.projector.toml`, so a new
+    `site.prepare` takes effect.
+ 
++   A pull request that closes, merged or not, deploys the site too, so the
++   Reviews section shows it as merged or closed at once. GitHub runs a
++   `pull_request_target` workflow from the default branch, on the default
++   branch, so the deploy needs no change to the `github-pages` environment,
++   and the action checks out the default branch, never the pull request's
++   code. A pull request from a fork skips the deploy, and its run takes a
++   concurrency group of its own, so it never replaces a deploy waiting in
++   `pages`. `project check` warns while the workflow is an earlier shape
++   that Projector wrote, and `project init` rewrites it.
++
+    `@v0` follows Projector's compatible releases. Pin an exact tag such as
+    `@v0.5.0`, or a full commit SHA, to change only when you choose, with
+    `--action-ref`.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index fefd7d6..67a2765 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -35,6 +35,7 @@
+     EnvironmentError,
+     FileAction,
+     InitError,
++    Issue,
+     ProjectorError,
+     ProjectStore,
+     UsageError,
+@@ -1181,6 +1182,21 @@ def write_site_workflow(root: Path, text: str, force: bool = False) -> FileActio
+     )
+ 
+ 
++def site_workflow_issues(root: Path) -> list[Issue]:
++    """A warning while the site workflow is an earlier shape Projector wrote,
++    which `project init` rewrites. A workflow edited by hand gets none, since
++    Projector cannot tell what its owner meant."""
++    path = root / WORKFLOW_PATH
++    if not path.is_file():
++        return []
++    text = path.read_text(encoding="utf-8", errors="replace")
++    if summary.workflow_shape(text, site_projects_dir(root)) != "earlier":
++        return []
++    return [Issue("site-workflow-outdated", WORKFLOW_PATH,
++                  "the site workflow is an earlier shape and does not deploy when a pull request closes "
++                  "(run 'project init' to refresh it)", "warning")]
++
++
+ class NotOnGitHub(ProjectorError):
+     """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
+ 
+@@ -1454,7 +1470,7 @@ def run(arguments: argparse.Namespace) -> int:
+         if command == "done":
+             print("Record whether the project shipped, was abandoned, or was superseded.", file=sys.stderr)
+     elif command == "check":
+-        issues = store.check(instructions_enabled(root))
++        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root)
+         # Warnings print but never fail the gate; `valid` and the exit code
+         # follow errors alone.
+         errors = [issue for issue in issues if issue.severity == "error"]
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 5985b16..4fba271 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -70,6 +70,11 @@
+ GENERATED_ATTRIBUTE = "linguist-generated"
+ FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+ 
++# A closed pull request deploys too, so the Reviews index shows it merged or
++# closed at once. pull_request_target runs the default branch's workflow on the
++# default branch, which the github-pages environment allows, and never checks
++# out the pull request. A fork's run skips the job and takes a concurrency group
++# of its own, so it never replaces a deploy waiting in `pages`.
+ WORKFLOW = """name: Projector site
+ on:
+   repository_dispatch:
+@@ -77,6 +82,8 @@
+   push:
+     branches: [{branch}]
+     paths: [{paths}]
++  pull_request_target:
++    types: [closed]
+   workflow_dispatch:
+ permissions:
+   contents: read
+@@ -84,10 +91,11 @@
+   pages: write
+   id-token: write
+ concurrency:
+-  group: pages
++  group: ${{{{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && format('fork-{{0}}', github.run_id) || 'pages' }}}}
+   cancel-in-progress: false
+ jobs:
+   publish:
++    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+     runs-on: ubuntu-latest
+     environment:
+       name: github-pages
+@@ -150,6 +158,33 @@
+     steps:
+       - id: walkthroughs
+         uses: ninjudd/projector/actions/walkthroughs@{ref}
++""",
++    # Its step named site, before a closed pull request deployed.
++    """name: Projector site
++on:
++  repository_dispatch:
++    types: [{event}]
++  push:
++    branches: [{branch}]
++    paths: [{paths}]
++  workflow_dispatch:
++permissions:
++  contents: read
++  pull-requests: read
++  pages: write
++  id-token: write
++concurrency:
++  group: pages
++  cancel-in-progress: false
++jobs:
++  publish:
++    runs-on: ubuntu-latest
++    environment:
++      name: github-pages
++      url: ${{{{ steps.site.outputs.page_url }}}}
++    steps:
++      - id: site
++        uses: ninjudd/projector/actions/site@{ref}
+ """,
+ )
+ 
+@@ -1294,9 +1329,10 @@ def workflow_text(action_ref: str, branch: str = "main", projects_dir: str | Non
+                            paths=", ".join(watched_paths(projects_dir)))
+ 
+ 
+-def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
+-    """Whether `text` is a workflow Projector wrote for this repository, in its
+-    current shape or an earlier one, with any action ref.
++def workflow_shape(text: str, projects_dir: str | None = None) -> str | None:
++    """Which shape of the workflow Projector wrote `text` in for this repository,
++    with any action ref: `current`, the one `workflow_text` writes, `earlier`,
++    one in `PREVIOUS_WORKFLOWS`, or None when it was edited by hand.
+ 
+     Only what Projector itself varies is free: the action ref, one branch, its
+     dispatch event, and the watched paths it lists for `projects_dir`, with or
+@@ -1311,13 +1347,20 @@ def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
+         "branch": ("@@BRANCH@@", r"[^\s,\]]+"),
+         "paths": ("@@PATHS@@", "(?:" + "|".join(map(re.escape, sorted(lists))) + ")"),
+     }
+-    for template in (WORKFLOW, *PREVIOUS_WORKFLOWS):
+-        pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
+-        for mark, allowed in slots.values():
+-            pattern = pattern.replace(re.escape(mark), allowed)
+-        if re.fullmatch(pattern, text):
+-            return True
+-    return False
++    for shape, templates in (("current", (WORKFLOW,)), ("earlier", PREVIOUS_WORKFLOWS)):
++        for template in templates:
++            pattern = re.escape(template.format(**{name: mark for name, (mark, _) in slots.items()}))
++            for mark, allowed in slots.values():
++                pattern = pattern.replace(re.escape(mark), allowed)
++            if re.fullmatch(pattern, text):
++                return shape
++    return None
++
++
++def generated_workflow(text: str, projects_dir: str | None = None) -> bool:
++    """Whether `text` is a workflow Projector wrote for this repository, in its
++    current shape or an earlier one, as `workflow_shape` tells them apart."""
++    return workflow_shape(text, projects_dir) is not None
+ 
+ 
+ def default_branch(remote: str = "origin", root: Path | None = None) -> str:
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 7e83630..ed15237 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -2002,15 +2002,41 @@ def test_sets_up_the_site_by_default_then_changes_nothing_on_a_rerun(self) -> No
+                           "public": True, "website": "unchanged"}, report["site"])
+ 
+     def test_init_updates_a_workflow_projector_wrote_in_an_earlier_shape(self) -> None:
++        shapes = {"before the new paths": summary.workflow_text("v0", "main").replace(
++            ", .projector.toml, .github/workflows/projector-site.yml", "")}
++        shapes.update((f"earlier shape {i}", text) for i, text in enumerate(earlier_workflows()))
+         self.workflow().parent.mkdir(parents=True)
+-        self.workflow().write_text(summary.workflow_text("v0", "main").replace(
+-            ", .projector.toml, .github/workflows/projector-site.yml", ""))
++        for name, text in shapes.items():
++            with self.subTest(name):
++                self.workflow().write_text(text)
+ 
+-        code, out, err = self.init(FakeGitHub(pages=SITE_READY))
++                code, out, err = self.init(FakeGitHub(pages=SITE_READY))
+ 
+-        self.assertEqual(0, code, err)
+-        self.assertIn(f"updated {summary.WORKFLOW_PATH}\n", out)
+-        self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
++                self.assertEqual(0, code, err)
++                self.assertIn(f"updated {summary.WORKFLOW_PATH}\n", out)
++                self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
++
++    def test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote(self) -> None:
++        warning = (f"warning: {summary.WORKFLOW_PATH}: the site workflow is an earlier shape and does not deploy "
++                   "when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]")
++        hand_edited = earlier_workflows()[-1].replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
++        cases = {f"earlier shape {i}": (text, True) for i, text in enumerate(earlier_workflows())}
++        cases.update({"current shape": (summary.workflow_text("v0", "main"), False),
++                      "edited by hand": (hand_edited, False), "no workflow": (None, False)})
++        for name, (text, warns) in cases.items():
++            with self.subTest(name):
++                if text is None:
++                    self.workflow().unlink(missing_ok=True)
++                else:
++                    self.workflow().parent.mkdir(parents=True, exist_ok=True)
++                    self.workflow().write_text(text)
++                out, err = io.StringIO(), io.StringIO()
++                with redirect_stdout(out), redirect_stderr(err):
++                    code = cli.main(["--root", str(self.repo), "check"])
++
++                self.assertEqual(0, code, err.getvalue())
++                self.assertEqual(warns, warning in err.getvalue().splitlines(), err.getvalue())
++                self.assertEqual(warns, "site-workflow-outdated" in err.getvalue(), err.getvalue())
+ 
+     def test_init_keeps_a_workflow_edited_by_hand(self) -> None:
+         # A workflow that sets up a toolchain for site.prepare, as a repository
+@@ -2320,6 +2346,13 @@ def test_reads_a_url_without_a_scheme_as_https(self) -> None:
+         self.assertEqual("http://projects.example.com/", cli.site_address("http://projects.example.com"))
+ 
+ 
++def earlier_workflows(projects_dir: str | None = None) -> list[str]:
++    """Each earlier shape of the site workflow, as Projector wrote it for `projects_dir` with the newest paths."""
++    paths = ", ".join(summary.watched_paths(projects_dir))
++    return [template.format(event=summary.DISPATCH_EVENT, ref="v0", branch="main", paths=paths)
++            for template in summary.PREVIOUS_WORKFLOWS]
++
++
+ class WorkflowTests(unittest.TestCase):
+     def test_the_action_hands_its_prepare_input_to_the_build_after_its_checkout(self) -> None:
+         action = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text()
+@@ -2383,6 +2416,21 @@ def test_the_workflow_listens_only_for_the_summaries_event(self) -> None:
+         self.assertIn("    types: [projector-summaries]\n", text)
+         self.assertNotIn(summary.LEGACY_DISPATCH_EVENT, text)
+ 
++    def test_a_pull_request_in_the_repository_deploys_when_it_closes_and_a_forks_does_not(self) -> None:
++        text = summary.workflow_text("v0", "main")
++        fork = "github.event.pull_request.head.repo.full_name != github.repository"
++
++        self.assertIn("  pull_request_target:\n    types: [closed]\n", text)
++        self.assertNotIn("  pull_request:\n", text, "a pull_request run checks out the pull request's merge ref")
++        self.assertIn("  publish:\n    if: github.event_name != 'pull_request_target' || "
++                      "github.event.pull_request.head.repo.full_name == github.repository\n", text)
++        self.assertIn("concurrency:\n  group: ${{ github.event_name == 'pull_request_target' && "
++                      f"{fork} && format('fork-{{0}}', github.run_id) || 'pages' }}}}\n  cancel-in-progress: false\n",
++                      text)
++        self.assertEqual(["contents: read", "pull-requests: read", "pages: write", "id-token: write"],
++                         text.split("permissions:\n", 1)[1].split("concurrency:", 1)[0].strip().split("\n  "),
++                         "a closed pull request deploys with the permissions every other run has")
++
+     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
+         text = summary.workflow_text("v0", "trunk")
+         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]\n", text)
+@@ -2408,10 +2456,18 @@ def test_every_workflow_projector_wrote_is_its_own_and_an_edited_one_is_not(self
+             "walkthroughs step": summary.PREVIOUS_WORKFLOWS[1].format(
+                 event="projector-walkthroughs", ref="v0", branch="main", paths="README.md, 'docs/**'"),
+             "no push trigger": summary.PREVIOUS_WORKFLOWS[0].format(event="projector-walkthroughs", ref="0123abc"),
++            "no closed trigger": summary.PREVIOUS_WORKFLOWS[2].format(
++                event="projector-summaries", ref="v0.5.3", branch="trunk", paths=", ".join(summary.watched_paths("plans"))),
+         }
+         for name, text in shapes.items():
+             with self.subTest(name):
+-                self.assertTrue(summary.generated_workflow(text, "plans" if "plans" in text else None))
++                projects_dir = "plans" if "plans" in text else None
++                self.assertTrue(summary.generated_workflow(text, projects_dir))
++                # The paths are not part of the shape: either list deploys when a pull request closes.
++                self.assertEqual("current" if name in ("current", "before the new paths") else "earlier",
++                                 summary.workflow_shape(text, projects_dir))
++        for text in earlier_workflows():
++            self.assertEqual("earlier", summary.workflow_shape(text))
+ 
+         setup = current.replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
+         self.assertFalse(summary.generated_workflow(setup), "a toolchain step for site.prepare")
