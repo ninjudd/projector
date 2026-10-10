@@ -1,0 +1,467 @@
+---
+status: ready
+priority: next
+---
+
+# Show projects proposed in open pull requests
+
+The site's Projects page lists each project whose plan an open pull request
+adds, marked **Proposed** and linked to that pull request, beside the projects
+already on the default branch.
+
+## 1. Problem
+
+The Projects page is the site's list of plans. `project site build` makes it
+from the `readme.md` files in the checkout it builds, which on a deploy is the
+default branch. A new plan reaches that branch only when its pull request
+merges, and Projector writes a plan as a pull request so that people review
+it first. While the plan is in review, the page does not list it, so the
+reader who goes there to find plans misses the ones that need their attention
+most.
+
+The rest of the site already has the plan. The review loop publishes a
+summary of every pull request it reviews to `refs/projector/summaries`, and
+each summary stores the pull request's diff as `diff.patch`. A new file's diff
+holds every line of the file. So the Reviews section shows the whole plan as a
+diff, but nothing on the site shows it as a project:
+
+- **The Projects page and search leave it out.** Pull request #216 adds the
+  `stack-header` plan, and the review loop has summarized each of its heads.
+  On 2026-10-10 its newest summary, at head `a3e26c8`, stored
+  `docs/projects/stack-header/readme.md` as a new file in one hunk,
+  `@@ -0,0 +1,640 @@`, which is every line of the plan. The Projects page and
+  the site's search do not list `stack-header`.
+- **A review cannot link the plan it adds.** `project_linker` in
+  `src/projector/site/__init__.py` links a changed file to the project whose
+  folder holds it, and only to a project the site has a page for. A file in
+  the folder of a plan that the pull request adds gets no link.
+- **A stack header cannot name a plan in review.** The `stack-header` plan in
+  #216 gives each stack of pull requests one project as its header, chosen
+  from the projects the site has a page for. A stack whose plan is still in
+  review falls back to a plain title.
+
+## 2. Solution
+
+The site build finds each project that an open pull request's newest summary
+adds, and adds it to the site's list of projects as a proposed project. A
+proposed project is one whose `readme.md` is a new file in the diff of an
+open pull request's newest summary and is not in the checkout the site is
+built from. The build rebuilds the plan's text from that diff, parses it with
+the same code `project list` uses, and serves it as Markdown at
+`projects/<name>/`, the address it keeps after it merges. The Projects page
+lists it in its status group with a **Proposed** badge that links the pull
+request's review page. Its own page opens with a banner that names the pull
+request and says the plan is not merged. The build reads only what summaries
+already publish, so it makes no new request to GitHub and puts nothing on the
+site that the Reviews section does not already show. When the pull request
+merges or closes, the next build leaves the project out of the proposed ones.
+
+### 2.1 The build finds proposed projects in the summaries
+
+`build_site` in `src/projector/site/__init__.py` collects the checkout's
+projects first, as it does now. Then `build_summaries` runs these steps:
+
+1. It reads every summary and keeps each pull request's newest one, as it
+   does now. `prepare_page` parses each diff into files with `parse_diff`,
+   which marks a new file with `new` and keeps every line of every hunk.
+2. It asks `status_lookup` for each pull request's state once, before it links
+   any summary to a project. It already asks once for each pull request, after
+   linking. This step only moves the call earlier.
+3. It takes each pull request whose state is `open`, lowest number first. A
+   draft pull request is open. A pull request whose state the build cannot
+   ask for proposes nothing. When any summary adds a plan and its state is
+   unknown, the build prints one line that says how many pull requests it left
+   out and why.
+4. In each open pull request's newest diff, it picks every file that is `new`
+   and whose path is `<projects directory>/<name>/readme.md`, with that exact
+   lowercase file name. The projects directory is the one the checkout
+   configures, even when the checkout does not have it yet, so a
+   repository's first plan can be proposed. `<name>` may hold slashes, for a
+   nested project.
+5. It drops a candidate whose name is a project in the checkout, or whose path
+   is a file in the checkout. The checkout always wins.
+6. It rebuilds each candidate's text with `new_file_text`, a new function in
+   `src/projector/summary.py`. The function joins the added lines of a new
+   file's hunks with `\n`, and ends the text with `\n` unless the diff marks
+   the last line as having no newline. It returns `None` for a file with no
+   hunks, which is either empty or binary.
+7. It parses the text with `project_from_text`, the function that
+   `ProjectStore._project_from_path` in `src/projector/core.py` now calls
+   after it reads a file. The name comes from the path, as it does for a
+   checkout project. A plan that does not load, because of a bad name,
+   frontmatter, status, priority, or owner, is skipped with one line that
+   names the pull request, the path, and the reason:
+
+   ```text
+   ::warning title=Proposed project skipped::#216 docs/projects/stack-header/readme.md: status must be one of draft|ready|in-progress|completed
+   ```
+
+8. When two open pull requests add a plan with the same name, the lower
+   number's plan is the proposed project, and the other numbers go in its
+   `also` list. A plan that fails step 7 does not take the name.
+9. It drops a nested candidate whose top-level folder holds no project, either
+   in the checkout or proposed by any open pull request, with the same warning
+   and the reason `its top-level project is not on the site`. This is the rule
+   that `project check` applies as `missing-plan`.
+10. For each proposed project, it takes the other new Markdown files that the
+    same diff adds under the project's folder, outside any deeper project's
+    folder, as the project's `files`. It rebuilds each one with
+    `new_file_text` and titles it with `title_from_text`, as `page_title`
+    titles a Markdown file in the checkout. It does not carry a new HTML page,
+    image, or data file.
+11. It writes each proposed file to `content/<path>` in the site, beside the
+    checkout's files. It never writes over a path the checkout has.
+12. It builds `project_linker` over the checkout's projects and the proposed
+    ones, links each summary, and writes the review pages, as it does now.
+    It returns the proposed projects beside its entries.
+
+`build_site` then adds the proposed projects to its list, so
+`assign_routes`, `site_routes`, `site.json`, `search.json`, and each
+project's `reviews` include them. `site.json` names the projects directory as
+`projectsDir` whenever it lists a project, so the page routes a proposed
+project's files to the Projects section even when the checkout has no
+projects directory. `search_index` reads each document from the
+site's `content/` copy rather than from the checkout, so it indexes a proposed
+file the same way as any other. `build_checkout` in `src/projector/cli.py`
+counts the proposed projects in its summary line:
+
+```text
+wrote _site/index.html: 14 projects, 1 proposed project, 23 reviews, 0 reviews skipped
+```
+
+### 2.2 The data marks a proposed project
+
+A proposed project is an ordinary entry in `site.json`'s `projects` list,
+with the fields every project has, `name`, `path`, `title`, `status`,
+`priority`, `owner`, `files`, and `reviews`, and one more:
+
+| Field | Value |
+| --- | --- |
+| `proposed.number` | The open pull request whose newest summary adds the plan, such as `216` |
+| `proposed.head` | That summary's head, the full SHA, such as `a3e26c8bb496e875a875aa704d6c3e02132ac08f` |
+| `proposed.also` | The other open pull requests whose newest summaries add a plan of the same name that loads, lowest first, or `[]` |
+
+A checkout project has no `proposed` field. The pull request's title and its
+review status come from its row in `site.json`'s `reviews`, which every
+proposed project has, because the summary that proposes it is on the site.
+
+Each entry in `search.json` for a proposed project's pages gains
+`"proposed": <number>`.
+
+### 2.3 The site shows each proposed project as proposed
+
+`site/src/site.ts` holds the word in one constant, `PROPOSED`, which every
+label below uses. Wherever the site lists a proposed project, the listing
+carries a badge, `<a class="badge proposed" href="<base>reviews/216/">Proposed #216</a>`,
+that links the pull request's review page.
+
+- **Projects page.** `showProjects` lists a proposed project in its status
+  group, sorted with the others by priority and name, with the badge after
+  its title. The note under the heading counts the proposed projects when
+  there are any. The filter matches the word, so typing `proposed` lists only
+  the proposed projects.
+- **Project page.** `showProjectFile` draws a banner above the status badges
+  on every page of a proposed project, its plan and each of its files. The
+  banner names the pull request with its title and review status, drawn by
+  `statusHtml` as the Reviews index draws it. It says that the plan is not on
+  the site's branch, `site.branch`, and which head it shows. When `also` is
+  not empty, it names those pull requests too.
+- **GitHub links.** **View on GitHub**, and a link or image in the plan that
+  points at a repository file the site does not carry, go to the file at
+  `proposed.head`, not on the site's branch, where the file may not exist.
+  `repoUrl` and `renderMarkdown` take the ref to link at.
+- **Sidebar.** `tree` draws the badge beside a proposed project, such as a
+  proposed nested project in a checkout project's folder.
+- **Search.** A result whose entry has `proposed` shows the badge beside its
+  kind.
+
+The Projects page, with #216 open:
+
+```text
+Projects
+15 projects under docs/projects, 1 of them proposed in open pull requests.
+Status says how finished a project is; priority says when it is scheduled.
+
+READY 4
+ Project                                                         Priority  Name
+ Review a minimal push incrementally                             next      incremental-review
+ Let several models review the same pull request                 next      multi-model-review
+ Head each stack with one project or a title  [Proposed #216]    next      stack-header
+ Expand the hidden lines around a summary's diff hunks           next      summary-diff-context
+```
+
+The project's page:
+
+```text
+Projects / stack-header
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Proposed in #216 Plan one header for each stack: its project or a title  │
+│ · Clean                                                                   │
+│ This plan is in an open pull request and is not on main yet. It shows    │
+│ head a3e26c8, the newest head with a summary.                             │
+└──────────────────────────────────────────────────────────────────────────┘
+ready  next  View on GitHub
+Reviews  #216 Plan one header for each stack: its project or a title
+
+Head each stack with one project or a title
+…
+```
+
+### 2.4 How other plans use proposed projects
+
+- **`stack-header` (#216).** That plan gives each stack one header, resolved
+  against the projects the site has a page for. Proposed projects are in that
+  set, at the same address, `<base>projects/<name>/`. A stack whose plan is
+  still in review gets a header that links the proposed page, rather than one
+  that falls back to a title. The header can read `proposed` from the
+  project to draw the badge. The build knows the proposed projects before it
+  links any summary, so it knows them before it resolves any header. The two
+  changes can land in either order. The one that lands second resolves the
+  header over the combined list.
+- **`summary-diff-context`.** That plan stores the head's version of each
+  changed file under `head/<path>` on the summaries ref, but not a new file,
+  whose diff already holds every line. This plan reads new files from the
+  diff, so it needs nothing from that one. The deferred view of changes to an
+  existing project in § 6 would read the head's plan from `head/<path>`.
+- **`incremental-review` and `multi-model-review`.** Neither changes how
+  summaries are stored. An incremental review still updates the summary for
+  the new head, so a proposed plan follows small pushes too. The banner draws
+  the review status from the same `review` field that the Reviews index reads,
+  so it shows whatever status those plans define.
+
+### 2.5 Files that change
+
+| File | Change |
+| --- | --- |
+| `src/projector/core.py` | `project_from_text`, the name check and frontmatter checks of `ProjectStore._project_from_path`, which now reads the file and calls it. |
+| `src/projector/summary.py` | `new_file_text`, the text of a new file from its parsed hunks. |
+| `src/projector/site/__init__.py` | `build_summaries` asks for statuses before it links, finds the proposed projects, writes their files, links over both lists, and returns them. `build_site` adds them to its list before `assign_routes`, and names `projectsDir` whenever it lists a project. `search_index` reads from `content/`. |
+| `src/projector/cli.py` | `site_projects` returns the configured projects directory even when the checkout lacks it. `build_checkout` counts the proposed projects. |
+| `site/src/site.ts` | `PROPOSED`, the badge, the banner, the Projects page count and filter, links at `proposed.head`, the sidebar badge, and the search badge. |
+| `site/src/globals.d.ts` | `proposed` on `SiteProject`, and on `SearchEntry`. |
+| `site/assets/site.css` | The badge and the banner, in the light and dark themes. |
+| `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
+| `docs/cli.md` | The Projects page in "Build the Projector site": proposed projects, where they come from, and when they leave. |
+| `tests/test_projector.py`, `tests/test_summary.py`, `tests/test_site.py` | The tests in § 4. |
+
+## 3. Why this design
+
+- **The name is Proposed.** A proposed plan is one put forward for review and
+  not yet accepted, which is what an open pull request is. The word sits on a
+  separate axis from `status`, so a row reads as both: Proposed, and Draft or
+  Ready. Rejected names:
+  - **Draft**, which is already a `status` value.
+  - **Unmerged**, which names a Git mechanism rather than the plan's state,
+    reads as a defect, and is awkward on a badge.
+  - **Pending**, which GitHub already uses for checks and reviews, and which
+    says the plan waits without saying for what.
+  - **Incoming**, which suggests the plan is accepted and on its way.
+  - **New**, which describes age. A plan merged yesterday is new, and a
+    proposal can sit open for weeks.
+  - **In review**, which the review statuses already cover. A proposed plan
+    can be unreviewed or have changes requested.
+  - **Open**, which is the pull request's state on the Reviews index's
+    **Open** and **Closed** boxes, not the plan's.
+
+  The project is named `proposed-projects` for the same reason.
+- **Read the summaries, and only the summaries.** The summaries ref is the
+  site's one source of pull request content. Publishing a summary is the act
+  that puts a pull request's diff on the site, and every deploy already reads
+  the ref. Reading a new plan from a diff the build has already parsed costs
+  no request, no fetch, and no new storage. A summary publish also starts a
+  deploy, so a proposed plan appears, and follows each new head, at the moment
+  its summary does. Rejected:
+  - **Fetching `refs/pull/<n>/head` in the build.** It needs the list of open
+    pull requests from GitHub anyway, because `refs/pull/*/head` stays after a
+    pull request closes. It costs a fetch per pull request on every deploy.
+    It needs each branch's merge base, which the deploy's shallow checkout
+    lacks, to tell what the pull request adds from what the default branch
+    moved, so a project renamed on the default branch would show its old name
+    as proposed. `summary-diff-context` rejects a per-deploy fetch for the
+    same reasons.
+  - **Asking the GitHub API for open pull requests and their files.** It would
+    show plans from pull requests that nobody chose to publish, a fork's
+    included, and add a second source of content with its own cache. No
+    deploy starts when a pull request opens or moves, so the plan would still
+    lag its branch until something else deployed.
+  - **Every branch.** A branch without a pull request proposes nothing to
+    anyone, and reading every branch would publish work in progress.
+- **A pull request without a summary proposes nothing.** In a repository with
+  a site, `review-pr` summarizes every pull request it reviews, so a plan in
+  review has a summary. A repository that does not review with Projector
+  publishes a summary with `project summary publish` to show a plan.
+- **Forks need no rule of their own.** A fork's pull request reaches the site
+  only when someone who can push to the summaries ref publishes its summary,
+  which is the gate the Reviews section already uses. A rule against forks
+  would need a new field on every summary and would hide a plan that a
+  maintainer chose to publish.
+- **No new exposure, so the existing visibility check covers it.** A deploy
+  runs `project site build --check-visibility`, which refuses to deploy a
+  private repository's site while that site is public. Every proposed file is
+  rebuilt from a `diff.patch` that the same deploy already serves on a review
+  page. `project site serve` serves on the loopback address unless told
+  otherwise, as it does now.
+- **Serve proposed content as Markdown only.** The site renders Markdown
+  through DOMPurify, so a plan's text cannot run a script. It shows an HTML
+  page as it is, in a frame on the site's own origin, where the page's script
+  can read every other page of the site. A proposed HTML page has not been
+  merged, so it does not get that frame. The plan links it at its head on
+  GitHub instead.
+- **Unknown state proposes nothing.** The Projects page is the record of
+  plans, so a plan from a closed pull request listed there is a false claim.
+  The Reviews index counts an unknown state as open, because a list of
+  summaries loses less from a wrong state. The build prints the count it left
+  out, so a site served without `gh` says why it shows no proposed projects.
+- **The checkout always wins.** A plan of the same name in the checkout is the
+  accepted one, and a file the checkout has is never replaced. That keeps a
+  proposal from changing any page that the default branch already serves.
+- **The lowest pull request number wins a name.** It is the first proposal and
+  stays stable from build to build, where the newest summary would flip the
+  page each time either pull request is summarized. The banner names the
+  others, so their versions are one click away.
+- **In its status group, not a separate section.** Proposed is a separate axis
+  from status. A section of its own would read as a fifth status, the
+  confusion the name was chosen to avoid. In its group, a proposed `ready`
+  plan sits beside the other `ready` plans, where a reader looking for ready
+  work finds it, and a proposed nested project keeps its place under its
+  parent. The badge, the count, and the filter keep proposed projects easy to
+  find. Rejected: a **Proposed** section above **in-progress**, which would
+  split a nested project from its parent and push the accepted plans down the
+  page.
+- **The same address before and after the merge.** A proposed project lives at
+  `projects/<name>/`, so a link to it, in a pull request or a stack header,
+  opens the accepted plan once it merges. Rejected: an address under the pull
+  request, such as `reviews/216/projects/stack-header/`, which would break
+  every such link at the merge.
+- **Reuse the parser and the diff.** `project_from_text` is the code
+  `project list` and `project check` run, moved out of
+  `_project_from_path` so it can take text instead of a path. A second parser
+  could accept a plan that `project check` rejects. `parse_diff` already
+  parses every summary's diff, and `new_file_text` reads its output rather
+  than parsing the patch again. `project_linker`, `assign_routes`,
+  `search_index`, `statusHtml`, `tree`, and the `badge` styles all serve
+  proposed projects unchanged, or with one new argument, because a proposed
+  project is an entry in the same list.
+- **One constant for the word.** Every label on the site reads `PROPOSED`, so
+  the word changes in one place.
+
+## 4. Acceptance criteria
+
+Build tests in `tests/test_site.py` run in a temporary checkout with the
+project `alpha`, publish summaries as the existing tests do, and replace
+`summary.pr_status` with a fake that returns each pull request's state. After
+the first row, each path is under `docs/projects/`:
+
+| Do | Expect |
+| --- | --- |
+| Build with open pull request #9, whose diff adds `docs/projects/gamma/readme.md` with `status: ready` and `priority: next` | `site.json` lists `gamma` with that status, priority, and title, and `proposed` `{"number": 9, "head": <head>, "also": []}`. `content/docs/projects/gamma/readme.md` equals the plan byte for byte. `projects/gamma/index.html` exists. `search.json` has `projects/gamma/` with `"proposed": 9`. |
+| Build the same with #9 merged, or closed | No `gamma` |
+| Build the same while the fake raises | No `gamma`, and one line saying one pull request's state is unknown |
+| Build with #9's newest summary no longer adding `gamma`, and an older one adding it | No `gamma` |
+| Build with #9 adding a plan whose last line has no newline | The content has no final newline |
+| Build with #9 adding a plan with `status: maybe` | No `gamma`, and one `::warning title=Proposed project skipped::#9 docs/projects/gamma/readme.md: status must be one of …` line |
+| Build with #9 adding `alpha/readme.md`, which the checkout has | `alpha` is the checkout's, with no `proposed`, and its content is unchanged |
+| Build in a checkout with no projects directory, with #9 adding `gamma/readme.md` | `gamma` is proposed, and `site.json`'s `projectsDir` is `docs/projects` |
+| Build with #9 and #12 both adding `gamma/readme.md`, with different titles | `gamma` has #9's title and `also` `[12]` |
+| Build the same with #9's plan failing to load | `gamma` has #12's title and `also` `[]`, and the warning names #9 |
+| Build with #9 adding `alpha/delta/readme.md` | `alpha/delta` is proposed |
+| Build with #9 adding `omega/x/readme.md` and no `omega` anywhere | No `omega/x`, and the warning names its missing top-level project |
+| Build with #9 adding `gamma/readme.md`, `gamma/design.md`, `gamma/page.html`, `gamma/data.json`, and a binary `gamma/logo.png` | `gamma`'s `files` is `design.md` alone, and `content/` holds no other file of `gamma` |
+| Read #9's review page data | Its file `docs/projects/gamma/readme.md` has the project `gamma` at `/projects/gamma/` |
+| Count the fake's calls | One per pull request, as the existing `statuses` test asserts |
+
+Unit tests:
+
+| Do | Expect |
+| --- | --- |
+| Call `project_from_text` and load the same text with `ProjectStore` (`tests/test_projector.py`) | The same `Project`, and the same message for each kind of bad plan |
+| Call `new_file_text` on parsed diffs (`tests/test_summary.py`) | A new file's exact text, with and without a final newline. `None` for a modified file, an empty file, and a binary file. |
+
+Page tests run under node against the compiled `site.js`, as the existing
+Projects view tests do:
+
+| Do | Expect |
+| --- | --- |
+| Draw the Projects page with one proposed `ready` project | Its row is in the **ready** group with `<a class="badge proposed" href="/reviews/9/">Proposed #9</a>`, and the note says `1 of them proposed in open pull requests` |
+| Type `proposed` in the filter | Only the proposed rows stay |
+| Draw the proposed project's page | The banner names #9 with its title and status, **View on GitHub** links `blob/<head>/docs/projects/gamma/readme.md`, and a relative link to a file the site lacks links at `<head>` |
+| Draw a search result for a proposed page | It shows the badge |
+| Give the pull request a title holding `<script>` | The badge and the banner show it as text |
+
+Every test above fails before the change, except the unit test of
+`project_from_text`'s messages, which pins the behavior the refactor keeps.
+
+In a browser, the implementing pull request runs `project site serve` on this
+repository while a pull request that adds a plan is open, in the light and dark
+themes, at full width and at 375 pixels. The plan is in its status group with
+the badge, its page has the banner, the badge opens the review page, and search
+finds the plan. The pull request's Testing section records these steps.
+
+## 5. Cost
+
+The site build is the path that changes, and it runs on every deploy and on
+every rebuild of `project site serve`.
+
+- **GitHub.** No new request. The build asks for each pull request's status
+  once, as it does now, and only earlier. The call-count test in § 4 holds it
+  there.
+- **Build work.** The build rebuilds text from hunks it has already parsed,
+  and parses the frontmatter of the plans that open pull requests add. That is
+  linear in the size of those plans, and small next to `parse_diff`, which
+  already reads every summary's diff.
+- **Site size.** Each proposed project adds its plan and its Markdown files to
+  `content/` and `search.json`, and one small object to `site.json`. Only open
+  pull requests contribute, so the size tracks the plans in review, not the
+  history of the ref.
+
+The implementing pull request reports the build's summary line and its time
+with `time project site build` on this repository's summaries ref, before and
+after the change.
+
+## 6. Deferred
+
+- **Changes to an existing project.** A pull request that changes a plan the
+  checkout has, such as an implementation pull request that moves it to
+  `in-progress`, shows nothing new. The project's page already lists that pull
+  request among its reviews, and its review page shows the change. Showing
+  the proposed status or text on the project's page needs the head's version
+  of the plan, which `summary-diff-context` stores under `head/<path>`. A
+  pull request that renames or moves a project falls here too.
+- **Rebuilding when a pull request closes.** No deploy starts when a pull
+  request closes without merging, so its proposed project stays until the next
+  deploy, which any summary publish or push to the default branch starts. The
+  Reviews index already shows a closed pull request as open for the same
+  time. A `pull_request_target` trigger in the generated workflow would close
+  the gap, at the cost of a deploy for every closed pull request in every
+  repository and a change to every site's workflow.
+- **`project list`.** The CLI reads the checkout and stays unchanged. A
+  command that lists proposed projects can follow if someone needs one in a
+  terminal.
+
+## 7. Background
+
+- **Where the summaries come from.** `review-pr` summarizes every pull request
+  it reviews while the repository hosts a site, and publishes with
+  `project summary publish`. Publishing stores `summary.json`, `diff.patch`,
+  and `attributes.json` under `summaries/<number>/<head>/` and sends the
+  `repository_dispatch` event that deploys the site. The deploy's other
+  triggers are a push to the default branch that changes the README, `docs/`,
+  or the site's configuration, and a manual run. No trigger fires when a pull
+  request opens, moves, or closes.
+- **What a summary's diff holds.** `parse_diff` sets `new` on a file whose
+  diff has `new file mode`, records each added line with its text, and records
+  the `\ No newline at end of file` marker as a meta line. A binary file has a
+  `Binary files … differ` line and no hunks.
+- **What the build asks GitHub.** `build_checkout` gives the build `base_pr`,
+  for a summary that did not record the pull request beneath it, and
+  `pr_status`, one GraphQL query per pull request for its state, base branch,
+  and reviews. The test that drives `statuses` in `tests/test_site.py`
+  asserts one `pr_status` call per pull request.
+- **How the site shows HTML.** `showHtml` in `site/src/site.ts` loads an HTML
+  page in an `iframe` from `content/`, on the site's own origin and without a
+  `sandbox` attribute. `renderMarkdown` passes Markdown through
+  `DOMPurify.sanitize`.
+- **What the checkout's projects skip.** `site_projects` in
+  `src/projector/cli.py` leaves out a plan that `project check` reports as
+  `invalid-project`, `missing-plan`, or `wrong-entry-case`. Steps 4, 7, and 9
+  of § 2.1 apply those three rules to proposed plans.
