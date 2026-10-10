@@ -396,17 +396,28 @@ before the plan's links.
 
 ### 2.7 A proposed project's page
 
-`proposed-projects` is a separate plan for projects that exist only on
-unmerged branches. A proposed project's page gets this sidebar when that plan
-meets two conditions, which this plan does not design:
+[`proposed-projects`](../proposed-projects/readme.md), which #218 merged,
+lists each plan that an open pull request adds as a project in `site.json`'s
+`projects`, with the fields every project has and a `proposed` field, at the
+same route. Stack headers resolve against those projects too. A proposed
+project's page therefore draws this sidebar as any project's page does:
 
-- **The page has a project record.** `projectNav` reads only `name`, `title`,
-  `path`, `files`, and `stacks` from the record, and `site.projects` for the
-  nested projects under its folder.
-- **Its segments carry its name.** `project_stacks` files a stack under each
-  `project` its segments' headers name. `stack_segments` treats a `project`
-  that names a plan the site lacks as no project, so `proposed-projects`
-  decides when a proposed project's name counts as one the site has.
+- **Its record.** `projectNav` reads only `name`, `title`, `path`, `files`,
+  and `stacks` from a project record, and `site.projects` for the nested
+  projects under its folder. A proposed project's record carries `stacks` in
+  place of `reviews`, as every project's record does.
+- **Its stacks.** `project_stacks` files a stack under each project that its
+  segments' headers name, and a proposed project is one of those once
+  `proposed-projects` adds it to the projects the headers resolve against.
+- **Its banner.** `proposed-projects` draws a banner above the status badges.
+  With the badges in the title row, the banner opens the content column,
+  above the plan, so the title row and the sidebar keep a summary page's
+  layout.
+- **Its GitHub links.** `proposed-projects` points **View on GitHub** at
+  `proposed.head`. The footer's history link points at that head too, as
+  `commits/<proposed.head>/<path>`, because the site's branch lacks the file.
+
+Whichever of the two implementations lands second makes these fit.
 
 ### 2.8 Files that change
 
