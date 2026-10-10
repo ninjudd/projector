@@ -103,8 +103,7 @@ a.rstatus:hover { text-decoration: underline; }
 .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
 .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
-.prblock .stack.projects .snum { align-self: start; padding-top: 1px; }
-.prblock .stack.projects .snum svg { display: block; width: 14px; height: 14px; }
+.prblock .stack.projects li > a { grid-template-columns: 1fr; }
 .prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prbar { display: none; }
 @media (max-width: 980px) {

@@ -820,9 +820,9 @@ class FileHeaderTests(SiteRepoCase):
 
         projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
         self.assertIsNotNone(projects, "the projects list is missing")
-        rows = re.findall(r'<li><a href="([^"]+)"><span class="snum"><svg[^>]*>.*?</svg></span>'
-                          r'<span class="stitle">([^<]+)</span></a></li>', projects.group(1))
-        self.assertEqual([("/projects/alpha/", "Build alpha"), ("/projects/alpha/beta/", "Finish beta")], rows)
+        self.assertEqual('<li><a href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
+                         '<li><a href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
+                         projects.group(1), "each project's title fills its row, with nothing before it")
         self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
                         "the projects come first in the sidebar")
         self.assertNotIn("Projects:", html)
