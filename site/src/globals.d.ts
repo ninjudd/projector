@@ -48,17 +48,26 @@ interface SummaryGroup {
   files: { path: string; collapsed?: boolean | null; note?: string; checks?: SummaryCheck[] }[];
 }
 
+/** A pull request's state when the site was built. */
+type PullState = 'open' | 'merged' | 'closed';
+
+/**
+ * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
+ * Projector review names the head.
+ */
+type ReviewStatus = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
   /**
-   * `base` is the merge base the diff is taken from. `state` is the pull request's state when the site was
-   * built, and `currentBaseRef` the base branch GitHub reported then, or null once that branch was deleted;
-   * both are absent when the build could not ask GitHub.
+   * `base` is the merge base the diff is taken from. `currentBaseRef` is the base branch GitHub reported when
+   * the site was built, or null once that branch was deleted; it and `state` are absent when the build could
+   * not ask GitHub.
    */
   pr: {
     repo: string; number: number; title: string; head: string; base?: string; headRef?: string; baseRef?: string;
-    state?: 'open' | 'merged' | 'closed'; currentBaseRef?: string | null;
+    state?: PullState; currentBaseRef?: string | null;
   };
   /** The repository's default branch when the site was built, where a merged pull request's files now are once the branch it merged into is gone. */
   defaultBranch?: string;
@@ -71,11 +80,8 @@ interface SummaryData {
   /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
   stack?: { number: number; title: string; url: string; current: boolean }[];
   projects?: { name: string; title: string; url: string }[];
-  /**
-   * The newest Projector review of this head, with its page on GitHub, or `unreviewed` when no
-   * Projector review names the head; absent when the build could not ask GitHub.
-   */
-  review?: { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+  /** The newest Projector review of this head; absent when the build could not ask GitHub. */
+  review?: ReviewStatus;
   generatedAt?: string;
 }
 
@@ -97,15 +103,19 @@ interface SiteProject {
   reviews: number[];
 }
 
+/** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
 interface SiteReview {
   number: number;
   name: string;
   title: string;
-  head: string;
   heads: number;
   projects: string[];
-  /** The number of the pull request this one is stacked on, whether or not the site has its review. */
-  stackedOn?: number | null;
+  /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
+  stack: number | null;
+  /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */
+  state?: PullState;
+  review?: ReviewStatus;
+  /** When the newest head was published, as an ISO 8601 time in UTC. */
   updated: string;
 }
 

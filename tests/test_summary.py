@@ -283,7 +283,8 @@ class SiteTests(unittest.TestCase):
                       (built_site / "reviews" / "7" / "index.html").read_text(), "the newest head, rendered in place")
         index = (built_site / "index.html").read_text()
         listed = json.loads((built_site / "site.json").read_text())["reviews"]
-        self.assertEqual([(7, "New", "c" * 40, 2)], [(w["number"], w["name"], w["head"], w["heads"]) for w in listed])
+        self.assertEqual([(7, "New", "1970-01-01T00:03:20Z", 2)],
+                         [(w["number"], w["name"], w["updated"], w["heads"]) for w in listed], "dated by the newest head")
         self.assertTrue((built_site / ".nojekyll").exists())
         page = (built_site / "reviews" / "7" / ("a" * 40) / "index.html").read_text()
         self.assertNotIn("summary-data", page)

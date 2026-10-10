@@ -9,6 +9,7 @@
   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
   --warn: #946300; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA; --info: #0550AE; --info-bg: #E3EDFA;
+  --merged: #7C3AED; --closed: #B42318;
   --code-bg: #EFECE3; --tok-bg: #FCE8A4; --tok-ring: #C99A1E;
   --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
@@ -23,6 +24,7 @@
     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
     --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+    --merged: #C4A7FF; --closed: #F0A19B;
     --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
     --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -36,6 +38,7 @@
   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
   --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+  --merged: #C4A7FF; --closed: #F0A19B;
   --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
   --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -72,6 +75,8 @@ a.rstatus:hover { text-decoration: underline; }
 .rstatus.clean { color: var(--ok); }
 .rstatus.changes-requested { color: var(--accent); }
 .rstatus.unreviewed { color: var(--muted); }
+.rstatus.merged { color: var(--merged); }
+.rstatus.closed { color: var(--closed); }
 
 /* sidebar */
 /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
