@@ -394,25 +394,30 @@
     return site.reviews.find(function (r) { return r.number === number; }) ?? null;
   }
 
-  function projectLinks(names: string[]): string {
-    return names.map(function (name) {
-      const project = projectNamed(name);
-      return `<a href="${esc(`${base}projects/${name}/`)}">${esc(project !== null ? project.title : name)}</a>`;
-    }).join('<br>');
+  // A merged pull request counts as closed, as on GitHub, and one whose state
+  // the build could not ask GitHub for counts as open.
+  function stateOf(r: SiteReview): 'open' | 'closed' { return r.state === 'merged' || r.state === 'closed' ? 'closed' : 'open'; }
+
+  // The states the address asks to list: ?state=open,closed for both,
+  // ?state=closed for closed alone, and ?state= for neither. With no query it
+  // lists the open ones.
+  function listedStates(): string[] {
+    const asked = new URLSearchParams(location.search).get('state');
+    return asked === null ? ['open'] : asked.split(',');
   }
 
-  function isDone(r: SiteReview): boolean { return r.state === 'merged' || r.state === 'closed'; }
-
+  // A review's row: its pull request's number and title as a summary's sidebar
+  // draws a stack's rows, its status, and when its newest head was published.
   function reviewRow(r: SiteReview): string {
-    const url = esc(`${base}reviews/${String(r.number)}/`);
-    return `<tr><td><a href="${url}">#${String(r.number)}</a></td><td><a href="${url}">${esc(r.name !== '' ? r.name : r.title)}</a>` +
-      `<div class="note">${esc(r.title)}</div></td><td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
-      `<td>${projectLinks(r.projects)}</td>` +
+    return `<tr><td class="pr"><a class="srow" href="${esc(`${base}reviews/${String(r.number)}/`)}">` +
+      `<span class="snum">#${String(r.number)}</span><span class="stitle">${esc(r.title)}</span></a></td>` +
+      `<td class="status"><span class="eyebrow">${statusHtml(r.state, r.review)}</span></td>` +
       `<td class="date"><time datetime="${esc(r.updated)}">${esc(localTime(new Date(r.updated)))}</time></td></tr>`;
   }
 
-  // The reviews in site.json's order, each stack's rows in one table body, which
-  // draws no divider between them.
+  // The reviews in site.json's order, each stack's rows together in one table
+  // body, with a divider only below it. Every column but the pull request's has
+  // a set width, so checking a box never moves one.
   function reviewsTable(reviews: SiteReview[]): string {
     const bodies: SiteReview[][] = [];
     reviews.forEach(function (r) {
@@ -421,31 +426,47 @@
       else bodies.push([r]);
     });
     return '<div class="tblwrap"><table class="tbl reviews">' +
-      '<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>' +
-      bodies.map(function (rows) {
-        return `<tbody${rows.length > 1 ? ' class="stack"' : ''}>${rows.map(reviewRow).join('')}</tbody>`;
-      }).join('') + '</table></div>';
+      '<colgroup><col><col class="status"><col class="date"></colgroup>' +
+      '<thead><tr><th>Pull request</th><th>Status</th><th class="date">Updated</th></tr></thead>' +
+      bodies.map(function (rows) { return `<tbody>${rows.map(reviewRow).join('')}</tbody>`; }).join('') +
+      '</table></div>';
   }
 
-  // A merged or closed pull request's review is left out until the reader asks
-  // for it. A stack keeps its other reviews together.
+  // The reviews of open pull requests, closed ones, or both, as the boxes at
+  // the top say and the address records. A stack keeps the reviews it has left
+  // together.
   function showReviews(): void {
-    const done = site.reviews.filter(isDone).length;
+    const listed = listedStates();
+    function box(state: string, label: string): string {
+      const count = site.reviews.filter(function (r) { return stateOf(r) === state; }).length;
+      return `<label><input type="checkbox" value="${state}"${listed.includes(state) ? ' checked' : ''}> ${label} ` +
+        `<span class="count">${String(count)}</span></label>`;
+    }
     const main = frame('reviews', 'Reviews', '<h1>Reviews</h1>' +
-      (done > 0 ? '<label class="showdone"><input type="checkbox"> Show merged and closed ' +
-        `<span class="count">${String(done)}</span></label>` : '') +
+      `<div class="reviewstates" role="group" aria-label="Pull request states">${box('open', 'Open')}${box('closed', 'Closed')}</div>` +
       '<div class="reviewlist"></div>');
     const list = main.querySelector('.reviewlist');
     if (list === null) throw new Error('The reviews view lost the list it just drew');
-    const box = main.querySelector<HTMLInputElement>('.showdone input');
+    const boxes = Array.from(main.querySelectorAll<HTMLInputElement>('.reviewstates input'));
+    function checked(): string[] {
+      return boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    }
     function draw(): void {
       if (list === null) return;
-      const all = box?.checked === true;
-      const shown = site.reviews.filter(function (r) { return all || !isDone(r); });
-      list.innerHTML = shown.length > 0 ? reviewsTable(shown)
-        : '<p class="note">Every review here is of a merged or closed pull request.</p>';
+      const states = checked();
+      const shown = site.reviews.filter(function (r) { return states.includes(stateOf(r)); });
+      if (states.length === 0) list.innerHTML = '<p class="note">Check Open or Closed to list their reviews.</p>';
+      else if (shown.length === 0) list.innerHTML = `<p class="note">No ${states.length === 1 ? `${states[0] ?? ''} ` : ''}pull request has a review here.</p>`;
+      else list.innerHTML = reviewsTable(shown);
     }
-    if (box !== null) box.addEventListener('change', draw);
+    boxes.forEach(function (b) {
+      b.addEventListener('change', function () {
+        const states = checked();
+        const query = states.length === 1 && states[0] === 'open' ? '' : `?state=${states.join(',')}`;
+        history.replaceState(null, '', location.pathname + query + location.hash);
+        draw();
+      });
+    });
     draw();
   }
 
