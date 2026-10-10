@@ -311,7 +311,7 @@ sidebar's other pieces move there, and both pages call them:
 | Helper | Draws | Called by |
 | --- | --- | --- |
 | `stackHeaderHtml(header, current)` | One segment's header, as `stack-header` defines it: a link for a project, a `<span>` for a title. It gains `current`: when true, it draws a `<span>` for a project too. | The Reviews index, and both sidebars through `stackSegmentsHtml` |
-| `stackSegmentsHtml(segments, rows, current, mark)` | One stack, as `stack-header` defines it: for each segment, its `<div class="stackhead">` and a `<ul class="stack">` of its members' rows. It gains `current` and `mark`: a header that names the project `current` gets the class `current` and draws through `stackHeaderHtml` as current, and when `mark` is true, the first such header also gets `aria-current="page"`. | `sideNavHtml`, once per stack |
+| `stackSegmentsHtml(segments, rows, current, mark)` | One stack, as #226 defines it: for each segment, its `<div class="stackhead">` and a `<ul class="stack">` of its members' rows. On a summary page it draws the stack today, and `sideNavHtml` takes it over for both sidebars. It gains `current` and `mark`: a header that names the project `current` gets the class `current` and draws through `stackHeaderHtml` as current, and when `mark` is true, the first such header also gets `aria-current="page"`. | `sideNavHtml`, once per stack |
 | `sideNavHtml(nav)` | The whole sidebar: `<nav class="nav">` named by `nav.label`, then the `.prblock`, holding one `<div class="stackgroup">` per stack drawn by `stackSegmentsHtml`, or `nav.empty` when there is none, then `nav.middle`, then the `.navfoot` row with `creditHtml()` and `nav.foot`. It passes `mark` as true until a stack has drawn a current header, so the sidebar holds one `aria-current`. | `renderPage` on a summary page, `projectNav` on a project page |
 | `titleRowHtml(eyebrow, title, sub)` | The title row: `<header class="top">` holding `<div class="eyebrow">` and the `<h1>`, then `<div class="sub">` when `sub` is not empty. Today `renderPage` writes this inline. | `renderPage` on a summary page, with the "…" menu as `sub`, and `showProjectFile` on a project page, with no `sub` |
 | `ICON`, `HISTORY_ICON` | The 20-unit stroked icon frame and the history icon | `headsList` on a summary page, the project sidebar's footer, and the site bar's icons, which today keep a copy of `ICON` in `site.ts` |
@@ -669,7 +669,9 @@ The evidence comes from this repository's site, `site.json` fetched on
   writes `<nav class="nav" aria-label="Sections">` with the `.prblock`, the
   `.extra` tabs, the numbered sections, and the `.navfoot` row, inline. Its
   `stackList` and `headsList` live inside the closure that draws one summary,
-  so `site.ts` cannot call them.
+  so `site.ts` cannot call them. #226 moves the stack's drawing out, into the
+  shared `stackSegmentsHtml`. The frame around it, `headsList`, and the title
+  row stay inside, and this plan moves them out.
 - **Why the scoping matters.** Every site page loads `summary.css`, which is
   why its column rules are written `.layout > .side`. `site.css` writes the
   tree column's rules as `.sitemain .side`, and its list and link rules as
