@@ -1,0 +1,776 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 0745211..f56de08 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -722,16 +722,26 @@ one row each with its title, and highlights the current one; a pull request
+ with no stack is a stack of one, with its own row highlighted. Its older
+ versions follow the sections. A summary's header shows the same status as its
+ row on Reviews: **Merged** or **Closed** once the pull request is, and until
+-then the verdict of the newest Projector review of its head, **Clean** or
+-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
+-no Projector review names the head. When that review is incremental, the
+-header reads **Clean · incremental from a8cf3d5**, where the second part names
+-the head of the full review it builds on and links that review, while the row
+-on Reviews shows **Clean** alone. A review counts only when its author owns
+-the repository, belongs to its organization, or collaborates on it, because
+-anyone can review a public repository's pull request. The build reads the
+-pull request's state and reviews through `gh` and shows no status when `gh`
+-cannot answer. **Docs** renders `README.md`
++then the verdict on its head, linked to the review on GitHub that decides it.
++Each model that reviewed the head counts by its newest Projector review of it,
++and the verdict is **Changes requested** when any of those requests changes
++and **Clean** otherwise. A head no Projector review names is **Unreviewed**.
++Models are told apart by their model ID, lowercased and without a trailing
++bracketed variant such as `[1m]`. When one model reviewed the head and its
++review is incremental, the header reads **Clean · incremental from a8cf3d5**,
++where the second part names the head of the full review it builds on and
++links that review. When several models reviewed the head, the header still
++shows the one status, marked with an asterisk, as in **Changes requested\***.
++Hovering over the status, or moving keyboard focus to it, shows a list with a
++row for each model, changes requested first: the model's name, its verdict
++drawn as the status is and linked to its review, and for an incremental review
++the full review it builds on. Tab moves from the status into the list's links,
++and skips them while the list is hidden. Escape hides the list. The row on
++Reviews shows the status alone, unmarked. A review counts only when its
++author owns the repository, belongs to its organization, or collaborates on
++it, because anyone can review a public repository's pull request. The build
++reads the pull request's state and reviews through `gh` and shows no status
++when `gh` cannot answer. **Docs** renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+ projects directory, which Projects covers. Each sidebar lists its readme as
+ **Overview** and appears only when there is more than that readme to list, and
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index 814d916..398d947 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Let several models review the same pull request
+@@ -355,7 +355,7 @@ models:
+ | --- | --- |
+ | `status` | `changes-requested` when any model's newest verdict on the head requests changes, `clean` when every one is clean, and `unreviewed` when none names the head. |
+ | `url` | The review that decides `status`: the newest changes-requested verdict, or else the newest clean one. |
+-| `models` | One entry for each model with a verdict on the head: `model`, `status`, and `url`. Changes requested come first, then models in ID order. |
++| `models` | One entry for each model with a verdict on the head: `model`, its identity by § 2.1, and its newest verdict's `status` and `url`. Changes requested come first, then models in ID order. |
+ 
+ The site reads no start comments or threads, so it never shows `waiting`.
+ 
+@@ -373,17 +373,35 @@ The site reads no start comments or threads, so it never shows `waiting`.
+ | Summaries | No change. There is one summary per head. Each model's review updates the newest summary, as `review-pr` already does when the newest version comes from another session, and its flags come from every open finding thread. When two models update one head's summary at once, the one that publishes last keeps the flags its own census read, so a finding the other model opened in between has no flag until the next summary of that pull request. The finding itself stays on GitHub and in the fix loop's view. |
+ 
+ A merged or closed pull request shows **Merged** or **Closed** in both
+-places, as it does on `main`. Otherwise the summary page's header shows the
+-verdict alone when one model reviewed the head, as it does today. With
+-several models, it groups them by verdict, changes requested first, and each
+-model's name links to that model's review. The first word of the header is
+-the word the Reviews index shows.
++places, as it does on `main`. Otherwise the summary page's header shows one
++status, the word the Reviews index shows, drawn by `statusHtml` exactly as it
++is today. When one model reviewed the head, that is all it shows. With
++several models, the status ends in an asterisk, and a note only a screen
++reader reads says how many models gave it. Hovering over the status, or
++focusing it from the keyboard, shows a card with a row for each model,
++changes requested first: the model's ID, its verdict drawn by `statusHtml` in
++the status's own capitals, letter spacing, weight, and colour and linked to
++that model's review, and for an incremental review the full review it builds
++on. The card stays in the page, so a keyboard tabs from the status into its
++links, and the status names it with `aria-describedby`. While it is hidden it
++is `visibility: hidden`, so Tab never lands on a link nobody can see. Escape
++hides it, moving focus back to the status first when focus is on one of its
++links. A `title` attribute would reach neither a keyboard nor a touch screen;
++a tap on the status focuses it, which shows the card. The status and each
++link in the card are targets at least 24 pixels tall, without changing the
++height of the header's line.
+ 
+ ```
+-#66 · Clean
+-#66 · Clean (claude-opus-5-5, gpt-5.5)
+-#66 · Changes requested (gpt-5.5) · Clean (claude-opus-5-5)
+-#66 · Unreviewed
++#66 · CLEAN
++#66 · CLEAN*
++      on hover or focus:
++        claude-opus-5-5 · CLEAN · incremental from a8cf3d5
++        gpt-5.5 · CLEAN
++#66 · CHANGES REQUESTED*
++      on hover or focus:
++        gpt-5.5 · CHANGES REQUESTED
++        claude-opus-5-5 · CLEAN
++#66 · UNREVIEWED
+ ```
+ 
+ ### 2.6 With incremental reviews
+@@ -419,8 +437,9 @@ other's design:
+ - **The site names an incremental review per model.** That plan adds
+   `incrementalFrom` to a head's clean status. Here it sits on the model's
+   entry in `models`, and on the status as well when one model reviewed the
+-  head. The header names it after the model:
+-  `#66 · Clean (claude-opus-5-5 incremental from a8cf3d5, gpt-5.5)`.
++  head. With one model the header shows it after the status, as that plan
++  does. With several, the model's row in the card names it:
++  `claude-opus-5-5 · CLEAN · incremental from a8cf3d5`.
+ 
+ An incremental review finishes in under a minute, so it is the review most
+ likely to wait for a peer. It waits only when the pull request is a draft.
+@@ -432,8 +451,8 @@ likely to wait for a peer. It waits only when the pull request is a draft.
+ | `src/projector/review.py` | `identity()` and `model_key()`. `Paths` takes the model and puts the state, lock, request, and worktree paths under it. A resolver picks the model for commands after setup. `start_comment()` writes `model=`. `start_comments()` lists them with their model, SHA, and time, and applies the live rule. `setup` refuses another session's live start comment by the same model and records `head_started_at`. `move` updates it. `verdict_marker()` also returns the model. `check_collision` compares identities. `activity()` reads when each model last posted and whether it owes a review, and `verifier()` applies the rules in § 2.8, for `census`, `adopt`, and `signoff()`. `census` gives each thread the fields in § 2.4, counts the threads marked `mine`, and waits with `--wait`. `adopt()` runs the steps in § 2.8. `publish` writes `model=` into each finding marker, applies `signoff()` with the peer wait, records `model` in the loop's record, and reports the sign-off. `status()` returns the object in § 2.4. The layout comment at the top of the module describes the new paths. |
+ | `src/projector/cli.py` | `--model` on `move`, `census`, `release`, `publish`, and `gate`. `census --wait`. `review adopt <number> <thread-id>` with `--result` and `--body`. `review status <number>` with `--reviewer` and `--json`. `publish`, `census`, and `adopt` read `review.peer_wait`. |
+ | `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker`, groups each head's verdicts by model, and gives `status`, `url`, and `models`. `review_row` passes the same `review` to the Reviews index, as it does on `main`. |
+-| `site/src/globals.d.ts`, `site/src/summary.ts` | `ReviewStatus` gains `models`. `statusHtml` keeps the one word for the Reviews index, and the header adds the model groups in § 2.5. |
+-| `site/assets/summary.js` | Rebuilt with `npm run build`. |
++| `site/src/globals.d.ts`, `site/src/summary.ts` | `ReviewStatus` gains `models`. `statusHtml` keeps the one word for the Reviews index and the header, marks it with an asterisk when several models gave it, and draws each model's verdict in the card in § 2.5. |
++| `site/assets/summary.js`, `site/assets/summary.css` | The script rebuilt with `npm run build`, and the list's styles, which show it on hover and focus. |
+ | `skills/review-pr/SKILL.md` | A section on reviewing as one model among several: the identity, the collision check per model, which threads you re-check and when you adopt one with `project review adopt`, and the sign-off rule in place of "draft means changes are needed". The labels section gives the start, finding, and verify markers their `model=`, and the adoption reply its `adopted-from=`. The leftover start comment rule compares the comment's model. Run `publish`, `adopt`, and `census --wait` with a timeout of at least `review.peer_wait` plus two minutes. |
+ | `skills/start-review-loop/SKILL.md` | Pass `--model` to every `project review` command. On `RESPONDED`, run `census --wait` first and re-review only as § 2.2 says. Find the last reviewed SHA from this model's verdicts. The collision paragraph says another loop of the same model. Give each model's loop its own id, such as `<repo>-review-<model-key>`, because two loops that write one record can lose an entry. |
+ | `skills/fix-pr/SKILL.md` | The clean test and report in § 2.5. A sentence that every unresolved finding is outstanding, whichever model opened it, and that which model re-checks it is the review's concern, not the fix's. |
+@@ -663,11 +682,16 @@ adopts, and every later reader agrees with it without a clock.
+   comment shows the duplicate before the second review starts.
+ - **Show one status and each model on the site.** `status` stays one word,
+   so the Reviews index, which shows each row's status, keeps working.
+-  `models` says which model objected, on the summary page where there is room
+-  for it. Showing only per-model verdicts would make every reader aggregate
+-  them again, and showing only the aggregate would hide who objected. The
+-  index row keeps the one word, because a row holds one status and the page
+-  it links to names the models.
++  `models` says which model objected, on the summary page, one hover or
++  keystroke from the status. Showing only per-model verdicts would make every
++  reader aggregate them again, and showing only the aggregate would hide who
++  objected. The index row keeps the one word, because a row holds one status
++  and the page it links to names the models. Listing every model's verdict in
++  the header itself, grouped by verdict, was rejected: the header would no
++  longer read as one status the way the row does, and it grows with each
++  model. So was a count of models beside the status: the asterisk says the
++  same in one character, and leaves the status the one control to hover or
++  focus.
+ - **Keep one summary per head.** A summary describes the change, not a
+   review, and `review-pr` already builds on a summary another session
+   published. One summary per model would multiply pages without new content.
+@@ -695,7 +719,7 @@ The tests run in temporary Git repositories against the fake GitHub in
+ | 11 | Publish on another author's pull request with `review.allow_approve = true`. | A clean verdict while another model requests changes or is reviewing posts a `COMMENT`. The last model to go clean posts an `APPROVE`. The draft state does not change. |
+ | 12 | Run `project review status`. | The text in § 2.4, and with `--json` each field in its table. A model with only earlier-head activity shows `pending` and leaves `signoff` alone. |
+ | 13 | Answer a `gpt-5.5` finding while `gpt-5.5` is still reviewing, then run `project review census --wait --json` as `claude-opus-5-5`. | `watch-prs.sh` reports `RESPONDED` to both loops, as today. Census returns once `gpt-5.5` posts, with the thread `adopt: no`, so `claude-opus-5-5` does not re-review. An answer on a `claude-opus-5-5[1m]` finding, or on one that names no model, is `mine` and `answered`, so it re-reviews. When `claude-opus-5-5` has a clean verdict on H and `gpt-5.5` resolves the last open thread, its own, `watch-prs.sh` reports `RESPONDED` to both loops, and `claude-opus-5-5` posts no start comment and does not re-review. |
+-| 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header line in § 2.5, and the Reviews index row of the same head shows the header's first word. A merged pull request shows **Merged** in both. |
++| 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header in § 2.5, the one status and, with several models, its asterisk and the card, and the Reviews index row of the same head shows the header's status, unmarked. A merged pull request shows **Merged** in both, with no card. |
+ | 15 | By hand, run a Claude Code review loop and a Codex review loop on a scratch pull request in a scratch repository. | Both review each head without a collision. A finding from one model keeps the pull request in draft after the other model's clean verdict. After the fix, both go clean and the pull request is ready. Then stop the Codex loop, push a fix that does not hold for one of its findings, and the Claude loop reopens that finding as an adoption. The implementing pull request's Testing section records these steps. |
+ | 16 | Review H as `claude-opus-5-5` while `gpt-5.5` has a verdict on an earlier head, a declined open finding, and nothing on H. Run `adopt --result accepted` on that finding. | Census marks the thread `adopt: wait` until the window closes, then `now`. `adopt` waits out the window, posts a reply whose marker carries `model=claude-opus-5-5 adopted-from=gpt-5.5` and whose first line names both models, and resolves the thread. Census then marks it `mine`, and `status` shows `gpt-5.5` as `stopped`. On a resolved finding whose fix does not hold, `adopt --result reopened` unresolves it. |
+ | 17 | Run `adopt` while `gpt-5.5` has a live start comment on H, or have `gpt-5.5` post a start comment, verdict, or verify reply during the wait. | `adopt` refuses and leaves the thread and its replies unchanged. Census marks the thread `adopt: no`. |
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index f68cd6e..5364c0d 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -78,6 +78,14 @@ a.rstatus:hover { text-decoration: underline; }
+ .rstatus.merged { color: var(--merged); }
+ .rstatus.closed { color: var(--closed); }
+ .rstatus.incremental { color: var(--muted); }
++.rmodels { position: relative; display: inline-block; }
++/* Padding that leaves the line as it is makes the status, and each link in the list, a target 24px tall. */
++.rmodels > .rstatus { padding-block: 5px; }
++.rmodellist { position: absolute; top: 100%; left: 0; z-index: 20; display: grid; padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-size: 12.5px; font-weight: 500; letter-spacing: normal; text-transform: none; white-space: nowrap; visibility: hidden; }
++.rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { visibility: visible; }
++.rmodels.dismissed .rmodellist { visibility: hidden; }
++.rmodel a { display: inline-block; padding-block: 4px; }
++.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+ .eyebrow code { text-transform: none; letter-spacing: normal; }
+ 
+ /* sidebar */
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 28faa09..3683b6c 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -16,12 +16,16 @@ function creditHtml() {
+ function localTime(when) {
+     return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+ }
+-// A pull request's status: Merged or Closed once it is, and until then the
+-// verdict of the newest Projector review of its head, linked to that review,
+-// or Unreviewed when no Projector review names the head. Nothing when the
+-// build could not ask GitHub, so a status it does not know never reads as
+-// unreviewed.
+-function statusHtml(state, review) {
++const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requested' };
++// A pull request's status: Merged or Closed once it is, and until then its
++// head's verdict, Changes requested when any model's newest Projector review
++// of it requests changes and Clean otherwise, linked to the review that
++// decides it, or Unreviewed when no Projector review names the head. Nothing
++// when the build could not ask GitHub, so a status it does not know never
++// reads as unreviewed. A verdict that several models gave ends in an
++// asterisk, says to a screen reader how many models gave it, and is
++// described by their list, the element whose id `several` names.
++function statusHtml(state, review, several) {
+     if (state === 'merged')
+         return '<span class="rstatus merged">Merged</span>';
+     if (state === 'closed')
+@@ -30,8 +34,10 @@ function statusHtml(state, review) {
+         return '';
+     if (review.status === 'unreviewed')
+         return '<span class="rstatus unreviewed">Unreviewed</span>';
+-    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++    const described = several !== undefined ? ` aria-describedby="${esc(several.list)}"` : '';
++    const marked = several !== undefined
++        ? `<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span>` : '';
++    return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}${marked}</a>`;
+ }
+ (function () {
+     function renderSummary(data) {
+@@ -342,19 +348,34 @@ function statusHtml(state, review) {
+                 return `<li><a class="srow" href="${esc(p.url)}"><span class="stitle">${esc(p.title)}</span></a></li>`;
+             }).join('') + '</ul>';
+         }
++        function incrementalLink(from) {
++            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
++            return from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
++        }
+         // The header, as the page's statement of how well the head was checked,
+-        // also links the full review a clean incremental review builds on.
++        // shows the one status the Reviews index shows, and also links the full
++        // review a clean incremental review builds on. When several models reviewed
++        // the head, the status ends in an asterisk, and hovering over it or
++        // focusing it shows each model's verdict, drawn as the status is and
++        // linked to that model's review. The list stays in the page, so a keyboard
++        // tabs from the status into its links, and the status names it with
++        // aria-describedby; wireSummary lets Escape hide it.
+         function reviewStatus() {
+-            const status = statusHtml(pr.state, data.review);
++            const review = data.review;
++            const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
++                review.models.length > 1 ? review.models : null;
++            const status = statusHtml(pr.state, review, several !== null ? { list: 'review-models', count: several.length } : undefined);
+             if (status === '')
+                 return '';
+-            const review = data.review;
+-            const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
+-            if (from === undefined)
+-                return ` · ${status}`;
+-            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+-            const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+-            return ` · ${status} · ${link}`;
++            if (several !== null) {
++                const rows = several.map(function (m) {
++                    const from = m.status === 'clean' && m.incrementalFrom !== undefined ? ` · ${incrementalLink(m.incrementalFrom)}` : '';
++                    return `<span class="rmodel">${esc(m.model)} · <span class="eyebrow">${statusHtml(undefined, m)}</span>${from}</span>`;
++                }).join('');
++                return ` · <span class="rmodels">${status}<span class="rmodellist" id="review-models">${rows}</span></span>`;
++            }
++            const from = review?.status === 'clean' && pr.state !== 'merged' && pr.state !== 'closed' ? review.incrementalFrom : undefined;
++            return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
+         }
+         function renderPage() {
+             const nav = data.groups.map(function (g, i) {
+@@ -596,6 +617,25 @@ function statusHtml(state, review) {
+                 }
+             });
+         });
++        // Escape hides the models a hover or focus shows beside the header's status,
++        // until the pointer leaves it or focus moves out of it. A hidden list is
++        // visibility: hidden, so Tab skips its links, and Escape on one of them
++        // first moves focus back to the status, which stays in sight.
++        document.querySelectorAll('.rmodels').forEach(function (box) {
++            const list = box.querySelector('.rmodellist'), status = box.querySelector(':scope > .rstatus');
++            box.addEventListener('keydown', function (ev) {
++                if (ev.key !== 'Escape')
++                    return;
++                if (list?.contains(document.activeElement) === true)
++                    status?.focus();
++                box.classList.add('dismissed');
++            });
++            box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); });
++            box.addEventListener('focusout', function (ev) {
++                if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget)))
++                    box.classList.remove('dismissed');
++            });
++        });
+         // A "…" button, on the page header or a file's, opens its links as a popover,
+         // which sits in the top layer, clear of the card's clipping and the sticky
+         // headers. An auto popover closes on Escape or a click outside it, and
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index aca0e1e..0e52859 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -51,16 +51,28 @@ interface SummaryGroup {
+ /** A pull request's state when the site was built. */
+ type PullState = 'open' | 'merged' | 'closed';
+ 
++/** The head of the full review a clean incremental review builds on, and that review's page, or null when the build found none. */
++interface IncrementalFrom { head: string; url: string | null }
++
++/** One model's newest Projector review of a head, with its page on GitHub. */
++type ModelStatus =
++  | { model: string; status: 'clean'; url: string; incrementalFrom?: IncrementalFrom }
++  | { model: string; status: 'changes-requested'; url: string };
++
+ /**
+- * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
+- * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
+- * head of the full review it builds on, and that review's page, or null when the build found none.
++ * A head's status from the newest Projector review each model gave it, or `unreviewed` when no
++ * Projector review names the head. It is `changes-requested` when any model's is, with `url` the
++ * newest such review, and `clean` otherwise. `models` lists each model, changes requested first.
++ * A clean status carries `incrementalFrom` when its one model's review is incremental.
+  */
+ type ReviewStatus =
+-  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
+-  | { status: 'changes-requested'; url: string }
++  | { status: 'clean'; url: string; models: ModelStatus[]; incrementalFrom?: IncrementalFrom }
++  | { status: 'changes-requested'; url: string; models: ModelStatus[] }
+   | { status: 'unreviewed' };
+ 
++/** What `statusHtml` draws a verdict from: a head's status, or one model's. */
++type Verdict = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
++
+ /** A summary page's data: the summary checked against its diff by the build. */
+ interface SummaryData {
+   name?: string;
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 2794cfc..8bc8fe3 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -19,18 +19,26 @@ function localTime(when: Date): string {
+   return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+ }
+ 
+-// A pull request's status: Merged or Closed once it is, and until then the
+-// verdict of the newest Projector review of its head, linked to that review,
+-// or Unreviewed when no Projector review names the head. Nothing when the
+-// build could not ask GitHub, so a status it does not know never reads as
+-// unreviewed.
+-function statusHtml(state: PullState | undefined, review: ReviewStatus | undefined): string {
++const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requested' } as const;
++
++// A pull request's status: Merged or Closed once it is, and until then its
++// head's verdict, Changes requested when any model's newest Projector review
++// of it requests changes and Clean otherwise, linked to the review that
++// decides it, or Unreviewed when no Projector review names the head. Nothing
++// when the build could not ask GitHub, so a status it does not know never
++// reads as unreviewed. A verdict that several models gave ends in an
++// asterisk, says to a screen reader how many models gave it, and is
++// described by their list, the element whose id `several` names.
++function statusHtml(state: PullState | undefined, review: Verdict | undefined,
++  several?: { list: string; count: number }): string {
+   if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
+   if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
+   if (review === undefined) return '';
+   if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
+-  const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++  const described = several !== undefined ? ` aria-describedby="${esc(several.list)}"` : '';
++  const marked = several !== undefined
++    ? `<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span>` : '';
++  return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}${marked}</a>`;
+ }
+ 
+ (function (): void {
+@@ -337,17 +345,34 @@ function renderSummary(data: SummaryData): void {
+     }).join('') + '</ul>';
+   }
+ 
++  function incrementalLink(from: IncrementalFrom): string {
++    const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
++    return from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
++  }
++
+   // The header, as the page's statement of how well the head was checked,
+-  // also links the full review a clean incremental review builds on.
++  // shows the one status the Reviews index shows, and also links the full
++  // review a clean incremental review builds on. When several models reviewed
++  // the head, the status ends in an asterisk, and hovering over it or
++  // focusing it shows each model's verdict, drawn as the status is and
++  // linked to that model's review. The list stays in the page, so a keyboard
++  // tabs from the status into its links, and the status names it with
++  // aria-describedby; wireSummary lets Escape hide it.
+   function reviewStatus(): string {
+-    const status = statusHtml(pr.state, data.review);
+-    if (status === '') return '';
+     const review = data.review;
+-    const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
+-    if (from === undefined) return ` · ${status}`;
+-    const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+-    const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+-    return ` · ${status} · ${link}`;
++    const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
++      review.models.length > 1 ? review.models : null;
++    const status = statusHtml(pr.state, review, several !== null ? { list: 'review-models', count: several.length } : undefined);
++    if (status === '') return '';
++    if (several !== null) {
++      const rows = several.map(function (m) {
++        const from = m.status === 'clean' && m.incrementalFrom !== undefined ? ` · ${incrementalLink(m.incrementalFrom)}` : '';
++        return `<span class="rmodel">${esc(m.model)} · <span class="eyebrow">${statusHtml(undefined, m)}</span>${from}</span>`;
++      }).join('');
++      return ` · <span class="rmodels">${status}<span class="rmodellist" id="review-models">${rows}</span></span>`;
++    }
++    const from = review?.status === 'clean' && pr.state !== 'merged' && pr.state !== 'closed' ? review.incrementalFrom : undefined;
++    return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
+   }
+ 
+   function renderPage(): string {
+@@ -569,6 +594,23 @@ function wireSummary(): void {
+     });
+   });
+ 
++  // Escape hides the models a hover or focus shows beside the header's status,
++  // until the pointer leaves it or focus moves out of it. A hidden list is
++  // visibility: hidden, so Tab skips its links, and Escape on one of them
++  // first moves focus back to the status, which stays in sight.
++  document.querySelectorAll<HTMLElement>('.rmodels').forEach(function (box) {
++    const list = box.querySelector('.rmodellist'), status = box.querySelector<HTMLElement>(':scope > .rstatus');
++    box.addEventListener('keydown', function (ev) {
++      if (ev.key !== 'Escape') return;
++      if (list?.contains(document.activeElement) === true) status?.focus();
++      box.classList.add('dismissed');
++    });
++    box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); });
++    box.addEventListener('focusout', function (ev) {
++      if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget))) box.classList.remove('dismissed');
++    });
++  });
++
+   // A "…" button, on the page header or a file's, opens its links as a popover,
+   // which sits in the top layer, clear of the card's clipping and the sticky
+   // headers. An auto popover closes on Escape or a click outside it, and
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 8239249..087fc45 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -39,6 +39,8 @@
+ SHORT = 12
+ STALE_AFTER = timedelta(days=1)
+ LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
++# A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
++VARIANT = re.compile(r"\[[^\[\]]*\]$")
+ 
+ 
+ class ReviewError(ProjectorError):
+@@ -102,6 +104,12 @@ def origin_repo(checkout: Path) -> str:
+ 
+ # Identity
+ 
++def identity(model: str) -> str:
++    """The reviewer a model ID names: the ID lowercased, without a trailing bracketed variant, so one
++    model at another context window is the same reviewer."""
++    return VARIANT.sub("", model.lower())
++
++
+ def authenticated_login() -> str:
+     login = run_gh(["api", "user", "--jq", ".login"]).strip()
+     if not login:
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 2bc2992..852ebd5 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -30,7 +30,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, ProjectorError, project_from_text, title_from_text
+-from ..review import verdict_marker
++from ..review import identity, verdict_marker
+ from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
+                        new_file_text, prepare_page, stored_attributes)
+ 
+@@ -146,22 +146,27 @@ def summary_time(path: Path) -> int:
+ 
+ 
+ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+-    """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
++    """Each head's status among `reviews`, from the newest Projector review each model gave it.
+ 
+     A review is Projector's when a line of its body is the marker a Projector
+-    review carries, which names the verdict and the head it reviewed, and its
+-    author owns the repository, belongs to its organization, or collaborates
+-    on it. When a head's newest review is a clean incremental review, its
+-    status also carries `incrementalFrom`: the head of the full review it
+-    builds on, and that head's newest full review as `url`, or None when no
+-    full review of it is among `reviews`.
++    review carries, which names the verdict, the head it reviewed, and the
++    model, and its author owns the repository, belongs to its organization, or
++    collaborates on it. Models are told apart by `identity`. A head's `models`
++    lists each model's newest verdict on it, changes requested first and then
++    by model. Its `status` is `changes-requested` when any of them is and
++    `clean` otherwise, and its `url` is the newest review with that verdict.
++    A model whose newest review is a clean incremental review carries
++    `incrementalFrom`: the head of the full review it builds on, and that
++    model's newest full review of that head as `url`, or None when none is
++    among `reviews`. The status carries the same when one model reviewed the
++    head.
+     """
+-    newest: dict[str, dict] = {}
+-    full: dict[str, dict] = {}
++    newest: dict[str, dict[str, dict]] = {}
++    full: dict[tuple[str, str], dict] = {}
+ 
+-    def keep(heads: dict[str, dict], head: str, found: dict) -> None:
+-        if head not in heads or found["at"] >= heads[head]["at"]:
+-            heads[head] = found
++    def keep(found_by: dict, key, found: dict) -> None:
++        if key not in found_by or found["at"] >= found_by[key]["at"]:
++            found_by[key] = found
+ 
+     for review in reviews:
+         if review.get("association") not in REVIEWER_ASSOCIATIONS:
+@@ -169,16 +174,27 @@ def keep(heads: dict[str, dict], head: str, found: dict) -> None:
+         marker = verdict_marker(review.get("body") or "")
+         if marker is None:
+             continue
+-        found = {"status": marker.verdict, "url": review["url"], "at": review["at"], "from": marker.incremental_from}
+-        keep(newest, marker.sha, found)
++        model = identity(marker.model)
++        found = {"model": model, "status": marker.verdict, "url": review["url"], "at": review["at"],
++                 "from": marker.incremental_from}
++        keep(newest.setdefault(marker.sha, {}), model, found)
+         if marker.incremental_from is None:
+-            keep(full, marker.sha, found)
++            keep(full, (marker.sha, model), found)
+     statuses = {}
+-    for head, found in newest.items():
+-        statuses[head] = {"status": found["status"], "url": found["url"]}
+-        if found["from"] is not None and found["status"] == "clean":
+-            statuses[head]["incrementalFrom"] = {"head": found["from"],
+-                                                 "url": (full.get(found["from"]) or {}).get("url")}
++    for head, by_model in newest.items():
++        verdicts = sorted(by_model.values(), key=lambda found: (found["status"] != "changes-requested", found["model"]))
++        models = []
++        for found in verdicts:
++            entry = {"model": found["model"], "status": found["status"], "url": found["url"]}
++            if found["from"] is not None and found["status"] == "clean":
++                entry["incrementalFrom"] = {"head": found["from"],
++                                            "url": (full.get((found["from"], found["model"])) or {}).get("url")}
++            models.append(entry)
++        status = verdicts[0]["status"]
++        deciding = max((found for found in verdicts if found["status"] == status), key=lambda found: found["at"])
++        statuses[head] = {"status": status, "url": deciding["url"], "models": models}
++        if len(models) == 1 and "incrementalFrom" in models[0]:
++            statuses[head]["incrementalFrom"] = models[0]["incrementalFrom"]
+     return statuses
+ 
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 3459623..85caffc 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1594,6 +1594,18 @@ def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
+         self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
+ 
+ 
++class IdentityTests(unittest.TestCase):
++    def test_a_model_is_one_reviewer_in_any_case_and_at_any_context_window(self) -> None:
++        for model, expected in (("claude-opus-5-5", "claude-opus-5-5"), ("Claude-Opus-5-5[1m]", "claude-opus-5-5"),
++                                ("gpt-5.5", "gpt-5.5"), ("anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5"),
++                                ("model[a]b", "model[a]b"), ("model[a][b]", "model[a]")):
++            with self.subTest(model):
++                self.assertEqual(expected, review.identity(model))
++
++    def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
++        self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
++
++
+ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 758d3f5..0d6f001 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -377,8 +377,7 @@ def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self)
+         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
+                                   projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
+ 
+-        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+-                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
++        self.assertEqual({"c": one("clean", 1), "d": one("changes-requested", 2)}, statuses)
+ 
+     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
+         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
+@@ -402,8 +401,7 @@ def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
+             projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
+         ])
+ 
+-        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
+-                         statuses)
++        self.assertEqual({"c": one("changes-requested", 1), "d": {"status": "unreviewed"}}, statuses)
+ 
+     def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
+         statuses = self.statuses([
+@@ -411,8 +409,7 @@ def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
+             projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 2, association="COLLABORATOR"),
+         ])
+ 
+-        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+-                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
++        self.assertEqual({"c": one("clean", 1), "d": one("changes-requested", 2)}, statuses)
+ 
+     def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
+         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
+@@ -420,8 +417,7 @@ def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
+                                   projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 3),
+                                   projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4)])
+ 
+-        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
+-                          "d": {"status": "clean", "url": review_url(4)}}, statuses)
++        self.assertEqual({"c": one("clean", 2), "d": one("clean", 4)}, statuses)
+ 
+     def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
+         self.assertEqual({"c": None, "d": None}, self.statuses(None))
+@@ -431,9 +427,48 @@ def test_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
+                                   projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
+                                   incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)])
+ 
+-        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
+-                          "d": {"status": "clean", "url": review_url(3),
+-                                "incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}}, statuses)
++        incremental = {"incrementalFrom": {"head": "c" * 40, "url": review_url(2)}}
++        self.assertEqual({"c": one("clean", 2),
++                          "d": dict(one("clean", 3), models=[dict(one("clean", 3)["models"][0], **incremental)],
++                                    **incremental)}, statuses)
++
++    def test_each_model_of_a_head_is_listed_and_any_change_request_decides_its_status(self) -> None:
++        statuses = self.statuses([
++            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, model="gpt-5.5"),
++            projector_review("changes-requested", "c" * 40, "2026-10-01T11:00:00Z", 2, model="claude-opus"),
++            projector_review("clean", "c" * 40, "2026-10-01T12:00:00Z", 3, model="Claude-Opus[1m]"),
++            projector_review("changes-requested", "c" * 40, "2026-10-01T13:00:00Z", 4, model="gpt-5.5"),
++            projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 5, model="gpt-5.5"),
++            projector_review("clean", "d" * 40, "2026-10-02T11:00:00Z", 6, model="claude-opus"),
++            projector_review("changes-requested", "d" * 40, "2026-10-02T12:00:00Z", 7, model="codex-mini"),
++            projector_review("changes-requested", "d" * 40, "2026-10-02T09:00:00Z", 8, model="anthropic/claude"),
++        ])
++
++        def model(name: str, status: str, review_id: int) -> dict:
++            return {"model": name, "status": status, "url": review_url(review_id)}
++
++        self.assertEqual({"status": "changes-requested", "url": review_url(4),
++                          "models": [model("gpt-5.5", "changes-requested", 4), model("claude-opus", "clean", 3)]},
++                         statuses["c"], "one model at another context window is one reviewer, by its newest review")
++        self.assertEqual({"status": "changes-requested", "url": review_url(7),
++                          "models": [model("anthropic/claude", "changes-requested", 8),
++                                     model("codex-mini", "changes-requested", 7),
++                                     model("claude-opus", "clean", 6), model("gpt-5.5", "clean", 5)]},
++                         statuses["d"], "the newest change request links the status, and models sort within a verdict")
++
++    def test_an_incremental_review_builds_on_its_own_models_full_review(self) -> None:
++        statuses = self.statuses([
++            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, model="claude-opus"),
++            projector_review("clean", "c" * 40, "2026-10-01T11:00:00Z", 2, model="gpt-5.5"),
++            incremental_review("d" * 40, "c" * 40, "2026-10-02T10:00:00Z", 3),
++            projector_review("clean", "d" * 40, "2026-10-02T11:00:00Z", 4, model="gpt-5.5"),
++        ])
++
++        self.assertEqual({"status": "clean", "url": review_url(4), "models": [
++            {"model": "claude-opus", "status": "clean", "url": review_url(3),
++             "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}},
++            {"model": "gpt-5.5", "status": "clean", "url": review_url(4)}]}, statuses["d"],
++            "with two models the status carries no incrementalFrom of its own")
+ 
+     def test_an_incremental_line_without_a_review_marker_sets_no_status(self) -> None:
+         line = incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)["body"].splitlines()[3]
+@@ -520,7 +555,7 @@ def pr_status(repo: str, number: int) -> dict:
+         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+             reviews = self.build()["reviews"]
+ 
+-        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
++        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", one("clean", 1))],
+                          [(r["number"], r["state"], r["review"]) for r in reviews],
+                          "each row carries what its newest head's page does")
+ 
+@@ -1724,6 +1759,69 @@ def test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on(
+         self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
+                       "a merged pull request shows Merged alone")
+ 
++    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
++    def test_the_header_marks_a_status_several_models_gave_and_lists_them_on_hover_or_focus(self) -> None:
++        full, head = "a8cf3d5" + "0" * 33, "c" * 40
++        words = {"clean": "Clean", "changes-requested": "Changes requested"}
++
++        def link(review_id: int, text: str, cls: str = "", described: bool = False) -> str:
++            attribute = (f' class="{cls}"' if cls else "") + (' aria-describedby="review-models"' if described else "")
++            return f'<a{attribute} href="{review_url(review_id)}" target="_blank" rel="noopener">{text}</a>'
++
++        def models(status: str, review_id: int, *rows: str) -> str:
++            chip = link(review_id, f'{words[status]}<span aria-hidden="true">*</span><span class="visually-hidden">, '
++                                   f'reviewed by {len(rows)} models</span>', f"rstatus {status}", described=True)
++            return f' · <span class="rmodels">{chip}<span class="rmodellist" id="review-models">{"".join(rows)}</span></span>'
++
++        def row(review_id: int, model: str, status: str, extra: str = "") -> str:
++            chip = link(review_id, words[status], f"rstatus {status}")
++            return f'<span class="rmodel">{model} · <span class="eyebrow">{chip}</span>{extra}</span>'
++
++        cases = {
++            "one model": ([projector_review("clean", head, "2026-10-02T10:00:00Z", 2)],
++                          f" · {link(2, 'Clean', 'rstatus clean')}"),
++            "two clean": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
++                           projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
++                          models("clean", 2, row(1, "claude-opus", "clean"), row(2, "gpt-5.5", "clean"))),
++            "split": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
++                       projector_review("changes-requested", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
++                      models("changes-requested", 2, row(2, "gpt-5.5", "changes-requested"),
++                             row(1, "claude-opus", "clean"))),
++            "incremental": ([projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
++                             incremental_review(head, full, "2026-10-02T09:00:00Z", 3),
++                             projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
++                            models("clean", 2, row(3, "claude-opus", "clean", " · " + link(
++                                1, "incremental from <code>a8cf3d5</code>", "rstatus incremental")),
++                                   row(2, "gpt-5.5", "clean"))),
++            "unreviewed": ([], ' · <span class="rstatus unreviewed">Unreviewed</span>'),
++        }
++        for name, (reviews, header) in cases.items():
++            with self.subTest(name):
++                data = self.build(state="open", reviews=reviews)
++                index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
++                status = re.match(r" · (?:<span class=\"rmodels\">)?(<(a|span) [^>]*>.*?</\2>)", header).group(1)
++
++                self.assertIn(f"{header}</div><h1>", rendered_summary(data))
++                self.assertEqual(index_row, re.sub(r' aria-describedby="review-models"|<span aria-hidden.*?models</span>',
++                                                   "", status), "the index row shows the header's status, unmarked")
++                shutil.rmtree(self.out)
++        data = self.build(state="merged", reviews=cases["split"][0])
++        index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('merged', {json.dumps(data['review'])}));")
++        merged = rendered_summary(data)
++        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged)
++        self.assertNotIn("rmodels", merged, "a merged pull request lists no models")
++        self.assertEqual('<span class="rstatus merged">Merged</span>', index_row)
++        css = (SITE_JS.parent / "summary.css").read_text()
++        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { visibility: visible; }", css,
++                      "a pointer or the keyboard shows the list, never a title attribute")
++        hidden = re.search(r"^\.rmodellist \{[^}]*\}", css, re.M).group(0)
++        self.assertIn("visibility: hidden;", hidden, "a hidden list's links leave the tab order")
++        self.assertIn(".rmodels.dismissed .rmodellist { visibility: hidden; }", css)
++        self.assertIn(".rmodels > .rstatus { padding-block: 5px; }", css, "the status is a target 24px tall")
++        self.assertRegex(css, r"\.visually-hidden \{[^}]*clip-path: inset\(50%\)")
++        self.assertIn("querySelector(':scope > .rstatus')", SUMMARY_JS.read_text())
++        self.assertIn("status?.focus()", SUMMARY_JS.read_text(), "Escape on a model's link moves focus to the status")
++
+     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
+         # A backport, or a stack layer merged into its parent's branch, may
+@@ -1893,18 +1991,25 @@ def review_url(review_id: int) -> str:
+     return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
+ 
+ 
+-def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
++def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER",
++                     model: str = "claude-opus") -> dict:
+     """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
+ 
+     `association` is the author's relation to the repository, as GitHub's
+     `author_association` gives it.
+     """
+-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
++    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model={model} effort=high "
+               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
+     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
+             "url": review_url(review_id), "at": at, "association": association}
+ 
+ 
++def one(status: str, review_id: int, model: str = "claude-opus") -> dict:
++    """A head's review status when one model reviewed it, as `review_statuses` gives it."""
++    return {"status": status, "url": review_url(review_id),
++            "models": [{"model": model, "status": status, "url": review_url(review_id)}]}
++
++
+ def incremental_review(head: str, full: str, at: str, review_id: int) -> dict:
+     """A clean incremental review of `head`, building on the full review of `full`, as `projector_review` gives one."""
+     review = projector_review("clean", head, at, review_id)
