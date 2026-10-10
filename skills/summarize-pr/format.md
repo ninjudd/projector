@@ -6,7 +6,8 @@ it. The summary is JSON:
 ```json
 {
   "version": 1,
-  "name": "Card Name Check Summary",
+  "name": "Card name check",
+  "project": "payments/card-checks",
   "pr": {
     "repo": "owner/name",
     "number": 2062,
@@ -47,10 +48,19 @@ it. The summary is JSON:
 
 ## Fields
 
-- `name` labels the summary in a project's list of reviews on the site.
-  Make it a short name for the change, not a sentence. The page, its
-  browser tab, and its row on the Reviews index take the pull request's
-  title.
+- `project` is the one project the pull request carries out as a layer of
+  its stack, by the name `project list` gives it, or `""` when it carries
+  none. `init` writes `null`, which means not decided yet, and `publish`
+  refuses `null`. The site heads each run of a stack's pull requests that
+  carry one project with that project's title, linked to its page, and puts
+  a pull request that names no project, or one the site has no page for,
+  under the header of the pull request before it. Choose it as step 4 of
+  `SKILL.md`'s "Build the summary" describes.
+- `name` is the title of the work the stack does, or of the pull request
+  alone: two to six words in sentence case, at most 60 characters, which
+  `publish` checks. The site shows the lowest layer's `name` as the stack's
+  header when no layer names a project. The page, its browser tab, and its
+  row on the Reviews index take the pull request's title.
 - `pr.head` is the commit the page describes. `build` stops when the pull
   request has moved past it, unless `--at-head` asks for that head exactly.
 - `pr.base` is the merge base the diff is taken from. `init` records it; the
@@ -104,10 +114,11 @@ it. The summary is JSON:
 
 ## HTML in text fields
 
-Every text field except `name`, `pr` and the file paths is inserted as HTML,
-so write `<code>`, `<b>` and links directly and escape a literal `<` as
-`&lt;`. `build` rebuilds that HTML from an allowlist before it reaches the
-page, because a Pages site deploys whatever summary is on its ref: the tags
+Every text field except `name`, `project`, `pr` and the file paths is
+inserted as HTML, so write `<code>`, `<b>` and links directly and escape a
+literal `<` as `&lt;`. `build` rebuilds that HTML from an allowlist before
+it reaches the page, because a Pages site deploys whatever summary is on its
+ref: the tags
 `a`, `b`, `br`, `code`, `div`, `em`, `h3`, `h4`, `i`, `li`, `ol`, `p`, `pre`,
 `span`, `strong`, `table`, `tbody`, `td`, `th`, `thead`, `tr` and `ul`; the
 classes below; and `href` only for `http`, `https` and `#` links. Anything

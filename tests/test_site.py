@@ -44,11 +44,13 @@ class SiteRepoCase(unittest.TestCase):
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_text(text)
         self.out = Path(tempfile.mkdtemp()) / "site"
-        # A build that knows its repository asks GitHub for each pull request's
-        # state and reviews. No test reaches GitHub; one that needs them supplies them.
-        offline = mock.patch.object(summary, "pr_status", side_effect=summary.SummaryError("gh api failed: offline"))
-        offline.start()
-        self.addCleanup(offline.stop)
+        # A build that knows its repository asks GitHub for its stacks and for each
+        # pull request's state and reviews. No test reaches GitHub; one that needs
+        # them supplies them.
+        for name in ("pr_status", "repo_stacks"):
+            offline = mock.patch.object(summary, name, side_effect=summary.SummaryError("gh api failed: offline"))
+            offline.start()
+            self.addCleanup(offline.stop)
 
 
 class SiteBuildTests(SiteRepoCase):
@@ -243,6 +245,30 @@ index 3333333..4444444 100644
 -old = 1
 +new = 2
 """
+BOTH_DIFF = """diff --git a/docs/projects/alpha/readme.md b/docs/projects/alpha/readme.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/readme.md
++++ b/docs/projects/alpha/readme.md
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git a/docs/projects/alpha/beta/readme.md b/docs/projects/alpha/beta/readme.md
+index 1111111..2222222 100644
+--- a/docs/projects/alpha/beta/readme.md
++++ b/docs/projects/alpha/beta/readme.md
+@@ -1,1 +1,1 @@
+-old
++new
+"""
+
+
+def github_stack(number: int, *pulls: int, merged: bool = False) -> dict:
+    """A stack as GitHub's stacks API lists it, with its pull requests bottom first."""
+    return {"number": number, "open": not merged, "base": {"ref": "main"},
+            "pull_requests": [{"number": n, "state": "closed" if merged else "open", "draft": False,
+                               "merged_at": "2026-10-10T12:00:00Z" if merged else None,
+                               "head": {"ref": f"feature-{n}", "sha": f"{n:040x}"}} for n in pulls]}
+
 
 # Without a doctype a browser lays the page out in quirks mode, and without the
 # viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
@@ -251,22 +277,26 @@ STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
 
 
 class SiteContentTests(SiteRepoCase):
-    def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
+    def publish(self, number: int, head: str, project: object = ..., name: str | None = None,
+                projects: list[str] | None = None, diff: str = PLAN_DIFF, **pr: str) -> None:
+        """Publish a summary of `number` at `head`, which records `project`, or none at all when it is `...`,
+        as a summary published before the field existed does."""
         data = {
             "version": 1,
-            "name": f"Summary {number}",
+            "name": f"Summary {number}" if name is None else name,
             "pr": {"repo": "owner/example", "number": number, "title": f"Change {number}", "head": head,
                    "base": "b" * 40, "baseRef": "main", **pr},
             "overview": {"summary": [], "cards": []},
-            "groups": [{"id": "all", "title": "All",
-                        "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}],
+            "groups": [{"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}],
         }
+        if project is not ...:
+            data["project"] = project
         if projects is not None:
             data["projects"] = projects
         folder = self.summaries / str(number) / head
         folder.mkdir(parents=True)
         (folder / "summary.json").write_text(json.dumps(data))
-        (folder / "diff.patch").write_text(PLAN_DIFF)
+        (folder / "diff.patch").write_text(diff)
 
     def setUp(self) -> None:
         super().setUp()
@@ -275,18 +305,47 @@ class SiteContentTests(SiteRepoCase):
         hidden = Path(tempfile.mkdtemp()) / ".worktrees" / "repo"
         hidden.parent.mkdir()
         self.repo = Path(shutil.move(str(self.repo), str(hidden)))
-        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
+        self.reset()
         (self.repo / "docs/images").mkdir(parents=True)
         (self.repo / "docs/images/diagram.png").write_bytes(b"\x89PNG fake")
         (self.repo / "docs/.hidden").write_text("not served")
 
-    def build(self) -> dict:
-        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), \
-             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    def reset(self) -> None:
+        """Start over with no summaries and no site built."""
+        self.summaries = Path(tempfile.mkdtemp()) / "summaries"
+        self.out = Path(tempfile.mkdtemp()) / "site"
+
+    def build(self, github: list[dict] | None = None) -> dict:
+        """Build the site and return its site.json, with GitHub listing the stacks in `github`, or unable to list
+        them when it is None. The build's output is in `self.printed`. A build of summaries says how it found
+        their stacks in exactly one line, with no warning about them."""
+        printed = io.StringIO()
+        listed = mock.patch.object(summary, "repo_stacks", return_value=(github, 1)) if github is not None \
+            else nullcontext()
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), listed, \
+             redirect_stdout(printed), redirect_stderr(printed):
             code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
                              "--summaries", str(self.summaries)])
         self.assertEqual(0, code)
+        self.printed = printed.getvalue()
+        lines = self.printed.splitlines()
+        self.assertEqual(int(self.summaries.is_dir()), sum(line.startswith("stacks: ") for line in lines), self.printed)
+        self.assertEqual([], [line for line in lines if "::warning" in line and "stack" in line.lower()])
+        self.assertNotIn("different projects", self.printed)
         return json.loads((self.out / "site.json").read_text())
+
+    def data(self, number: int) -> dict:
+        """The data of pull request `number`'s page, which has one head."""
+        return json.loads(next((self.out / "reviews" / str(number)).glob("*/data.json")).read_text())
+
+    def sidebars(self) -> dict[int, list[int]]:
+        """The pull requests each review's sidebar lists in its stack, with [] for one alone."""
+        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
+        return {r["number"]: [row["number"] for row in self.data(r["number"])["stack"]] for r in reviews}
+
+    def groups(self) -> list[tuple[int, int | None]]:
+        """Each review on the Reviews index, in its order, with the number its stack is grouped under."""
+        return [(r["number"], r["stack"]) for r in json.loads((self.out / "site.json").read_text())["reviews"]]
 
     def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, list[int]], list[str]]:
         """The pull requests in each review's stack, as its page lists them, and the head branches the build asked GitHub about."""
@@ -495,9 +554,9 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": False}, rows[0])
         self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(11, "e" * 40)], "the top sees the whole stack")
         self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(9, "c" * 40)], "the bottom sees the whole stack")
-        self.assertEqual([{"number": 7, "title": "", "url": "", "current": False},
+        self.assertEqual([{"number": 7, "title": "", "url": "https://github.com/owner/example/pull/7", "current": False},
                           {"number": 13, "title": "Change 13", "url": "/reviews/13/", "current": True}],
-                         stack(13, "a" * 40), "a pull request with no summary has no title or link")
+                         stack(13, "a" * 40), "a pull request with no summary has no title, and links to GitHub")
         self.assertEqual([], stack(20, "b" * 40), "a pull request alone has no stack")
 
     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
@@ -560,12 +619,13 @@ class SiteContentTests(SiteRepoCase):
                          "each row carries what its newest head's page does")
 
     def test_the_reviews_index_titles_each_review_as_its_page_does(self) -> None:
-        self.publish(9, "c" * 40)
+        self.publish(9, "c" * 40, project="")
 
         reviews = self.build()["reviews"]
 
-        self.assertEqual([(9, "Change 9", "Summary 9")], [(r["number"], r["title"], r["name"]) for r in reviews],
-                         "the pull request's title, not the summary's name")
+        self.assertEqual([(9, "Change 9", {"title": "Summary 9"})], [(r["number"], r["title"], r["header"]) for r in reviews],
+                         "the pull request's title, under the summary's name as its stack's title")
+        self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
 
     def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
         self.publish(9, "c" * 40)
@@ -575,15 +635,18 @@ class SiteContentTests(SiteRepoCase):
         self.assertNotIn("state", review)
         self.assertNotIn("review", review)
 
-    def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
-        self.publish(9, "c" * 40)
+    def test_a_review_is_headed_by_the_project_it_records_and_listed_on_its_page(self) -> None:
+        self.publish(9, "c" * 40, project="alpha/beta")
 
         manifest = self.build()
 
-        reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
-        self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
-        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
-        self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
+        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+        self.assertEqual({"alpha": [], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]},
+                         "the recorded project, not the one whose plan the diff changes")
+        data = self.data(9)
+        self.assertEqual((beta, [{"header": beta, "members": [9]}]), (data["header"], data["segments"]))
+        self.assertEqual([beta], [r["header"] for r in manifest["reviews"]])
+        self.assertNotIn("projects", data)
         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
 
     def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
@@ -598,15 +661,30 @@ class SiteContentTests(SiteRepoCase):
         for page in pages:
             self.assertTrue(page.read_text().startswith(STANDARDS_HEAD), page.relative_to(self.out))
 
-    def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
-        self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
+    def test_a_pull_request_alone_is_headed_by_its_own_project_or_its_title(self) -> None:
+        alpha = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+        titled = {"title": "Summary 9"}
+        # PLAN_DIFF changes alpha's plan, and BOTH_DIFF alpha's and alpha/beta's.
+        for case, published, header in (
+                ("a project the site has", {"project": "alpha"}, alpha),
+                ("a project the site lacks", {"project": "no-such-project"}, titled),
+                ("no project, while the diff changes alpha's plan", {"project": ""}, titled),
+                ("an older summary whose diff changes one project's files", {}, alpha),
+                ("an older summary whose projects list names one the site has",
+                 {"projects": ["no-such-project", "alpha/beta"]}, beta),
+                ("a null project, read as an older summary's", {"project": None}, alpha),
+                ("an older summary whose diff changes two projects' files", {"diff": BOTH_DIFF}, titled)):
+            with self.subTest(case):
+                self.reset()
+                self.publish(9, "c" * 40, **published)
 
-        manifest = self.build()
+                manifest = self.build()
 
-        data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
-        self.assertEqual(["alpha/beta", "alpha"], [p["name"] for p in data["projects"]],
-                         "named projects first, unknown names dropped, then the ones the diff touches")
-        self.assertEqual({"alpha": [9], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]})
+                self.assertEqual(header, self.data(9)["header"])
+                self.assertEqual([{"header": header, "members": [9]}], self.data(9)["segments"], "one segment")
+                self.assertEqual({"alpha": [9] if header is alpha else [], "alpha/beta": [9] if header is beta else []},
+                                 {p["name"]: p["reviews"] for p in manifest["projects"]})
 
     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
         manifest = self.build()
@@ -631,6 +709,264 @@ class SiteContentTests(SiteRepoCase):
         self.assertNotIn("status:", alpha["text"], "frontmatter is not searchable text")
         self.assertIn("Build alpha", alpha["text"])
         self.assertTrue((self.out / "search" / "index.html").is_file())
+
+    # Stacks GitHub lists
+
+    def test_a_github_stack_keeps_a_layer_whose_base_moved_to_the_default_branch(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10")
+
+        self.build([github_stack(30, 9, 10)])
+
+        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
+        self.assertEqual([(9, 9), (10, 9)], self.groups())
+        self.assertIn("stacks: read 1 GitHub stack in 1 request\n", self.printed)
+
+    def test_github_decides_its_members_whatever_their_base_branches_say(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-14")
+        self.publish(14, "c" * 40, headRef="feature-14")
+
+        self.build([github_stack(30, 9, 10)])
+
+        self.assertEqual({9: [9, 10], 10: [9, 10], 14: []}, self.sidebars())
+
+    def test_a_merged_github_stack_stays_one_group_under_closed(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10")
+
+        merged = {"state": "merged", "base": None, "reviews": []}
+        with mock.patch.object(summary, "pr_status", return_value=merged):
+            reviews = self.build([github_stack(30, 9, 10, merged=True)])["reviews"]
+
+        self.assertEqual([(9, 9, "merged"), (10, 9, "merged")], [(r["number"], r["stack"], r["state"]) for r in reviews])
+        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
+
+    def test_a_github_stack_member_without_a_summary_stays_in_the_sidebar(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+
+        self.build([github_stack(30, 9, 11)])
+
+        self.assertEqual([{"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": True},
+                          {"number": 11, "title": "", "url": "https://github.com/owner/example/pull/11", "current": False}],
+                         self.data(9)["stack"])
+        self.assertEqual([(9, None)], self.groups(), "the index's group holds the reviews alone")
+
+    def test_a_pull_request_chained_by_hand_joins_a_github_stack_after_its_members(self) -> None:
+        for beneath in (10, 9):
+            with self.subTest(based_on=beneath):
+                self.reset()
+                self.publish(9, "a" * 40, headRef="feature-9")
+                self.publish(10, "b" * 40, headRef="feature-10")
+                self.publish(15, "c" * 40, headRef="feature-15", baseRef=f"feature-{beneath}")
+
+                self.build([github_stack(30, 9, 10)])
+
+                self.assertEqual({9: [9, 10, 15], 10: [9, 10, 15], 15: [9, 10, 15]}, self.sidebars())
+                self.assertEqual([(9, 9), (10, 9), (15, 9)], self.groups())
+
+    def test_a_branch_between_two_github_stacks_joins_neither(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10")
+        self.publish(20, "c" * 40, headRef="feature-20", baseRef="feature-10")
+        self.publish(21, "d" * 40, headRef="feature-21", baseRef="feature-20")
+
+        self.build([github_stack(30, 9, 10), github_stack(40, 20, 21)])
+
+        self.assertEqual({9: [9, 10], 10: [9, 10], 20: [20, 21], 21: [20, 21]}, self.sidebars())
+
+    def test_a_pull_request_in_no_github_stack_sits_on_its_base_branch(self) -> None:
+        self.publish(12, "a" * 40, headRef="feature-12", baseRef="feature-13")
+        self.publish(13, "b" * 40, headRef="feature-13")
+
+        self.build([github_stack(30, 1, 2)])
+
+        self.assertEqual({12: [13, 12], 13: [13, 12]}, self.sidebars())
+
+    def test_a_stack_or_member_github_lists_without_a_number_is_left_out_and_counted(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-9")
+        self.publish(20, "c" * 40, headRef="feature-20")
+        self.publish(21, "d" * 40, headRef="feature-21")
+        unnumbered = github_stack(30, 10, 9)
+        del unnumbered["number"]
+        unlisted = github_stack(31)
+        del unlisted["pull_requests"]
+        partial = github_stack(40, 20, 99, 21)
+        partial["pull_requests"][1]["number"] = "99"
+
+        self.build([unnumbered, unlisted, partial])
+
+        self.assertEqual({9: [9, 10], 10: [9, 10], 20: [20, 21], 21: [20, 21]}, self.sidebars(),
+                         "the unnumbered stack's pull requests sit on their base branches, and the gap closes")
+        self.assertIn("stacks: read 3 GitHub stacks in 1 request; left out 1 stack with no number, whose pull requests "
+                      "sit on their base branches; left out 1 stack with no list of pull requests; left out 1 stack "
+                      "member with no number\n", self.printed)
+
+    def test_a_pull_request_in_two_github_stacks_belongs_to_the_higher_one(self) -> None:
+        for number, head in ((9, "a"), (10, "b"), (11, "c"), (12, "d")):
+            self.publish(number, head * 40, headRef=f"feature-{number}")
+
+        self.build([github_stack(30, 9, 10, 11), github_stack(40, 10, 12)])
+
+        self.assertEqual({9: [9, 11], 10: [10, 12], 11: [9, 11], 12: [10, 12]}, self.sidebars())
+
+    # Stacks GitHub cannot list
+
+    def test_without_github_s_stacks_every_pull_request_sits_on_its_base_branch(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-9")
+        self.publish(10, "b" * 40, headRef="feature-10", baseRef="feature-9")
+
+        self.build()
+
+        self.assertEqual({9: [9, 10], 10: [9, 10]}, self.sidebars())
+        self.assertIn("stacks: GitHub's stacks could not be read, so every pull request sits on its base branch\n",
+                      self.printed)
+
+    def test_a_base_branch_github_cannot_look_up_leaves_only_its_own_pull_request_alone(self) -> None:
+        self.publish(12, "a" * 40, headRef="feature-12", baseRef="feature-13")
+        self.publish(17, "b" * 40, headRef="feature-17", baseRef="feature-16")
+
+        def lookup(*args: str) -> str | None:
+            head = next(a for a in args if a.startswith("head=")).split(":", 1)[1]
+            if head == "feature-16":
+                raise summary.SummaryError("gh api failed: HTTP 502")
+            return {"feature-13": "13\n"}.get(head, "\n")
+
+        with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
+            self.build()
+
+        self.assertEqual({12: [13, 12], 17: []}, self.sidebars())
+
+    # Headers
+
+    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+
+    def layered(self, *projects: object, github: bool = True, merged: bool = False) -> dict:
+        """Build a stack of #9 and up, each layer based on the one beneath, that record `projects` bottom first;
+        return site.json. GitHub lists the stack unless `github` is false, and reports it merged when `merged`."""
+        numbers = range(9, 9 + len(projects))
+        for number, project in zip(numbers, projects):
+            self.publish(number, f"{number:040x}", project, headRef=f"feature-{number}",
+                         **({"baseRef": f"feature-{number - 1}"} if number > 9 else {}))
+        status = {"state": "merged" if merged else "open", "base": None, "reviews": []}
+        with mock.patch.object(summary, "pr_status", return_value=status):
+            return self.build([github_stack(30, *numbers, merged=merged)] if github else None)
+
+    def assert_segments(self, manifest: dict, expected: list[tuple[dict, list[int]]]) -> None:
+        """Every page of the stack carries `expected` as its segments, and every page and row the header of its own."""
+        segments = [{"header": header, "members": members} for header, members in expected]
+        own = {n: header for header, members in expected for n in members}
+        for row in manifest["reviews"]:
+            data = self.data(row["number"])
+            self.assertEqual(segments, data["segments"], row["number"])
+            self.assertEqual(own[row["number"]], data["header"], row["number"])
+            self.assertEqual(own[row["number"]], row["header"], row["number"])
+
+    def test_a_layer_with_no_project_sits_under_the_project_of_the_layer_beneath(self) -> None:
+        manifest = self.layered("alpha", "")
+
+        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
+        self.assertEqual([10, 9], next(p["reviews"] for p in manifest["projects"] if p["name"] == "alpha"))
+
+    def test_a_merged_stack_keeps_the_header_of_its_bottom_layer(self) -> None:
+        manifest = self.layered("alpha", "", merged=True)
+
+        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
+
+    def test_a_stack_splits_into_a_segment_for_each_run_of_layers_that_carry_one_project(self) -> None:
+        alpha, beta = self.ALPHA, self.BETA
+        for projects, expected in (
+                (("", "alpha"), [(alpha, [9, 10])]),
+                (("alpha", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                (("alpha", "", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                (("", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                (("alpha", "no-such-project", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                (("alpha", "", "alpha"), [(alpha, [9, 10, 11])]),
+                (("alpha", "alpha/beta", "alpha"), [(alpha, [9]), (beta, [10]), (alpha, [11])]),
+                (("alpha", "alpha/beta"), [(alpha, [9]), (beta, [10])])):
+            with self.subTest(projects=projects):
+                self.reset()
+                manifest = self.layered(*projects)
+
+                self.assert_segments(manifest, expected)
+                reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
+                self.assertEqual({"alpha": sorted((n for h, m in expected if h is alpha for n in m), reverse=True),
+                                  "alpha/beta": sorted((n for h, m in expected if h is beta for n in m), reverse=True)},
+                                 reviews, "a project lists every member of each segment it heads, newest first")
+
+    def test_a_stack_found_from_base_branches_splits_as_a_github_stack_does(self) -> None:
+        self.assert_segments(self.layered("alpha", "alpha/beta", github=False), [(self.ALPHA, [9]), (self.BETA, [10])])
+
+    def test_a_merged_stack_of_two_projects_keeps_both_segments(self) -> None:
+        manifest = self.layered("alpha", "alpha/beta", merged=True)
+
+        self.assert_segments(manifest, [(self.ALPHA, [9]), (self.BETA, [10])])
+        self.assertEqual(["merged", "merged"], [r["state"] for r in manifest["reviews"]])
+
+    def test_a_member_without_a_summary_joins_the_segment_beneath_it(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
+
+        manifest = self.build([github_stack(30, 9, 11, 10)])
+
+        self.assert_segments(manifest, [(self.ALPHA, [9, 11]), (self.BETA, [10])])
+        self.assertEqual([9, 11, 10], [row["number"] for row in self.data(9)["stack"]])
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_a_member_without_a_summary_is_drawn_under_the_header_beneath_it(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
+        self.build([github_stack(30, 9, 11, 10)])
+
+        html = rendered_summary(self.data(9))
+
+        self.assertRegex(html, r'<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+                               r'<ul class="stack" aria-label="Pull requests for Build alpha">'
+                               r'<li class="srow current"[^>]*>.*?#9</span>.*?</li>'
+                               r'<li><a class="srow" href="https://github.com/owner/example/pull/11">.*?#11</span>.*?</ul>'
+                               r'<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>')
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_each_merged_page_of_a_two_project_stack_draws_both_headers(self) -> None:
+        self.layered("alpha", "alpha/beta", merged=True)
+
+        for number in (9, 10):
+            html = rendered_summary(self.data(number))
+            self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', '<a href="/projects/alpha/beta/">Finish beta</a>'],
+                             re.findall(r'<div class="stackhead">(.*?)</div>', html), number)
+            self.assertIn('<span class="rstatus merged">Merged</span>', html)
+
+    def test_a_pull_request_chained_by_hand_joins_the_segment_drawn_above_it(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
+        self.publish(15, "c" * 40, "", headRef="feature-15", baseRef="feature-9")
+
+        manifest = self.build([github_stack(30, 9, 10)])
+
+        self.assertEqual([9, 10, 15], [row["number"] for row in self.data(15)["stack"]])
+        self.assert_segments(manifest, [(self.ALPHA, [9]), (self.BETA, [10, 15])])
+
+    def test_a_stack_with_no_project_is_titled_by_its_lowest_name(self) -> None:
+        for names, title in ((("", "Second layer's title"), "Second layer's title"), (("", ""), "Change 9")):
+            with self.subTest(names=names):
+                self.reset()
+                for number, name in zip((9, 10), names):
+                    self.publish(number, f"{number:040x}", "", name, headRef=f"feature-{number}")
+
+                manifest = self.build([github_stack(30, 9, 10)])
+
+                self.assert_segments(manifest, [({"title": title}, [9, 10])])
+
+    def test_every_row_carries_its_header_and_no_name_or_projects(self) -> None:
+        self.publish(9, "a" * 40, "alpha", projects=["alpha/beta"])
+        self.publish(10, "b" * 40, "")
+
+        reviews = self.build()["reviews"]
+
+        self.assertEqual([(10, {"title": "Summary 10"}), (9, self.ALPHA)], [(r["number"], r["header"]) for r in reviews])
+        self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
 
 
 def new_file_diff(path: str, content: str | bytes) -> str:
@@ -724,6 +1060,23 @@ class ProposedProjectTests(SiteRepoCase):
         self.assertEqual({"name": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"},
                          data["files"][0]["project"])
         self.assertIn("2 projects, 1 proposed project, 1 reviews, 0 reviews skipped", self.out_text)
+
+    def test_a_stack_segment_that_carries_out_a_proposed_project_is_headed_by_its_proposed_page(self) -> None:
+        self.publish(9, {"gamma/readme.md": GAMMA})
+        upper = self.publish(10, {"alpha/more.md": "# More\n"})
+        path = self.summaries / "10" / upper / "summary.json"
+        data = json.loads(path.read_text())
+        data["project"] = "gamma"
+        data["pr"]["baseRef"] = "change-9"
+        path.write_text(json.dumps(data))
+
+        manifest = self.build()
+
+        gamma = {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"}
+        self.assertEqual([(9, gamma), (10, gamma)], [(r["number"], r["header"]) for r in manifest["reviews"]],
+                         "the bottom layer's diff proposes gamma, and the upper layer records it")
+        self.assertEqual([10, 9], self.project(manifest, "gamma")["reviews"])
+        self.assertEqual([], self.project(manifest, "alpha")["reviews"])
 
     def test_a_merged_or_closed_pull_request_proposes_nothing(self) -> None:
         self.publish(9, {"gamma/readme.md": GAMMA})
@@ -1375,7 +1728,7 @@ function frame(active, title, body) {
         """
         stub = self.STUB.replace("SEARCH", json.dumps(search)) + \
             f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
-        functions = ("stateOf", "listedStates", "reviewRow", "reviewsTable", "showReviews")
+        functions = ("stateOf", "listedStates", "reviewRow", "sameHeader", "reviewsTable", "showReviews")
         program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
             "\nshowReviews();"
             "\nconst opened = boxes.map(function (b) { return [b.value, b.checked]; });"
@@ -1388,29 +1741,48 @@ function frame(active, title, body) {
         return json.loads(node(program))
 
     @staticmethod
-    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
-        """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
-        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1,
-               "stack": stack, "updated": "2023-11-14T22:21:40Z"}
+    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None,
+               header: dict | None = None) -> dict:
+        """A row of site.json's reviews, under `header`, or else its stack's title; without a `state`, GitHub
+        could not be asked."""
+        row = {"number": number, "title": f"Change {number}", "heads": 1, "stack": stack,
+               "header": header or {"title": f"Stack {stack or number}"}, "updated": "2023-11-14T22:21:40Z"}
         if state is not None:
             row["state"] = state
             row["review"] = review or {"status": "unreviewed"}
         return row
 
     def bodies(self, html: str) -> list[list[int]]:
-        """The pull requests in each table body of the list, one body for each stack and for each review alone.
+        """The pull requests in each stack the list draws, one for each review alone too.
 
-        Each row is its pull request's number and title, drawn as a stack's
-        row in a summary's sidebar is.
+        Each segment of a stack is a table body that opens with its header
+        row, and every body of a stack but its last is `continued`. Each row
+        is its pull request's number and title, drawn as a stack's row in a
+        summary's sidebar is.
         """
-        found = []
-        for rows in re.findall(r'<tbody>(.*?)</tbody>', html):
+        return [[n for segment in stack for n in segment] for stack in self.stacks(html)]
+
+    def stacks(self, html: str) -> list[list[list[int]]]:
+        """The pull requests in each segment of each stack the list draws."""
+        found: list[list[list[int]]] = [[]]
+        for continued, head, rows in re.findall(
+                r'<tbody( class="continued")?><tr class="stackhead"><th colspan="3" scope="rowgroup">(.*?)</th></tr>'
+                r'(.*?)</tbody>', html):
+            self.assertRegex(head, r'^(<a href="[^"]*">[^<]*</a>|<span>[^<]*</span>)$')
             numbers = [int(n) for n in re.findall(
                 r'<tr><td class="pr"><a class="srow" href="/reviews/(\d+)/"><span class="snum">#\1</span>'
                 r'<span class="stitle">Change \1</span></a></td>', rows)]
             self.assertEqual(rows.count("<tr>"), len(numbers), rows)
-            found.append(numbers)
+            found[-1].append(numbers)
+            if not continued:
+                found.append([])
+        self.assertEqual(html.count("<tbody"), sum(len(stack) for stack in found), html)
+        self.assertEqual([], found.pop(), "the last body ends its stack")
         return found
+
+    def heads(self, html: str) -> list[str]:
+        """Each table body's header, as drawn."""
+        return re.findall(r'<tr class="stackhead"><th colspan="3" scope="rowgroup">(.*?)</th></tr>', html)
 
     def test_open_reviews_are_listed_first_and_each_box_changes_the_list_and_the_address(self) -> None:
         reviews = [self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
@@ -1479,6 +1851,68 @@ function frame(active, title, body) {
                       "var(--border); }", css, "a divider only below each stack, or each review alone")
         self.assertIn("table.tbl.reviews { table-layout: fixed; }", css, "checking a box never moves a column")
         self.assertIn("table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }", css)
+
+    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+
+    def test_each_stack_and_review_alone_opens_with_its_header(self) -> None:
+        drawn = self.draw([self.review(10, 9, "open", header=self.ALPHA), self.review(11, 9, "open", header=self.ALPHA),
+                           self.review(8, None, "open", header={"title": "Fix loop stack subagent name"})])
+        html = drawn["steps"][0]["list"]
+
+        self.assertEqual([[[10, 11]], [[8]]], self.stacks(html))
+        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Fix loop stack subagent name</span>"],
+                         self.heads(html), "a project's header links to it, and a title's is plain text")
+
+    def test_a_header_stays_above_the_rows_a_box_leaves(self) -> None:
+        drawn = self.draw([self.review(9, 9, "merged", header=self.ALPHA), self.review(10, 9, "open", header=self.ALPHA)])
+
+        self.assertEqual([[[10]]], self.stacks(drawn["steps"][0]["list"]))
+        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>'], self.heads(drawn["steps"][0]["list"]))
+
+    def test_a_stack_of_two_segments_draws_a_body_for_each_and_one_divider(self) -> None:
+        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "open", header=self.ALPHA),
+                           self.review(11, 9, "open", header=self.BETA)])
+        html = drawn["steps"][0]["list"]
+
+        self.assertEqual([[[9, 10], [11]]], self.stacks(html))
+        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', '<a href="/projects/alpha/beta/">Finish beta</a>'],
+                         self.heads(html))
+        self.assertEqual(1, html.count('<tbody class="continued">'))
+        css = (SITE_JS.parent / "site.css").read_text()
+        self.assertIn("table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }", css,
+                      "a segment the stack continues below draws no divider")
+        self.assertNotIn("tr:first-child td", css, "the header row takes the body's top padding")
+        self.assertRegex(css, r"table\.tbl\.reviews tr\.stackhead th \{ padding: 6px [^;]*; border-bottom: 0;")
+
+    def test_segments_on_either_side_of_hidden_rows_share_a_header_when_they_name_one_project(self) -> None:
+        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "merged", header=self.BETA),
+                           self.review(11, 9, "open", header=self.ALPHA)])
+
+        self.assertEqual([[[9, 11]]], self.stacks(drawn["steps"][0]["list"]))
+
+    def test_the_last_segment_drawn_ends_the_stack_when_the_boxes_hide_the_rest(self) -> None:
+        drawn = self.draw([self.review(9, 9, "open", header=self.ALPHA), self.review(10, 9, "merged", header=self.BETA)])
+        html = drawn["steps"][0]["list"]
+
+        self.assertEqual([[[9]]], self.stacks(html))
+        self.assertNotIn("continued", html)
+
+    def test_on_a_phone_the_hidden_time_column_takes_no_width_from_the_titles(self) -> None:
+        # A header spans all three columns, so a column left out of the table
+        # entirely would come back as one with no set width and take the room
+        # the titles need.
+        css = (SITE_JS.parent / "site.css").read_text()
+        phone = re.search(r"@media \(max-width: 640px\) \{(.*?)\n\}", css, re.S)
+        assert phone is not None
+        self.assertIn("table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }", phone.group(1))
+        self.assertIn("table.tbl.reviews col.date { width: 0; }", phone.group(1))
+        self.assertNotIn("col.date { display: none", css)
+
+    def test_a_header_s_title_is_escaped(self) -> None:
+        drawn = self.draw([self.review(9, None, "open", header={"title": "<script>alert(1)</script>"})])
+
+        self.assertEqual(["<span>&lt;script&gt;alert(1)&lt;/script&gt;</span>"], self.heads(drawn["steps"][0]["list"]))
 
 
 @unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
@@ -1570,18 +2004,148 @@ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/s
                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
 
 
-def rendered_summary(data: dict, popovers: bool = True) -> str:
-    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers."""
+def rendered_summary(data: dict, popovers: bool = True, then: str = "process.stdout.write(root.innerHTML);") -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers.
+
+    The script `then` runs after it, with the context views renderSummary returns as `views`, and writes the output.
+    """
     lines = SUMMARY_JS.read_text().splitlines()
-    start = lines.index("    function renderSummary(data) {")
-    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
+    # The renderer and the declarations above it in the page's function.
+    start = lines.index("(function () {") + 1
+    end = next(i for i in range(lines.index("    function renderSummary(data) {"), len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
                "const window = {};\n"
                f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
                shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
-               f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
+               f"\nconst views = renderSummary({json.dumps(data)});\n{then}")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+
+EXPANDER_DIFF = """diff --git a/lines.txt b/lines.txt
+index 1111111..2222222 100644
+--- a/lines.txt
++++ b/lines.txt
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++LINE 11
+ line 12
+@@ -50,3 +50,3 @@ def fifty():
+ line 50
+-line 51
++LINE 51
+ line 52
+diff --git a/plain.txt b/plain.txt
+index 1111111..2222222 100644
+--- a/plain.txt
++++ b/plain.txt
+@@ -1 +1 @@
+-old
++new
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "the expander test needs node")
+class ExpanderTests(unittest.TestCase):
+    """A file the build gave `context` draws an expander in each gap; the page reveals its lines escaped."""
+
+    def setUp(self) -> None:
+        summaries = Path(tempfile.mkdtemp()) / "summaries"
+        folder = summaries / "7" / ("c" * 40)
+        (folder / "head").mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({
+            "version": 1, "pr": {"repo": "owner/example", "number": 7, "title": "Seven", "head": "c" * 40},
+            "groups": [{"id": "all", "title": "All", "files": [{"path": "lines.txt"}, {"path": "plain.txt"}]}]}))
+        (folder / "diff.patch").write_text(EXPANDER_DIFF)
+        lines = [f"LINE {n}" if n in (11, 51) else f"line {n}" for n in range(1, 101)]
+        (folder / "head" / "lines.txt").write_text("".join(f"{line}\n" for line in lines))
+        out = Path(tempfile.mkdtemp()) / "site"
+        with redirect_stdout(io.StringIO()):
+            site_build.build_site(out, summaries=summaries, base="/projector/")
+        self.data = json.loads((out / "reviews" / "7" / ("c" * 40) / "data.json").read_text())
+        self.fid = {f["path"]: f["id"] for f in self.data["files"]}
+
+    def card(self, html: str, path: str) -> str:
+        start = re.search(f'<article class="file[^"]*" id="{self.fid[path]}"', html).start()
+        return html[start:html.index("</article>", start)]
+
+    def test_each_gap_puts_the_controls_its_place_allows_in_the_gutter_of_the_header_below_it(self) -> None:
+        html = rendered_summary(self.data)
+        card = self.card(html, "lines.txt")
+
+        self.assertEqual(2, card.count('<table class="diff">'), "no table or row of its own for a gap")
+        trays = re.findall(r'<tr class="(hunk|gaptail)"((?: data-\w+="\d+")*)><td class="ln xctl" colspan="2">(.*?)</td>'
+                           r'<td class="code">([^<]*)</td></tr>', card)
+        self.assertEqual([("hunk", ' data-hunk="0" data-gap="0"', "@@ -10,3 +10,3 @@"),
+                          ("hunk", ' data-hunk="1" data-gap="1"', "@@ -50,3 +50,3 @@ def fifty():"),
+                          ("gaptail", ' data-gap="2"', "")],
+                         [(kind, marks, text) for kind, marks, _, text in trays],
+                         "the gap above each hunk in its header's gutter, and the gap below the last in a row of its own")
+        controls = [re.findall(r'data-expand="(\w+)" aria-label="([^"]+)" title="([^"]+)"', tray) for _, _, tray, _ in trays]
+        self.assertEqual([[("all", "Expand all", "Expand all")],
+                          [("down", "Expand down", "Expand down"), ("up", "Expand up", "Expand up"),
+                           ("all", "Expand all", "Expand all")],
+                          [("down", "Expand down", "Expand down"), ("all", "Expand all", "Expand all")]], controls,
+                         "no expand up below the last hunk, and only expand all for 20 lines or fewer")
+        self.assertIn('<tr class="hunk"><td class="ln" colspan="2"></td><td class="code">@@ -1 +1 @@</td></tr>',
+                      self.card(html, "plain.txt"), "a file without context draws its header as it always has")
+        self.assertNotIn("xbtn", self.card(html, "plain.txt"))
+
+    def test_a_header_shows_its_range_as_revealed_lines_grow_it(self) -> None:
+        texts = json.loads(rendered_summary(self.data, then=(
+            f"const view = views[{json.dumps(self.fid['lines.txt'])}];\n"
+            "const first = view.range(1);\n"
+            "process.stdout.write(JSON.stringify([view.headerText(1, first),\n"
+            "  view.headerText(1, {...first, oldFirst: 30, newFirst: 30}),\n"
+            "  view.headerText(0, {...view.range(0), oldLast: 32, newLast: 32}),\n"
+            "  view.headerText(0, {oldFirst: 1, oldLast: 52, newFirst: 1, newLast: 52}),\n"
+            "  view.headerText(0, {oldFirst: 5, oldLast: 4, newFirst: 4, newLast: 4})]));")))
+
+        self.assertEqual(["@@ -50,3 +50,3 @@ def fifty():",
+                          "@@ -30,23 +30,23 @@ def fifty():",
+                          "@@ -10,23 +10,23 @@",
+                          "@@ -1,52 +1,52 @@",
+                          "@@ -4,0 +4 @@"], texts,
+                         "lines above a hunk move its start, lines below grow its count, a side with no lines names "
+                         "the line before it, and the text after the second @@ stays")
+
+    def test_revealed_lines_are_escaped_context_rows_numbered_on_both_sides(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['<script>alert(1)</script>', 'b &amp; c'], null, 1, 2, 5));"))
+
+        self.assertEqual('<tr class="ctx"><td class="ln">5</td><td class="ln">1</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">&lt;script&gt;alert(1)&lt;/script&gt;</span></td></tr>'
+                         '<tr class="ctx"><td class="ln">6</td><td class="ln">2</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">b &amp;amp; c</span></td></tr>', rows)
+        self.assertNotIn("<script>", rows)
+
+    def test_a_highlighted_line_is_drawn_from_the_highlighters_markup(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['x'], ['<span class=\"hljs-keyword\">x</span>'], 1, 1, 1));"))
+
+        self.assertIn('<span class="src"><span class="hljs-keyword">x</span></span>', rows)
+
+    def test_a_file_with_context_has_a_hidden_collapse_control_and_its_diff_as_first_drawn(self) -> None:
+        html = rendered_summary(self.data)
+        card = self.card(html, "lines.txt")
+
+        self.assertIn('<tr class="hunk" data-hunk="0" data-gap="0"><td class="ln xctl" colspan="2"><button class="xbtn '
+                      'xcollapse" type="button" hidden aria-label="Collapse expanded lines" title="Collapse expanded lines">'
+                      '<svg', card, "the control leads the first header's gutter, hidden until a gap is expanded")
+        self.assertEqual(1, card.count("xcollapse"))
+        self.assertNotIn("xcollapse", self.card(html, "plain.txt"))
+        body = card[card.index(f'<div class="fbody" id="{self.fid["lines.txt"]}-body">'):]
+        body = body[body.index(">") + 1:body.rindex("</div>")]
+        self.assertEqual(body, rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].bodyHtml);")),
+                         "collapsing puts back exactly the hunks and expanders the page first drew")
+
+    def test_only_a_file_with_context_has_a_view(self) -> None:
+        self.assertEqual([self.fid["lines.txt"]], json.loads(rendered_summary(
+            self.data, then="process.stdout.write(JSON.stringify(Object.keys(views)));")))
 
 
 class FileHeaderTests(SiteRepoCase):
@@ -1909,17 +2473,55 @@ class FileHeaderTests(SiteRepoCase):
                       "the page adds no reading guide of its own")
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
-    def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
-        html = rendered_summary(self.build())
+    def test_the_sidebar_heads_the_stack_with_its_project_linked_to_its_page(self) -> None:
+        data = self.build()
+        data["segments"][0]["header"] = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+        html = rendered_summary(data)
 
-        projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
-        self.assertIsNotNone(projects, "the projects list is missing")
-        self.assertEqual('<li><a class="srow" href="/projects/alpha/"><span class="stitle">Build alpha</span></a></li>'
-                         '<li><a class="srow" href="/projects/alpha/beta/"><span class="stitle">Finish beta</span></a></li>',
-                         projects.group(1), "each project's title fills its row, with nothing before it")
-        self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
-                        "the projects come first in the sidebar")
-        self.assertNotIn("Projects:", html)
+        self.assertIn('<div class="prblock"><div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+                      '<ul class="stack" aria-label="Pull requests in this stack"><li class="srow current" '
+                      'aria-current="page"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul></div>',
+                      html)
+        self.assertNotIn("stack projects", html)
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_sidebar_heads_a_stack_with_no_project_with_its_title_unlinked(self) -> None:
+        data = self.build()
+        self.assertEqual({"title": "Summary 9"}, data["header"], "its diff changes two projects' files")
+
+        self.assertIn('<div class="prblock"><div class="stackhead"><span>Summary 9</span></div><ul class="stack"',
+                      rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_sidebar_escapes_a_header_s_title(self) -> None:
+        data = self.build()
+        data["segments"][0]["header"] = {"title": "<script>alert(1)</script>"}
+
+        self.assertIn('<div class="stackhead"><span>&lt;script&gt;alert(1)&lt;/script&gt;</span></div>',
+                      rendered_summary(data))
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_sidebar_heads_each_segment_of_the_stack(self) -> None:
+        data = self.build()
+        alpha = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+        data["segments"] = [{"header": alpha, "members": [7, 9]}, {"header": beta, "members": [11]}]
+        data["stack"] = [{"number": 7, "title": "Change 7", "url": "/reviews/7/", "current": False},
+                         {"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": True},
+                         {"number": 11, "title": "", "url": "https://github.com/owner/example/pull/11", "current": False}]
+        html = rendered_summary(data)
+
+        self.assertIn('<div class="prblock">'
+                      '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+                      '<ul class="stack" aria-label="Pull requests for Build alpha">'
+                      '<li><a class="srow" href="/reviews/7/"><span class="snum">#7</span><span class="stitle">Change 7'
+                      '</span></a></li><li class="srow current" aria-current="page"><span class="snum">#9</span>'
+                      '<span class="stitle">Change 9</span></li></ul>'
+                      '<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>'
+                      '<ul class="stack" aria-label="Pull requests for Finish beta">'
+                      '<li><a class="srow" href="https://github.com/owner/example/pull/11"><span class="snum">#11</span>'
+                      '<span class="stitle"></span></a></li></ul></div>', html,
+                      "each segment's header, then its rows in order, the current one marked in its own segment")
 
     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
     def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
@@ -2010,10 +2612,10 @@ def projector_review(verdict: str, head: str, at: str, review_id: int, associati
             "url": review_url(review_id), "at": at, "association": association}
 
 
-def one(status: str, review_id: int, model: str = "claude-opus") -> dict:
-    """A head's review status when one model reviewed it, as `review_statuses` gives it."""
+def one(status: str, review_id: int) -> dict:
+    """A head's review status when claude-opus alone reviewed it, as `review_statuses` gives it."""
     return {"status": status, "url": review_url(review_id),
-            "models": [{"model": model, "status": status, "url": review_url(review_id)}]}
+            "models": [{"model": "claude-opus", "status": status, "url": review_url(review_id)}]}
 
 
 def incremental_review(head: str, full: str, at: str, review_id: int) -> dict:

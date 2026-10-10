@@ -1035,6 +1035,13 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         except summary.SummaryError:
             return None
 
+    # Stacks GitHub cannot list come from base branches instead.
+    def repo_stacks() -> Optional[tuple[list, int]]:
+        try:
+            return summary.repo_stacks(repo)
+        except summary.SummaryError:
+            return None
+
     entries, failures, proposed = site.build_site(
         out,
         summaries=summaries,
@@ -1047,6 +1054,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         base=base,
         lookup=base_pr if repo else None,
         status_lookup=pr_status if repo else None,
+        stacks_lookup=repo_stacks if repo else None,
     )
     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
             f"{len(entries)} reviews, {len(failures)} reviews skipped")

@@ -104,6 +104,37 @@ push to, or approve the pull request unless the user asks.
      earlier review rounds settled, and what the pull request leaves for
      later.
 
+   Then make the two choices the site heads the pull request's stack with,
+   `project` and `name`. `init` leaves `project` as `null`, and `publish`
+   refuses it until you choose. Each summary records its own choices, and
+   copies no other layer's:
+
+   1. **Choose the project the change is about.** List the candidates with
+      `project list --json`, and look at the plan files the diff changes.
+      The pull request's body and branch often name the plan. When the
+      change touches several plans, choose the plan it adds or the plan
+      whose status it changes. A plan touched only in passing, such as by a
+      link fix or a rename across every plan, is not the change's project.
+      For a pull request in a stack, choose the project this layer carries
+      out, which it may not edit. That is usually the project of the layer
+      beneath. A layer that starts the work of another plan records that
+      plan, and the site starts a new header there.
+      `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's
+      pull requests on GitHub, and the summaries ref holds what each
+      summarized layer chose. When that request answers 404 or fails, follow
+      the summary's `pr.basePr` down the stack instead, as the site falls
+      back to base branches. Record the project's name as `project list`
+      gives it, such as `"stack-header"` or `"payments/invoices"`, or `""`
+      when no single plan is the subject.
+   2. **Name the whole stack.** Set `name` to two to six words in sentence
+      case that name the work, such as `Stack header plan` or
+      `Summary publish retry`, at most 60 characters. Do not write a
+      sentence, and do not copy the pull request's title. When no layer
+      names a project, the site shows the lowest layer's `name` as the
+      stack's title, so on the bottom layer of a stack, name the work of the
+      whole stack as far as you know it. To change a stack's title, publish
+      the bottom layer's summary again.
+
 ## Write for someone new to the code
 
 Follow the writing guide in `../writing.md` when you write every intro, note
@@ -260,10 +291,11 @@ starts the workflow. The deploy checks out the default branch, which lacks
 the head, so `publish` also stores the `linguist-generated` attributes the
 head's `.gitattributes` gives the changed files, as `attributes.json`, and
 the head's version of each changed file whose diff hides some of its lines,
-under `head/`. It fetches the head first when the checkout lacks it. Publishes that run at the
-same time, as a review loop's subagents run them, each land. A publish whose
-push loses the race for the ref fetches the ref again, rebuilds its commit on
-the new tip, and pushes again, up to five pushes in all. `publish` fetches the
+under `head/`, so a reader can expand the lines around each hunk. It fetches
+the head first when the checkout lacks it. Publishes that run at the same
+time, as a review loop's subagents run them, each land. A publish whose push
+loses the race for the ref fetches the ref again, rebuilds its commit on the
+new tip, and pushes again, up to five pushes in all. `publish` fetches the
 diff from the compare API, which serves pull requests past the 300-file limit
 of `gh pr diff`, so pass `--diff` only when `publish` reports that GitHub
 could not serve the diff. The file is then the local `git diff` from step 3,
@@ -345,6 +377,10 @@ starting a new one, and skip step 1.
 2. Read the new commits and any new review threads, then revise the summary:
    set `pr.head`, move new files into groups, drop files that left the diff,
    and rewrite every note, check and overview card the change made untrue.
+   Make the two choices at the end of step 4 of "Build the summary" again: a
+   summary published before summaries recorded a project has no `project`,
+   and `publish` refuses it until you set one, and a `name` must still title
+   the stack in at most 60 characters.
    Move each note that has a `line` to where its code sits in the new diff,
    using step 1's diff, and remove a note whose code is gone: `build` checks
    only that a line is still in its file's diff, not that it still holds the

@@ -16,6 +16,34 @@ interface Window {
 /** A diff line: its kind (a, d, c, or m for a meta line), old and new numbers, and text. */
 type SummaryLine = [string, number | null, number | null, string];
 
+/** A hunk: its header line, the start and line count of each side the header names, and its lines. */
+interface SummaryHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: SummaryLine[];
+}
+
+/**
+ * A run of head lines a file's hunks leave hidden: new-side lines `start` to `end`, above hunk `before`, or
+ * below the last hunk when `before` is the number of hunks. New line `start` is old line `oldStart`.
+ */
+interface SummaryGap {
+  before: number;
+  start: number;
+  end: number;
+  oldStart: number;
+}
+
+/** The head's copy of a file, served at `url` with `lines` lines, and the gaps its hunks leave. */
+interface SummaryContext {
+  url: string;
+  lines: number;
+  gaps: SummaryGap[];
+}
+
 interface SummaryFile {
   path: string;
   id: string;
@@ -26,9 +54,11 @@ interface SummaryFile {
   deleted?: boolean;
   adds: number;
   dels: number;
-  hunks: { header: string; lines: SummaryLine[] }[];
+  hunks: SummaryHunk[];
   /** The deepest project on the site whose folder holds the file; absent outside every project the site has. */
   project?: { name: string; title: string; url: string };
+  /** What lets the page reveal the lines around the hunks; absent where the summary stored no copy of the file. */
+  context?: SummaryContext;
 }
 
 /** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */
@@ -73,6 +103,19 @@ type ReviewStatus =
 /** What `statusHtml` draws a verdict from: a head's status, or one model's. */
 type Verdict = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
 
+/** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
+interface StackHeader {
+  title: string;
+  project?: string;
+  url?: string;
+}
+
+/** A run of a stack's pull requests, bottom first, that carry out one project, or a whole stack that carries none. */
+interface StackSegment {
+  header: StackHeader;
+  members: number[];
+}
+
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
@@ -93,10 +136,16 @@ interface SummaryData {
   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
   /** Every published head of the pull request, newest first; `at` is when it was published, in Unix seconds. */
   heads?: { head: string; url: string; current: boolean; at?: number }[];
-  /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
+  /**
+   * Every pull request in this one's stack, bottom first; absent or empty when it stands alone. One without a
+   * summary on the site has no title, and its `url` is its page on GitHub.
+   */
   stack?: { number: number; title: string; url: string; current: boolean }[];
-  projects?: { name: string; title: string; url: string }[];
-  /** The newest Projector review of this head; absent when the build could not ask GitHub. */
+  /** The stack's segments, bottom first, every member of the stack in one. A pull request alone has one. */
+  segments: StackSegment[];
+  /** The header of the segment this pull request is in. */
+  header: StackHeader;
+  /** This head's status across the models that reviewed it, as `ReviewStatus` describes; absent when the build could not ask GitHub. */
   review?: ReviewStatus;
   generatedAt?: string;
 }
@@ -134,12 +183,13 @@ interface SiteProject {
 /** A review's row on the Reviews index, in the order the index lists them: each stack's together, from the default branch up. */
 interface SiteReview {
   number: number;
-  name: string;
   title: string;
+  /** The header of the stack segment this review is in. */
+  header: StackHeader;
   heads: number;
   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
   stack: number | null;
-  /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */
+  /** The pull request's state, and its newest head's status across the models that reviewed it, as `ReviewStatus` describes; each absent when the build could not ask GitHub. */
   state?: PullState;
   review?: ReviewStatus;
   /** When the newest head was published, as an ISO 8601 time in UTC. */
