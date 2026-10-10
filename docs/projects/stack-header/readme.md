@@ -56,7 +56,7 @@ stack's title:
 | Field | Value | Meaning |
 | --- | --- | --- |
 | `project` | A project's canonical name, such as `"stack-header"` or `"payments/invoices"` | The one project this pull request's stack carries out: the plan the stack adds, specs, implements, or completes. |
-| `project` | `""` | The stack carries out no project. |
+| `project` | `""` | This pull request names no project. When no layer of its stack names one either, the stack has no project. A layer above that names a project gives the stack that project (§ 2.2, step 3). |
 | `project` | `null`, or no `project` key | Not decided yet. `init` writes `null`, and `publish` refuses it. The build reads a summary published before the field existed by the rule in § 2.2, step 2. |
 | `name` | A short title, at most 60 characters | The title of the work the stack does, or the work of the pull request alone. The site shows it as the stack's header when the stack has no project. |
 
@@ -77,10 +77,13 @@ order:
    work of the whole stack.
 3. **Agree with the layer beneath.** When the pull request is stacked, its
    summary's `pr.basePr` names the pull request beneath it. Read that pull
-   request's newest summary from the summaries ref, and copy its `project` and
-   `name` when they are set. To change a stack's project or title, publish the
-   bottom layer's summary again, because the build takes the header from the
-   lowest layer.
+   request's newest summary from the summaries ref. When its `project` is a
+   non-empty string, copy it over your choice from step 1. When its `name` is
+   non-empty, copy it over your choice from step 2. Otherwise keep your own
+   choice: a layer beneath that names no project, such as a refactor the plan
+   never mentions, leaves the project to the layers above it. To change a
+   stack's project or title, publish the summary of the lowest layer that
+   names one again, because the build takes the header from that layer.
 
 `publish` refuses a summary whose `project` is `null`, missing, or not a
 string, or whose `name` is empty or longer than `NAME_MAX`, which is 60
@@ -365,6 +368,14 @@ sidebar and index tests do:
 | Render a header whose title holds `<script>` | The text is escaped, on the sidebar and on the index |
 | Draw the Reviews index with a stack and a pull request alone | Each table body starts with `<tr class="stackhead"><th colspan="…" scope="rowgroup">`, whose `colspan` equals the head row's columns. The project header links and the title header does not. The head row has no Projects column. |
 | Draw the index with a stack's bottom pull request filtered out | The header stays above the stack's other rows |
+
+The build tests cover what the site does with the values a stack's layers
+record. Which values each layer records is the skill's job, so the
+implementing pull request's `skills/summarize-pr/SKILL.md` states § 2.1,
+step 3 as written. It copies the layer beneath's `project` only when that
+value is a non-empty string, and its `name` only when that value is not
+empty. A stack that opens with a refactor recording `""` therefore keeps the
+project that a layer above it records.
 
 The existing tests `test_the_sidebar_lists_each_project_as_a_row_above_the_stack`,
 `test_a_review_links_to_the_projects_its_diff_changes_and_back`, and
