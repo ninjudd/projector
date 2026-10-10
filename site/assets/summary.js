@@ -957,6 +957,17 @@ function statusHtml(state, review) {
             }
             return html?.length === lines.length ? html : null;
         }
+        // Whether the browser shows `el`'s focus, as it does for focus from the
+        // keyboard and not from a mouse click. A browser without :focus-visible,
+        // such as Safari before 15.4, throws on the selector.
+        function focusVisible(el) {
+            try {
+                return el?.matches(':focus-visible') ?? false;
+            }
+            catch {
+                return false;
+            }
+        }
         function hunkTable(el) {
             if (!(el instanceof HTMLTableElement))
                 throw new Error('An expander has no hunk beside it');
@@ -994,23 +1005,25 @@ function statusHtml(state, review) {
             if (file === null || gapTable === null || view === undefined || gap === undefined)
                 throw new Error('An expander sits outside its file');
             let start = gap.start, end = gap.end;
-            // Redrawing replaces the controls, so a reader on the keyboard keeps focus
-            // on the control they used, or on expand all once it is the only one.
+            // Redrawing replaces the controls, so focus stays on the control the
+            // reader used, or on expand all once it is the only one. No focus move
+            // scrolls, so the page stays on the lines just revealed.
             const redraw = function (how, failed) {
                 const refocus = row.contains(document.activeElement);
                 row.innerHTML = view.expanderCells(gap, end - start + 1, failed);
                 if (refocus)
-                    (row.querySelector(`[data-expand="${how}"]`) ?? row.querySelector('[data-expand="all"]'))?.focus();
+                    (row.querySelector(`[data-expand="${how}"]`) ?? row.querySelector('[data-expand="all"]'))?.focus({ preventScroll: true });
             };
-            // Closing the gap removes its controls, so focus moves on to the file's
-            // next expander, or to its header when this was the last.
+            // Closing the gap removes its controls. A reader on the keyboard moves on
+            // to the file's next expander, or to its header after the last; a mouse
+            // click, which focuses the button too, leaves focus where the browser puts it.
             const close = function () {
-                const refocus = row.contains(document.activeElement);
+                const refocus = row.contains(document.activeElement) && focusVisible(document.activeElement);
                 const expanders = Array.from(file.querySelectorAll('tr.expander'));
                 const next = expanders[expanders.indexOf(row) + 1];
                 closeGap(gapTable);
                 if (refocus)
-                    (next?.querySelector('[data-expand]') ?? file.querySelector('.ftoggle'))?.focus();
+                    (next?.querySelector('[data-expand]') ?? file.querySelector('.ftoggle'))?.focus({ preventScroll: true });
             };
             row.addEventListener('click', function (ev) {
                 const how = ev.target instanceof Element ? ev.target.closest('[data-expand]')?.dataset.expand : undefined;
