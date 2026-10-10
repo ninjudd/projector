@@ -1817,11 +1817,11 @@ class ProjectPageTests(unittest.TestCase):
 
     @staticmethod
     def outline(side: str) -> list[str]:
-        """The sidebar's headers and rows in order: each header's markup, `|` where a stack starts, and `#n` for
-        each row."""
-        found = re.findall(r'(<div class="stackhead[^>]*>.*?</div>)|(<div class="stackgroup">)|'
+        """The sidebar's headers and rows in order: each header's markup, `|` where a stack starts, `-` where a
+        list opens with a rule, and `#n` for each row."""
+        found = re.findall(r'(<div class="stackhead[^>]*>.*?</div>)|(<div class="stackgroup">)|(<ul class="stack split")|'
                            r'<span class="snum">(#\d+)</span>', side)
-        return [head or ("|" if group else row) for head, group, row in found]
+        return [head or ("|" if group else "-" if split else row) for head, group, split, row in found]
 
     def drawn(self, site: dict, path: str = README, body: list[list[str]] | None = None) -> tuple[dict, str]:
         """The page drawn for `path`, and its sidebar, which holds exactly one current item."""
@@ -1922,17 +1922,29 @@ class ProjectPageTests(unittest.TestCase):
     def test_a_stack_of_two_projects_heads_only_the_other_projects_segment_with_a_link(self) -> None:
         _, side = self.drawn(self.site([self.stack((self.BETA, [9]), (self.ALPHA, [10]))]))
 
-        self.assertEqual([self.ALPHA_HERE, "|", self.BETA_LINK, "#9", "#10"], self.outline(side))
+        self.assertEqual([self.ALPHA_HERE, "|", self.BETA_LINK, "#9", "-", "#10"], self.outline(side))
         self.assertIn(f'{self.ALPHA_HERE}<div class="stackgroup">{self.BETA_LINK}'
                       '<ul class="stack" aria-label="Pull requests for Build beta">', side)
-        self.assertIn('</ul><ul class="stack" aria-label="Pull requests for Build alpha"><li><a class="srow" href="/reviews/10/">',
-                      side, "this project's segment keeps its rows and its list's name")
+
+    def test_a_projects_segment_after_another_projects_opens_with_a_rule_not_its_header(self) -> None:
+        # As #222, recording `project-page-sections`, sits on #219, recording `project-page-nav`.
+        _, side = self.drawn(self.site([self.stack((self.BETA, [9]), (self.ALPHA, [10]))]))
+
+        self.assertIn(f'{self.BETA_LINK}<ul class="stack" aria-label="Pull requests for Build beta"><li><a class="srow" '
+                      'href="/reviews/9/"><span class="snum">#9</span><span class="stitle">Change 9</span></a></li></ul>'
+                      '<ul class="stack split" aria-label="Pull requests for Build alpha"><li><a class="srow" '
+                      'href="/reviews/10/">', side, "a rule, not alpha's name, ends beta's segment above #10")
+        self.assertEqual(1, side.count(">Build alpha<"), "the project's name shows once, at the top")
+        css = (SITE_JS.parent / "summary.css").read_text()
+        self.assertIn(".prblock .stack.split { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }",
+                      css)
 
     def test_a_stack_that_returns_to_the_project_never_repeats_its_header(self) -> None:
         _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]), (self.BETA, [10]), (self.ALPHA, [11])),
                                         self.stack((self.ALPHA, [8]))]))
 
-        self.assertEqual([self.ALPHA_HERE, "|", "#9", self.BETA_LINK, "#10", "#11", "|", "#8"], self.outline(side))
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", self.BETA_LINK, "#10", "-", "#11", "|", "#8"], self.outline(side),
+                         "a rule ends beta's segment, and none opens a stack, which its group's divider does")
 
     def test_a_nested_project_heads_its_sidebar_and_lists_only_its_own_pages(self) -> None:
         stack = self.stack((self.BETA, [9]), (self.ALPHA, [10]))

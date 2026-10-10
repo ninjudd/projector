@@ -68,11 +68,13 @@ function segmentHeadHtml(header, current) {
 // A stack as a sidebar lists it: each segment's header above a row for each of
 // its pull requests, the current one marked. `rows` has a row for every member
 // of the stack. A segment whose header names the project `own` shows only its
-// rows, because the sidebar names that project once, above its stacks. A
+// rows, because the sidebar names that project once, above its stacks. When
+// such a segment follows another one, its list is `split`: a rule above its
+// rows ends the segment before it, which would otherwise seem to hold them. A
 // screen reader names a lone segment's list for the stack, and each of several
 // by its header.
 function stackSegmentsHtml(segments, rows, own) {
-    return segments.map(function (segment) {
+    return segments.map(function (segment, i) {
         const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
         const items = segment.members.map(function (number) {
             const s = rows.find(function (r) { return r.number === number; });
@@ -81,8 +83,10 @@ function stackSegmentsHtml(segments, rows, own) {
             const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
             return s.current === true ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
         }).join('');
-        const head = own !== '' && segment.header.project === own ? '' : segmentHeadHtml(segment.header, false);
-        return `${head}<ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
+        const unheaded = own !== '' && segment.header.project === own;
+        const head = unheaded ? '' : segmentHeadHtml(segment.header, false);
+        const split = unheaded && i > 0 ? ' split' : '';
+        return `${head}<ul class="stack${split}" aria-label="${esc(label)}">${items}</ul>`;
     }).join('');
 }
 // The sidebar a summary page and a project page share, as `SideNav` describes

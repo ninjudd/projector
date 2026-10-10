@@ -148,6 +148,9 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 .prblock > .stackhead + .stackgroup > .stackhead:first-child { margin-top: 6px; }
 .prblock .stackgroup + .stackgroup { margin: 10px -6px 0; padding: 16px 6px 0; border-top: 1px solid var(--border); }
 .prblock .snone { margin: 0; padding: 0 3px 4px; font-size: 12.5px; color: var(--muted); }
+/* Where the project's own segment follows another project's, a rule inset from
+   the box's dividers ends that segment above the project's rows. */
+.prblock .stack.split { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
 .prbar { display: none; }
 @media (max-width: 980px) {
   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
