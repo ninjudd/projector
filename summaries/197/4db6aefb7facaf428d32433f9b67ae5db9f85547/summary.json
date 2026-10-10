@@ -1,0 +1,190 @@
+{
+ "version": 1,
+ "name": "Files changed pane",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 197,
+  "title": "Add a Files changed pane to a summary page and simplify its header and sidebar",
+  "head": "4db6aefb7facaf428d32433f9b67ae5db9f85547",
+  "headRef": "summary-files-pane",
+  "base": "71028a87e875e9f9df15e80be2453f685a85541a",
+  "baseRef": "summary-stack-sidebar",
+  "basePr": 196
+ },
+ "overview": {
+  "summary": [
+   "A summary page, the guided review page that the Projector site renders from a summary's JSON, groups a pull request's files into sections in reading order. Before this change, a reader who wanted one file had to know which section held it. Each section listed only its own files, and nothing listed the files that start collapsed, such as generated code, tests, and docs, apart from the rest.",
+   "This change adds a <b>Files changed</b> pane to the overview, under the line counts. It lists every file in the diff by path, with its new or deleted badge and its added and removed line counts. A circle beside each file fills with a check once the file is marked Reviewed. The files that start collapsed sit in a closed list labelled <b>Generated, test, and docs</b>. Clicking a file unfolds its section, opens the file, and scrolls to it, even when the URL hash already names that file.",
+   "The change also reworks the page around the pane:",
+   "<ul><li><b>Header.</b> The heading and the browser tab show the pull request's title, not the summary's <code>name</code>. The links read Conversation, Files, and Compare. Beside the pull request number, the header shows the newest Projector verdict on this head: <b>Clean</b>, <b>Changes requested</b>, or <b>Unreviewed</b>.</li><li><b>Sidebar.</b> The repo#number line, the Reviewed counter, and the overview-card links go. Overview links to the top of the page, and Files links to the line counts. A credit line under the sidebar replaces the footer.</li><li><b>Overview.</b> The line counts lose their heading, and the legend goes. The last section is at least one window tall, so a jump to it brings it to the top.</li><li><b>Opening scroll.</b> A page that fetches its data scrolls to the file its address names once it renders.</li><li><b>Site bar.</b> On a summary page, the site's menu bar lines up with the page content.</li></ul>",
+   "The pull request is stacked on #196, which adds the stack list and moves the version list in the sidebar. Its head merges that branch, which now includes <code>main</code> through #202, among them the change that renders summary pages in standards mode."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Collapsed file</b>: a file card whose diff starts hidden. By default that is a file whose kind is <code>generated</code>, <code>test</code>, or <code>docs</code>. A summary overrides the default per file with <code>collapsed</code>.</li><li><b>Folded section</b>: a group whose body is hidden, for example after the reader marks it Reviewed.</li><li><b><code>fid</code></b>: a file card's element id, <code>f-</code> plus ten hex digits of the SHA-1 of its path, which <code>src/projector/summary.py</code> generates.</li><li><b>Site bar</b>: the Projector site's menu bar, which <code>site.css</code> styles and which sits above a summary page on a hosted site.</li><li><b>Projector review marker</b>: the hidden HTML comment line, <code>&lt;!-- projector-review v=1 verdict=… sha=… --&gt;</code>, that opens every Projector review body. <code>MARKER</code> in <code>src/projector/review.py</code> matches it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review of this head is clean, and all three earlier finding threads are resolved:<ul class=\"tight\"><li><code>format.md</code> now says where a summary's <code>name</code> appears.</li><li>The page's review status counts only reviews by the repository's owner, members, and collaborators.</li><li>The review-status paragraph in <code>docs/cli.md</code> wraps at the surrounding width.</li></ul></li><li>The review listed six optional suggestions, several of which appear here as context notes.</li><li>The full validation gate passed at this head: <code>npm run check</code>, <code>npm run build</code> with no change to <code>summary.js</code>, 495 Python tests, <code>project check</code>, and both plugin validations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "pane",
+   "title": "The page renderer",
+   "kicker": "The Files changed pane, and the header, sidebar, and overview around it.",
+   "intro": [
+    "The renderer in <code>site/src/summary.ts</code> builds the whole page as one HTML string in <code>renderSummary</code>. Then <code>wireSummary</code> attaches the click handlers and restores each checkbox from <code>localStorage</code>. The pane follows the same split.",
+    "<ol><li><b>Rendering.</b> <code>renderFilesPane</code> collects every file from every group, sorts the files by path, and splits them into an open list and a closed list with <code>startsCollapsed</code>. That function holds the rule each file card already used, so a file sits in the closed list exactly when its card starts collapsed. <code>renderOverview</code> places the pane right after the line-count card, which carries the <code>files</code> id that the sidebar's Files link targets.</li><li><b>Navigation.</b> Each row links to its file card's <code>fid</code>. A click pushes the hash with <code>history.pushState</code> and calls <code>reveal</code>, which unfolds the section, opens the file, and scrolls to it. A plain hash change runs the same <code>reveal</code>, but without a forced scroll, because the browser has already scrolled.</li><li><b>Reviewed state.</b> <code>syncJump</code> copies a file card's <code>reviewed</code> class to its pane row, whose circle the stylesheet then fills with a check. It runs in <code>markFile</code> and when the page restores Reviewed state on load.</li></ol>",
+    "The header takes its title from <code>pr.title</code>, which the build requires, and falls back to <code>name</code> only when the title is empty. <code>reviewStatus</code> adds the review status beside the pull request number from the page data's <code>review</code> field. When the build could not ask GitHub, that field is absent and the header shows no status, so an unknown status never reads as Unreviewed."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The validation gate passed at this head in a scratch worktree: <code>npm run check</code> reported no findings, <code>npm run build</code> left <code>site/assets/summary.js</code> unchanged, and all 495 Python tests passed with no skip."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds the pane, <code>startsCollapsed</code>, <code>syncJump</code>, <code>reveal</code>, and <code>reviewStatus</code>. Retitles the header, trims the sidebar, moves the credit under it, and drops the legend, the footer, and the Reviewed counter.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 62,
+       "text": "<code>startsCollapsed</code> returns the same expression that <code>renderFile</code> computed inline before, so the pane's open and closed lists match how each card starts. Checked by comparing the removed and added lines."
+      },
+      {
+       "kind": "context",
+       "line": 171,
+       "text": "The line-count card takes the element id <code>files</code>. A summary group or overview card with the id <code>files</code> or <code>overview</code> gets a duplicate id, and the build does not refuse either one."
+      },
+      {
+       "kind": "context",
+       "line": 251,
+       "text": "<code>reviewStatus</code> returns nothing when <code>data.review</code> is absent, which is what the build writes when it could not ask GitHub. It links Clean and Changes requested to the review through <code>ext</code>, which escapes the URL."
+      },
+      {
+       "kind": "context",
+       "line": 263,
+       "text": "<code>#top</code> needs no element with that id. Browsers scroll to the top of the document for that fragment, and <code>reveal</code> finds no element and does nothing."
+      },
+      {
+       "kind": "verify",
+       "line": 328,
+       "text": "Every place that sets a file card's <code>reviewed</code> class also calls <code>syncJump</code>: here in <code>markFile</code>, and in the restore on load. A section's Reviewed box never marks a file, so it needs no sync. Checked by searching for every <code>classList.toggle('reviewed'</code>."
+      },
+      {
+       "kind": "context",
+       "line": 677,
+       "text": "The handler calls <code>preventDefault</code> on every click, so a Ctrl-click or a Cmd-click on a row stays in the same tab instead of opening a new one."
+      },
+      {
+       "kind": "context",
+       "line": 684,
+       "text": "On load, <code>openHashTarget(true)</code> always scrolls to the hash's target. A page that fetches <code>data.json</code> renders after the browser has already looked for that target and found nothing, so without this scroll the address's file would never come into view."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles the pane, its collapsed sublist, the check circle, the review status colors, and the credit line. It scopes the sticky sidebar to the summary layout, removes the legend, footer, and Reviewed counter rules, and makes the last section at least one window tall. Every title in the sidebar's stack list is bold, so the current row wraps the same way as the others."
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Drops <code>indexUrl</code> and adds <code>review</code>, the newest Projector verdict on this head, to <code>SummaryData</code>."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "collapsed": true,
+     "note": "Compiled from <code>site/src/summary.ts</code> by <code>npm run build</code>."
+    }
+   ]
+  },
+  {
+   "id": "builder",
+   "title": "The site builder",
+   "kicker": "Titles each page from the pull request, looks up each head's review status, and aligns the site bar.",
+   "intro": [
+    "The Python site builder in <code>src/projector/site/__init__.py</code> writes each summary page's HTML shell and its <code>data.json</code>. It now titles each shell with <code>pr_title</code>, and stops writing <code>indexUrl</code>.",
+    "It also writes each head's review status into <code>data.json</code>:",
+    "<ol><li><b>Fetch.</b> For each pull request with a summary, <code>build_checkout</code> in <code>cli.py</code> calls <code>pr_reviews</code> in <code>summary.py</code>. That function lists every submitted review through <code>gh api</code>, with each author's <code>author_association</code>, GitHub's word for how the author relates to the repository. When <code>gh</code> fails, the lookup returns nothing and the pages carry no status.</li><li><b>Match.</b> <code>review_statuses</code> skips any review whose author is not the repository's owner, a member of its organization, or a collaborator, because anyone can review a public repository's pull request. In each remaining review, it looks for a line that matches the Projector review marker, which names the verdict and the head it reviewed. For each head, the newest such review wins.</li><li><b>Write.</b> Each version's page gets that head's status and review URL, or <code>unreviewed</code> when no counted review names the head.</li></ol>",
+    "On a hosted site, <code>site.css</code> pads the site's menu bar so that its ends line up with the summary's content. It also sets the search form's margin outright, so the box no longer depends on the browser's default margin for a form."
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>pr_title</code> and <code>review_statuses</code>, writes each page's <code>review</code>, and stops writing <code>indexUrl</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The review index rows still read <code>name</code>, so a summary's <code>name</code> now appears where the site lists reviews, but not on its own page."
+      },
+      {
+       "kind": "verify",
+       "line": 154,
+       "text": "A review counts only when its <code>association</code> is <code>OWNER</code>, <code>MEMBER</code>, or <code>COLLABORATOR</code>. <code>test_a_marker_from_outside_the_repository_sets_no_status</code> checks that a newer forged <code>clean</code> marker from a <code>NONE</code> author leaves a real <code>changes-requested</code> verdict in place. The test passed at this head."
+      },
+      {
+       "kind": "context",
+       "line": 141,
+       "text": "On an organization repository, GitHub can report a member whose membership is private as <code>CONTRIBUTOR</code>. A Projector review by that member then leaves the page at Unreviewed, which is the safe direction."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>pr_reviews</code>, which lists a pull request's submitted reviews with their body, page, and time."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Passes a <code>review_lookup</code> to the site build that returns nothing when <code>gh</code> fails."
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Captures the head SHA in <code>MARKER</code>, so the site builder can read which head a review names."
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Aligns the site bar with a summary page's content, and fixes the search box's margin."
+    },
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    }
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Every site deploy now runs one <code>gh api</code> call for each pull request that has a summary, one after another. This repository has 27 today, and the workflow token allows 1,000 requests per hour."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill documentation",
+   "kicker": "The CLI reference, the summarize-pr skill, and its format guide describe the new page.",
+   "intro": [
+    "The <code>summarize-pr</code> skill now says that the <b>Files changed</b> list keeps collapsed files in a closed list of their own. Its format guide says that the page adds the list of files, that an overview card's <code>id</code> is only its anchor, and that a summary's <code>name</code> labels it where the site lists reviews, while the page takes the pull request's title. The CLI reference in <code>docs/cli.md</code> describes the header's review status."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the header's review status, and which reviews count toward it."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-pr/format.md"
+    }
+   ]
+  }
+ ]
+}

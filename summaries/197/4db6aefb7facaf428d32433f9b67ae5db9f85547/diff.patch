@@ -1,0 +1,1121 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index e1c5cb2..aada5c7 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -681,7 +681,13 @@ that did not record the number has it looked up with `gh` at build time;
+ when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
+ every pull request in its stack, the ones beneath it and the ones above it,
+ one row each with its title, and highlights the current one; its older
+-versions follow the sections. **Docs** renders `README.md`
++versions follow the sections. A summary's header shows the verdict of the
++newest Projector review of its head, **Clean** or **Changes requested**,
++linked to that review on GitHub, or **Unreviewed** when no Projector review
++names the head. A review counts only when its author owns the repository,
++belongs to its organization, or collaborates on it, because anyone can review
++a public repository's pull request. The build reads the reviews through `gh`
++and shows no status when `gh` cannot answer. **Docs** renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+ projects directory, which Projects covers. Each sidebar lists its readme as
+ **Overview** and appears only when there is more than that readme to list, and
+@@ -730,7 +736,7 @@ composite action with `--check-visibility`, which refuses to build, and so to
+ deploy, when a private repository's Pages site is public or GitHub cannot say
+ whether it is. For summaries it builds every
+ `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
+-for nothing, and skips and reports any summary that fails or has no stored diff.
++for no diff, and skips and reports any summary that fails or has no stored diff.
+ It marks generated files by the `attributes.json` beside a summary, or by the
+ checkout's `.gitattributes` for a summary stored without one.
+ It reads only `summary.json`, so it also reports each summary stored only as
+diff --git a/site/assets/site.css b/site/assets/site.css
+index 871b2ce..904bb5c 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -9,8 +9,11 @@
+   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+   border-bottom: 1px solid var(--border);
+ }
+-/* On a summary page the bar scrolls away; the summary's own headers stick. */
+-.sitebar.scrolls { position: static; }
++/* On a summary page the bar scrolls away; the summary's own headers stick. Its
++   ends line up with the summary's 1440px .wrap: the site name over the sidebar,
++   and the search box over Compare. */
++.sitebar.scrolls { position: static; padding-inline: max(16px, calc((100% - 1440px) / 2 + 16px)); }
++.sitebar.scrolls .menuspace { display: none; }
+ .sitename {
+   display: inline-flex; align-items: center; gap: 10px;
+   font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text); text-decoration: none;
+@@ -135,7 +138,7 @@ table.tbl.reviews .stack::before { content: "↳ "; }
+ .plist { margin-top: 10px; font-size: 14px; }
+ .plist b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+ 
+-.sitesearch { margin-left: auto; }
++.sitesearch { margin: 0 0 0 auto; display: flex; }
+ .sitesearch input {
+   width: 12rem; max-width: 40vw; padding: 5px 10px; font: inherit; font-size: 14px;
+   color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 1045a15..ac39799 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -55,22 +55,32 @@ a { color: var(--text); text-decoration-color: var(--underline); text-underline-
+ a:hover { color: var(--accent); text-decoration-color: currentColor; }
+ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+ .wrap { max-width: 1440px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
+-.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 32px; align-items: start; }
++.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; align-items: start; }
+ @media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
+ 
+ /* top */
+-.top { padding-block: 28px 8px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
++.top { padding-block: 28px 20px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
+ .top h1 { font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+ .top .sub { color: var(--muted); font-size: 14px; }
+ .top .sub a { color: inherit; }
+ .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--muted); font-weight: 600; }
++.rstatus { text-decoration: none; }
++a.rstatus:hover { text-decoration: underline; }
++.rstatus.clean { color: var(--ok); }
++.rstatus.changes-requested { color: var(--accent); }
++.rstatus.unreviewed { color: var(--muted); }
+ 
+ /* sidebar */
+-.side { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; }
+-.side .nav { max-height: calc(100vh - env(safe-area-inset-top, 0px) - 32px); overflow-y: auto; }
+-@media (max-width: 980px) { .side { position: static; } .side .nav { max-height: none; overflow: visible; } }
++/* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
++.layout > .side { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; display: flex; flex-direction: column; max-height: calc(100vh - env(safe-area-inset-top, 0px) - 32px); }
++.side .nav { overflow-y: auto; }
++@media (max-width: 980px) { .layout > .side { position: static; max-height: none; } .side .nav { overflow: visible; } }
++/* Lined up with the text inside the box above: its border, padding, and link padding. */
++.credit { flex: none; margin-top: 10px; padding-inline: 19px; font-size: 12px; color: var(--muted); }
++.credit a { color: inherit; }
+ .nav { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
+ .prblock { padding: 4px 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
++.prblock > :first-child { margin-top: 0; }
+ .prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
+ .prref:hover { text-decoration: underline; }
+ .prtitle { margin-top: 4px; font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@@ -87,37 +97,50 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+ .versions li.current { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+ .versions .mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+ .versions .vwhen { white-space: nowrap; }
+-.prblock .stack { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
++.prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+ .prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: baseline; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
+ .prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
+-.prblock .stack li.current { background: var(--accent-soft); color: var(--text); font-weight: 600; }
++.prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
+ .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+ .prblock .stack li.current .snum { color: var(--accent); }
+-.prblock .stack .stitle { min-width: 0; overflow-wrap: anywhere; }
++.prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
+ .prbar { display: none; }
+ @media (max-width: 980px) {
+   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
+   .prbar .prref { font-size: 13px; }
+   .prbar .prname { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ }
+-.nav .progress { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 6px 10px; font-size: 13px; color: var(--muted); }
+-.nav .progress b { color: var(--text); font-variant-numeric: tabular-nums; }
+-.nav .bar { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; margin: 0 6px 10px; }
+-.nav .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+ .nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+ .nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
+ .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
+ .prblock a { display: inline; padding: 0; }
+ .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+ .nav .ntitle { overflow-wrap: anywhere; }
+-.nav .ncheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
+-.nav .ncheck.done { background: var(--ok) var(--check-icon) center / 9px 9px no-repeat; border-color: var(--ok); }
++.nav .ncheck, .ftree .fcheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
++.nav .ncheck.done, .ftree a.reviewed .fcheck { background: var(--ok) var(--check-icon) center / 9px 9px no-repeat; border-color: var(--ok); }
+ .nav .extra { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+ .nav .extra a { grid-template-columns: 1fr; font-size: 13px; color: var(--muted); }
+ @media (max-width: 980px) { .nav ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+ 
+ /* overview */
+ .overview { display: flex; flex-direction: column; gap: 20px; }
++/* Level with the sidebar, which sticks 16px down. */
++.stats { scroll-margin-top: calc(var(--stick-top) + 16px); }
++.filespane > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
++.filespane > summary::-webkit-details-marker, .fcollapsed > summary::-webkit-details-marker { display: none; }
++.filespane > summary h3 { margin: 0; }
++.filespane > summary .chev, .fcollapsed > summary .chev { align-self: center; margin: 0 2px; }
++.filespane:not([open]) > summary .chev, .fcollapsed:not([open]) > summary .chev { transform: rotate(-45deg); }
++.filespane .fcount { color: var(--muted); font-size: 13px; }
++.ftree { list-style: none; margin: 10px 0 0; padding: 0; max-height: 420px; overflow-y: auto; }
++.ftree a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 4px 8px; margin: 0 -8px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13px; }
++.ftree a:hover { background: var(--surface-2); }
++.ftree .fpath { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ftree .fpath .dir { color: var(--muted); }
++.ftree .stat { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
++.ftree a.reviewed .fpath { color: var(--muted); }
++.fcollapsed { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
++.fcollapsed > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; color: var(--muted); font-size: 13px; }
+ .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; box-shadow: var(--shadow); }
+ .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+ .prose p { margin: 0 0 12px; max-width: 72ch; }
+@@ -139,11 +162,12 @@ table.tbl td.r { font-weight: 600; }
+ .twocol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; align-items: start; }
+ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.tight li:last-child { margin-bottom: 0; }
+ .count { color: var(--muted); font-size: 12.5px; margin-left: 4px; }
+-.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; color: var(--muted); align-items: center; }
+ 
+ /* groups */
+ .groups { display: flex; flex-direction: column; gap: 28px; margin-top: 36px; }
+ .group { position: relative; scroll-margin-top: var(--stick-top); }
++/* Tall enough that jumping to the last section still brings it to the top. */
++.group:last-child { min-height: calc(100vh - var(--stick-top)); }
+ .gsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
+ .ghead { position: sticky; top: var(--stick-top); z-index: 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 2px solid var(--border); }
+ .group.gstuck .ghead { box-shadow: 0 8px 8px -8px rgba(0, 0, 0, .2); }
+@@ -263,7 +287,6 @@ table.diff td.nte { white-space: normal; font-family: "Geist", ui-sans-serif, sy
+ .hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; } .hljs-link { text-decoration: underline; }
+ .hljs-deletion { color: inherit; }
+ 
+-footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
+ :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+ @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+ .chip.inline { margin-top: 0; }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index b9902db..93e78dc 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -57,12 +57,18 @@
+                 return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
+             }).join('') + '</ul>';
+         }
++        // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
++        function startsCollapsed(entry, f) {
++            return entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
++        }
++        function splitPath(path) {
++            const slash = path.lastIndexOf('/');
++            return [slash >= 0 ? path.slice(0, slash + 1) : '', path.slice(slash + 1)];
++        }
+         function renderFile(entry) {
+             const f = fileAt(entry.path);
+-            const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+-            const slash = f.path.lastIndexOf('/');
+-            const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+-            const base = f.path.slice(slash + 1);
++            const collapsed = startsCollapsed(entry, f);
++            const [dir, base] = splitPath(f.path);
+             const checks = entry.checks ?? [];
+             // A note with a line sits under that line of the diff; the rest sit at the top of the file.
+             const atLine = {};
+@@ -166,20 +172,48 @@
+             const summary = (o.summary ?? []).map(block).join('');
+             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+                 '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+-            const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
+-                [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
+-            out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
++            const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
++                [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
++            out += '<div class="card stats" id="files"><div class="statgrid">' +
+                 tiles.map(function (t) { return `<div class="stat-tile"><div class="v">${t[0]}</div><div class="l">${t[1]}</div></div>`; }).join('') +
+-                '</div></div>';
++                '</div></div>' + renderFilesPane();
+             const cards = o.cards ?? [];
+             if (cards.length > 0) {
+                 out += '<div class="twocol">' + cards.map(function (c) {
+                     return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
+                 }).join('') + '</div>';
+             }
+-            out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
+             return out;
+         }
++        // Every file in the diff, by path, each linking to its card; the files the
++        // diff starts collapsed sit in a closed list of their own below the rest.
++        function renderFilesPane() {
++            const rows = data.groups.flatMap(function (g) {
++                return g.files.map(function (entry) { const f = fileAt(entry.path); return { f: f, collapsed: startsCollapsed(entry, f) }; });
++            }).sort(function (a, b) { return a.f.path < b.f.path ? -1 : a.f.path > b.f.path ? 1 : 0; });
++            if (rows.length === 0)
++                return '';
++            function row(f) {
++                const [dir, base] = splitPath(f.path);
++                const mark = f.new === true ? '<span class="badge new">new</span>' : f.deleted === true ? '<span class="badge deleted">deleted</span>' : '';
++                return `<li><a class="fjump" href="#${f.id}" data-fid="${f.id}" title="${esc(f.path)}"><span class="fcheck" aria-hidden="true"></span>` +
++                    `<span class="fpath"><span class="dir">${esc(dir)}</span><span class="base">${esc(base)}</span></span><span class="fbadge">${mark}</span>` +
++                    `<span class="stat"><span class="plus">+${num(f.adds)}</span> <span class="minus">−${num(f.dels)}</span></span></a></li>`;
++            }
++            function list(group) {
++                return '<ul class="ftree">' + group.map(function (r) { return row(r.f); }).join('') + '</ul>';
++            }
++            const open = rows.filter(function (r) { return !r.collapsed; });
++            const closed = rows.filter(function (r) { return r.collapsed; });
++            const count = (n) => `${num(n)} file${n === 1 ? '' : 's'}`;
++            return '<details class="card filespane" open>' +
++                `<summary><span class="chev" aria-hidden="true"></span><h3>Files changed</h3><span class="fcount">${count(rows.length)}</span></summary>` +
++                (open.length > 0 ? list(open) : '') +
++                (closed.length > 0
++                    ? `<details class="fcollapsed"><summary><span class="chev" aria-hidden="true"></span><b>Generated, test, and docs</b>${count(closed.length)}</summary>${list(closed)}</details>`
++                    : '') +
++                '</details>';
++        }
+         // Every published head, newest first, one line each with when it was
+         // published in the reader's own time zone, in a list that starts closed.
+         function headsList() {
+@@ -218,27 +252,34 @@
+                 return `<a href="${esc(p.url)}">${esc(p.title)}</a>`;
+             }).join(' · ') + '</div>';
+         }
++        // Nothing when the build could not ask GitHub, so a status it does not know
++        // never reads as unreviewed.
++        function reviewStatus() {
++            const review = data.review;
++            if (review === undefined)
++                return '';
++            if (review.status === 'unreviewed')
++                return ' · <span class="rstatus unreviewed">Unreviewed</span>';
++            const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
++            return ` · ${ext(review.url, word, `rstatus ${review.status}`)}`;
++        }
+         function renderPage() {
+             const nav = data.groups.map(function (g, i) {
+                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+             }).join('');
+-            const extra = '<a href="#overview">Overview</a>' + (data.overview?.cards ?? []).filter(function (c) { return c.id !== undefined && c.id !== ''; }).map(function (c) {
+-                return `<a href="#${esc(c.id)}">${c.title}</a>`;
+-            }).join('');
+-            const title = esc(data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
++            const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
++            const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
+             return '<div class="wrap">' +
+                 `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+-                `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+-                `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
++                `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
++                `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+                 '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-                `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
++                `<div class="prblock">${stackList()}${projectsList()}</div>` +
+                 `<div class="extra">${extra}</div>` +
+-                `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-                `<ol>${nav}</ol>${headsList()}</nav></aside>` +
++                `<ol>${nav}</ol>${headsList()}</nav>` +
++                '<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div></aside>' +
+                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+-                `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+-                `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+-                '</main></div></div>';
++                `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+         }
+         const root = document.getElementById('summary') ?? document.body;
+         root.innerHTML = renderPage();
+@@ -261,22 +302,12 @@
+         }
+         catch { /* without storage the state lasts only this visit */ } }
+         const groups = Array.from(document.querySelectorAll('.group'));
+-        const progressEl = document.getElementById('progress-count');
+-        const barEl = document.getElementById('progress-bar');
+         function refreshProgress() {
+-            let done = 0;
+             groups.forEach(function (g) {
+-                const isDone = g.classList.contains('done');
+-                if (isDone)
+-                    done++;
+                 const dot = document.querySelector(`.ncheck[data-gid="${g.dataset.gid ?? ''}"]`);
+                 if (dot !== null)
+-                    dot.classList.toggle('done', isDone);
++                    dot.classList.toggle('done', g.classList.contains('done'));
+             });
+-            if (progressEl !== null)
+-                progressEl.textContent = `${String(done)} / ${String(groups.length)}`;
+-            if (barEl !== null)
+-                barEl.style.width = `${String(groups.length > 0 ? (100 * done / groups.length) : 0)}%`;
+         }
+         function filesOf(g) { return Array.from(g.querySelectorAll('.file')); }
+         function fileBox(f) {
+@@ -301,10 +332,17 @@
+             if (!collapsed)
+                 highlightFile(f);
+         }
++        // The files pane marks each file reviewed beside its card.
++        function syncJump(f) {
++            const jump = document.querySelector(`.fjump[data-fid="${f.dataset.fid ?? ''}"]`);
++            if (jump !== null)
++                jump.classList.toggle('reviewed', f.classList.contains('reviewed'));
++        }
+         // Reviewing a file collapses it; un-reviewing one opens it to be read again.
+         function markFile(f, reviewed) {
+             fileBox(f).checked = reviewed;
+             f.classList.toggle('reviewed', reviewed);
++            syncJump(f);
+             set('f:' + (f.dataset.fid ?? ''), reviewed);
+             setCollapsed(f, reviewed);
+         }
+@@ -350,6 +388,7 @@
+                 const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
+                 fileBox(f).checked = reviewed;
+                 f.classList.toggle('reviewed', reviewed);
++                syncJump(f);
+                 if (reviewed)
+                     setCollapsed(f, true);
+             });
+@@ -687,13 +726,11 @@
+         }
+         if (window.hljs !== undefined)
+             setTimeout(pump, 0);
+-        // A hash pointing into a folded section unfolds it, and one pointing at a
+-        // collapsed file opens it.
+-        function openHashTarget() {
+-            const h = location.hash.replace('#', '');
+-            if (h === '')
+-                return;
+-            const el = document.getElementById(h);
++        // Showing an element unfolds the section around it and opens it when it is a
++        // collapsed file. The browser scrolls to a hash itself, so it is scrolled to
++        // here only when `scroll` asks or a section had to unfold first.
++        function reveal(id, scroll) {
++            const el = document.getElementById(id);
+             if (el === null)
+                 return;
+             const g = el.closest('.group');
+@@ -702,11 +739,29 @@
+                 setFolded(g, false, true);
+             if (el.classList.contains('file'))
+                 setCollapsed(el, false);
+-            if (unfold)
++            if (scroll || unfold)
+                 el.scrollIntoView({ block: 'start' });
+         }
+-        window.addEventListener('hashchange', openHashTarget);
+-        openHashTarget();
++        function openHashTarget(scroll) {
++            const h = location.hash.replace('#', '');
++            if (h !== '')
++                reveal(h, scroll);
++        }
++        window.addEventListener('hashchange', function () { openHashTarget(false); });
++        // A file in the files pane opens and scrolls to its card on every click, even
++        // when the hash already names it and the browser would do nothing.
++        document.querySelectorAll('.fjump').forEach(function (a) {
++            a.addEventListener('click', function (ev) {
++                const fid = a.dataset.fid ?? '';
++                ev.preventDefault();
++                if (location.hash !== '#' + fid)
++                    history.pushState(null, '', '#' + fid);
++                reveal(fid, true);
++            });
++        });
++        // A page that fetches its data renders after the browser has looked for the
++        // hash's target and found nothing, so the first look scrolls by itself.
++        openHashTarget(true);
+         refreshProgress();
+     }
+     const node = document.getElementById('summary-data');
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 9c9cbfc..ba3e9e9 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -59,7 +59,11 @@ interface SummaryData {
+   /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
+   stack?: { number: number; title: string; url: string; current: boolean }[];
+   projects?: { name: string; title: string; url: string }[];
+-  indexUrl?: string;
++  /**
++   * The newest Projector review of this head, with its page on GitHub, or `unreviewed` when no
++   * Projector review names the head; absent when the build could not ask GitHub.
++   */
++  review?: { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+   generatedAt?: string;
+ }
+ 
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 894bf4a..874b721 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -57,12 +57,19 @@ function renderSummary(data: SummaryData): void {
+     }).join('') + '</ul>';
+   }
+ 
++  // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
++  function startsCollapsed(entry: SummaryGroup['files'][number], f: SummaryFile): boolean {
++    return entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
++  }
++  function splitPath(path: string): [string, string] {
++    const slash = path.lastIndexOf('/');
++    return [slash >= 0 ? path.slice(0, slash + 1) : '', path.slice(slash + 1)];
++  }
++
+   function renderFile(entry: SummaryGroup['files'][number]): string {
+     const f = fileAt(entry.path);
+-    const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+-    const slash = f.path.lastIndexOf('/');
+-    const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+-    const base = f.path.slice(slash + 1);
++    const collapsed = startsCollapsed(entry, f);
++    const [dir, base] = splitPath(f.path);
+     const checks = entry.checks ?? [];
+     // A note with a line sits under that line of the diff; the rest sit at the top of the file.
+     const atLine: Record<string, SummaryCheck[]> = {};
+@@ -159,21 +166,49 @@ function renderSummary(data: SummaryData): void {
+     const summary = (o.summary ?? []).map(block).join('');
+     let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+       '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+-    const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
+-      [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
+-    out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
++    const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
++      [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
++    out += '<div class="card stats" id="files"><div class="statgrid">' +
+       tiles.map(function (t) { return `<div class="stat-tile"><div class="v">${t[0]}</div><div class="l">${t[1]}</div></div>`; }).join('') +
+-      '</div></div>';
++      '</div></div>' + renderFilesPane();
+     const cards = o.cards ?? [];
+     if (cards.length > 0) {
+       out += '<div class="twocol">' + cards.map(function (c) {
+         return `<div class="card"${c.id !== undefined && c.id !== '' ? ` id="${esc(c.id)}"` : ''}><h3>${c.title}</h3>${c.html}</div>`;
+       }).join('') + '</div>';
+     }
+-    out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
+     return out;
+   }
+ 
++  // Every file in the diff, by path, each linking to its card; the files the
++  // diff starts collapsed sit in a closed list of their own below the rest.
++  function renderFilesPane(): string {
++    const rows = data.groups.flatMap(function (g) {
++      return g.files.map(function (entry) { const f = fileAt(entry.path); return { f: f, collapsed: startsCollapsed(entry, f) }; });
++    }).sort(function (a, b) { return a.f.path < b.f.path ? -1 : a.f.path > b.f.path ? 1 : 0; });
++    if (rows.length === 0) return '';
++    function row(f: SummaryFile): string {
++      const [dir, base] = splitPath(f.path);
++      const mark = f.new === true ? '<span class="badge new">new</span>' : f.deleted === true ? '<span class="badge deleted">deleted</span>' : '';
++      return `<li><a class="fjump" href="#${f.id}" data-fid="${f.id}" title="${esc(f.path)}"><span class="fcheck" aria-hidden="true"></span>` +
++        `<span class="fpath"><span class="dir">${esc(dir)}</span><span class="base">${esc(base)}</span></span><span class="fbadge">${mark}</span>` +
++        `<span class="stat"><span class="plus">+${num(f.adds)}</span> <span class="minus">−${num(f.dels)}</span></span></a></li>`;
++    }
++    function list(group: typeof rows): string {
++      return '<ul class="ftree">' + group.map(function (r) { return row(r.f); }).join('') + '</ul>';
++    }
++    const open = rows.filter(function (r) { return !r.collapsed; });
++    const closed = rows.filter(function (r) { return r.collapsed; });
++    const count = (n: number): string => `${num(n)} file${n === 1 ? '' : 's'}`;
++    return '<details class="card filespane" open>' +
++      `<summary><span class="chev" aria-hidden="true"></span><h3>Files changed</h3><span class="fcount">${count(rows.length)}</span></summary>` +
++      (open.length > 0 ? list(open) : '') +
++      (closed.length > 0
++        ? `<details class="fcollapsed"><summary><span class="chev" aria-hidden="true"></span><b>Generated, test, and docs</b>${count(closed.length)}</summary>${list(closed)}</details>`
++        : '') +
++    '</details>';
++  }
++
+   // Every published head, newest first, one line each with when it was
+   // published in the reader's own time zone, in a list that starts closed.
+   function headsList(): string {
+@@ -211,27 +246,33 @@ function renderSummary(data: SummaryData): void {
+     }).join(' · ') + '</div>';
+   }
+ 
++  // Nothing when the build could not ask GitHub, so a status it does not know
++  // never reads as unreviewed.
++  function reviewStatus(): string {
++    const review = data.review;
++    if (review === undefined) return '';
++    if (review.status === 'unreviewed') return ' · <span class="rstatus unreviewed">Unreviewed</span>';
++    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
++    return ` · ${ext(review.url, word, `rstatus ${review.status}`)}`;
++  }
++
+   function renderPage(): string {
+     const nav = data.groups.map(function (g, i) {
+       return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+     }).join('');
+-    const extra = '<a href="#overview">Overview</a>' + (data.overview?.cards ?? []).filter(function (c) { return c.id !== undefined && c.id !== ''; }).map(function (c) {
+-      return `<a href="#${esc(c.id)}">${c.title}</a>`;
+-    }).join('');
+-    const title = esc(data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
++    const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
++    const title = esc(pr.title !== '' ? pr.title : data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
+     return '<div class="wrap">' +
+       `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
+-      `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))} · head <span class="mono">${short(pr.head)}</span> on ${esc(baseRef ?? 'base')}</div><h1>${title}</h1></div>` +
+-        `<div class="sub">${data.indexUrl !== undefined && data.indexUrl !== '' ? `<a href="${esc(data.indexUrl)}">All reviews</a> · ` : ''}${ext(prUrl, 'Open on GitHub')} · ${ext(`${prUrl}/files`, 'Files tab')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
++      `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
++        `<div class="sub">${ext(prUrl, 'Conversation')} · ${ext(`${prUrl}/files`, 'Files')} · ${ext(`${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, 'Compare')}</div></header>` +
+       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
+-        `<div class="prblock">${ext(prUrl, esc(prRef), 'prref')}${stackList()}${projectsList()}</div>` +
++        `<div class="prblock">${stackList()}${projectsList()}</div>` +
+         `<div class="extra">${extra}</div>` +
+-        `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
+-        `<ol>${nav}</ol>${headsList()}</nav></aside>` +
++        `<ol>${nav}</ol>${headsList()}</nav>` +
++        '<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div></aside>' +
+       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+-        `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
+-        `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
+-      '</main></div></div>';
++        `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+   }
+ 
+   const root = document.getElementById('summary') ?? document.body;
+@@ -246,19 +287,12 @@ function wireSummary(): void {
+   function set(k: string, v: boolean): void { try { if (v) localStorage.setItem(KEY + k, '1'); else localStorage.removeItem(KEY + k); } catch { /* without storage the state lasts only this visit */ } }
+ 
+   const groups = Array.from(document.querySelectorAll<HTMLElement>('.group'));
+-  const progressEl = document.getElementById('progress-count');
+-  const barEl = document.getElementById('progress-bar');
+ 
+   function refreshProgress(): void {
+-    let done = 0;
+     groups.forEach(function (g) {
+-      const isDone = g.classList.contains('done');
+-      if (isDone) done++;
+       const dot = document.querySelector(`.ncheck[data-gid="${g.dataset.gid ?? ''}"]`);
+-      if (dot !== null) dot.classList.toggle('done', isDone);
++      if (dot !== null) dot.classList.toggle('done', g.classList.contains('done'));
+     });
+-    if (progressEl !== null) progressEl.textContent = `${String(done)} / ${String(groups.length)}`;
+-    if (barEl !== null) barEl.style.width = `${String(groups.length > 0 ? (100 * done / groups.length) : 0)}%`;
+   }
+ 
+   function filesOf(g: HTMLElement): HTMLElement[] { return Array.from(g.querySelectorAll<HTMLElement>('.file')); }
+@@ -281,10 +315,17 @@ function wireSummary(): void {
+     if (!collapsed) highlightFile(f);
+   }
+ 
++  // The files pane marks each file reviewed beside its card.
++  function syncJump(f: HTMLElement): void {
++    const jump = document.querySelector(`.fjump[data-fid="${f.dataset.fid ?? ''}"]`);
++    if (jump !== null) jump.classList.toggle('reviewed', f.classList.contains('reviewed'));
++  }
++
+   // Reviewing a file collapses it; un-reviewing one opens it to be read again.
+   function markFile(f: HTMLElement, reviewed: boolean): void {
+     fileBox(f).checked = reviewed;
+     f.classList.toggle('reviewed', reviewed);
++    syncJump(f);
+     set('f:' + (f.dataset.fid ?? ''), reviewed);
+     setCollapsed(f, reviewed);
+   }
+@@ -330,6 +371,7 @@ function wireSummary(): void {
+       const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
+       fileBox(f).checked = reviewed;
+       f.classList.toggle('reviewed', reviewed);
++      syncJump(f);
+       if (reviewed) setCollapsed(f, true);
+     });
+     const reviewed = get('g:' + gid) === '1' || allFilesReviewed(g);
+@@ -610,21 +652,36 @@ function wireSummary(): void {
+   }
+   if (window.hljs !== undefined) setTimeout(pump, 0);
+ 
+-  // A hash pointing into a folded section unfolds it, and one pointing at a
+-  // collapsed file opens it.
+-  function openHashTarget(): void {
+-    const h = location.hash.replace('#', '');
+-    if (h === '') return;
+-    const el = document.getElementById(h);
++  // Showing an element unfolds the section around it and opens it when it is a
++  // collapsed file. The browser scrolls to a hash itself, so it is scrolled to
++  // here only when `scroll` asks or a section had to unfold first.
++  function reveal(id: string, scroll: boolean): void {
++    const el = document.getElementById(id);
+     if (el === null) return;
+     const g = el.closest<HTMLElement>('.group');
+     const unfold = g !== null && g !== el && g.classList.contains('folded');
+     if (unfold) setFolded(g, false, true);
+     if (el.classList.contains('file')) setCollapsed(el, false);
+-    if (unfold) el.scrollIntoView({ block: 'start' });
++    if (scroll || unfold) el.scrollIntoView({ block: 'start' });
+   }
+-  window.addEventListener('hashchange', openHashTarget);
+-  openHashTarget();
++  function openHashTarget(scroll: boolean): void {
++    const h = location.hash.replace('#', '');
++    if (h !== '') reveal(h, scroll);
++  }
++  window.addEventListener('hashchange', function () { openHashTarget(false); });
++  // A file in the files pane opens and scrolls to its card on every click, even
++  // when the hash already names it and the browser would do nothing.
++  document.querySelectorAll<HTMLAnchorElement>('.fjump').forEach(function (a) {
++    a.addEventListener('click', function (ev) {
++      const fid = a.dataset.fid ?? '';
++      ev.preventDefault();
++      if (location.hash !== '#' + fid) history.pushState(null, '', '#' + fid);
++      reveal(fid, true);
++    });
++  });
++  // A page that fetches its data renders after the browser has looked for the
++  // hash's target and found nothing, so the first look scrolls by itself.
++  openHashTarget(true);
+   refreshProgress();
+ }
+ 
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 83f883c..24b2084 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -91,8 +91,9 @@ push to, or approve the pull request unless the user asks.
+      that line in the diff. A note about one file goes on that file. Only a
+      note that ties several files together stays on the group.
+    - **Collapse noise.** Generated code, tests and documentation start
+-     collapsed unless a file's `collapsed` says otherwise. A file the
+-     repository marks `linguist-generated` in `.gitattributes` counts as
++     collapsed unless a file's `collapsed` says otherwise, and the page's
++     **Files changed** list keeps them in a closed list of their own. A file
++     the repository marks `linguist-generated` in `.gitattributes` counts as
+      generated, as on GitHub; `format.md` says how. Give the files a
+      reviewer must read a one-line `note` that says what the file is for and
+      what changed in it, not a list of the names it defines.
+@@ -268,7 +269,7 @@ could not serve the diff. The file is then the local `git diff` from step 3,
+ since the compare call there fails with `publish`'s. It must be the diff from
+ the summary's `pr.base` to its `pr.head`, because every later deploy serves
+ the stored diff as it is. Because the diff is
+-stored, the site deploy asks GitHub for nothing: it checks each summary against
++stored, the site deploy asks GitHub for no diff: it checks each summary against
+ its stored diff and writes each page's data beside it, and the page loads
+ that data when it opens. The deploy reports and skips any summary that still
+ fails, or that names another repository, so one bad summary costs one
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index d6ef901..b4e3113 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -47,8 +47,10 @@ it. The summary is JSON:
+ 
+ ## Fields
+ 
+-- `name` is the page title: a short name for the change, not a sentence.
+-  It becomes the browser tab and gallery title.
++- `name` labels the summary where the site lists reviews: in the Reviews
++  table and in a project's list of reviews. Make it a short name for the
++  change, not a sentence. The page and its browser tab take the pull
++  request's title, and use `name` only when that title is empty.
+ - `pr.head` is the commit the page describes. `build` stops when the pull
+   request has moved past it, unless `--at-head` asks for that head exactly.
+ - `pr.base` is the merge base the diff is taken from. `init` records it; the
+@@ -57,13 +59,13 @@ it. The summary is JSON:
+   request's head, are what the site's review list uses to mark a stacked pull
+   request. `init` records both; keep them when you edit a summary by hand.
+ - `overview.summary` is what the pull request does, in a few paragraphs.
+-  The page adds the line counts and a legend itself.
++  The page adds the line counts and the list of files itself.
+ - Each item of `overview.summary` and of a group's `intro` renders as a
+   paragraph, except an item that starts with a block, `<ul>`, `<ol>`,
+   `<table>`, `<div>`, `<pre>`, `<h3>`, `<h4>` or `<p>`, which renders as
+   written. Give a list, table or heading an item of its own.
+-- `overview.cards` lay out two per row. A card with an `id` also gets a
+-  link in the sidebar, under Overview and above the groups, in page order.
++- `overview.cards` lay out two per row. A card with an `id` takes it as its
++  anchor.
+ - `groups[].id` must be unique; it is the section anchor.
+ - `checks` are review notes, on a group or on one of its files. Each has a
+   `kind`: `context` for what to hold in mind, `verify` for an invariant
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index eb221a7..f0ef969 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -984,6 +984,13 @@ def base_pr(base_ref: str) -> Optional[int]:
+         except summary.SummaryError:
+             return None
+ 
++    # A review that cannot be asked about shows no status, rather than unreviewed.
++    def pr_reviews(number: int) -> Optional[list[dict]]:
++        try:
++            return summary.pr_reviews(repo, number)
++        except summary.SummaryError:
++            return None
++
+     entries, failures = site.build_site(
+         out,
+         summaries=summaries,
+@@ -995,6 +1002,7 @@ def base_pr(base_ref: str) -> Optional[int]:
+         trunk=trunk_branch(root),
+         base=base,
+         lookup=base_pr if repo else None,
++        review_lookup=pr_reviews if repo else None,
+     )
+     return f"{len(projects)} projects, {len(entries)} reviews, {len(failures)} reviews skipped"
+ 
+diff --git a/src/projector/review.py b/src/projector/review.py
+index d8e84ea..a4168d4 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -559,7 +559,7 @@ def census_lines(result: dict) -> list[str]:
+ )
+ MARKER = re.compile(
+     r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=\S+ model=\S+ (?:effort=\S+ )?"
+-    r"sha=[0-9a-f]{40} findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
++    r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+ )
+ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+ PRIORITY_HEADER = re.compile(r"^\*\*(P1|P2) · [^\n]+\*\*")
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index a376957..d1da492 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -29,6 +29,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, title_from_text
++from ..review import MARKER
+ from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
+ 
+ 
+@@ -96,10 +97,15 @@ def copy_assets(out: Path) -> None:
+         (out / asset).write_bytes((ASSETS / asset).read_bytes())
+ 
+ 
++def pr_title(payload: dict) -> str:
++    """The pull request's own title, which heads its summary page."""
++    return payload["pr"].get("title") or payload.get("name") or f"#{payload['pr']['number']}"
++
++
+ def write_page(out: Path, payload: dict) -> None:
+     """A standalone page, with its data embedded and the renderer beside it."""
+     out.mkdir(parents=True, exist_ok=True)
+-    (out / "index.html").write_text(page(payload["name"], payload), encoding="utf-8")
++    (out / "index.html").write_text(page(pr_title(payload), payload), encoding="utf-8")
+     copy_assets(out)
+ 
+ 
+@@ -129,15 +135,47 @@ def summary_time(path: Path) -> int:
+     return int(path.stat().st_mtime)
+ 
+ 
++# Anyone can review a public repository's pull request, and GitHub shows a
++# marker line as nothing, so only a review by someone the repository let in
++# can set a status.
++REVIEWER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
++
++
++def review_statuses(reviews: list[dict]) -> dict[str, dict]:
++    """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
++
++    A review is Projector's when a line of its body is the marker a Projector
++    review carries, which names the verdict and the head it reviewed, and its
++    author owns the repository, belongs to its organization, or collaborates
++    on it.
++    """
++    newest: dict[str, dict] = {}
++    for review in reviews:
++        if review.get("association") not in REVIEWER_ASSOCIATIONS:
++            continue
++        for line in (review.get("body") or "").splitlines():
++            marker = MARKER.match(line.strip())
++            if marker is None:
++                continue
++            verdict, head = marker.groups()
++            if head not in newest or review["at"] >= newest[head]["at"]:
++                newest[head] = {"status": verdict, "url": review["url"], "at": review["at"]}
++            break
++    return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
++
++
+ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
+-                    lookup=None, repo_root: Path | None = None) -> tuple[list[dict], list[str]]:
++                    lookup=None, repo_root: Path | None = None, review_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+     Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
+     `lookup`, and each page lists the pull requests in its stack. A file is
+     generated as the `attributes.json` that `publish` stored beside a summary
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+-    its .gitattributes.
++    its .gitattributes. Each page also carries `review`, the newest Projector
++    review of its head, from the reviews `review_lookup` returns for its pull
++    request: `unreviewed` when none names the head, and no `review` at all
++    when `review_lookup` is missing or returns None because it could not ask.
+     """
+     summaries = sorted(root.glob("*/*/summary.json"))
+     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
+@@ -184,22 +222,28 @@ def skip(path: Path, reason: object) -> None:
+         heads = [{"head": p["pr"]["head"], "url": f"{base}reviews/{number}/{p['pr']['head']}/", "at": when}
+                  for when, p in versions]
+         stack = stack_rows(int(number), bases, prs, base)
++        # The review skill publishes its review before the summary, and publishing
++        # the summary starts this build, so the reviews include the verdict on the
++        # head the summary describes.
++        reviews = review_lookup(int(number)) if review_lookup is not None else None
++        statuses = review_statuses(reviews) if reviews is not None else None
+         for _, payload in versions:
+             head = payload["pr"]["head"]
+-            payload.update(indexUrl=f"{base}reviews/", heads=[dict(h, current=h["head"] == head) for h in heads],
+-                           stack=stack)
++            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack)
++            if statuses is not None:
++                payload["review"] = statuses.get(head, {"status": "unreviewed"})
+             folder = out / "reviews" / number / head
+             folder.mkdir(parents=True, exist_ok=True)
+             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+             (folder / "data.json").write_text(data, encoding="utf-8")
+             (folder / "index.html").write_text(
+-                page(payload["name"], payload, embed=False, assets=f"{base}assets/", site_base=base,
++                page(pr_title(payload), payload, embed=False, assets=f"{base}assets/", site_base=base,
+                      src=f"{base}reviews/{number}/{head}/data.json"), encoding="utf-8")
+             print(f"built {number}/{head[:9]}: {len(payload['groups'])} groups, {payload['stats']['files']} files")
+         latest = versions[0][1]
+         newest = latest["pr"]["head"]
+         (out / "reviews" / number / "index.html").write_text(
+-            page(latest["name"], latest, embed=False, assets=f"{base}assets/", site_base=base,
++            page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
+                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
+         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
+                         "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),
+@@ -488,13 +532,15 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+-               trunk: str | None = None, lookup=None) -> tuple[list[dict], list[str]]:
++               trunk: str | None = None, lookup=None, review_lookup=None) -> tuple[list[dict], list[str]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+     `trunk` the default branch a pull request that is not stacked is based on.
+     `lookup` finds the pull request whose head is a branch, for a summary that
+-    did not record the one it is stacked on.
++    did not record the one it is stacked on. `review_lookup` returns a pull
++    request's reviews, or None when it cannot ask, for each summary's review
++    status.
+     """
+     trunk = trunk or branch
+     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
+@@ -508,8 +554,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     files = collect_files(repo_root, projects_dir, out) if repo_root else []
+     assign_routes(docs, described)
+     link = project_linker(described, base)
+-    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root) \
+-        if summaries and summaries.is_dir() else ([], [])
++    built = build_summaries(summaries, out, base, link, trunk=trunk, lookup=lookup, repo_root=repo_root,
++                            review_lookup=review_lookup) if summaries and summaries.is_dir() else ([], [])
+     entries, failures = built
+     for project in described:
+         project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 081be84..1cc7d90 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -647,6 +647,15 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+     return int(found) if found and found.strip().isdigit() else None
+ 
+ 
++def pr_reviews(repo: str, number: int) -> list[dict]:
++    """Every submitted review of pull request `number`: its `body`, its page as `url`, its time as `at`, and its
++    author's relation to the repository as `association`, GitHub's `author_association`."""
++    rows = gh("api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
++              "--jq", ".[] | select(.submitted_at != null) "
++                      "| {body, url: .html_url, at: .submitted_at, association: .author_association} | @json")
++    return [json.loads(row) for row in rows.splitlines() if row.strip()]
++
++
+ def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
+     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
+     meta = {
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 60f87a8..067403b 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -43,6 +43,11 @@ def setUp(self) -> None:
+             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+             (self.repo / path).write_text(text)
+         self.out = Path(tempfile.mkdtemp()) / "site"
++        # A build that knows its repository asks GitHub for each pull request's
++        # reviews. No test reaches GitHub; one that needs reviews supplies them.
++        offline = mock.patch.object(summary, "pr_reviews", side_effect=summary.SummaryError("gh api failed: offline"))
++        offline.start()
++        self.addCleanup(offline.stop)
+ 
+ 
+ class SiteBuildTests(SiteRepoCase):
+@@ -327,6 +332,77 @@ def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -
+ 
+         self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+ 
++    def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
++        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
++        asked: list[tuple[str, int]] = []
++
++        def pr_reviews(repo: str, number: int) -> list[dict]:
++            asked.append((repo, number))
++            if reviews is None:
++                raise summary.SummaryError("gh api failed: offline")
++            return reviews
++
++        self.publish(9, "c" * 40)
++        self.publish(9, "d" * 40)
++        with mock.patch.object(summary, "pr_reviews", side_effect=pr_reviews):
++            self.build()
++        self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
++        return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
++                for head in ("c" * 40, "d" * 40)}
++
++    def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:
++        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
++                                  projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
++
++        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
++                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
++
++    def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
++        marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
++        statuses = self.statuses([
++            projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
++            {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z", "association": "OWNER"},
++            {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
++             "at": "2026-10-03T10:00:00Z", "association": "OWNER"},
++            {"body": None, "url": review_url(4), "at": "2026-10-04T10:00:00Z", "association": "OWNER"},
++        ])
++
++        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
++
++    def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
++        # Anyone can review a public repository's pull request, and GitHub
++        # shows a marker line as nothing, so a forged one must not count.
++        statuses = self.statuses([
++            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
++            projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2, association="NONE"),
++            projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 3, association="CONTRIBUTOR"),
++            projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
++        ])
++
++        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
++                         statuses)
++
++    def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
++        statuses = self.statuses([
++            projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1, association="MEMBER"),
++            projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 2, association="COLLABORATOR"),
++        ])
++
++        self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
++                          "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
++
++    def test_the_newest_projector_review_of_a_head_decides_its_status(self) -> None:
++        statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-02T10:00:00Z", 2),
++                                  projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
++                                  projector_review("changes-requested", "d" * 40, "2026-10-01T10:00:00Z", 3),
++                                  projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4)])
++
++        self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
++                          "d": {"status": "clean", "url": review_url(4)}}, statuses)
++
++    def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
++        self.assertEqual({"c": None, "d": None}, self.statuses(None))
++
+     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
+         self.publish(9, "c" * 40, headRef="feature-a")
+         self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
+@@ -365,7 +441,6 @@ def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+         self.assertEqual({"alpha": [9], "alpha/beta": []}, reviews, "the deepest project owns the file")
+         data = json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+         self.assertEqual([{"name": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}], data["projects"])
+-        self.assertEqual("/reviews/", data["indexUrl"])
+         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
+ 
+     def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
+@@ -579,17 +654,24 @@ def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
+         # The sidebar is sticky on a wide screen, so a list taller than the
+         # window has no other way to reach its last sections. On a narrow
+         # screen it sits above the content and scrolls with the page.
++        # The sidebar holds the list's box and the credit under it, so the
++        # sidebar is what fits the window, and the box takes what the credit
++        # leaves.
+         css = (SITE_JS.parent / "summary.css").read_text()
++        side = re.search(r"^\.layout > \.side \{([^}]*)\}", css, re.M)
++        self.assertIsNotNone(side, "summary.css has no .layout > .side rule")
++        self.assertRegex(side.group(1), r"max-height: calc\(100vh\b")
++        self.assertRegex(side.group(1), r"display: flex; flex-direction: column;")
+         wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
+         self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
+-        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
+         self.assertRegex(wide.group(1), r"overflow-y: auto")
+         # A scroll the list cannot take passes to the page, which is what pins
+         # the sidebar and brings a long list's last sections into the window.
+         self.assertNotIn("overscroll-behavior", wide.group(1))
+-        narrow = re.search(r"@media \(max-width: 980px\) \{ \.side \{ position: static; \} (.*) \}$", css, re.M)
++        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; max-height: none; \} (.*) \}$",
++                           css, re.M)
+         self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
+-        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
++        self.assertIn(".side .nav { overflow: visible; }", narrow.group(1))
+ 
+     def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
+         css = (SITE_JS.parent / "summary.css").read_text()
+@@ -607,12 +689,37 @@ def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
+         self.assertTrue(stack, "summary.css has no .stack rule")
+         self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
+ 
+-    def test_a_stack_row_shows_its_whole_title(self) -> None:
++    def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
+         css = (SITE_JS.parent / "summary.css").read_text()
+         title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
+         self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
+         self.assertIn("overflow-wrap: anywhere;", title.group(1))
+-        self.assertNotIn("line-clamp", title.group(1))
++        self.assertIn("-webkit-line-clamp: 3;", title.group(1))
++        # Every title has the same weight, because bold text is wider, and a
++        # current row in a different weight could wrap onto more lines than
++        # the same title in another row.
++        self.assertIn("font-weight: 600;", title.group(1))
++        current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
++        self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
++        self.assertNotIn("font-weight", current.group(1))
++        current_title = re.search(r"^\.prblock \.stack li\.current \.stitle \{", css, re.M)
++        self.assertIsNone(current_title, "the current row's title is styled like every other title")
++
++
++def review_url(review_id: int) -> str:
++    return f"https://github.com/owner/example/pull/9#pullrequestreview-{review_id}"
++
++
++def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER") -> dict:
++    """A review of pull request 9 as `summary.pr_reviews` returns it, carrying a Projector review's marker for `head`.
++
++    `association` is the author's relation to the repository, as GitHub's
++    `author_association` gives it.
++    """
++    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model=claude-opus effort=high "
++              f"sha={head} findings=0 seconds=60 covered=2/2 -->")
++    return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
++            "url": review_url(review_id), "at": at, "association": association}
+ 
+ 
+ def served_summary(number: int, head: str) -> dict:
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index d796f9f..b4b9920 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -143,7 +143,7 @@ def test_writes_the_page_and_the_renderer(self) -> None:
+ 
+         self.assertEqual(0, code, err)
+         html = (site / "index.html").read_text()
+-        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Core Summary</title>\n"), html[:200])
++        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Change the core</title>\n"), html[:200])
+         self.assertTrue((site / "summary.js").is_file())
+         self.assertTrue((site / "summary.css").is_file())
+         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
+@@ -291,7 +291,6 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+         self.assertIn('src="/assets/site.js"', page)
+         self.assertIn('<meta charset="utf-8">', page)
+         data = json.loads((built_site / "reviews" / "7" / ("a" * 40) / "data.json").read_text())
+-        self.assertEqual("/reviews/", data["indexUrl"])
+         self.assertEqual(["/reviews/7/" + "c" * 40 + "/", "/reviews/7/" + "a" * 40 + "/"], [h["url"] for h in data["heads"]])
+         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
+         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
+@@ -1040,6 +1039,22 @@ def test_the_live_head_check_asks_nothing_about_stacks(self) -> None:
+         self.assertNotIn("basePr", meta)
+ 
+ 
++class PrReviewsTests(unittest.TestCase):
++    def test_reads_every_page_of_reviews_one_row_each(self) -> None:
++        rows = [{"body": "First\nline two", "url": "https://github.com/owner/example/pull/7#pullrequestreview-1",
++                 "at": "2026-10-01T10:00:00Z", "association": "OWNER"},
++                {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
++                 "at": "2026-10-02T10:00:00Z", "association": "NONE"}]
++        with mock.patch.object(summary, "gh", return_value="".join(json.dumps(r) + "\n" for r in rows)) as gh:
++            reviews = summary.pr_reviews("owner/example", 7)
++
++        self.assertEqual(rows, reviews)
++        args = gh.call_args.args
++        self.assertEqual(("api", "--paginate", "repos/owner/example/pulls/7/reviews"), args[:3])
++        self.assertIn("select(.submitted_at != null)", args[-1], "a pending review has no verdict to show yet")
++        self.assertIn("association: .author_association", args[-1], "the site trusts a verdict by who wrote it")
++
++
+ class StatusTests(unittest.TestCase):
+     def status(self, answers: dict[str, str | None], *args: str) -> tuple[int, str, str]:
+         def lookup(*gh_args: str) -> str | None:
