@@ -454,9 +454,10 @@ The body file is the review below its signature line: the intent paragraph,
 the census, the coverage line, disclosures, `Suggestions`, and what was
 checked. Put `{census}` where the census goes; `publish` fills it with the
 count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
-`{short_sha}` where you use them. It fills them only in prose: code quoted in
-backticks or a fenced block, and any other text in braces, goes out exactly as
-written. The threads file is a JSON list of findings,
+`{short_sha}` where you use them. It fills them in prose and in a backtick
+span that holds one placeholder alone, so `` `{short_sha}` `` shows the SHA in
+code font. Longer code in backticks, a fenced block, and any other text in
+braces go out exactly as written. The threads file is a JSON list of findings,
 each `{"path", "line", "priority", "body"}`, where `body` is the visible text
 below — `publish` adds the finding marker with the head's SHA. It refuses,
 exiting 1 with what to fix and keeping the lock so you can correct the input
@@ -467,7 +468,7 @@ and run it again, when:
   its text does not open with its priority header or lacks a `**Fix:**` line,
   or it opens a `<!-- projector-… -->` marker comment of its own;
 - the body is missing or empty, opens with its own signature line or carries
-  a marker comment, or has no `{census}` outside code;
+  a marker comment, or has no `{census}` outside quoted code;
 - the verdict disagrees with the census: `clean` with a finding open or
   being posted, or `changes-requested` with none;
 - the collision check below trips.
