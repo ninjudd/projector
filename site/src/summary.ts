@@ -655,11 +655,11 @@ function wireSummary(): void {
     if (el.classList.contains('file')) setCollapsed(el, false);
     if (scroll || unfold) el.scrollIntoView({ block: 'start' });
   }
-  function openHashTarget(): void {
+  function openHashTarget(scroll: boolean): void {
     const h = location.hash.replace('#', '');
-    if (h !== '') reveal(h, false);
+    if (h !== '') reveal(h, scroll);
   }
-  window.addEventListener('hashchange', openHashTarget);
+  window.addEventListener('hashchange', function () { openHashTarget(false); });
   // A file in the files pane opens and scrolls to its card on every click, even
   // when the hash already names it and the browser would do nothing.
   document.querySelectorAll<HTMLAnchorElement>('.fjump').forEach(function (a) {
@@ -670,7 +670,9 @@ function wireSummary(): void {
       reveal(fid, true);
     });
   });
-  openHashTarget();
+  // A page that fetches its data renders after the browser has looked for the
+  // hash's target and found nothing, so the first look scrolls by itself.
+  openHashTarget(true);
   refreshProgress();
 }
 

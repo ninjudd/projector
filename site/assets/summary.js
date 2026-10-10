@@ -732,12 +732,12 @@
             if (scroll || unfold)
                 el.scrollIntoView({ block: 'start' });
         }
-        function openHashTarget() {
+        function openHashTarget(scroll) {
             const h = location.hash.replace('#', '');
             if (h !== '')
-                reveal(h, false);
+                reveal(h, scroll);
         }
-        window.addEventListener('hashchange', openHashTarget);
+        window.addEventListener('hashchange', function () { openHashTarget(false); });
         // A file in the files pane opens and scrolls to its card on every click, even
         // when the hash already names it and the browser would do nothing.
         document.querySelectorAll('.fjump').forEach(function (a) {
@@ -749,7 +749,9 @@
                 reveal(fid, true);
             });
         });
-        openHashTarget();
+        // A page that fetches its data renders after the browser has looked for the
+        // hash's target and found nothing, so the first look scrolls by itself.
+        openHashTarget(true);
         refreshProgress();
     }
     const node = document.getElementById('summary-data');
