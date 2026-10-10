@@ -730,11 +730,13 @@ Models are told apart by their model ID, lowercased and without a trailing
 bracketed variant such as `[1m]`. When one model reviewed the head and its
 review is incremental, the header reads **Clean · incremental from a8cf3d5**,
 where the second part names the head of the full review it builds on and
-links that review. When several models reviewed the head, the header groups
-them by verdict, changes requested first, and links each model's name to its
-review, as in **Changes requested (gpt-5.5) · Clean (claude-opus-5-5)**; an
-incremental review reads **claude-opus-5-5 incremental from a8cf3d5** inside
-its group. The row on Reviews shows the first word alone. A review counts
+links that review. When several models reviewed the head, the header still
+shows the one status, followed by a muted count such as **2 models**.
+Hovering over the status or the count, or moving keyboard focus to either,
+shows a list with a row for each model, changes requested first: the model's
+name linked to its review, its verdict, and for an incremental review the full
+review it builds on. Escape hides the list. The row on Reviews shows the
+status alone. A review counts
 only when its author owns the repository, belongs to its organization, or
 collaborates on it, because anyone can review a public repository's pull
 request. The build reads the pull request's state and reviews through `gh`

@@ -1760,43 +1760,62 @@ class FileHeaderTests(SiteRepoCase):
                       "a merged pull request shows Merged alone")
 
     @unittest.skipUnless(shutil.which("node"), "the status test needs node")
-    def test_the_header_groups_models_by_verdict_and_the_index_row_shows_its_first_word(self) -> None:
+    def test_the_header_shows_one_status_and_lists_several_models_on_hover_or_focus(self) -> None:
         full, head = "a8cf3d5" + "0" * 33, "c" * 40
 
-        def link(review_id: int, text: str, cls: str = "") -> str:
-            attribute = f' class="{cls}"' if cls else ""
+        def link(review_id: int, text: str, cls: str = "", described: bool = False) -> str:
+            attribute = (f' class="{cls}"' if cls else "") + (' aria-describedby="review-models"' if described else "")
             return f'<a{attribute} href="{review_url(review_id)}" target="_blank" rel="noopener">{text}</a>'
 
-        clean, changes = link(2, "Clean", "rstatus clean"), link(2, "Changes requested", "rstatus changes-requested")
+        def models(status: str, review_id: int, *rows: str) -> str:
+            badge = link(review_id, {"clean": "Clean", "changes-requested": "Changes requested"}[status],
+                         f"rstatus {status}", described=True)
+            return (f' · <span class="rmodels">{badge}<span class="rmodelcount" tabindex="0" '
+                    f'aria-describedby="review-models">{len(rows)} models</span>'
+                    f'<span class="rmodellist" id="review-models">{"".join(rows)}</span></span>')
+
+        def row(review_id: int, model: str, status: str, extra: str = "") -> str:
+            word = {"clean": "Clean", "changes-requested": "Changes requested"}[status]
+            return (f'<span class="rmodel">{link(review_id, model)} · <span class="rstatus {status}">{word}</span>'
+                    f'{extra}</span>')
+
         cases = {
-            "one model": ([projector_review("clean", head, "2026-10-02T10:00:00Z", 2)], f" · {clean}"),
+            "one model": ([projector_review("clean", head, "2026-10-02T10:00:00Z", 2)],
+                          f" · {link(2, 'Clean', 'rstatus clean')}"),
             "two clean": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
                            projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
-                          f" · {clean} ({link(1, 'claude-opus')}, {link(2, 'gpt-5.5')})"),
+                          models("clean", 2, row(1, "claude-opus", "clean"), row(2, "gpt-5.5", "clean"))),
             "split": ([projector_review("clean", head, "2026-10-02T09:00:00Z", 1),
                        projector_review("changes-requested", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
-                      f" · {changes} ({link(2, 'gpt-5.5')}) · <span class=\"rstatus clean\">Clean</span> "
-                      f"({link(1, 'claude-opus')})"),
+                      models("changes-requested", 2, row(2, "gpt-5.5", "changes-requested"),
+                             row(1, "claude-opus", "clean"))),
             "incremental": ([projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
                              incremental_review(head, full, "2026-10-02T09:00:00Z", 3),
                              projector_review("clean", head, "2026-10-02T10:00:00Z", 2, model="gpt-5.5")],
-                            f" · {clean} ({link(3, 'claude-opus')} "
-                            f"{link(1, 'incremental from <code>a8cf3d5</code>', 'rstatus incremental')}, "
-                            f"{link(2, 'gpt-5.5')})"),
+                            models("clean", 2, row(3, "claude-opus", "clean", " · " + link(
+                                1, "incremental from <code>a8cf3d5</code>", "rstatus incremental")),
+                                   row(2, "gpt-5.5", "clean"))),
             "unreviewed": ([], ' · <span class="rstatus unreviewed">Unreviewed</span>'),
         }
         for name, (reviews, header) in cases.items():
             with self.subTest(name):
                 data = self.build(state="open", reviews=reviews)
-                row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
+                index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
+                badge = re.match(r" · (?:<span class=\"rmodels\">)?(<(a|span) [^>]*>[^<]*</\2>)", header).group(1)
 
                 self.assertIn(f"{header}</div><h1>", rendered_summary(data))
-                self.assertTrue(header.startswith(f" · {row}"), "the index row shows the header's first word")
+                self.assertEqual(index_row, badge.replace(' aria-describedby="review-models"', ""),
+                                 "the index row shows the header's status")
                 shutil.rmtree(self.out)
         data = self.build(state="merged", reviews=cases["split"][0])
-        row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('merged', {json.dumps(data['review'])}));")
-        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', rendered_summary(data))
-        self.assertEqual('<span class="rstatus merged">Merged</span>', row)
+        index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('merged', {json.dumps(data['review'])}));")
+        merged = rendered_summary(data)
+        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged)
+        self.assertNotIn("rmodels", merged, "a merged pull request lists no models")
+        self.assertEqual('<span class="rstatus merged">Merged</span>', index_row)
+        css = (SITE_JS.parent / "summary.css").read_text()
+        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { opacity: 1;", css,
+                      "a pointer or the keyboard shows the list, never a title attribute")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:

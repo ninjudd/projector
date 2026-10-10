@@ -22,8 +22,9 @@ const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requeste
 // of it requests changes and Clean otherwise, linked to the review that
 // decides it, or Unreviewed when no Projector review names the head. Nothing
 // when the build could not ask GitHub, so a status it does not know never
-// reads as unreviewed.
-function statusHtml(state, review) {
+// reads as unreviewed. A verdict's link is described by the element whose id
+// is `describedBy`, when one is given.
+function statusHtml(state, review, describedBy = '') {
     if (state === 'merged')
         return '<span class="rstatus merged">Merged</span>';
     if (state === 'closed')
@@ -32,7 +33,8 @@ function statusHtml(state, review) {
         return '';
     if (review.status === 'unreviewed')
         return '<span class="rstatus unreviewed">Unreviewed</span>';
-    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}</a>`;
+    const described = describedBy !== '' ? ` aria-describedby="${esc(describedBy)}"` : '';
+    return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}</a>`;
 }
 (function () {
     function renderSummary(data) {
@@ -348,30 +350,28 @@ function statusHtml(state, review) {
             return from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
         }
         // The header, as the page's statement of how well the head was checked,
-        // also links the full review a clean incremental review builds on. With
-        // several models it groups them by verdict, changes requested first, each
-        // model's name linking to its own review; the first word is still the one
-        // the Reviews index shows.
+        // shows the one status the Reviews index shows, and also links the full
+        // review a clean incremental review builds on. When several models reviewed
+        // the head, a model count follows the status, and hovering or focusing
+        // either shows each model's verdict, linked to its review. The list stays
+        // in the page, so a keyboard tabs into its links, and both name it with
+        // aria-describedby; wireSummary lets Escape hide it.
         function reviewStatus() {
-            const status = statusHtml(pr.state, data.review);
+            const review = data.review;
+            const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
+                review.models.length > 1 ? review.models : null;
+            const status = statusHtml(pr.state, review, several !== null ? 'review-models' : '');
             if (status === '')
                 return '';
-            const review = data.review;
-            if (pr.state === 'merged' || pr.state === 'closed' || review === undefined || review.status === 'unreviewed')
-                return ` · ${status}`;
-            if (review.models.length > 1) {
-                const models = review.models;
-                return ['changes-requested', 'clean'].map(function (verdict) {
-                    const names = models.filter(function (m) { return m.status === verdict; }).map(function (m) {
-                        return ext(m.url, esc(m.model)) + (m.status === 'clean' && m.incrementalFrom !== undefined ? ` ${incrementalLink(m.incrementalFrom)}` : '');
-                    });
-                    if (names.length === 0)
-                        return '';
-                    const word = verdict === review.status ? status : `<span class="rstatus ${verdict}">${VERDICT_WORDS[verdict]}</span>`;
-                    return ` · ${word} (${names.join(', ')})`;
+            if (several !== null) {
+                const rows = several.map(function (m) {
+                    const from = m.status === 'clean' && m.incrementalFrom !== undefined ? ` · ${incrementalLink(m.incrementalFrom)}` : '';
+                    return `<span class="rmodel">${ext(m.url, esc(m.model))} · <span class="rstatus ${m.status}">${VERDICT_WORDS[m.status]}</span>${from}</span>`;
                 }).join('');
+                return ` · <span class="rmodels">${status}<span class="rmodelcount" tabindex="0" aria-describedby="review-models">` +
+                    `${String(several.length)} models</span><span class="rmodellist" id="review-models">${rows}</span></span>`;
             }
-            const from = review.status === 'clean' ? review.incrementalFrom : undefined;
+            const from = review?.status === 'clean' && pr.state !== 'merged' && pr.state !== 'closed' ? review.incrementalFrom : undefined;
             return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
         }
         function renderPage() {
@@ -612,6 +612,17 @@ function statusHtml(state, review) {
                 catch {
                     fallback();
                 }
+            });
+        });
+        // Escape hides the models a hover or focus shows beside the header's status,
+        // until the pointer leaves it or focus moves out of it.
+        document.querySelectorAll('.rmodels').forEach(function (box) {
+            box.addEventListener('keydown', function (ev) { if (ev.key === 'Escape')
+                box.classList.add('dismissed'); });
+            box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); });
+            box.addEventListener('focusout', function (ev) {
+                if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget)))
+                    box.classList.remove('dismissed');
             });
         });
         // A "…" button, on the page header or a file's, opens its links as a popover,
