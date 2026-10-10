@@ -19,6 +19,7 @@ fetches its data.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import html
 import json
 import os
@@ -30,7 +31,8 @@ from pathlib import Path
 
 from ..core import Project, title_from_text
 from ..review import MARKER
-from ..summary import ATTRIBUTES_FILE, DIFF_FILE, LEGACY_SUMMARY_FILE, SummaryError, prepare_page, stored_attributes
+from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
+                       prepare_page, stored_attributes)
 
 
 
@@ -52,6 +54,8 @@ CONTENT = "content"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 PAGES = (".md", ".html")
 FIXED_ROUTES = ("", "projects/", "reviews/", "docs/", "search/")
+# Where the site serves the head's copy of each file a summary page can expand.
+BLOBS = "reviews/blobs"
 
 
 def escape(s: object) -> str:
@@ -164,6 +168,94 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
     return {head: {"status": found["status"], "url": found["url"]} for head, found in newest.items()}
 
 
+def stored_head_file(folder: Path, path: str) -> bytes | None:
+    """The head's copy of `path` that `publish` stored in `folder`, or None when it stored none.
+
+    Whoever can push the summaries ref writes the diff that names `path`, so
+    a path that leads out of `folder`, through `..` or a symlink, reads
+    nothing, and neither does anything but a regular file of at most
+    CONTEXT_MAX_BYTES. `folder` must be absolute and free of symlinks.
+    """
+    target = (folder / path).resolve()
+    try:
+        if not target.is_relative_to(folder) or not target.is_file() or target.stat().st_size > CONTEXT_MAX_BYTES:
+            return None
+        return target.read_bytes()
+    except OSError:
+        return None
+
+
+def head_lines(text: str) -> list[str]:
+    """The lines of `text`, with no empty line after a final newline."""
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def shows_diff(f: dict, lines: list[str]) -> bool:
+    """Whether `lines`, a file at the head, hold each context and added line of the file's diff at its number."""
+    return all(0 < line[2] <= len(lines) and lines[line[2] - 1] == line[3]
+               for hunk in f["hunks"] for line in hunk["lines"] if line[0] in ("a", "c"))
+
+
+def hunk_gaps(hunks: list[dict], total: int) -> list[dict]:
+    """The runs of a file's `total` head lines that its hunks leave hidden, above, between, and below them.
+
+    Each gap is new-side lines `start` to `end`. `before` is the index of the
+    hunk it sits above, or the number of hunks for the gap below the last,
+    and `oldStart` is the old-side number of `start`. A hunk with no lines on
+    a side sits after its start line on that side. An empty gap is left out.
+    """
+    gaps = []
+    new_next = old_next = 1
+    for before, hunk in enumerate(hunks):
+        new_start = hunk["newStart"] + (hunk["newLines"] == 0)
+        old_start = hunk["oldStart"] + (hunk["oldLines"] == 0)
+        gaps.append({"before": before, "start": new_next, "end": new_start - 1, "oldStart": old_next})
+        new_next, old_next = new_start + hunk["newLines"], old_start + hunk["oldLines"]
+    gaps.append({"before": len(hunks), "start": new_next, "end": total, "oldStart": old_next})
+    return [gap for gap in gaps if gap["start"] <= gap["end"]]
+
+
+def blob_id(data: bytes, head: str) -> str:
+    """The id Git gives `data` as a blob: SHA-256 where commit `head` has 64 digits, as in a SHA-256 repository, else SHA-1."""
+    digest = hashlib.sha256 if len(head) == 64 else hashlib.sha1
+    return digest(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict[str, int]) -> None:
+    """Give each file of `payload` whose head copy `publish` stored in `stored` the `context` its page expands.
+
+    A copy that disagrees with the file's diff is dropped with a warning, so
+    a page never shows a wrong line. The copy's text, decoded as UTF-8 with
+    each CRLF a LF, as the diff reads, is written once per blob under BLOBS,
+    and `written` maps each blob written to its size.
+    """
+    pr = payload["pr"]
+    for f in payload["files"]:
+        data = stored_head_file(stored, f["path"])
+        if data is None:
+            continue
+        text = data.decode("utf-8", "replace").replace("\r\n", "\n")
+        lines = head_lines(text)
+        if not shows_diff(f, lines):
+            print(f"::warning title=Context dropped::{pr['number']}/{pr['head']}: {f['path']} at the head does not "
+                  "match its diff, so its page cannot expand the lines around its hunks")
+            continue
+        gaps = hunk_gaps(f["hunks"], len(lines))
+        if not gaps:
+            continue
+        blob = blob_id(data, str(pr["head"]))
+        if blob not in written:
+            encoded = text.encode("utf-8")
+            target = out / BLOBS / f"{blob}.txt"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(encoded)
+            written[blob] = len(encoded)
+        f["context"] = {"url": f"{base}{BLOBS}/{blob}.txt", "lines": len(lines), "gaps": gaps}
+
+
 def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: str = "main",
                     lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest.
@@ -175,7 +267,9 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     requests in its stack. A file is
     generated as the `attributes.json` that `publish` stored beside a summary
     says, or, for a summary without one, as the checkout at `repo_root` reads
-    its .gitattributes. `status_lookup` returns a pull request's state and
+    its .gitattributes. A file whose head copy `publish` stored beside its
+    summary carries the `context` its page expands, as `add_context`
+    describes. `status_lookup` returns a pull request's state and
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
     GitHub reports, or None once that branch is deleted, and `review`, the
@@ -201,6 +295,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
                    "with `project summary publish`")
 
     by_pr: dict[str, list[tuple[int, dict]]] = {}
+    absolute = root.resolve()
+    written: dict[str, int] = {}
     for path in summaries:
         try:
             summary = json.loads(path.read_text(encoding="utf-8"))
@@ -221,7 +317,10 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
         except (SummaryError, ValueError, KeyError, TypeError) as exc:
             skip(path, exc)
             continue
+        add_context(payload, absolute / number / head / HEAD_DIR, out, base, written)
         by_pr.setdefault(number, []).append((summary_time(path), payload))
+    print(f"wrote {len(written)} head {'file' if len(written) == 1 else 'files'} for summary pages to expand, "
+          f"{sum(written.values()):,} bytes, under {BLOBS}/")
     for versions in by_pr.values():
         versions.sort(key=lambda v: v[0], reverse=True)
     prs = {int(number): versions[0][1]["pr"] for number, versions in by_pr.items()}

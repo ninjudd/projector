@@ -35,6 +35,10 @@ PAGES_ROOT = "summaries"
 DIFF_FILE = "diff.patch"
 # What `publish` read from the head's .gitattributes, stored beside the diff.
 ATTRIBUTES_FILE = "attributes.json"
+# The folder beside the diff where `publish` stores the head's copy of each
+# changed file a summary page can expand, and the largest file it stores.
+HEAD_DIR = "head"
+CONTEXT_MAX_BYTES = 1024 * 1024
 # Publishes running at once, as a review loop's subagents run them, race to
 # move the summaries ref, so a push that loses is rebuilt on the new tip and
 # tried again, up to this many pushes in all.
@@ -259,6 +263,12 @@ def header_path(rest: str) -> str:
     return unquote_path(b_side[-1]) if len(b_side) == 2 else rest
 
 
+def hunk_range(side: str) -> tuple[int, int]:
+    """The start and line count of one side of a hunk header, `-12,3` or `+12`, whose count defaults to 1."""
+    start, _, count = side[1:].partition(",")
+    return int(start), int(count) if count else 1
+
+
 def parse_diff(text: str) -> list[dict]:
     files: list[dict] = []
     cur = hunk = None
@@ -286,10 +296,10 @@ def parse_diff(text: str) -> list[dict]:
             if source.startswith("a/"):
                 cur["path"] = source[2:]
         elif raw.startswith("@@"):
-            head = raw.split("@@")[1].split()
-            old_no = int(head[0].lstrip("-").split(",")[0])
-            new_no = int(head[1].lstrip("+").split(",")[0])
-            hunk = {"header": raw, "lines": []}
+            old_side, new_side = raw.split("@@")[1].split()[:2]
+            (old_no, old_lines), (new_no, new_lines) = hunk_range(old_side), hunk_range(new_side)
+            hunk = {"header": raw, "oldStart": old_no, "oldLines": old_lines, "newStart": new_no, "newLines": new_lines,
+                    "lines": []}
             cur["hunks"].append(hunk)
         elif hunk is None:
             continue
@@ -379,6 +389,12 @@ def generated_values(paths: list[str], values: list[str]) -> dict[str, bool]:
     return {path: value not in ("unset", "false") for path, value in zip(paths, values) if value != "unspecified"}
 
 
+def has_commit(root: Path, head: str) -> bool:
+    """Whether the checkout at `root` has commit `head`, which must be a full SHA."""
+    return bool(FULL_SHA.fullmatch(head or "")) and subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{head}^{{commit}}"], capture_output=True).returncode == 0
+
+
 def head_attributes(root: Path, head: str, paths: list[str]) -> dict[str, bool] | None:
     """`linguist-generated` for each of `paths` as the .gitattributes files of commit `head` set it.
 
@@ -386,10 +402,7 @@ def head_attributes(root: Path, head: str, paths: list[str]) -> dict[str, bool] 
     read it. Git 2.40 added `check-attr --source`; an older Git reads the
     commit's tree into a scratch index and checks the attributes there.
     """
-    if not FULL_SHA.fullmatch(head or ""):
-        return None
-    if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{head}^{{commit}}"],
-                      capture_output=True).returncode != 0:
+    if not has_commit(root, head):
         return None
     values = check_attr(root, paths, f"--source={head}")
     if values is None:
@@ -948,8 +961,10 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, 
 # Publishing to the summaries ref
 
 def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
+    """Run git on UTF-8 text; output that is not UTF-8, such as a path in another encoding, reads with replacements."""
     try:
-        return subprocess.run(["git", *args], check=True, capture_output=True, text=True, env=env, input=input).stdout.strip()
+        return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace",
+                              env=env, input=input).stdout.strip()
     except subprocess.CalledProcessError as exc:
         raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
@@ -1023,11 +1038,14 @@ def ref_exists(ref: str) -> bool:
                           capture_output=True).returncode == 0
 
 
-def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None) -> str:
+def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None,
+                 blobs: dict[str, str] | None = None) -> str:
     """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`.
 
     With `generated`, the head's `linguist-generated` values go beside them.
-    Without, an attributes file an earlier publish of this head left stays.
+    Each of `blobs`, the head's blob of a changed file by path, goes under
+    HEAD_DIR at its path, as an entry naming the blob the head already has.
+    What an earlier publish of this head stored and this one does not stays.
     """
     files = [("summary.json", json.dumps(summary, indent=1, ensure_ascii=False) + "\n"), (DIFF_FILE, diff)]
     if generated is not None:
@@ -1040,6 +1058,9 @@ def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: 
         for name, content in files:
             blob = git("hash-object", "-w", "--stdin", input=content)
             git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
+        if blobs:
+            git("update-index", "-z", "--index-info", env=env,
+                input="".join(f"100644 {blob}\t{folder}/{HEAD_DIR}/{path}\0" for path, blob in sorted(blobs.items())))
         return git("write-tree", env=env)
 
 
@@ -1066,37 +1087,63 @@ def push_decision(repo: str) -> tuple[str | None, str]:
         return None, f"could not tell whether {repo} hosts its Projector site: {error}"
 
 
-def publish_attributes(remote: str, head: str, paths: list[str]) -> dict[str, bool] | None:
-    """The head's `linguist-generated` values for `paths`, for `publish` to store, or None when it cannot read them.
+def readable_head(remote: str, head: str) -> Path | None:
+    """The top of this checkout once it has commit `head`, or None when it cannot have it.
 
     A deploy builds from a checkout of the default branch, which lacks the
-    head, so they are read here. A head this checkout lacks is fetched from
-    `remote` first, into its objects and FETCH_HEAD alone, as `git fetch
-    REMOTE HEAD` would; no branch or tag changes.
+    head, so `publish` reads what a page needs from the head here. A head
+    this checkout lacks is fetched from `remote` first, into its objects and
+    FETCH_HEAD alone, as `git fetch REMOTE HEAD` would; no branch or tag
+    changes.
     """
     top = checkout_root()
-    if top is None or not paths:
+    if top is None or not FULL_SHA.fullmatch(head):
         return None
-    found = head_attributes(top, head, paths)
-    if found is None and FULL_SHA.fullmatch(head):
-        fetched = subprocess.run(["git", "-C", str(top), "fetch", "--quiet", "--no-tags", remote, head],
-                                 capture_output=True, stdin=subprocess.DEVNULL)
-        if fetched.returncode == 0:
-            found = head_attributes(top, head, paths)
-    if found is None:
-        print(f"could not read the .gitattributes of {head[:9]}, which {remote} did not serve; the site will mark "
-              "generated files by the .gitattributes of the checkout it builds from", file=sys.stderr)
-    return found
+    if not has_commit(top, head):
+        subprocess.run(["git", "-C", str(top), "fetch", "--quiet", "--no-tags", remote, head],
+                       capture_output=True, stdin=subprocess.DEVNULL)
+    return top if has_commit(top, head) else None
+
+
+def head_blobs(root: Path, head: str, files: list[dict]) -> dict[str, str]:
+    """The blob of each of the diff's `files` that a summary page can expand, by path, in commit `head` at `root`.
+
+    A page can expand a file whose hunks show it is text and leave lines
+    hidden, which a new or deleted file's do not. Its entry in the head must
+    be a regular file, not a symlink or a submodule, of at most
+    CONTEXT_MAX_BYTES. A .gitattributes file is left out, because the
+    deploy's checkout of the summaries ref and `site serve`'s archive of it
+    would apply it to the files stored beside it.
+    """
+    wanted = {f["path"] for f in files if f["hunks"] and not f["new"] and not f["deleted"]
+              and f["path"].rsplit("/", 1)[-1] != ".gitattributes"}
+    if not wanted:
+        return {}
+    found = {}
+    for record in git("-C", str(root), "ls-tree", "-r", "-z", head).split("\0"):
+        meta, _, path = record.partition("\t")
+        mode, _, blob = meta.split(" ") if meta.count(" ") == 2 else ("", "", "")
+        if path in wanted and mode in ("100644", "100755"):
+            found[path] = blob
+    if not found:
+        return {}
+    sizes = git("-C", str(root), "cat-file", "--batch-check=%(objectname) %(objectsize)",
+                input="".join(f"{blob}\n" for blob in found.values()))
+    small = {blob for blob, size in (line.split(" ") for line in sizes.splitlines())
+             if size.isdigit() and int(size) <= CONTEXT_MAX_BYTES}
+    return {path: blob for path, blob in found.items() if blob in small}
 
 
 def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
     """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
 
-    The head's `linguist-generated` values go beside them when this checkout
-    has the head or can fetch it, so a deploy classifies files as the head does.
-    Without `push`, the commit goes on this checkout's own `ref` and nothing
-    leaves it, no dispatch included; `reason` says why, for the report.
+    When this checkout has the head or can fetch it, the head's
+    `linguist-generated` values go beside them, so a deploy classifies files
+    as the head does, and so does the head's copy of each changed file a page
+    can expand, as `head_blobs` chooses them. Without `push`, the commit goes
+    on this checkout's own `ref` and nothing leaves it, no dispatch included;
+    `reason` says why, for the report.
     """
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     pr = summary_pr(summary)
@@ -1104,15 +1151,25 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
     if slug and slug.lower() != pr["repo"].lower():
         raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
     diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
-    paths = [f["path"] for f in prepare_page(summary, diff=diff, at_head=True, generated={})["files"]]
-    generated = publish_attributes(remote, str(pr["head"]), paths)
+    files = prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
+    head = str(pr["head"])
+    top = readable_head(remote, head) if files else None
+    generated, blobs = None, {}
+    if top is not None:
+        generated = head_attributes(top, head, [f["path"] for f in files])
+        blobs = head_blobs(top, head, files)
+    elif files:
+        print(f"could not read {head[:9]}, which {remote} did not serve; the site will mark generated files by the "
+              ".gitattributes of the checkout it builds from, and the summary's page cannot expand the lines around "
+              "its hunks", file=sys.stderr)
     folder = f"{root}/{pr['number']}/{pr['head']}"
-    written = (f"{folder}/summary.json, {DIFF_FILE} and {ATTRIBUTES_FILE}" if generated is not None
-               else f"{folder}/summary.json and {DIFF_FILE}")
+    stored = ["summary.json", DIFF_FILE, *([ATTRIBUTES_FILE] if generated is not None else []),
+              *([f"{len(blobs)} head {'file' if len(blobs) == 1 else 'files'} under {HEAD_DIR}/"] if blobs else [])]
+    written = f"{folder}/{', '.join(stored[:-1])} and {stored[-1]}"
     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
     if not push:
         parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
-        tree = summary_tree(parent, folder, summary, diff, generated)
+        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
             print(f"{ref} in this checkout already has this summary; nothing to publish")
             return None
@@ -1130,7 +1187,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
             if seed is None:
                 seed = seed_from_legacy(remote)
             parent = seed
-        tree = summary_tree(parent, folder, summary, diff, generated)
+        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
         if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
             print(f"{ref} already has this summary; nothing to publish")
             return None
