@@ -1,0 +1,1920 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 27222c5..0d8e027 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1064,6 +1064,8 @@ project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opu
+ project review move 66
+ project review census 66 --json
+ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
++project review census 66 --wait --model claude-opus-5-5
++project review adopt 66 PRRT_kwDOA… --result kept --body reply.md
+ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+ project review release 66
+@@ -1107,13 +1109,71 @@ support, they leave the effort out rather than guess it.
+ 
+ `move` follows a head that moved mid-review: it creates a worktree for the new
+ head, rechecks trust, edits the start comment in place to name it, re-reads the
+-comment to confirm the edit, and updates the state file. `census` lists every
+-thread whose first comment carries the `projector-finding` marker, reading
+-every page, and prints how many are resolved and open and each open thread's
+-`path:line`; with `--json` each thread also carries its comments. It counts
+-every model's threads alike and takes `--model` like the commands around it,
+-so a review loop passes the same flags to each. `release` clears the locks of
+-one model's review of the pull request.
++comment to confirm the edit, and updates the state file. `release` clears
++the locks of one model's review of the pull request.
++
++`census` lists every thread whose first comment carries the
++`projector-finding` marker, from any account, reading every page, and says
++which model re-checks each one, as the review set up for `--model` reads it,
++or before `setup`, as `--model` reads it as this checkout's reviewer. A model
++re-checks the findings it opened while it still reviews the pull request. A
++model has stopped when it owes the pull request a review, has posted nothing
++since it began to owe it, and `review.peer_wait` seconds have passed: it owes
++the head when it has a verdict on an earlier head and none on this one, a
++re-review when its newest verdict on the head requests changes and none of
++its threads is open, and an answer when an author's reply on a thread it
++re-checks is newer than anything it has posted. A start comment, a verdict,
++or a verify reply naming the model is a post, and a model with a live start
++comment has not stopped. A stopped model's findings pass to the first model
++whose adoption reply is on the thread and that has not stopped, or else to
++no one yet, and any model still reviewing may adopt them. With `--json` each
++thread carries its comments, each with its `login` and `at`, and:
++
++| Field | Value |
++| --- | --- |
++| `model` | The model that opened the thread, or `null` when its marker names none. |
++| `verifier` | The model that re-checks it now, or `null` when the model that opened it has stopped and no model still reviewing has adopted it. |
++| `mine` | `true` when this model is the verifier, or the thread names no model. |
++| `adopt` | `now` when this model may adopt it, `wait` when its verifier owes a review whose `review.peer_wait` window is still open, or `no`. |
++| `adopt_at` | With `wait`, when the window closes. |
++| `answered` | `true` when the author's reply is newer than the verifier's last verify reply on the thread. |
++
++`total`, `resolved`, and `open` count the threads marked `mine`, and `others`
++counts the rest. Without `--json` it prints that count, the way a review body
++states it, adding the other models' threads on a second clause when there
++are any, and each open thread's `path:line` with its model and whether this
++model may adopt it:
++
++```
++4 finding threads from claude-opus-5-5: 4 resolved, 0 open. Other models: 2 threads, 1 open
++src/projector/review.py:648 (gpt-5.5)
++```
++
++With `--wait`, `census` reads again every 15 seconds until no answered thread
++is at `wait`, so it returns once the verifier posts or its window closes.
++
++`adopt` takes over a thread `census` marks `adopt: now`, or one at `wait`
++once its window closes:
++
++```sh
++project review adopt 66 PRRT_kwDOA… --result kept --body reply.md
++```
++
++It runs within a review, between `setup` and `publish`, and refuses when no
++review of the model holds the lock or the head has moved since. It refuses a
++thread this model re-checks already, one that names no model, and one whose
++verifier still reviews, and waits out an open window, refusing if the
++verifier posts meanwhile. It then posts a verify reply as the
++reviewer, opening with
++`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> adopted-from=<model-id> -->`
++and a line naming both models, followed by the body file, and reads the
++thread again. When another model that has not stopped adopted it first, it
++deletes its own reply and refuses. Otherwise it resolves the thread for
++`fixed`, `accepted`, or `withdrawn`, unresolves it for `reopened`, and leaves
++it for `kept`. The adoption reply records the stop: a model is recorded as
++stopped while an adoption reply naming it is newer than anything it has
++posted, so the sign-off leaves its verdicts out and no later publish waits
++for it, until it posts again.
+ 
+ `publish` submits the review. `--body` names a file holding the review below
+ its signature line, with `{census}` where the census goes and, wherever used,
+@@ -1127,19 +1187,24 @@ the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
+ when the pull request closed or its head moved, when a finding's line is
+ outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
+ line, when the body is empty, carries its own signature or marker comment, or
+-has no `{census}` outside quoted code, when the verdict disagrees with the finding
+-count, or when the reviewer already has a verdict by this model on the head
+-that this loop's record does not account for. A verdict by another model is a
+-second opinion and never collides, and one whose marker names no model
+-collides with every model. Outside a loop, `--second-verdict <review-id>`
+-publishes beside an earlier verdict the body names.
++has no `{census}` outside quoted code, when the verdict disagrees with the
++count of this model's findings, as `census` marks them `mine`, when a thread
++`census` marks `adopt: now`, open or resolved, is not adopted yet, or when the
++reviewer already has a verdict by this model on the head that this loop's
++record does not account for. Before it counts, it waits, reading every 15
++seconds, until no thread is at `adopt: wait`, so a window that closes after
++the review cannot leave a finding no model re-checks. A verdict by another
++model is a second opinion and never collides, and one whose marker names no
++model collides with every model. Outside a loop, `--second-verdict
++<review-id>` publishes beside an earlier verdict the body names.
+ 
+ On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
+ rule to the head it published on. The rule reads the reviewer's verdicts and
+ start comments and every Projector finding thread. A start comment is live
+ until its model posts a verdict on its head, or until a day passes since its
+ last edit, and a model is reviewing the head while its start comment there is
+-live. With each model's newest verdict on the head counting, the head is
++live. A model recorded as stopped, as `adopt` records one, is left out. With
++each other model's newest verdict on the head counting, the head is
+ `changes-requested` when any of those requests changes, `waiting` when none
+ does and a model is reviewing it or a finding thread is open, `clean` when
+ every one is clean, and `unreviewed` when there is none. `changes-requested`
+@@ -1176,7 +1241,9 @@ $ project review status 66
+ ```
+ 
+ A model with a verdict or a start comment only on an earlier head is
+-`pending`, and does not change the sign-off. It reads the pull request, its
++`pending`, and does not change the sign-off. A model recorded as stopped is
++`stopped`, names the model that adopted its findings as `adopted_by`, and
++its verdicts do not count. It reads the pull request, its
+ reviews, its issue comments, and its threads, finds the reviewer as `setup`
+ does, from `--reviewer`, then `review.username`, then the authenticated user,
+ and runs from any directory. It exits 0 whatever the sign-off, and 1 only
+@@ -1187,8 +1254,8 @@ when it cannot read the pull request. With `--json` it prints one object:
+ | `repo`, `number`, `head` | The pull request and its current head SHA. |
+ | `draft` | Whether the pull request is a draft. |
+ | `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
+-| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
+-| `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
++| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. A stopped model adds `adopted_by`. |
++| `open_threads` | Each open Projector finding thread's `path`, `line`, `model`, or `null` for a thread whose marker names none, and `verifier`, the model that re-checks it, or `null`. |
+ 
+ `interdiff` decides whether the head may have an incremental review: a short
+ clean verdict on a head that changed little since this loop's last full review
+@@ -1207,8 +1274,9 @@ no judgment, in this order, and refuses at the first that fails:
+ is trusted; the loop's record holds a clean full review of the pull request,
+ and its newest verdict is clean and on another head; that full review is on
+ GitHub and its marker names this run's Projector version, model, and effort;
+-no finding thread is open; the change can be measured, which takes the full
+-review's recorded merge base, both heads in the checkout, and on a moved base
++no finding thread this model re-checks is open, and no thread is one it may
++adopt; the change can be measured, which takes the full review's recorded merge base, both heads
++in the checkout, and on a moved base
+ a Git that knows `merge-tree --merge-base` (2.40 or newer); the change touches
+ no binary file, symlink, or submodule; and when the merge base moved, a `gate`
+ run on this head exited 0. It prints the earlier full review, the `kind` of
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index 89bd50e..7be316f 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -491,7 +491,7 @@ A model has stopped when it owes the pull request a review, has posted
+ nothing since it began to owe it, and `review.peer_wait` seconds have passed
+ since then. Posting means a start comment, a verdict, or a verify reply on
+ the pull request. A model with a live start comment has not stopped. A model
+-owes a review in two cases:
++owes a review in three cases:
+ 
+ - **A new head.** It has a verdict on an earlier head and none on the current
+   head. It began to owe the head when the adopting review began on it, the
+@@ -499,6 +499,13 @@ owes a review in two cases:
+ - **An answer.** An author's reply on a finding it re-checks is newer than
+   anything the model has posted. It began to owe the answer when the reply
+   was posted.
++- **A re-review.** Its newest verdict on the current head requests changes,
++  and none of the findings it re-checks is open, as when the author resolved
++  them by hand without a push. It began to owe the re-review when the
++  adopting review began on the head. Without this case, a model upgraded in
++  the middle of a pull request, whose old ID requested changes on the head
++  before every thread was resolved, would hold the sign-off at
++  `changes-requested` until the next push.
+ 
+ A model whose verdict names the current head can still owe an answer, so a
+ loop that stopped just after its verdict is found too.
+@@ -527,10 +534,19 @@ thread, or rule 3 lets a model still reviewing adopt it.
+ #### Adopting a finding
+ 
+ A review re-checks every thread that census marks `adopt: now` by reading it,
+-exactly as it re-checks its own. A resolved fix that still holds needs
+-nothing more. When a thread needs an action, a decline to accept or keep or a
+-fix that does not hold, the review runs one command, so that the wait, the
+-claim, and the check that the claim won happen in one place:
++exactly as it re-checks its own, and settles each one with one command, so
++that the wait, the claim, and the check that the claim won happen in one
++place. That includes a resolved thread whose fix still holds, with
++`--result fixed`: its reply is what records the stop, so without it a stopped
++model's verdict on the head would still count, and every later publish would
++wait for it as a peer. The cost is one reply on each such thread, once.
++
++`publish` holds that rule. It waits until no thread is at `adopt: wait`, so
++a review that finishes inside a model's window cannot publish and leave a
++finding that no model re-checks once the window closes, and then refuses
++either verdict while any thread, open or resolved, is at `adopt: now`. A
++quick review pays at most what is left of `review.peer_wait` for this, once
++for each model that stopped.
+ 
+ ```sh
+ project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file>
+@@ -753,6 +769,10 @@ after the change. It pins that the fix loop still reports every finding.
+   or an approval posted, and a peer is pending. Then it lasts at most what is
+   left of `review.peer_wait` after the review's own time, with two listings
+   every 15 seconds.
++- **`project review census`** reads the pull request, its reviews, its issue
++  comments, and its threads, four requests where it made one, because who
++  re-checks a thread depends on every model's posts. `publish` and the
++  incremental rules run it once each.
+ - **`project review status`** makes four requests: the pull request, its
+   reviews, its issue comments, and its threads. `fix-pr` runs it once for each
+   report.
+@@ -831,3 +851,29 @@ Reading the code settled these points, beyond those § 1 names:
+ - A second machine that runs a review loop as the same account and the same
+   model already trips the collision check in this repository. This plan keeps
+   that behavior and catches it earlier, at setup.
++
++## 9. Implementation
++
++The plan is built in four layers of one stack, each safe to merge alone:
++
++1. **The site** (#233): `review_statuses` gives each head's combined `status`
++   and its `models`, and the summary page's header shows one status, marked
++   with an asterisk and a card of each model's verdict when several models
++   reviewed the head, as § 2.5 describes. `review.identity` lives here.
++2. **Identity and local state** (#237): each model's state, lock, request,
++   and worktree under its model key, `--model` on every later command, the
++   start, finding, and loop-record `model=`, the collision check by identity,
++   and the duplicate check at setup.
++3. **The sign-off** (#239): `signoff()`, the peer wait with
++   `review.peer_wait`, gated approvals, `project review status`, and
++   `fix-pr`'s clean test, which runs `status --reviewer` for each account
++   that posted a Projector review.
++4. **Who re-checks a finding**: the census fields and `census --wait`,
++   `project review adopt`, recorded stops in the sign-off and `status`, the
++   re-review case in § 2.8, and the skills' rules for each.
++
++The tests in `tests/test_review.py`, `tests/test_site.py`, and
++`tests/test_watchers.py` cover criteria 1 to 14 and 16 to 23. Criterion 15,
++two review loops on two hosts, is a check by hand that the operator runs once
++the release carries all four layers, so the project stays `in-progress` until
++it has run.
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 3b543d0..cfcff62 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -61,7 +61,9 @@ are resolved. The work outstanding on the head is:
+ 
+ - **A merge conflict**, when `mergeable` is `CONFLICTING`. `UNKNOWN` means
+   GitHub has not computed it yet, so ask again after a few seconds.
+-- **Every unresolved review thread.**
++- **Every unresolved review thread**, including every Projector finding
++  whichever model opened it. When several models review the pull request,
++  which of them re-checks a finding is the review's concern, not the fix's.
+ - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
+   one whose findings exist only in its body.
+ - **A body-only finding** in a `COMMENT` review.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 16357e9..e66eef9 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -153,7 +153,11 @@ it.
+   and scratch worktree, its start comment never stops your `setup`, and its
+   verdict never trips your collision check.
+ - **A model upgraded in the middle of a pull request**, such as a loop
+-  restarted on a newer version, is a new reviewer.
++  restarted on a newer version, is a new reviewer. The old ID stops, and a
++  model still reviewing adopts its findings, as
++  [Who re-checks a finding](#who-re-checks-a-finding) describes.
++- **Each model re-checks its own findings**, and adopts those of a model that
++  has stopped, by the same section.
+ 
+ One rule over GitHub's state decides the sign-off, and every `publish`
+ applies it after it submits, so the last model to finish sets the draft
+@@ -161,7 +165,10 @@ state. It reads the reviewer account's verdicts and start comments and every
+ Projector finding thread, from any account. A start comment is live until
+ its model posts a verdict on its head, or until a day has passed since it was
+ last edited, and a model is reviewing the head while its start comment on the
+-head is live. Each model's newest verdict on the head counts, and the head is:
++head is live. A model is recorded as stopped while an adoption reply naming
++it is newer than anything it has posted, and its verdicts do not count,
++because the model that adopted its findings speaks for them. Each other
++model's newest verdict on the head counts, and the head is:
+ 
+ - **`changes-requested`** when any model's newest verdict on it requests
+   changes. A self-review returns to draft.
+@@ -174,13 +181,14 @@ head is live. Each model's newest verdict on the head counts, and the head is:
+ 
+ A loop that has not noticed a push yet has posted nothing for the new head.
+ So before `publish` marks a draft ready, it waits for each peer: another
+-model with a verdict on an earlier head, or a live start comment on another
+-head, and nothing on this one. It waits until `review.peer_wait` seconds,
+-180 by default, after this review began on the head, re-reading every 15
+-seconds. A peer's start comment makes the head `waiting`, a peer's verdict
+-joins the rule, and a peer that posts nothing by then is absent. A review
+-that already took longer does not wait, and neither does one that leaves a
+-pull request already ready, or one on a head that moves meanwhile. Run
++model, not recorded as stopped, with a verdict on an earlier head, or a live
++start comment on another head, and nothing on this one. It waits until
++`review.peer_wait` seconds, 180 by default, after this review began on the
++head, re-reading every 15 seconds. A peer's start comment makes the head
++`waiting`, a peer's verdict joins the rule, and a peer that posts nothing by
++then is absent. A review that already took longer does not wait, and neither
++does one that leaves a pull request already ready, or one on a head that
++moves meanwhile. Run
+ `publish`, and on another author's pull request any `publish` that may
+ approve, with a timeout of at least `review.peer_wait` plus two minutes.
+ 
+@@ -236,10 +244,11 @@ state, so each model reviewing the pull request keeps its own state, lock,
+ and scratch worktree, as
+ [Review as one model among several](#review-as-one-model-among-several)
+ describes. Each later command, `move`, `census`, `interdiff`, `gate`,
+-`publish`, and `release`, takes `--model` too. Every one but `census` finds
+-the review by the pull request and the model, and refuses, naming the models,
+-when more than one model has a review of the pull request set up on this
+-machine and `--model` does not pick one.
++`adopt`, `publish`, and `release`, takes `--model` too, and finds the review
++by the pull request and the model. It refuses, naming the models, when more
++than one model has a review of the pull request set up on this machine and
++`--model` does not pick one. `census` also runs before `setup`, as a loop runs
++it on `RESPONDED`, reading as the model `--model` names.
+ 
+ The review holds a lock for the pull request, head, and model from `setup`
+ until it is published, so a second instance of the same model for the same
+@@ -396,7 +405,8 @@ and the patch. It exits 0 only when the rules that need no judgment all hold:
+   newest verdict in it is clean and names another head.
+ - That full review is on GitHub, and its marker names the Projector version,
+   model, and effort this run would write.
+-- No finding thread is open.
++- No finding thread this model re-checks is open, and no thread, open or
++  resolved, is one it may adopt.
+ - The change can be measured, and it touches no binary file, symlink, or
+   submodule.
+ - When the merge base moved since the full review, a `project review gate`
+@@ -547,9 +557,11 @@ itself, from the review's state and one reading of the clock, so the duration,
+ `seconds=`, and `sha=` are never typed and never disagree.
+ 
+ The visible verdict word is `CLEAN` or `CHANGES REQUESTED`, matching the
+-marker's `verdict=`. `clean` means no finding thread on the pull request is
+-open — a thread outlives the head it was filed on, so findings from earlier
+-heads count until resolved; `changes-requested` means at least one is open.
++marker's `verdict=`. `clean` means no finding thread your model re-checks
++is open — a thread outlives the head it was filed on, so findings from
++earlier heads count until resolved; `changes-requested` means at least one is
++open. Another model's open finding does not change your verdict, and it
++holds the sign-off until that model settles it.
+ Print the census the verdict rests on — `6 finding threads: 4 resolved, 2
+ open` — counting the threads this review opens among the open, so a
+ changes-requested review on a fresh head never prints `0 open` above its own
+@@ -622,20 +634,27 @@ The visible text of a thread's first comment has three parts, the shape
+ A finding is outstanding until you verify it is addressed. Whether its thread
+ is marked resolved is a hint, not the answer: an author may resolve a thread
+ before the fix works, and another may fix the code and never resolve it. So
+-before choosing a verdict, verify every Projector finding thread on the pull
+-request, resolved or not, against this head, and settle each one yourself.
+-You are the only party whose resolution is final. This command lists them,
+-reading every page so that a pull request with more than a hundred threads is
+-read to the end; it keys on the finding marker, never on a login:
++before choosing a verdict, verify every Projector finding thread your model
++re-checks, resolved or not, against this head, and settle each one yourself.
++For those threads you are the only party whose resolution is final. This
++command lists every thread, reading every page so that a pull request with
++more than a hundred threads is read to the end; it keys on the finding
++marker, never on a login:
+ 
+ ```sh
+-project review census <number> --json
++project review census <number> --json [--model <model-id>]
+ ```
+ 
+ Each thread carries its id, whether it is resolved, its `path` and `line`,
+ whether it is outdated, and its comments, the finding first and then the
+-replies. Without `--json` it prints the count the review body states, such as
++replies, each with its `login` and `at`. It also says who re-checks it, as
++[Who re-checks a finding](#who-re-checks-a-finding) describes: `model`,
++`verifier`, `mine`, `adopt`, `adopt_at`, and `answered`. Without `--json` it
++prints the count the review body states, such as
+ `6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
++The count covers the threads marked `mine`, and when other models have
++threads it adds them on a second clause:
++`4 finding threads from claude-opus-5-5: 4 resolved, 0 open. Other models: 2 threads, 1 open`.
+ 
+ An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
+ keeps `originalLine`. Outdated says the code changed, not that the finding was
+@@ -668,6 +687,74 @@ a person's or another tool's, is theirs to resolve, never yours. `fix-pr`
+ answers in a thread with `<!-- projector-reply v=1 -->`; that reply is the
+ author speaking, and it is what you weigh when a finding is declined.
+ 
++### Who re-checks a finding
++
++When several models review the pull request, each re-checks its own
++findings, so that two models still reviewing never settle each other's, and a
++finding whose model has stopped passes to a model that is still reviewing.
++Census marks each thread:
++
++- **`mine: true`**: your model re-checks it. That is a finding your model
++  opened, one it adopted, or one that names no model, which an earlier
++  release opened and every model re-checks. Verify and settle it as above.
++- **`adopt: "now"`**: the model that opened it, and any that adopted it, has
++  stopped reviewing the pull request. Re-check it as you would your own, and
++  settle it with `project review adopt`, below, even when it is resolved and
++  its fix holds, with `--result fixed`. The adoption reply records on GitHub
++  that the model stopped, so no later review waits for it and its verdicts
++  stop counting toward the sign-off.
++- **`adopt: "wait"`**: its verifier owes a review, and its `review.peer_wait`
++  window closes at `adopt_at`. Leave it until then.
++- **`adopt: "no"`** and not `mine`: another model still reviewing re-checks
++  it. Leave it to that model, and never reply on it or resolve it.
++
++A model has stopped when it owes the pull request a review, has posted
++nothing since it began to owe it, and `review.peer_wait` seconds have passed.
++Posting means a start comment, a verdict, or a verify reply naming the model.
++A model with a live start comment has not stopped. It owes a review when it
++has a verdict on an earlier head and none on this one, when its newest
++verdict on this head requests changes and none of its threads is open, and
++when an author's reply on a thread it re-checks is newer than anything it
++has posted. The verifier of a thread is the model that opened it, under the
++account that opened it, unless it has stopped; otherwise the first model
++whose adoption reply is on the thread and has not stopped; otherwise no one
++yet. So the first adoption reply wins, and a model that comes back, by
++posting a start comment or a verdict, gets its findings back. A Projector
++finding from another account follows the same rules, read from that
++account's own posts.
++
++Adopt a thread with one command, which holds the wait, the claim, and the
++check that the claim won in one place:
++
++```sh
++project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file> [--model <model-id>]
++```
++
++The body file is the rest of the reply, as for any verify reply. Run `adopt`
++within the review, after `setup` and before `publish`; it refuses once the
++review is published or the head has moved. It also refuses a thread your
++model re-checks already, one that names no model, and one whose verifier
++still reviews. While the verifier's window is open, it
++waits, reading again every 15 seconds, and refuses if the verifier posts in
++the meantime. It then posts the reply, opening with
++`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> adopted-from=<model-id> -->`
++and a line naming both models, and reads the thread again. When another
++model that has not stopped adopted it first, it deletes its reply and refuses;
++leave the thread to that model. Otherwise it applies the result: it resolves
++the thread for `fixed`, `accepted`, or `withdrawn`, unresolves it for
++`reopened`, and leaves it as it is for `kept`. Every thread your model adopts
++counts as `mine` from then on.
++
++`publish` counts the threads marked `mine` for the verdict. It first waits
++until no thread is at `adopt: "wait"`, reading again every 15 seconds, so a
++window that closes after your review cannot leave a finding no model
++re-checks. It then refuses either verdict while any thread is at
++`adopt: "now"`, open or resolved, naming each, so adopt those and publish
++again. Re-run census just before you choose the verdict, because a window
++that was open when the review began has usually closed by then. Run
++`publish`, `adopt`, and `census --wait` with a timeout of at least
++`review.peer_wait` plus two minutes.
++
+ ## Publish one review
+ 
+ P1 and P2 findings always go out as inline threads in **one** review, each
+@@ -740,18 +827,19 @@ and a second verdict on a head this loop already published needs
+ `setup --rereview`, the re-review `RESPONDED` asks for.
+ 
+ A head is *clean* only when, after you have settled every earlier finding as
+-above, no Projector finding thread is open **and this review posts no P1 or P2
+-thread**. A `Suggestions` list in the body does not count against it: a review
+-whose only output is that list is clean. Settle the earlier findings now,
+-before choosing a branch, and re-run the query to confirm none is open. Both
+-tests are one-way: a finding you kept or reopened makes the head not clean
+-whatever else inspection found, and a new thread makes it not clean whatever
+-the earlier findings came to. Because you resolve what you verify, a clean
+-head needs no second pass to notice that someone clicked resolve, and an
+-author who fixes a finding without resolving it is not held up. Under
+-`start-review-loop` the watcher asks for a re-review on an unmoved head when
+-the author answers: `RESPONDED` fires when every thread is resolved, or when
+-the newest comment on an open finding thread is the author's.
++above, no Projector finding thread your model re-checks is open **and this
++review posts no P1 or P2 thread**. A `Suggestions` list in the body does not
++count against it: a review whose only output is that list is clean. Settle
++the earlier findings now, before choosing a branch, and re-run the query to
++confirm none is open. Both tests are one-way: a finding you kept or reopened
++makes the head not clean whatever else inspection found, and a new thread
++makes it not clean whatever the earlier findings came to. Because you resolve
++what you verify, a clean head needs no second pass to notice that someone
++clicked resolve, and an author who fixes a finding without resolving it is
++not held up. Under `start-review-loop` the watcher asks for a re-review on an
++unmoved head when the author answers: `RESPONDED` fires when every thread is
++resolved, or when the newest comment on an open finding thread is the
++author's.
+ 
+ `publish` chooses the review state from the mode, and the draft transition
+ from the sign-off rule in
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index bf6f293..afc5288 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -75,11 +75,11 @@ nothing open.
+    every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
+    loop passes `--loop <id>` and `--model <model-id>` to each
+    `project review` command it runs on a pull request: `setup`, `move`,
+-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
+-   which reviews this loop published lives under that id in the review state
+-   directory, where `project review publish` keeps it. Give each model's loop
+-   an id of its own, because two loops that write one record can lose an
+-   entry.
++   `census`, `interdiff`, `gate`, `adopt`, `publish`, and `release`. The
++   record of which reviews this loop published lives under that id in the
++   review state directory, where `project review publish` keeps it. Give each
++   model's loop an id of its own, because two loops that write one record can
++   lose an entry.
+ 7. Seed the state file with only the SHAs already reviewed, then run one
+    pass:
+ 
+@@ -138,6 +138,18 @@ reads the new head against that history instead of rediscovering it.
+   `--rereview`. A `NEW HEAD`
+   that arrives mid-review is the moved-head case that skill's start-comment
+   rule covers.
++- A `RESPONDED` reaches every model's loop, whichever model's finding the
++  author answered, and also when the last open thread is resolved. Before it
++  re-reviews, the subagent runs
++  `project review census <number> --wait --json --loop <id> --model <model-id>`
++  and `project review status <number>`. It re-reviews only when its model's
++  newest verdict on the head requests changes, when its model has no verdict
++  on the head, or when an answered thread is marked `mine` or `adopt: "now"`,
++  as `../review-pr/SKILL.md` describes under "Who re-checks a finding".
++  Otherwise the event belongs to another model: it reports that and stops,
++  posting no start comment. Give the subagent's command a timeout of at least
++  `review.peer_wait` plus two minutes, because `census --wait` waits for a
++  model that owes an answer.
+ - The subagent reports each published review back: the SHA, the verdict, the
+   sign-off, the review id, how many threads it opened, and for an
+   incremental review the head of the full review it builds on; `publish` has
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index e95ee9d..c9d6f42 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -465,6 +465,9 @@ def parser() -> argparse.ArgumentParser:
+         "interdiff", help="measure the change since this loop's last full review and check whether the head may "
+                           "have an incremental review"
+     )
++    review_adopt = review_commands.add_parser(
++        "adopt", help="re-check a finding thread whose model has stopped reviewing, and take it over"
++    )
+     add_output(review_commands.add_parser(
+         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+     ))
+@@ -480,7 +483,7 @@ def parser() -> argparse.ArgumentParser:
+                                help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+     add_output(review_status)
+     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
+-                    review_interdiff):
++                    review_interdiff, review_adopt):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                              "later: default the review set up for this pull request)")
+@@ -495,7 +498,8 @@ def parser() -> argparse.ArgumentParser:
+     review_setup.add_argument("--model", required=True,
+                               help="the model ID of this session, which names the start comment and keys the "
+                                    "review's state")
+-    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
++    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff,
++                    review_adopt):
+         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
+                                              "of this pull request set up here)")
+     review_setup.add_argument("--rereview", action="store_true",
+@@ -513,6 +517,14 @@ def parser() -> argparse.ArgumentParser:
+                                 help="files read over files changed, such as 12/12 (required without --incremental)")
+     review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
+                                 help="outside a loop, the earlier verdict a user agreed to publish beside")
++    review_adopt.add_argument("thread", help="the finding thread's id, as census lists it")
++    review_adopt.add_argument("--result", required=True, choices=review.ADOPT_RESULTS,
++                              help="how the re-check settles it, as a verify reply's result")
++    review_adopt.add_argument("--body", type=Path, required=True,
++                              help="the reply below the line naming both models: what at this head settles it")
++    review_census.add_argument("--wait", action="store_true",
++                               help="read again every 15 seconds until no answered thread waits on its "
++                                    "verifier's review.peer_wait window")
+     review_publish.add_argument("--incremental", action="store_true",
+                                 help="publish a clean incremental review of the change since this loop's last "
+                                      "full review, when `project review interdiff` allows one")
+@@ -867,17 +879,27 @@ def incremental_enabled(checkout: Path) -> bool:
+     return value
+ 
+ 
+-def review_status(root: Path, arguments: argparse.Namespace) -> int:
+-    """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
+-    request cannot be read. The reviewer is found as `setup` finds it."""
+-    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++def config_here() -> dict:
++    """The configuration of the checkout this command runs in, or none outside one."""
+     try:
+-        configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
++        return load_config(review.checkout_root(Path.cwd()))
+     except ProjectorError:
+-        configured = None
+-    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
++        return {}
++
++
++def reviewer_here(explicit: Optional[str]) -> str:
++    """The reviewer as `setup` finds it: `explicit`, then this checkout's review.username, then you."""
++    configured = config_here().get("review.username")
++    return explicit or (configured if isinstance(configured, str) and configured else None) \
+         or review.authenticated_login()
+-    result = review.status(repo, arguments.pr, reviewer)
++
++
++def review_status(root: Path, arguments: argparse.Namespace) -> int:
++    """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
++    request cannot be read."""
++    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++    result = review.status(repo, arguments.pr, reviewer_here(arguments.reviewer),
++                           review.peer_wait(config_here().get("review.peer_wait")))
+     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
+     return 0
+ 
+@@ -902,10 +924,17 @@ def run_review(arguments: argparse.Namespace) -> int:
+     else:
+         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+         if command == "census":
+-            # Every model's threads are counted alike, so the model a loop passes is only checked.
+-            if arguments.model is not None:
+-                review.model_key(arguments.model)
+-            result = review.census(repo, arguments.pr)
++            model = review.find_model(root, repo, arguments.pr, arguments.model)
++            state = review.stored_state(review.Paths(root, repo, arguments.pr, model)) if model else None
++            if state:
++                me, began = (state["reviewer"], state["model"]), review.parse_time(state["head_started_at"])
++                wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
++            else:
++                # Run before setup, as a loop does on RESPONDED, it reads as this checkout's reviewer, and
++                # a review not yet begun owes nothing to the head.
++                me, began = ((reviewer_here(None), model) if model else None), None
++                wait = review.peer_wait(config_here().get("review.peer_wait"))
++            result = review.census(repo, arguments.pr, me, began, wait, settle="answered" if arguments.wait else "")
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+@@ -921,10 +950,22 @@ def run_review(arguments: argparse.Namespace) -> int:
+                       + (f" by model {model}" if model else ""))
+             return 0
+         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
++        if command == "adopt":
++            state = review.read_state(paths)
++            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
++            result = review.adopt(paths, arguments.thread, arguments.result, arguments.body, wait)
++            if arguments.json_output:
++                print(json.dumps(result, indent=2))
++            else:
++                print(f"adopted thread {result['thread']} from {result['adopted_from']} ({result['result']}); "
++                      + ("resolved" if result["resolved"] else "open"))
++            return 0
+         if command == "interdiff":
+             state = review.read_state(paths)
+             enabled = incremental_enabled(Path(state["checkout"]))
+-            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
++            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
++            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled,
++                                              wait=wait)
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 8ac2eba..b1d76d5 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -41,6 +41,10 @@
+ MARK = "📽️"
+ SHORT = 12
+ STALE_AFTER = timedelta(days=1)
++# `review.peer_wait`'s default, and how often a wait reads GitHub again.
++PEER_WAIT = 180
++PEER_POLL = 15
++sleep = time.sleep
+ LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
+ VARIANT = re.compile(r"\[[^\[\]]*\]$")
+@@ -435,9 +439,10 @@ def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str
+ START_MODEL = re.compile(r"· model `([^`\n]+)` ·")
+ 
+ 
+-def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
+-    """The reviewer's start comments on the pull request, from every page, each with its `id`, `url`, the
+-    `sha` and `model` it names, and when it was created and last edited."""
++def start_comments(repo: str, number: int, reviewer: Optional[str] = None) -> list[dict]:
++    """The start comments on the pull request, from every page, each with its `id`, `url`, `login`, the
++    `sha` and `model` it names, and when it was created and last edited: the reviewer's alone when
++    `reviewer` is given, and every account's otherwise."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
+                    "--jq", '.[] | select(.body // "" | contains("projector-start")) '
+                            '| {id, url: .html_url, login: .user.login, body, created_at, updated_at} '
+@@ -448,10 +453,11 @@ def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
+         marker = START_MARKER.search(comment.get("body") or "")
+         named = START_MODEL.search(comment.get("body") or "")
+         model = (marker and marker.group(2)) or (named and named.group(1))
+-        if (comment.get("login") or "").lower() != reviewer.lower() or not marker or not model:
++        login = (comment.get("login") or "").lower()
++        if reviewer is not None and login != reviewer.lower() or not marker or not model:
+             continue
+-        comments.append({"id": comment["id"], "url": comment.get("url"), "sha": marker.group(1), "model": model,
+-                         "created_at": comment["created_at"],
++        comments.append({"id": comment["id"], "url": comment.get("url"), "login": login, "sha": marker.group(1),
++                         "model": model, "created_at": comment["created_at"],
+                          "updated_at": comment.get("updated_at") or comment["created_at"]})
+     return comments
+ 
+@@ -466,6 +472,7 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
+     for review in reviews:
+         marker = verdict_marker(review.get("body") or "")
+         if (marker is not None and marker.sha == comment["sha"] and identity(marker.model) == model
++                and (review.get("login") or "").lower() == comment["login"]
+                 and review.get("at") and parse_time(review["at"]) >= created):
+             return False
+     return True
+@@ -640,12 +647,12 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
+   pullRequest(number:$n){ reviewThreads(first:100, after:$after){
+     pageInfo{ hasNextPage endCursor }
+     nodes{ id isResolved isOutdated path line originalLine
+-      comments(first:50){ nodes{ databaseId body } } } } } } }"""
++      comments(first:50){ nodes{ databaseId body createdAt author{ login } } } } } } } }"""
+ 
+ 
+-def census(repo: str, number: int) -> dict:
+-    """Every Projector finding thread on the pull request, read to the last page, with its
+-    replies, so the review can verify and settle each one from this one list."""
++def finding_threads(repo: str, number: int) -> list[dict]:
++    """Every Projector finding thread on the pull request, from any account, read to the last page,
++    each with its comments, the finding first, and each comment's `id`, `body`, `login`, and `at`."""
+     owner, name = repo.split("/", 1)
+     threads, after = [], None
+     while True:
+@@ -667,24 +674,232 @@ def census(repo: str, number: int) -> dict:
+                     "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
+                     "outdated": bool(node.get("isOutdated")),
+                     "resolved": bool(node.get("isResolved")),
+-                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
++                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or "",
++                                  "login": ((c.get("author") or {}).get("login") or "").lower(),
++                                  "at": c.get("createdAt")} for c in comments],
+                 })
+         if not connection["pageInfo"]["hasNextPage"]:
+             break
+         after = connection["pageInfo"]["endCursor"]
+-    resolved = sum(1 for t in threads if t["resolved"])
+-    return {"total": len(threads), "resolved": resolved, "open": len(threads) - resolved, "threads": threads}
++    return threads
++
++
++def census(repo: str, number: int, me: Optional[tuple[str, str]] = None, began: Optional[datetime] = None,
++           wait: int = PEER_WAIT, settle: str = "") -> dict:
++    """Every Projector finding thread on the pull request, with its replies and who re-checks it, so
++    the review can verify and settle each one from this one list.
++
++    `me` is the reviewer's login and the model running the review, and
++    `began` when its review began on the head. Each thread gets the fields
++    review-pr § Who re-checks a finding names: `model`, `verifier`, `mine`,
++    `adopt`, `adopt_at`, and `answered`. `total`, `resolved`, and `open`
++    count the threads marked `mine`, every thread when there is no `me`,
++    and `others` counts the rest. With `settle`, it reads again every
++    PEER_POLL seconds until no thread waits on its verifier's window: no
++    answered thread with `answered`, as `census --wait` asks, and none at all
++    with `all`, as `publish` asks, so a window that closes after the review
++    cannot leave a finding no model re-checks."""
++    while True:
++        act = activity(repo, number, me)
++        threads = [dict(t, **act.ownership(t, began or act.at, wait)) for t in act.threads]
++        held = [parse_time(t["adopt_at"]) for t in threads
++                if t["adopt"] == "wait" and (settle == "all" or t["answered"])]
++        if not settle or not held:
++            break
++        sleep(max(1.0, min(PEER_POLL, (min(held) - now()).total_seconds())))
++    counted = [t for t in threads if t["mine"] or me is None]
++    others = [t for t in threads if not (t["mine"] or me is None)]
++    resolved = sum(1 for t in counted if t["resolved"])
++    return {"total": len(counted), "resolved": resolved, "open": len(counted) - resolved,
++            "others": {"total": len(others), "open": sum(1 for t in others if not t["resolved"])},
++            "model": me[1] if me else None, "threads": threads}
++
++
++def census_line(result: dict, posting: int = 0) -> str:
++    """The count a review body prints: this model's threads, with `posting` new ones among the open, and
++    the other models' on a second clause when there are any."""
++    total, open_now, others = result["total"] + posting, result["open"] + posting, result["others"]
++    noun = "thread" if total == 1 else "threads"
++    if not others["total"]:
++        return f"{total} finding {noun}: {result['resolved']} resolved, {open_now} open"
++    return (f"{total} finding {noun} from {result['model']}: {result['resolved']} resolved, {open_now} open. "
++            f"Other models: {others['total']} thread{'' if others['total'] == 1 else 's'}, {others['open']} open")
+ 
+ 
+ def census_lines(result: dict) -> list[str]:
+-    noun = "thread" if result["total"] == 1 else "threads"
+-    lines = [f"{result['total']} finding {noun}: {result['resolved']} resolved, {result['open']} open"]
++    lines = [census_line(result)]
+     for t in result["threads"]:
+         if not t["resolved"]:
+-            lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
++            notes = [n for n in (t["model"], f"adopt {t['adopt']}" if t["adopt"] != "no" else None) if n]
++            lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}"
++                         + (f" ({', '.join(notes)})" if notes else ""))
+     return lines
+ 
+ 
++# Who re-checks a finding
++
++def activity(repo: str, number: int, me: Optional[tuple[str, str]] = None) -> "Activity":
++    """Every model's posts on the pull request, read from GitHub now, as `me`, a login and a model, reads them."""
++    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
++    return Activity(pr.get("head", {}).get("sha", ""), reviewer_reviews(repo, number), start_comments(repo, number),
++                    finding_threads(repo, number), now(), (me[0].lower(), identity(me[1])) if me else None)
++
++
++VERIFY_MARKER = re.compile(r"<!--\s*projector-verify\b([^>]*?)\s*-->")
++FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
++
++
++def verify_reply(body: str) -> Optional[dict]:
++    """A verify reply's marker, as `result`, `sha`, `model`, and `adopted-from`, or None for another comment."""
++    marker = VERIFY_MARKER.search(body)
++    return dict(re.findall(r"([a-z-]+)=(\S+)", marker.group(1))) if marker else None
++
++
++def thread_model(thread: dict) -> Optional[str]:
++    """The model a finding thread's marker names, or None for one an earlier release opened."""
++    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
++    return found.group(1) if found else None
++
++
++class Activity:
++    """Every model's posts on the pull request, from every account, as review-pr § Who re-checks a
++    finding reads them. A model is a login and an identity, since one holds within one account.
++
++    `me` is the model running this review, which never reads itself as stopped."""
++
++    def __init__(self, head: str, reviews: list[dict], starts: list[dict], threads: list[dict], at: datetime,
++                 me: Optional[tuple[str, str]] = None) -> None:
++        self.head, self.threads, self.at, self.me = head, threads, at, me
++        self.verdicts: dict[tuple[str, str], list[dict]] = {}
++        self.last: dict[tuple[str, str], datetime] = {}
++        self.live: set[tuple[str, str]] = set()
++        for review in reviews:
++            marker = verdict_marker(review.get("body") or "")
++            if marker is None or not review.get("at"):
++                continue
++            key = ((review.get("login") or "").lower(), identity(marker.model))
++            self.verdicts.setdefault(key, []).append({"sha": marker.sha, "at": parse_time(review["at"]),
++                                                      "verdict": marker.verdict})
++            self.posted(key, parse_time(review["at"]))
++        for comment in starts:
++            key = (comment["login"], identity(comment["model"]))
++            self.posted(key, parse_time(comment["updated_at"]))
++            if is_live(comment, reviews, at):
++                self.live.add(key)
++        for thread in threads:
++            for comment in thread["comments"][1:]:
++                reply = verify_reply(comment["body"])
++                if reply and reply.get("model") and comment.get("at"):
++                    self.posted((comment["login"], identity(reply["model"])), parse_time(comment["at"]))
++
++    def posted(self, key: tuple[str, str], at: datetime) -> None:
++        if key not in self.last or at > self.last[key]:
++            self.last[key] = at
++
++    def opener(self, thread: dict) -> Optional[tuple[str, str]]:
++        model = thread_model(thread)
++        return (thread["comments"][0]["login"], identity(model)) if model else None
++
++    def adoptions(self, thread: dict) -> list[dict]:
++        """The thread's adoption replies in order, each with the `adopter`, the model it took the thread
++        `from`, its time `at`, and its comment `id`."""
++        holders, found = [self.opener(thread)], []
++        for comment in thread["comments"][1:]:
++            reply = verify_reply(comment["body"])
++            if not (reply and reply.get("model") and reply.get("adopted-from") and comment.get("at")):
++                continue
++            source = identity(reply["adopted-from"])
++            # The model it took over is the one of that identity that held the thread before it.
++            taken = next((h for h in reversed(holders) if h and h[1] == source), (comment["login"], source))
++            adopter = (comment["login"], identity(reply["model"]))
++            found.append({"adopter": adopter, "from": taken, "at": parse_time(comment["at"]), "id": comment["id"]})
++            holders.append(adopter)
++        return found
++
++    def rechecks(self, key: tuple[str, str]) -> list[dict]:
++        """The threads `key` re-checks while it reviews: the ones it opened and the ones it adopted."""
++        return [t for t in self.threads
++                if self.opener(t) == key or any(a["adopter"] == key for a in self.adoptions(t))]
++
++    def answers(self, thread: dict) -> list[datetime]:
++        """When the author, or anyone but a review, replied on the thread."""
++        return [parse_time(c["at"]) for c in thread["comments"][1:]
++                if c.get("at") and not verify_reply(c["body"]) and FINDING_MARKER not in c["body"]]
++
++    def owes(self, key: tuple[str, str], began: datetime) -> Optional[datetime]:
++        """Since when `key` has owed the pull request a review and posted nothing, or None. It owes the
++        head when it has a verdict on an earlier head and none on this one, a re-review when its newest
++        verdict on the head requests changes and none of its threads is open, both since `began`, and
++        an answer since the first reply on a thread it re-checks that is newer than all it posted."""
++        if key in self.live:
++            return None
++        last, verdicts = self.last.get(key), self.verdicts.get(key, [])
++        on_head = sorted((v for v in verdicts if v["sha"] == self.head), key=lambda v: v["at"])
++        threads = self.rechecks(key)
++        since = []
++        if verdicts and not on_head:
++            since.append(began)
++        if on_head and on_head[-1]["verdict"] == "changes-requested" and all(t["resolved"] for t in threads):
++            since.append(began)
++        answers = [at for t in threads for at in self.answers(t) if last is None or at > last]
++        if answers:
++            since.append(min(answers))
++        since = [at for at in since if last is None or last < at]
++        return min(since) if since else None
++
++    def recorded_stopped(self, key: tuple[str, str]) -> bool:
++        """Whether an adoption reply naming `key` is newer than anything it has posted."""
++        last = self.last.get(key)
++        return any(a["from"] == key and (last is None or a["at"] > last)
++                   for t in self.threads for a in self.adoptions(t))
++
++    def stopped(self, key: tuple[str, str], began: datetime, wait: int) -> bool:
++        if key == self.me:
++            return False
++        since = self.owes(key, began)
++        return self.recorded_stopped(key) or since is not None and self.at >= since + timedelta(seconds=wait)
++
++    def verifier(self, thread: dict, began: datetime, wait: int) -> Optional[tuple[str, str]]:
++        """Who re-checks the thread now: the model that opened it unless it has stopped, else the first
++        adopter that has not, else no one yet."""
++        opener = self.opener(thread)
++        if opener is None:
++            return None
++        for key in [opener] + [a["adopter"] for a in self.adoptions(thread)]:
++            if not self.stopped(key, began, wait):
++                return key
++        return None
++
++    def holder(self, thread: dict) -> tuple[str, str]:
++        """The model that held the thread last: its newest adopter, else the model that opened it."""
++        adoptions = self.adoptions(thread)
++        return adoptions[-1]["adopter"] if adoptions else self.opener(thread)
++
++    def ownership(self, thread: dict, began: datetime, wait: int) -> dict:
++        """The census fields for the thread, as `me` reads them."""
++        model = thread_model(thread)
++        verifier = self.verifier(thread, began, wait)
++        mine = model is None or (self.me is not None and verifier == self.me)
++        adopt, adopt_at = "no", None
++        if self.me is not None and model is not None and not mine:
++            if verifier is None:
++                adopt = "now"
++            else:
++                since = self.owes(verifier, began)
++                if since is not None:
++                    adopt, adopt_at = "wait", (since + timedelta(seconds=wait)).isoformat()
++        checks = []
++        for comment in thread["comments"][1:]:
++            reply = verify_reply(comment["body"])
++            if reply and comment.get("at") and \
++                    (verifier is None or (comment["login"], identity(reply.get("model") or "")) == verifier):
++                checks.append(parse_time(comment["at"]))
++        answers = self.answers(thread)
++        answered = bool(answers) and (not checks or max(answers) > max(checks))
++        return {"model": model, "verifier": verifier[1] if verifier else None, "mine": mine, "adopt": adopt,
++                "adopt_at": adopt_at, "answered": answered}
++
++
+ # Incremental reviews
+ 
+ class Unmeasurable(ReviewError):
+@@ -815,7 +1030,7 @@ def producer(version: str, model: str, effort: Optional[str]) -> str:
+ 
+ 
+ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
+-                      reviews: Optional[list[dict]] = None) -> dict:
++                      reviews: Optional[list[dict]] = None, wait: int = PEER_WAIT) -> dict:
+     """Whether the head may have an incremental review, with the change measured since this loop's
+     last full review of the pull request.
+ 
+@@ -860,10 +1075,16 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
+             raise Refused(f"the full review of {full['sha'][:7]} was made by "
+                           f"{producer(marker.projector, marker.model, marker.effort)}, and this run is "
+                           f"{producer(*mine)}")
+-        open_findings = census(repo, number)["open"]
++        # A thread this model may adopt, resolved or not, counts as its own: a full review settles it.
++        tally = census(repo, number, (state["reviewer"], state["model"]), parse_time(state["head_started_at"]), wait)
++        open_findings = sum(1 for t in tally["threads"] if not t["resolved"] and t["mine"])
++        adoptable = sum(1 for t in tally["threads"] if t["adopt"] != "no")
+         if open_findings:
+             raise Refused(f"{open_findings} finding thread{'' if open_findings == 1 else 's'} "
+                           f"{'is' if open_findings == 1 else 'are'} open")
++        if adoptable:
++            raise Refused(f"{adoptable} finding thread{'' if adoptable == 1 else 's'} of a model that stopped "
++                          "reviewing, or may stop, needs a full review to adopt it")
+         if not full.get("base"):
+             raise Refused(f"the change cannot be measured: loop {loop}'s record holds no merge base for the "
+                           f"full review of {full['sha'][:7]}, as a record an earlier release wrote does not")
+@@ -1056,14 +1277,14 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+ 
+ 
+-def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
+-    """Every Projector review the reviewer posted on the pull request, from every page, each with
+-    its `id`, `url`, `at`, and `body`."""
++def reviewer_reviews(repo: str, number: int, reviewer: Optional[str] = None) -> list[dict]:
++    """Every Projector review on the pull request, from every page, each with its `id`, `url`, `at`,
++    `login`, and `body`: the reviewer's alone when `reviewer` is given, and every account's otherwise."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+-                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
+-                           '| select(.body // "" | contains("projector-review")) '
+-                           '| {id, url: .html_url, at: .submitted_at, body} | @json']).splitlines()
+-    return [json.loads(row) for row in rows if row.strip()]
++                   "--jq", '.[] | select(.body // "" | contains("projector-review")) '
++                           '| {id, url: .html_url, at: .submitted_at, login: .user.login, body} | @json']).splitlines()
++    reviews = [json.loads(row) for row in rows if row.strip()]
++    return [r for r in reviews if reviewer is None or (r.get("login") or "").lower() == reviewer.lower()]
+ 
+ 
+ def read_record(root: Path, loop: str) -> list[dict]:
+@@ -1111,13 +1332,92 @@ def same_model(body: str) -> bool:
+             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
+ 
+ 
+-# The sign-off
++# Adopting a finding
+ 
+-PEER_WAIT = 180
+-PEER_POLL = 15
+-sleep = time.sleep
++ADOPT_RESULTS = ("fixed", "accepted", "withdrawn", "kept", "reopened")
++THREAD_MUTATION = "mutation($id:ID!){ %s(input:{threadId:$id}){ thread{ isResolved } } }"
++
++
++def adopt(paths: Paths, thread_id: str, result: str, body_path: Path, wait: int = PEER_WAIT) -> dict:
++    """Take over the re-check of a finding whose model has stopped reviewing, by the steps review-pr
++    § Who re-checks a finding gives.
++
++    It refuses a thread that is this model's own or names no model, and one
++    whose verifier still reviews: it owes no review, or has posted since it
++    began to owe one, or another model that has not stopped adopted it first.
++    While the verifier's window is open, it waits, reading again every
++    PEER_POLL seconds. It then posts the adoption reply, reads the thread
++    again, and applies `result` only when no earlier adoption by a model that
++    has not stopped is there; otherwise it deletes its reply and refuses."""
++    if result not in ADOPT_RESULTS:
++        raise ReviewError(f"--result must be one of {', '.join(ADOPT_RESULTS)}, not {result}")
++    state = read_state(paths)
++    repo, number, reviewer, model = state["repo"], paths.number, state["reviewer"], state["model"]
++    me, began = (reviewer.lower(), identity(model)), parse_time(state["head_started_at"])
++    if not paths.lock(state["sha"]).exists():
++        raise ReviewError(f"no review of {repo}#{number} at {state['sha'][:7]} by model {model} holds the lock; "
++                          f"adopt within a review, after `project review setup {number}`")
++    if not body_path.is_file():
++        raise ReviewError(f"the body file {body_path} does not exist; write the reply there first")
++    body = body_path.read_text(encoding="utf-8").strip()
++    if not body:
++        raise ReviewError("the body is empty; say what at this head settles the finding")
++    if VERIFY_MARKER.search(body) or OWN_MARKER.search(body):
++        raise ReviewError("leave the marker out of the body; adopt writes it")
++
++    def thread_now(act: Activity) -> dict:
++        if act.head != state["sha"]:
++            raise ReviewError(f"the head moved to {act.head[:7]} since {state['sha'][:7]} was set up; run "
++                              f"`project review move {number}` and re-check the thread against the new head")
++        found = next((t for t in act.threads if t["id"] == thread_id), None)
++        if found is None:
++            raise ReviewError(f"{repo}#{number} has no Projector finding thread {thread_id}")
++        return found
++
++    while True:
++        act = activity(repo, number, (reviewer, model))
++        thread = thread_now(act)
++        if act.opener(thread) is None:
++            raise ReviewError(f"thread {thread_id} names no model, so it is every model's; settle it as your own")
++        verifier = act.verifier(thread, began, wait)
++        if verifier == me:
++            raise ReviewError(f"thread {thread_id} is yours to re-check; settle it as your own")
++        if verifier is None:
++            source = act.holder(thread)
++            break
++        since = act.owes(verifier, began)
++        if since is None:
++            raise ReviewError(f"{verifier[1]} still reviews this pull request and re-checks thread {thread_id}; "
++                              "leave it to that model")
++        sleep(max(1.0, min(PEER_POLL, (since + timedelta(seconds=wait) - now()).total_seconds())))
++    token = reviewer_token(reviewer)
++    text = (f"<!-- projector-verify v=1 result={result} sha={state['sha']} model={model} adopted-from={source[1]} -->\n"
++            f"Re-checked by `{model}` for `{source[1]}`, which has stopped reviewing this pull request.\n\n{body}\n")
++    reply = gh_json(["api", f"repos/{repo}/pulls/{number}/comments/{thread['comments'][0]['id']}/replies",
++                     "-f", f"body={text}"], token)
++    act = activity(repo, number, (reviewer, model))
++    thread = thread_now(act)
++    adoptions = act.adoptions(thread)
++    earlier = adoptions[:next((i for i, a in enumerate(adoptions) if a["id"] == reply["id"]), len(adoptions))]
++    first = next((a for a in earlier if a["adopter"] != me and not act.stopped(a["adopter"], began, wait)), None)
++    if first is not None:
++        try:
++            run_gh(["api", "-X", "DELETE", f"repos/{repo}/pulls/comments/{reply['id']}"], token)
++        except NotFound:
++            pass
++        raise ReviewError(f"{first['adopter'][1]} adopted thread {thread_id} first and re-checks it; your reply "
++                          "is deleted, so leave the thread to that model")
++    change = {"fixed": "resolveReviewThread", "accepted": "resolveReviewThread",
++              "withdrawn": "resolveReviewThread", "reopened": "unresolveReviewThread"}.get(result)
++    if change and thread["resolved"] != (change == "resolveReviewThread"):
++        run_gh(["api", "graphql", "-f", f"query={THREAD_MUTATION % change}", "-f", f"id={thread_id}"], token)
++    return {"repo": repo, "number": number, "thread": thread_id, "result": result, "reply": reply["id"],
++            "adopted_from": source[1], "resolved": thread["resolved"] if change is None
++            else change == "resolveReviewThread"}
+ 
+ 
++# The sign-off
++
+ def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) -> dict[str, dict]:
+     """Each model with a Projector verdict or a start comment among the reviewer's, keyed by identity.
+ 
+@@ -1146,12 +1446,13 @@ def entry(model: str) -> dict:
+     return models
+ 
+ 
+-def signoff(models: dict[str, dict], open_threads: int) -> str:
++def signoff(models: dict[str, dict], open_threads: int, stopped: frozenset = frozenset()) -> str:
+     """The rule review-pr § Review as one model among several states: `changes-requested` when any
+     model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
+     or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
+-    and `unreviewed` when no model has one."""
+-    verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
++    and `unreviewed` when no model has one. The verdicts of a model recorded as `stopped` do not
++    count, because the model that adopted its findings speaks for them."""
++    verdicts = [m["verdict"]["verdict"] for key, m in models.items() if m["verdict"] and key not in stopped]
+     if "changes-requested" in verdicts:
+         return "changes-requested"
+     if open_threads or any(m["reviewing"] for m in models.values()):
+@@ -1159,11 +1460,24 @@ def signoff(models: dict[str, dict], open_threads: int) -> str:
+     return "clean" if verdicts else "unreviewed"
+ 
+ 
+-def pending_peers(models: dict[str, dict], me: str) -> list[str]:
+-    """The other models that reviewed an earlier head, or are reviewing another one, and have neither a
+-    verdict nor a live start comment on this one: a loop that has not noticed the push yet."""
+-    return sorted(key for key, m in models.items()
+-                  if key != me and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
++def pending_peers(models: dict[str, dict], me: str, stopped: frozenset = frozenset()) -> list[str]:
++    """The other models, not recorded as stopped, that reviewed an earlier head, or are reviewing another
++    one, and have neither a verdict nor a live start comment on this one: a loop that has not noticed
++    the push yet."""
++    return sorted(key for key, m in models.items() if key != me and key not in stopped
++                  and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
++
++
++def stopped_models(act: Activity, reviewer: str, models: dict[str, dict]) -> dict[str, str]:
++    """The reviewer's models recorded as stopped, each with the model whose adoption reply recorded it."""
++    stopped = {}
++    for key in models:
++        model = (reviewer.lower(), key)
++        if act.recorded_stopped(model):
++            newest = max((a for t in act.threads for a in act.adoptions(t) if a["from"] == model),
++                         key=lambda a: a["at"])
++            stopped[key] = newest["adopter"][1]
++    return stopped
+ 
+ 
+ def peer_wait(value: object) -> int:
+@@ -1175,13 +1489,14 @@ def peer_wait(value: object) -> int:
+     return value
+ 
+ 
+-def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
++def sign(repo: str, number: int, reviewer: str, head: str, me: str, deadline: datetime,
+          posted: Optional[dict] = None) -> dict:
+     """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
+     says `clean`.
+ 
+-    The rule reads the reviewer's verdicts and start comments; `posted` stands
+-    in for this review's verdict before it is submitted. While the rule says
++    The rule reads the reviewer's verdicts and start comments, and every
++    finding thread; `posted` stands in for this review's verdict before it is
++    submitted. While the rule says
+     `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
+     until `deadline`: a peer's start comment makes it `waiting`, a peer's
+     verdict joins the rule, and a peer that posts nothing by the deadline is
+@@ -1190,12 +1505,16 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
+     seconds it `waited`, the peers still `pending`, and whether the head
+     `moved`."""
+     started = now()
++    threads = finding_threads(repo, number)
++    open_threads = sum(1 for t in threads if not t["resolved"])
+     while True:
+         reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
+             + ([posted] if posted else [])
+-        models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
+-        result = signoff(models, open_threads)
+-        pending = pending_peers(models, me) if result == "clean" else []
++        starts, at = start_comments(repo, number, reviewer), now()
++        models = models_on(head, reviews, starts, at)
++        stopped = frozenset(stopped_models(Activity(head, reviews, starts, threads, at), reviewer, models))
++        result = signoff(models, open_threads, stopped)
++        pending = pending_peers(models, me, stopped) if result == "clean" else []
+         waited = int((now() - started).total_seconds())
+         if not pending or now() >= deadline:
+             return {"signoff": result, "models": models, "waited": waited, "pending": pending, "moved": False}
+@@ -1205,30 +1524,29 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
+                     "pending": pending, "moved": True}
+ 
+ 
+-FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
+-
+-
+-def thread_model(thread: dict) -> Optional[str]:
+-    """The model a finding thread's marker names, or None for one an earlier release opened."""
+-    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
+-    return found.group(1) if found else None
+-
+-
+-def status(repo: str, number: int, reviewer: str) -> dict:
++def status(repo: str, number: int, reviewer: str, wait: int = PEER_WAIT) -> dict:
+     """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
+-    part in it and every open Projector finding thread."""
++    part in it and every open Projector finding thread with who re-checks it."""
+     try:
+         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+     except NotFound as exc:
+         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+-    head = pr["head"]["sha"]
+-    models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
+-    threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
++    head, at = pr["head"]["sha"], now()
++    reviews, starts = reviewer_reviews(repo, number), start_comments(repo, number)
++    act = Activity(head, reviews, starts, finding_threads(repo, number), at)
++    own_reviews = [r for r in reviews if (r.get("login") or "").lower() == reviewer.lower()]
++    own_starts = [c for c in starts if c["login"] == reviewer.lower()]
++    models = models_on(head, own_reviews, own_starts, at)
++    stopped = stopped_models(act, reviewer, models)
++    open_threads = [t for t in act.threads if not t["resolved"]]
+     rows = []
+     for key in sorted(models):
+         m = models[key]
+-        row = {"model": m["model"],
+-               "state": "reviewing" if m["reviewing"] else m["verdict"]["verdict"] if m["verdict"] else "pending"}
++        state = "reviewing" if m["reviewing"] else "stopped" if key in stopped \
++            else m["verdict"]["verdict"] if m["verdict"] else "pending"
++        row = {"model": m["model"], "state": state}
++        if key in stopped:
++            row["adopted_by"] = stopped[key]
+         verdict = m["verdict"] or m["earlier"]
+         if verdict:
+             row.update(review=verdict["id"], url=verdict["url"], at=verdict["at"], sha=verdict["sha"])
+@@ -1237,8 +1555,9 @@ def status(repo: str, number: int, reviewer: str) -> dict:
+             row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
+         rows.append(row)
+     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
+-            "signoff": signoff(models, len(threads)), "models": rows,
+-            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
++            "signoff": signoff(models, len(open_threads), frozenset(stopped)), "models": rows,
++            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t),
++                              "verifier": act.ownership(t, at, wait)["verifier"]} for t in open_threads]}
+ 
+ 
+ def status_lines(result: dict) -> list[str]:
+@@ -1250,12 +1569,16 @@ def status_lines(result: dict) -> list[str]:
+             since = parse_time(row["since"]).strftime("%H:%M UTC")
+             where = "" if row["state"] == "reviewing" else f" on {row['comment_sha'][:7]}"
+             detail = f"start comment {row['comment']}{where}, since {since}"
++        elif row["state"] == "stopped":
++            detail = f"findings adopted by {row['adopted_by']}"
+         else:
+             detail = f"review {row['review']}" + (f" on {row['sha'][:7]}" if row["sha"] != result["head"] else "")
+         lines.append(f"  {row['model']:<{width}}{row['state']:<20}{detail}")
+     threads = result["open_threads"]
+     if threads:
+-        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
++        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "")
++                          + (f", re-checked by {t['verifier']}" if t["verifier"] and t["verifier"] != t["model"]
++                             else "") for t in threads)
+         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
+     return lines
+ 
+@@ -1378,7 +1701,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     loop = loop if loop is not None else state.get("loop")
+     repo, sha, reviewer = state["repo"], state["sha"], state["reviewer"]
+     me = identity(state["model"])
+-    deadline = parse_time(state["head_started_at"]) + timedelta(seconds=wait)
++    began = parse_time(state["head_started_at"])
++    deadline = began + timedelta(seconds=wait)
+     if incremental:
+         for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
+             if given is not None:
+@@ -1414,27 +1738,34 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         incremental_from = None
+         mine = ((pr.get("user") or {}).get("login") or "").lower() == reviewer.lower()
+         if incremental:
+-            rules = incremental_rules(root, state, loop, enabled, reviews)
++            rules = incremental_rules(root, state, loop, enabled, reviews, wait)
+             if not rules["incremental"]:
+                 raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
+                                   "on this setup")
+             incremental_from = rules["from"]
+             text = compose_incremental(state, body, rules, not mine, now())
+-            event, open_after = "COMMENT", 0
++            event = "COMMENT"
+         else:
+             check_threads(threads, diff_lines(repo, number) if threads else {})
+-            tally = census(repo, number)
++            # A thread whose verifier's window is open waits until it closes: published before then, the
++            # review would leave a finding that no model re-checks once the window closed.
++            tally = census(repo, number, (reviewer, state["model"]), began, wait, settle="all")
++            adoptable = [t for t in tally["threads"] if t["adopt"] == "now"]
++            if adoptable:
++                listed_threads = ", ".join(f"{t['path']}:{t['line']} ({t['model']}, thread {t['id']}"
++                                           + (", resolved)" if t["resolved"] else ")") for t in adoptable)
++                raise ReviewError(f"{len(adoptable)} finding thread{'' if len(adoptable) == 1 else 's'} of a "
++                                  f"model that stopped reviewing {'is' if len(adoptable) == 1 else 'are'} yours to "
++                                  f"re-check: {listed_threads}; settle each with `project review adopt`, a resolved "
++                                  "one whose fix holds with --result fixed")
+             open_after = tally["open"] + len(threads)
+             if verdict == "clean" and open_after:
+-                raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
+-                                  f"{len(threads)} are being posted; settle them or request changes")
++                raise ReviewError(f"a clean verdict needs no open finding of this model's, and {tally['open']} are "
++                                  f"open and {len(threads)} are being posted; settle them or request changes")
+             if verdict == "changes-requested" and not open_after:
+-                raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
+-                                  "is clean")
+-            total = tally["total"] + len(threads)
+-            noun = "thread" if total == 1 else "threads"
+-            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_after} open"
+-            text = compose(state, verdict, body, covered, len(threads), census_line, now())
++                raise ReviewError("changes-requested needs an open finding of this model's or a new one; with none "
++                                  "open the head is clean")
++            text = compose(state, verdict, body, covered, len(threads), census_line(tally, len(threads)), now())
+             if mine or verdict == "clean" and not allow_approve:
+                 event = "COMMENT"
+             elif verdict == "changes-requested":
+@@ -1443,8 +1774,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+                 # One account's newest approval or change request sets reviewDecision, so an approval would
+                 # replace another model's standing change request: approve only when the rule, counting
+                 # this verdict as posted, signs the head off.
+-                posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
+-                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
++                posted = {"id": None, "url": None, "at": now().isoformat(), "login": reviewer, "body": text}
++                ahead = sign(repo, number, reviewer, sha, me, deadline, posted)
+                 if ahead["moved"]:
+                     raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
+                                       f"other models; run `project review move {number}` and review the new head")
+@@ -1463,7 +1794,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         # Recorded before anything else can fail, so a retry finishes this review rather than
+         # posting a second one.
+         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
+-                              "from": incremental_from, "self": mine, "open": open_after}
++                              "from": incremental_from, "self": mine}
+         write_state(paths, state)
+     published = state["published"]
+     token = reviewer_token(reviewer)
+@@ -1475,8 +1806,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+               "login": reviewer, "body": read["body"]}
+     draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+     # Only a draft is about to be signed off, so only a draft waits for its peers.
+-    signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
+-                  deadline if published.get("self") and draft else now(), posted)
++    signed = sign(repo, number, reviewer, sha, me, deadline if published.get("self") and draft else now(), posted)
+     draft_wanted = None
+     if published.get("self") and not signed["moved"]:
+         draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
+diff --git a/tests/test_review.py b/tests/test_review.py
+index c6979ca..abd2359 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -74,17 +74,19 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.after_post = None
+         # Reviews the listing leaves out, as one GitHub has not indexed yet.
+         self.unlisted: set[int] = set()
++        # Replies posted on finding threads, and each thread resolved or unresolved, with its token.
++        self.next_reply = 5001
++        self.after_reply = None
++        self.mutations: list[tuple[str, bool, str | None]] = []
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
+         if self.fail and self.fail in " ".join(args):
+             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
+-            login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
+             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
+-                                       "body": r["body"]}) + "\n"
+-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
+-                           and r["id"] not in self.unlisted)
++                                       "login": r["user"]["login"], "body": r["body"]}) + "\n"
++                           for r in self.reviews if "projector-review" in r["body"] and r["id"] not in self.unlisted)
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
+             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
+         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
+@@ -105,9 +107,25 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+         if args[:2] == ["pr", "ready"]:
+             self.pr["draft"] = "--undo" in args
+             return ""
++        if args[:3] == ["api", "-X", "DELETE"] and "/pulls/comments/" in args[3]:
++            comment_id = int(args[3].rsplit("/", 1)[1])
++            for node in self.thread_nodes():
++                node["comments"]["nodes"] = [c for c in node["comments"]["nodes"] if c["databaseId"] != comment_id]
++            return ""
+         if args[:3] == ["api", "-X", "DELETE"]:
+             del self.comments[int(args[3].rsplit("/", 1)[1])]
+             return ""
++        if len(args) == 4 and args[1].startswith(f"repos/{REPO}/pulls/1/comments/") and args[1].endswith("/replies"):
++            first = int(args[1].split("/")[-2])
++            node = next(n for n in self.thread_nodes() if n["comments"]["nodes"][0]["databaseId"] == first)
++            reply_id, self.next_reply = self.next_reply, self.next_reply + 1
++            at = review.now().strftime("%Y-%m-%dT%H:%M:%SZ")
++            node["comments"]["nodes"].append({"databaseId": reply_id, "body": args[3].removeprefix("body="),
++                                              "createdAt": at, "author": {"login": token.removeprefix("token-")}})
++            if self.after_reply:
++                hook, self.after_reply = self.after_reply, None
++                hook(node)
++            return json.dumps({"id": reply_id, "created_at": at})
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+             return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
+                                        "body": body, **self.comment_info[i]}) + "\n"
+@@ -116,6 +134,12 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return f"token-{args[-1]}\n"
+         if args == ["api", "user", "--jq", ".login"]:
+             return "operator\n"
++        if args[:2] == ["api", "graphql"] and "ReviewThread(input" in args[3]:
++            thread_id = next(a.split("=", 1)[1] for a in args if a.startswith("id="))
++            node = next(n for n in self.thread_nodes() if n["id"] == thread_id)
++            node["isResolved"] = "unresolveReviewThread" not in args[3]
++            self.mutations.append((thread_id, node["isResolved"], token))
++            return json.dumps({"data": {}})
+         if args[:2] == ["api", "graphql"]:
+             after = next((a.split("=", 1)[1] for a in args if a.startswith("after=")), None)
+             return json.dumps(self.pages[0 if after is None else int(after)])
+@@ -141,6 +165,9 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return json.dumps({"body": self.comments[int(args[1].rsplit("/", 1)[1])]})
+         raise AssertionError(f"unexpected gh call: {args}")
+ 
++    def thread_nodes(self) -> list[dict]:
++        return [n for page in self.pages for n in page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]]
++
+     def comment(self, body: str, login: str = "operator", created_at: str | None = None,
+                 updated_at: str | None = None) -> int:
+         """Post an issue comment as `login`, created at `created_at` or the fake's time, and return its id."""
+@@ -537,9 +564,13 @@ def test_refuses_without_a_review_set_up(self) -> None:
+ 
+ 
+ def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
+-           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
++           path: str = "src/x.py", line: int | None = 3, original: int | None = None, first: int = 9,
++           login: str = "operator", at: str = "2026-09-27T01:00:00Z", replies: tuple[dict, ...] = ()) -> dict:
++    """A review thread as the census query returns it, its finding first, posted as `login` at `at`."""
+     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
+-            "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
++            "line": line, "originalLine": original,
++            "comments": {"nodes": [{"databaseId": first, "body": body, "createdAt": at, "author": {"login": login}},
++                                   *replies]}}
+ 
+ 
+ def page(nodes: list[dict], next_cursor: str | None) -> dict:
+@@ -1141,18 +1172,20 @@ def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> No
+         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
+                              r"runs on a pull request: (.*?)\. ", skill, re.S)
+         commands = re.findall(r"`(\w+)`", sentence.group(1))
+-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release"], commands)
++        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "adopt", "publish", "release"], commands)
+         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
++        extras = {"publish": ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3"),
++                  "adopt": ("T9", "--result", "kept", "--body", str(self.body()))}
+         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
+         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
+         self.github.pr["head"]["sha"] = self.push_head("second head")
+         ran = {"setup": 0}
+         for command in commands[1:]:
+-            extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
+-            ran[command] = self.later(command, *flags, *extra)[0]
++            ran[command] = self.later(command, *flags, *extras.get(command, ()))[0]
+ 
+-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
+-                         ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
++        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "adopt": 1, "publish": 0,
++                          "release": 0}, ran, "interdiff refuses with no full review to build on, gate with "
++                                              "review.gate unset, and adopt with no thread T9")
+ 
+     def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
+         self.assertEqual(0, self.setup_review()[0])
+@@ -1452,7 +1485,8 @@ def test_reports_each_model_and_the_open_threads_and_exits_zero_whatever_the_sig
+                           ("gpt-5.5", "reviewing", None)],
+                          [(m["model"], m["state"], m.get("review")) for m in as_json["models"]])
+         self.assertEqual(started, as_json["models"][2]["comment"])
+-        self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5"}], as_json["open_threads"])
++        self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5", "verifier": "gpt-5.5"}],
++                         as_json["open_threads"])
+ 
+     def test_a_model_with_only_earlier_activity_is_pending_and_leaves_the_sign_off_alone(self) -> None:
+         self.add_verdict("claude-opus-5-5")
+@@ -1492,6 +1526,391 @@ def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+         self.assertIn("does not exist", err)
+ 
+ 
++class OwnershipCase(SignoffCase):
++    """Finding threads by several models, as claude-opus-5-5 reviews head H beside gpt-5.5."""
++
++    REPLY = "<!-- projector-reply v=1 -->\nDeclined: the guard in `load` already stops this."
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.ids = iter(range(7001, 8000))
++        self.reply = self.dir / "reply.md"
++        self.reply.write_text("At this head `load` warms the cache before the first read, so the finding holds.\n")
++
++    def node(self, body: str, at: str, login: str = "operator") -> dict:
++        return {"databaseId": next(self.ids), "body": body, "createdAt": at, "author": {"login": login}}
++
++    def finding(self, thread_id: str, model: str | None, *replies: dict, resolved: bool = False,
++                login: str = "operator") -> dict:
++        marker = f"<!-- projector-finding v=1 priority=P2 sha={self.earlier}" + (f" model={model}" if model else "")
++        return thread(thread_id, f"{marker} -->\n**P2 · A nil deref**", resolved=resolved, first=next(self.ids),
++                      login=login, replies=replies)
++
++    def verify(self, model: str, at: str, result: str = "kept", adopted_from: str | None = None,
++               login: str = "operator") -> dict:
++        marker = (f"<!-- projector-verify v=1 result={result} sha={self.head} model={model}"
++                  + (f" adopted-from={adopted_from}" if adopted_from else "") + " -->")
++        return self.node(f"{marker}\nStill fails at this head.", at, login)
++
++    def answer(self, at: str) -> dict:
++        return self.node(self.REPLY, at)
++
++    def put(self, *nodes: dict) -> None:
++        self.github.pages = [page(list(nodes), None)]
++
++    def census(self, *extra: str) -> dict:
++        code, out, err = self.later("census", "--json", *extra)
++        self.assertEqual(0, code, err)
++        return json.loads(out)
++
++    def one(self, result: dict, thread_id: str = "T1") -> dict:
++        return next(t for t in result["threads"] if t["id"] == thread_id)
++
++    def adopt(self, result: str, thread_id: str = "T1", *extra: str) -> tuple[int, str, str]:
++        return self.later("adopt", thread_id, "--result", result, "--body", str(self.reply), *extra)
++
++    def model_state(self, status: dict, model: str) -> dict:
++        return next(m for m in status["models"] if m["model"] == model)
++
++    def thread_node(self, thread_id: str = "T1") -> dict:
++        return next(n for n in self.github.thread_nodes() if n["id"] == thread_id)
++
++    def stopped_gpt(self, *replies: dict, resolved: bool = False) -> None:
++        """gpt-5.5 reviewed an earlier head at 01:00 and opened T1, the author declined it at 01:05, and
++        gpt-5.5 has posted nothing since, so its window closed long before the clock's 01:14."""
++        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z"), *replies, resolved=resolved))
++
++
++class CensusOwnershipTests(OwnershipCase):
++    def test_a_model_still_reviewing_keeps_its_thread_and_the_count_names_the_other_models(self) -> None:
++        self.start("gpt-5.5")
++        self.put(self.finding("T1", "gpt-5.5"), self.finding("T2", "claude-opus-5-5", resolved=True))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.census()
++        _, text, _ = self.later("census")
++
++        self.assertEqual(("gpt-5.5", "gpt-5.5", False, "no"),
++                         tuple(self.one(result)[k] for k in ("model", "verifier", "mine", "adopt")))
++        self.assertTrue(self.one(result, "T2")["mine"])
++        self.assertEqual((1, 1, 0, {"total": 1, "open": 1}),
++                         (result["total"], result["resolved"], result["open"], result["others"]))
++        self.assertEqual(["1 finding thread from claude-opus-5-5: 1 resolved, 0 open. Other models: 1 thread, 1 open",
++                          "src/x.py:3 (gpt-5.5)"], text.splitlines())
++
++    def test_a_clean_verdict_passes_another_running_models_open_finding_and_prints_both_clauses(self) -> None:
++        self.start("gpt-5.5")
++        self.put(self.finding("T1", "gpt-5.5"))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertIn("0 finding threads from claude-opus-5-5: 0 resolved, 0 open. Other models: 1 thread, 1 open",
++                      self.posted()["body"])
++        self.assertEqual("waiting", result["signoff"], "gpt-5.5 is reviewing and its finding is open")
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_a_clean_verdict_is_refused_on_its_own_unnamed_or_adopted_open_finding(self) -> None:
++        def adopted() -> None:
++            self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++            self.put(self.finding("T1", "gpt-5.5", self.verify("claude-opus-5-5", "2026-09-27T01:05:00Z",
++                                                               adopted_from="gpt-5.5")))
++
++        for name, arrange in {"its own": lambda: self.put(self.finding("T1", "claude-opus-5-5")),
++                              "its own at another context window":
++                                  lambda: self.put(self.finding("T1", "claude-opus-5-5[1m]")),
++                              "naming no model": lambda: self.put(self.finding("T1", None)),
++                              "adopted": adopted}.items():
++            with self.subTest(name):
++                self.setUp()
++                arrange()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                code, _, err = self.publish("clean")
++
++                self.assertEqual(1, code)
++                self.assertIn("needs no open finding of this model's", err)
++                self.assertEqual([], [r for r in self.github.reviews if "claude-opus-5-5" in r["body"]])
++
++    def test_an_open_finding_a_stopped_model_left_is_settled_before_any_verdict(self) -> None:
++        self.stopped_gpt()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual("now", self.one(self.census())["adopt"])
++        for verdict in ("clean", "changes-requested"):
++            code, _, err = self.publish(verdict)
++            self.assertEqual(1, code)
++            self.assertIn("settle each with `project review adopt`", err)
++
++    def test_an_answer_on_this_models_thread_or_an_unnamed_one_is_its_own_to_re_review(self) -> None:
++        self.put(self.finding("T1", "claude-opus-5-5[1m]", self.answer("2026-09-27T01:05:00Z")),
++                 self.finding("T2", None, self.answer("2026-09-27T01:05:00Z")))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.census("--wait")
++
++        for thread_id in ("T1", "T2"):
++            self.assertEqual((True, True, "no"), tuple(self.one(result, thread_id)[k]
++                                                       for k in ("mine", "answered", "adopt")))
++        self.assertEqual([], self.slept)
++
++    def test_census_wait_returns_once_the_model_that_owes_the_answer_posts(self) -> None:
++        self.begin_now()
++        answered = self.clock
++        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(answered))))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        before = self.one(self.census())
++        self.hooks[1] = lambda: self.thread_node()["comments"]["nodes"].append(
++            self.verify("gpt-5.5", iso(self.clock)))
++
++        after = self.one(self.census("--wait"))
++
++        self.assertEqual(("wait", True), (before["adopt"], before["answered"]))
++        self.assertEqual((answered + timedelta(seconds=180)).isoformat(), before["adopt_at"])
++        self.assertEqual(("no", "gpt-5.5", False), (after["adopt"], after["verifier"], after["answered"]))
++        self.assertEqual([15], self.slept)
++
++    def test_census_wait_returns_when_the_window_closes_with_the_thread_adoptable(self) -> None:
++        self.begin_now()
++        self.add_verdict("gpt-5.5", verdict="changes-requested", at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.one(self.census("--wait"))
++
++        self.assertEqual(("now", None), (result["adopt"], result["verifier"]))
++        self.assertEqual(180, sum(self.slept))
++
++    def test_another_accounts_finding_is_its_models_while_it_reviews_and_adoptable_once_it_stops(self) -> None:
++        self.start("gpt-5.5")
++        self.github.comment_info[max(self.github.comment_info)]["login"] = "teammate"
++        self.add_verdict("gpt-5.5", verdict="changes-requested", login="teammate")
++        self.put(self.finding("T1", "gpt-5.5", login="teammate"))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual("no", self.one(self.census())["adopt"])
++        result = self.json_publish("clean")
++        self.assertEqual("waiting", result["signoff"], "another account's verdict does not count, its thread does")
++        self.assertTrue(self.github.pr["draft"])
++
++        self.setUp()
++        self.add_verdict("gpt-5.5", sha=self.earlier, login="teammate", at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z"), login="teammate"))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual("now", self.one(self.census())["adopt"])
++        self.assertEqual(0, self.adopt("kept")[0])
++        self.assertTrue(self.one(self.census())["mine"])
++
++
++class AdoptTests(OwnershipCase):
++    def test_adopt_waits_out_the_window_then_posts_a_reply_naming_both_models_and_settles(self) -> None:
++        self.begin_now()
++        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, out, err = self.adopt("accepted")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(180, sum(self.slept))
++        reply = self.thread_node()["comments"]["nodes"][-1]
++        self.assertEqual(
++            f"<!-- projector-verify v=1 result=accepted sha={self.head} model=claude-opus-5-5 "
++            "adopted-from=gpt-5.5 -->\n"
++            "Re-checked by `claude-opus-5-5` for `gpt-5.5`, which has stopped reviewing this pull request.\n\n"
++            "At this head `load` warms the cache before the first read, so the finding holds.\n", reply["body"])
++        self.assertEqual([("T1", True, "token-operator")], self.github.mutations)
++        self.assertIn("adopted thread T1 from gpt-5.5 (accepted); resolved", out)
++        adopted = self.one(self.census())
++        self.assertEqual((True, "claude-opus-5-5"), (adopted["mine"], adopted["verifier"]))
++        status = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++        self.assertEqual(("stopped", "claude-opus-5-5"),
++                         tuple(self.model_state(status, "gpt-5.5").get(k) for k in ("state", "adopted_by")))
++
++    def test_a_fix_that_does_not_hold_is_reopened_and_one_that_holds_is_recorded(self) -> None:
++        for result, resolved, mutations in (("reopened", False, [("T1", False, "token-operator")]),
++                                            ("fixed", True, []), ("kept", True, [])):
++            with self.subTest(result):
++                self.setUp()
++                self.stopped_gpt(resolved=True)
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                self.assertEqual(0, self.adopt(result)[0])
++
++                self.assertEqual(mutations, self.github.mutations)
++                self.assertEqual(resolved, self.thread_node()["isResolved"])
++                self.assertIn(f"result={result} ", self.thread_node()["comments"]["nodes"][-1]["body"])
++
++    def test_adopt_refuses_while_the_model_still_reviews_and_leaves_the_thread_as_it_was(self) -> None:
++        self.stopped_gpt()
++        self.start("gpt-5.5")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        replies = len(self.thread_node()["comments"]["nodes"])
++
++        code, _, err = self.adopt("accepted")
++
++        self.assertEqual(1, code)
++        self.assertIn("gpt-5.5 still reviews this pull request", err)
++        self.assertEqual((replies, []), (len(self.thread_node()["comments"]["nodes"]), self.github.mutations))
++        self.assertEqual("no", self.one(self.census())["adopt"])
++
++    def test_adopt_refuses_when_the_model_posts_during_the_wait(self) -> None:
++        posts = {"start comment": lambda: self.start("gpt-5.5"),
++                 "verdict": lambda: self.add_verdict("gpt-5.5", at=iso(self.clock)),
++                 "verify reply": lambda: self.thread_node()["comments"]["nodes"].append(
++                     self.verify("gpt-5.5", iso(self.clock)))}
++        for name, post in posts.items():
++            with self.subTest(name):
++                self.setUp()
++                self.begin_now()
++                self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++                self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                self.hooks[2] = post
++
++                code, _, err = self.adopt("accepted")
++
++                self.assertEqual(1, code)
++                self.assertIn("still reviews", err)
++                self.assertEqual([], self.github.mutations)
++                self.assertFalse(any("adopted-from" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
++
++    def test_a_stopped_models_change_request_stops_counting_once_its_finding_is_adopted(self) -> None:
++        self.add_verdict("gpt-5.5", verdict="changes-requested", at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z")))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        before = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++
++        self.assertEqual(0, self.adopt("kept")[0])
++        after = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++
++        self.assertEqual("changes-requested", before["signoff"])
++        self.assertEqual("waiting", after["signoff"], "only the kept finding holds it now")
++        self.assertEqual("stopped", self.model_state(after, "gpt-5.5")["state"])
++
++    def test_the_first_adoption_reply_wins_and_the_second_deletes_its_own(self) -> None:
++        self.stopped_gpt()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        def codex_first(node: dict) -> None:
++            node["comments"]["nodes"].insert(-1, self.verify("codex-mini", iso(self.clock - timedelta(seconds=1)),
++                                                             result="accepted", adopted_from="gpt-5.5"))
++
++        self.github.after_reply = codex_first
++
++        code, _, err = self.adopt("accepted")
++
++        self.assertEqual(1, code)
++        self.assertIn("codex-mini adopted thread T1 first", err)
++        self.assertEqual([], self.github.mutations)
++        self.assertFalse(any("model=claude-opus-5-5" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
++        result = self.one(self.census())
++        self.assertEqual(("codex-mini", "no"), (result["verifier"], result["adopt"]))
++
++    def test_a_returning_model_gets_its_finding_back_and_the_adopter_holds_it_when_it_stops_again(self) -> None:
++        self.stopped_gpt(self.verify("claude-opus-5-5", "2026-09-27T01:08:00Z", adopted_from="gpt-5.5"))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual("claude-opus-5-5", self.one(self.census())["verifier"])
++
++        self.start("gpt-5.5", at=iso(self.clock))
++        back = self.one(self.census())
++        status = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++        self.assertEqual(("gpt-5.5", False, "no"), (back["verifier"], back["mine"], back["adopt"]))
++        self.assertEqual("reviewing", self.model_state(status, "gpt-5.5")["state"], "not stopped: its verdicts count")
++
++        # Two days on, its start comment is stale and the author answered after it; gpt-5.5 posts nothing.
++        self.clock += timedelta(days=2)
++        self.thread_node()["comments"]["nodes"].append(self.answer(iso(self.clock - timedelta(hours=1))))
++        again = self.one(self.census())
++        self.assertEqual(("claude-opus-5-5", True), (again["verifier"], again["mine"]))
++        comments = self.thread_node()["comments"]["nodes"]
++        self.assertEqual(1, sum(1 for c in comments if "projector-verify" in c["body"]), "no new reply took it back")
++
++    def test_when_the_adopter_stops_in_turn_a_third_model_adopts_it_from_the_adopter(self) -> None:
++        self.stopped_gpt(self.verify("claude-opus-5-5", "2026-09-27T01:06:00Z", adopted_from="gpt-5.5"),
++                         self.answer("2026-09-27T01:07:00Z"))
++        self.model = "codex-mini"
++        self.assertEqual(0, self.setup_review("--loop", "codex")[0])
++
++        self.assertEqual(("now", None), tuple(self.one(self.census())[k] for k in ("adopt", "verifier")))
++        self.assertEqual(0, self.adopt("kept")[0])
++
++        self.assertIn("model=codex-mini adopted-from=claude-opus-5-5 -->",
++                      self.thread_node()["comments"]["nodes"][-1]["body"])
++        self.assertEqual(("codex-mini", True), tuple(self.one(self.census())[k] for k in ("verifier", "mine")))
++
++    def test_a_review_that_publishes_inside_a_models_window_waits_it_out_and_must_adopt_the_finding(self) -> None:
++        # gpt-5.5 reviewed an earlier head and left an open finding nobody has answered. This review
++        # began just now and publishes at once, while gpt-5.5's window on the head is still open.
++        self.begin_now()
++        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "gpt-5.5"))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual("wait", self.one(self.census())["adopt"])
++
++        code, _, err = self.publish("clean")
++
++        self.assertEqual(1, code, "published before the window closed, the finding would have no verifier")
++        self.assertEqual(180, sum(self.slept))
++        self.assertIn("yours to re-check: src/x.py:3 (gpt-5.5, thread T1)", err)
++        self.assertEqual("now", self.one(self.census())["adopt"])
++        self.assertEqual(0, self.adopt("withdrawn")[0])
++        result = self.json_publish("clean")
++        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
++        self.assertEqual("claude-opus-5-5", self.one(self.census())["verifier"])
++
++    def test_an_upgraded_models_change_request_on_a_head_resolved_by_hand_is_adopted_before_sign_off(self) -> None:
++        # The loop was restarted on claude-opus-5-5. Its old ID requested changes on this head, and the
++        # author resolved that finding by hand without pushing.
++        self.begin_now()
++        self.add_verdict("claude-opus-5-0", verdict="changes-requested", at="2026-09-27T01:00:00Z")
++        self.put(self.finding("T1", "claude-opus-5-0", resolved=True))
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        held = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++
++        code, _, err = self.publish("clean")
++
++        self.assertEqual("changes-requested", held["signoff"])
++        self.assertEqual(1, code)
++        self.assertEqual(180, sum(self.slept))
++        self.assertIn("(claude-opus-5-0, thread T1, resolved)", err)
++        self.assertIn("--result fixed", err)
++        self.assertEqual(0, self.adopt("fixed")[0])
++        self.assertTrue(self.thread_node()["isResolved"], "a fix that holds stays resolved")
++        result = self.json_publish("clean")
++        self.assertEqual(("clean", False), (result["signoff"], result["draft"]),
++                         "the old ID is recorded as stopped, so its change request no longer holds the head")
++
++    def test_adopt_refuses_outside_a_review_or_on_a_head_that_moved(self) -> None:
++        self.stopped_gpt()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.pr["head"]["sha"] = "f" * 40
++        moved = self.adopt("kept")
++        self.github.pr["head"]["sha"] = self.head
++        self.assertEqual(0, self.later("release")[0])
++        released = self.adopt("kept")
++
++        self.assertEqual(1, moved[0])
++        self.assertIn("project review move 1", moved[2])
++        self.assertEqual(1, released[0])
++        self.assertIn("holds the lock", released[2])
++        self.assertFalse(any("adopted-from" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
++
++    def test_adopt_refuses_this_models_own_thread_and_one_naming_no_model(self) -> None:
++        for model, words in (("claude-opus-5-5", "is yours to re-check"), (None, "names no model")):
++            with self.subTest(model=model):
++                self.setUp()
++                self.put(self.finding("T1", model, self.answer("2026-09-27T01:05:00Z")))
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                code, _, err = self.adopt("accepted")
++
++                self.assertEqual(1, code)
++                self.assertIn(words, err)
++
++
+ def css(**padding: int) -> str:
+     """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
+     return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index ee17efc..d140605 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -251,6 +251,24 @@ def test_reports_every_kind_of_outstanding_work_on_a_tracked_pull_request(self)
+             {tuple(row[:3]) for row in self.state_rows()},
+         )
+ 
++    def test_reports_every_unresolved_finding_whichever_model_opened_it(self) -> None:
++        def finding(model: str) -> str:
++            return f"<!-- projector-finding v=1 priority=P2 sha={SHA_A} model={model} -->\nP2 from {model}"
++
++        # Two models still reviewing, and codex-mini, which has stopped; the watcher reads no replies.
++        self.pull_request(1, threads=[thread("T1", who="operator", body=finding("claude-opus-5-5")),
++                                      thread("T2", who="operator", line=4, body=finding("gpt-5.5")),
++                                      thread("T3", who="operator", line=5, body=finding("codex-mini"))])
++        self.track("acme/app#1")
++
++        result = self.run_watcher(THREADS)
++
++        self.assert_ok(result)
++        self.assertEqual(["FINDING acme/app#1 src/x.py:3 [operator] — P2 from claude-opus-5-5",
++                          "FINDING acme/app#1 src/x.py:4 [operator] — P2 from gpt-5.5",
++                          "FINDING acme/app#1 src/x.py:5 [operator] — P2 from codex-mini"],
++                         result.stdout.splitlines())
++
+     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+         self.pull_request(1, draft=True, threads=[thread("T1")], reviews=[review(5)])
+         self.track("acme/app#1")
