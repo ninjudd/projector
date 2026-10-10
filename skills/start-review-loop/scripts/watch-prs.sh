@@ -147,8 +147,8 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # The last field is "held" while the pull request's author has a hold comment
 # open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
 # otherwise. Only the author's comment counts, because anyone can comment. A
-# hold lives only while its changes are built, so the newest 100 comments
-# hold it.
+# hold lives only while its changes are built, so it is among the newest 100
+# comments.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
     state isDraft reviewDecision headRefOid headRefName author{login}
