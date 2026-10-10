@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "name": "Multi-model review plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 214,
+  "title": "Plan letting several models review the same pull request",
+  "head": "3e344cf8e03c72eb8a985d2917c6d694495c23a3",
+  "headRef": "spec-multi-model-review",
+  "base": "7645db9e3ff49fac3e51a78cc55c00aa79ad5052",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A <b>review loop</b> (<code>start-review-loop</code>) watches the operator's pull requests and runs a Projector review on every pushed head, publishing each one with <code>project review publish</code>. Every loop posts as one GitHub account, and Projector treats that account as the reviewer. That works for one loop, but an operator who runs loops in Claude Code, in Codex, and with a third model to get separate opinions finds that Projector reads all of them as one reviewer.",
+   "<ul><li><b>The collision check refuses the second model.</b> A verdict on the head that this loop did not publish reads as another loop, and publish stops to ask the user.</li><li><b>Local state collides.</b> The lock, state file, and scratch worktree are keyed by pull request and head, so a second model on one machine refuses or removes the first model's worktree.</li><li><b>The last publish sets the draft state.</b> One model's clean verdict marks the pull request ready over another model's changes request.</li><li><b>Each model settles the others' findings.</b> Any review can resolve or reopen any Projector finding thread.</li></ul>",
+   "This pull request adds only a plan, <code>docs/projects/multi-model-review/readme.md</code>, at <code>status: ready</code> and <code>priority: next</code>. The plan makes the model ID that every review marker already records the reviewer's identity within the account. Each model gets its own lock, state, worktree, collision check, and findings. One <b>sign-off rule</b> over GitHub's state decides the draft state: a head is signed off when every model with a verdict on it is clean, no model is still reviewing it, and no Projector finding thread is open. Every publish applies the rule after it submits, so the last model to finish sets the draft state. Before marking a draft ready, publish waits a bounded time, <code>review.peer_wait</code>, for a model that reviewed an earlier head to start on this one."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Reviewer identity</b>: the model ID given to <code>project review setup --model</code>, with a trailing bracketed variant such as <code>[1m]</code> removed.</li><li><b>Start comment</b>: the comment setup posts when a review begins and publish deletes when it ends. A live one means that model is reviewing.</li><li><b>Sign-off rule</b>: <code>clean</code>, <code>changes-requested</code>, <code>waiting</code>, or <code>unreviewed</code> for the current head.</li><li><b>Peer wait</b>: how long publish waits for another model before it marks a draft ready.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, at <code>3e344cf</code>, requested changes with three findings: the plan gives two answers for which finding threads the sign-off reads, the watcher's all-resolved test still counts other models' threads, and § 2.6 names the incremental review plan by terms it does not use. The plan's claims about the current code in § 1 and § 8 hold.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The multi-model review plan",
+   "kicker": "Identity by model, per-model state, and one sign-off rule that every publish applies",
+   "intro": [
+    "The plan reads in order: the problem (§ 1), the design (§ 2), the reasons and rejected alternatives (§ 3), acceptance tests (§ 4), cost (§ 5), rollout (§ 6), deferred questions (§ 7), and what reading the code established (§ 8).",
+    "The design has three parts that depend on each other. Identity by model (§ 2.1) decides which reviews collide and which threads a model owns. Per-model state (§ 2.4) lets two models review one head on one machine. The sign-off rule and peer wait (§ 2.3) replace \"the last publish sets the draft state\" with a rule over every model's verdicts, start comments, and open threads."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "collapsed": false,
+     "note": "A new plan at <code>status: ready</code>, which claims every blocking question is answered or deferred.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 1 and § 8 match the code at this head: the lock, state, and worktree paths in <code>Paths</code>, the forced removal in <code>add_worktree</code>, the loop-record collision check, the per-head <code>review_statuses</code>, and the watcher's reply test. Checked by reading <code>src/projector/review.py</code>, <code>src/projector/site/__init__.py</code>, and both watcher scripts.",
+       "line": 27
+      },
+      {
+       "kind": "flag",
+       "text": "This paragraph says the sign-off and thread ownership read only the reviewer's own account's threads, but § 2.3 says the rule reads every Projector finding thread. Today's <code>census</code> keys on the finding marker, not on a login. The plan needs one answer.",
+       "line": 90
+      },
+      {
+       "kind": "context",
+       "text": "The sign-off rule's four results. <code>waiting</code> leaves the draft state alone, so a ready pull request stays ready while a new head is reviewed, as it does today.",
+       "line": 149
+      },
+      {
+       "kind": "context",
+       "text": "The peer wait counts from when this model's review began on the head, so a long review spends the wait while it runs. A stopped peer costs at most the rest of the wait, once for each sign-off.",
+       "line": 178
+      },
+      {
+       "kind": "context",
+       "text": "Local state moves under <code>&lt;model-key&gt;</code>. State that an earlier release wrote is not read, so a review set up before the upgrade runs setup again.",
+       "line": 225
+      },
+      {
+       "kind": "flag",
+       "text": "The watcher row filters only the reply test by model. The all-resolved test still counts every model's threads, so one model resolving its own finding on an unmoved draft sends every other model's loop a <code>RESPONDED</code> and a redundant re-review.",
+       "line": 312
+      },
+      {
+       "kind": "flag",
+       "text": "Pull request #212 merged as <code>docs/projects/incremental-review/readme.md</code>, which says incremental review and <code>incrementalFrom</code>. This section says carry and <code>carriedFrom</code>. The Reviews index badge from #213 has also merged.",
+       "line": 330
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
