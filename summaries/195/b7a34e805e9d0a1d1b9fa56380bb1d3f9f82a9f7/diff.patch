@@ -1,0 +1,139 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 793f923..1538934 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -838,8 +838,9 @@ clears the pull request's review lock.
+ 
+ `publish` submits the review. `--body` names a file holding the review below
+ its signature line, with `{census}` where the census goes and, wherever used,
+-`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills only outside
+-quoted code; `--threads` names a JSON list
++`{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills in prose and
++in a backtick span that holds one placeholder alone, but not in longer quoted
++code; `--threads` names a JSON list
+ of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
+ files read over the files changed. `publish` writes the signature line and
+ marker itself from the review's state and one reading of the clock, and adds
+@@ -847,7 +848,7 @@ the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
+ when the pull request closed or its head moved, when a finding's line is
+ outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
+ line, when the body is empty, carries its own signature or marker comment, or
+-has no `{census}` outside code, when the verdict disagrees with the finding
++has no `{census}` outside quoted code, when the verdict disagrees with the finding
+ count, or when the reviewer already has a verdict on the head that this loop's
+ record does not account for; outside a loop, `--second-verdict <review-id>`
+ publishes beside an earlier verdict the body names. On a self-review it
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 3b7fdaa..23bbfe1 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -454,9 +454,10 @@ The body file is the review below its signature line: the intent paragraph,
+ the census, the coverage line, disclosures, `Suggestions`, and what was
+ checked. Put `{census}` where the census goes; `publish` fills it with the
+ count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
+-`{short_sha}` where you use them. It fills them only in prose: code quoted in
+-backticks or a fenced block, and any other text in braces, goes out exactly as
+-written. The threads file is a JSON list of findings,
++`{short_sha}` where you use them. It fills them in prose and in a backtick
++span that holds one placeholder alone, so `` `{short_sha}` `` shows the SHA in
++code font. Longer code in backticks, a fenced block, and any other text in
++braces go out exactly as written. The threads file is a JSON list of findings,
+ each `{"path", "line", "priority", "body"}`, where `body` is the visible text
+ below — `publish` adds the finding marker with the head's SHA. It refuses,
+ exiting 1 with what to fix and keeping the lock so you can correct the input
+@@ -467,7 +468,7 @@ and run it again, when:
+   its text does not open with its priority header or lacks a `**Fix:**` line,
+   or it opens a `<!-- projector-… -->` marker comment of its own;
+ - the body is missing or empty, opens with its own signature line or carries
+-  a marker comment, or has no `{census}` outside code;
++  a marker comment, or has no `{census}` outside quoted code;
+ - the verdict disagrees with the census: `clean` with a finding open or
+   being posted, or `changes-requested` with none;
+ - the collision check below trips.
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 22d32c9..d8e84ea 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -547,6 +547,9 @@ def census_lines(result: dict) -> list[str]:
+ PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
+ # Code the body quotes is left exactly as written: fenced blocks, then inline spans.
+ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
++# An inline span that holds a placeholder and nothing else asks for the value in code font,
++# as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
++LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
+ # A comment of Projector's own at the start of a line, as a review or finding carries it.
+ OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding)\b", re.M)
+ SIGNATURE = re.compile(
+@@ -695,19 +698,21 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
+         raise ReviewError("the body is empty; write the review below the signature line")
+     if OWN_MARKER.search(body) or body.lstrip().startswith(MARK):
+         raise ReviewError("leave the signature line and marker out of the body; publish writes them")
+-    if not PLACEHOLDER.search(CODE.sub("", body)) or "{census}" not in CODE.sub("", body):
++    prose = CODE.sub(lambda m: m.group(0) if LONE_PLACEHOLDER.fullmatch(m.group(0)) else "", body)
++    if "{census}" not in prose:
+         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                           "outside code")
+     seconds = elapsed(state["start_comment"]["created_at"], at)
+     took = duration(seconds, state["heads"])
+     values = {"took": took, "seconds": str(seconds), "sha": state["sha"], "short_sha": state["sha"][:7],
+               "census": census_line}
+-    # Placeholders are filled only in prose, so quoted code keeps its braces; anything else in
+-    # braces is the author's text, not a placeholder.
++    # Placeholders are filled only in prose and in a span that holds one alone, so quoted code
++    # keeps its braces; anything else in braces is the author's text, not a placeholder.
+     pieces, last = [], 0
+     for code in CODE.finditer(body):
+         pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:code.start()]))
+-        pieces.append(code.group(0))
++        lone = LONE_PLACEHOLDER.fullmatch(code.group(0))
++        pieces.append(f"`{values[lone.group(1)]}`" if lone else code.group(0))
+         last = code.end()
+     pieces.append(PLACEHOLDER.sub(lambda m: values[m.group(1)], body[last:]))
+     filled = "".join(pieces)
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 1d1e31b..85085e6 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -865,7 +865,7 @@ def test_a_body_without_the_census_in_prose_is_refused(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+ 
+         self.refused(self.publish("clean", body=self.body("No census here.\n")), "{census}")
+-        self.refused(self.publish("clean", body=self.body("Only quoted: `{census}`.\n")), "{census}")
++        self.refused(self.publish("clean", body=self.body("Only quoted: `print({census})`.\n")), "{census}")
+ 
+     def test_braces_that_are_not_placeholders_publish_as_written(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+@@ -882,11 +882,23 @@ def test_placeholders_fill_from_state_and_the_same_clock(self) -> None:
+ 
+         self.assertIn(f"Reviewed {self.head[:7]} ({self.head}) in 12m 34s, 754 seconds.", self.posted()["body"])
+ 
++    def test_a_span_holding_only_a_placeholder_is_filled_in_code_font(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        body = self.body("Reviewed `{short_sha}` (`{sha}`) in `{took}`.\n\n`{census}`\n\n```\n{short_sha}\n```\n")
++        code, _, err = self.publish("clean", body=body)
++
++        self.assertEqual(0, code, err)
++        posted = self.posted()["body"]
++        self.assertIn(f"Reviewed `{self.head[:7]}` (`{self.head}`) in `12m 34s`.", posted)
++        self.assertIn("`0 finding threads: 0 resolved, 0 open`", posted)
++        self.assertIn("```\n{short_sha}\n```", posted, "a fenced block stays quoted code")
++
+     def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+         body = self.body(
+             "The loop id `example-projector-review-loop` and the `projector-finding` marker both appear here.\n\n"
+-            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `{short_sha}` from state.\n"
++            "{census}\n\nSuggestions\n- `f\"sha={sha}\"` should read `state[\"{short_sha}\"]`.\n"
+             "- Findings are `{path, line}` objects.\n\n```\nprint(f\"{sha} {took}\")\n```\n")
+         item = finding(body="**P2 · The `projector-finding` marker is parsed by substring**\n\n"
+                             "`census` matches `{name}` too loosely.\n\n**Fix:** match the comment.")
+@@ -895,7 +907,7 @@ def test_prose_and_code_that_mention_markers_or_braces_publish_as_written(self)
+ 
+         self.assertEqual(0, code, err)
+         posted = self.posted()["body"]
+-        self.assertIn('`f"sha={sha}"` should read `{short_sha}` from state.', posted)
++        self.assertIn('`f"sha={sha}"` should read `state["{short_sha}"]`.', posted)
+         self.assertIn("`{path, line}` objects", posted)
+         self.assertIn('print(f"{sha} {took}")', posted)
+         self.assertIn("`example-projector-review-loop`", posted)

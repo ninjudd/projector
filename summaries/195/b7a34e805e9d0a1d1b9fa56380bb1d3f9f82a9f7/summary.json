@@ -1,0 +1,114 @@
+{
+ "version": 1,
+ "name": "Lone placeholder spans",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 195,
+  "title": "Fill a review placeholder that sits alone in backticks",
+  "head": "b7a34e805e9d0a1d1b9fa56380bb1d3f9f82a9f7",
+  "headRef": "review-fill-code-placeholder",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a review agent publishes a review, it writes the body to a file and runs <code>project review publish</code>. That command fills a few <b>placeholders</b> in the body: <code>{census}</code> becomes the count of finding threads, <code>{took}</code> the review's duration, <code>{seconds}</code> the same span in seconds, and <code>{sha}</code> and <code>{short_sha}</code> the head commit. Until this change, it filled them only in prose. Any code in backticks went out exactly as written, so a review could quote code that happens to contain braces.",
+   "Agents often want the SHA in code font, so they wrap the placeholder in backticks. That span counted as quoted code, and review loops published dozens of reviews that showed a literal placeholder on GitHub instead of the SHA.",
+   "This change fills an inline code span whose whole content is one placeholder, and keeps the backticks around the value. A placeholder inside longer code, and everything in a fenced block, still go out as written. A lone census span now also satisfies the check that a body prints the census. To mention a placeholder by name, a review quotes it inside longer code, such as <code>print({census})</code>."
+  ],
+  "cards": [
+   {
+    "id": "rules",
+    "title": "What publish fills",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Where the placeholder sits</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>Prose</td><td>Filled</td><td class=\"r\">Filled</td></tr><tr><td>Alone in an inline code span</td><td>Literal</td><td class=\"r\">Filled, in code font</td></tr><tr><td>Inside longer inline code</td><td>Literal</td><td class=\"r\">Literal</td></tr><tr><td>In a fenced block</td><td>Literal</td><td class=\"r\">Literal</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>b7a34e8</code>, verdict clean, with no finding threads.</li><li>One suggestion: rewrap the 82-character line in <code>docs/cli.md</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "compose",
+   "title": "Filling lone placeholder spans",
+   "kicker": "The rule change in compose, which builds the posted review text",
+   "intro": [
+    "<code>compose</code> in <code>src/projector/review.py</code> turns the agent's body file into the review text that GitHub receives. It finds quoted code with the <code>CODE</code> pattern, which matches a fenced block or a single-backtick inline span, and fills placeholders only in the prose between those matches.",
+    "The change adds <code>LONE_PLACEHOLDER</code>, a pattern for an inline span that holds exactly one placeholder. Two places use it: the census check, which now keeps such spans when it looks for <code>{census}</code>, and the fill loop, which replaces such a span with the value wrapped in backticks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>LONE_PLACEHOLDER</code> and uses it in the census check and the fill loop of <code>compose</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>CODE</code> matches a fenced block as one piece, so <code>LONE_PLACEHOLDER.fullmatch</code> can match only a single-backtick span. A probe against <code>compose</code> at this head refused a body whose only census sat inside a fenced block.",
+       "line": 552
+      },
+      {
+       "kind": "verify",
+       "text": "The census check drops all code except lone spans. Removing the old <code>PLACEHOLDER.search</code> test loses nothing, because a body that holds <code>{census}</code> already holds a placeholder. A census quoted inside longer code is still refused, as the updated test checks.",
+       "line": 701
+      },
+      {
+       "kind": "verify",
+       "text": "<code>compose</code> is the only reader of <code>PLACEHOLDER</code>, <code>CODE</code>, and <code>LONE_PLACEHOLDER</code>, and none of the filled values contains a backtick that could break the span. A probe filled a SHA wrapped in double backticks and a lone census span as expected.",
+       "line": 715
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for the new rule",
+   "kicker": "A new test for lone spans, and two tests moved off the old behavior",
+   "intro": [
+    "The new test publishes a body that uses lone spans for the short SHA, the full SHA, the duration, and the census, plus a fenced block that holds a placeholder. It checks that each span shows its value in backticks and that the fenced block stays literal.",
+    "Two existing tests relied on a lone span staying literal. The census refusal test now quotes the census inside <code>print(...)</code>, and the test for code that mentions braces quotes the short-SHA placeholder inside longer code."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite passes at this head: 455 tests with one skip, the compiled-site check that needs <code>npm ci</code> in <code>site/</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "note": "Adds <code>test_a_span_holding_only_a_placeholder_is_filled_in_code_font</code> and updates two tests that pinned the old literal behavior."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation of the rule",
+   "kicker": "The review skill and the CLI reference describe which spans publish fills",
+   "intro": [
+    "Review agents read <code>skills/review-pr/SKILL.md</code> to learn how to write a body, and <code>docs/cli.md</code> is the command reference. Both now say that <code>publish</code> fills placeholders in prose and in a span that holds one placeholder alone, but not in longer quoted code or fenced blocks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "States the new fill rule and that a lone census span satisfies the census check."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "States the same rule in the <code>publish</code> reference.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This line runs to 82 characters while the paragraph around it wraps at 80 or less. The review lists rewrapping it as a suggestion.",
+       "line": 851
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
