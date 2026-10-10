@@ -253,12 +253,11 @@
             return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
         }
         // The pull requests stacked with this one, one row each, this one marked; a
-        // pull request alone shows its title instead. A pull request in the stack
-        // with no summary on the site links to GitHub.
+        // pull request alone is a stack of one. A pull request in the stack with no
+        // summary on the site links to GitHub.
         function stackList() {
-            const stack = data.stack ?? [];
-            if (stack.length < 2)
-                return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
+            const listed = data.stack ?? [];
+            const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
             return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
                 const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
                 if (s.current)
