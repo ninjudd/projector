@@ -645,7 +645,9 @@ does not, because readers of the conversation do not see it.
 `summary publish` also puts the same link at the very bottom of the pull
 request's description, after a blank line, and removes the link an earlier
 publish left there. Where the account cannot edit the description, it prints
-why and leaves the description as it was.
+why and leaves the description as it was. Pass `--no-describe` to post
+the comment and leave the description alone, for a repository whose
+instructions forbid agents to edit descriptions.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.
