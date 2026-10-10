@@ -1,0 +1,363 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 395d2ef..ef28a03 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -118,7 +118,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 2 -->
++<!-- projector:begin 3 -->
+ ## Projector conventions
+ 
+ This repository keeps its project plans in Git with
+@@ -143,9 +143,10 @@ line breaks.
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+-it, and let `gh stack` carry the fix up by rebasing the layers above. Chain
+-pull requests by base branch, and update them by merging, only where
+-`gh stack` is unavailable.
++it, and let `gh stack` carry the fix up right away by rebasing every layer
++above, so each layer stays on the current head of the one below and the
++stack can merge as a unit. Chain pull requests by base branch, and update
++them by merging, only where `gh stack` is unavailable.
+ 
+ Projector generates this section. To change it, change the template in
+ Projector and run `project init`.
+diff --git a/docs/cli.md b/docs/cli.md
+index 27222c5..aeda364 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -41,10 +41,11 @@ what it did to each:
+   markers: where plans live, how to use `project`, the writing style for
+   documentation and GitHub prose, and how to open dependent work as a stack
+   with `gh stack`, or as pull requests chained by base branch where
+-  `gh stack` is unavailable. `init` appends the section to an existing
+-  file or creates the file with only that section, and refreshes the section
+-  when it falls behind the template this command ships. Everything outside the
+-  markers is yours and is never changed.
++  `gh stack` is unavailable, and keep every layer on the current head of the
++  one below so the stack can merge as a unit. `init` appends the section to
++  an existing file or creates the file with only that section, and refreshes
++  the section when it falls behind the template this command ships.
++  Everything outside the markers is yours and is never changed.
+ - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
+   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
+   creates the link when `CLAUDE.md` is absent, or a file containing the import
+@@ -388,7 +389,7 @@ collaborator on an older CLI is told what to do without a failing gate.
+ 
+ ```console
+ $ project check
+-warning: AGENTS.md: Projector section is version 1; this command ships version 2 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
++warning: AGENTS.md: Projector section is version 2; this command ships version 3 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+ Project plans are valid.
+ ```
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index a39e4c5..0b16196 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -45,11 +45,15 @@ the README`. The core workflows use the local CLI and do not require MCP.
+ When dependent work needs more than one pull request to stay reviewable,
+ `implement` opens it as a stack that GitHub records, using the `gh stack`
+ GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
+-the layers above it. The extension is optional. Without it, or in a
+-repository that does not have stacks enabled, `implement` chains the pull
+-requests by base branch and tells you once, and `fix-pr` and
+-`start-fix-loop` find a stack's layers from those base branches. Install it
+-with `gh extension install github/gh-stack` to get real stacks.
++the layers above it right away. Every layer stays on the current head of the
++layer below it, so you can merge the whole stack, or any number of layers
++from the bottom up, in one step from GitHub, and `start-fix-loop` reports
++which of them are ready to merge together. The extension is optional.
++Without it, or in a repository that does not have stacks enabled,
++`implement` chains the pull requests by base branch and tells you once, and
++`fix-pr` and `start-fix-loop` find a stack's layers from those base
++branches. Install it with `gh extension install github/gh-stack` to get
++real stacks.
+ 
+ GitHub's own `gh-stack` skill teaches an agent the extension's commands.
+ Projector does not copy it. Both hosts' Projector marketplaces serve a
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 3b543d0..4a25be1 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -164,7 +164,9 @@ and thread reply. For every accepted finding, preserve this order:
+    with `<!-- projector-reply v=1 -->` so a loop sharing this login never reads
+    it back as a new finding. Name the commit and state what was reproduced and
+    changed.
+-3. Push the pull request branch, never its base branch.
++3. Push the pull request branch, never its base branch. On a layer with
++   layers above it, carry the fix up and push those layers too, as
++   [Preserve stacked ownership](#preserve-stacked-ownership) describes.
+ 4. Resolve the thread only after the push succeeds.
+ 5. Re-fetch `reviewThreads` and confirm `isResolved: true`.
+ 
+@@ -209,6 +211,12 @@ works, and by merging each layer into the one above it where it does not.
+ Either way, run each affected layer's full gate before you push it. Do not
+ patch parent code inside a child merely to avoid updating the layers above.
+ 
++The user can merge the whole stack, or its bottom layers, from GitHub at any
++moment, so a run that changes a layer with layers above it is not done when
++that layer is pushed. It is done once the change is carried up, every layer
++above is pushed, and GitHub's comparison shows the stack in sync again, as
++that section describes.
++
+ After a parent merges, update the layers above it the same way: the rebase
+ replays them onto the new base and drops a squash-merged parent's commits
+ from them. Then verify each child points at the intended base and remains
+@@ -227,6 +235,10 @@ A pull request is clean only when:
+   its current head, for each login that posted a Projector review on the
+   pull request,
+ - no unresolved threads remain,
++- in a stack, it and every layer below it are in sync on GitHub, so the
++  stack shows none of them needing a rebase: GitHub's comparison, which
++  `../implement/SKILL.md` describes under "Stack dependent work", prints
++  `0` for each, whatever a local `gh stack view` reads,
+ - the current head is the one actually reviewed, and
+ - the reviewer's own sign-off signal is clear: `reviewDecision` is not
+   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
+@@ -252,10 +264,11 @@ report on the review loop's verdict and let theirs arrive whenever it does. A
+ standing `CHANGES_REQUESTED` from one is a real verdict and does block, exactly
+ as any other cross-author verdict would.
+ 
+-Report the head SHA, the merge commit if you made one, the fix commits, the
+-declined findings, the Suggestions you took and left, and the validation
+-results. A stale `CHANGES_REQUESTED`, or a pull request still in draft after
+-all fixes, is a wait for re-review rather than another code change. Do not
++Report the head SHA, each layer's new head when you carried a change up a
++stack, the merge commit if you made one, the fix commits, the declined
++findings, the Suggestions you took and left, and the validation results. A
++stale `CHANGES_REQUESTED`, or a pull request still in draft after all
++fixes, is a wait for re-review rather than another code change. Do not
+ manufacture an empty commit to trigger it.
+ 
+ Never mark a draft pull request ready yourself. A clean review is what clears
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index d86dd63..d6bd560 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -187,6 +187,17 @@ differ, these rules win:
+   merge would keep it. A layer of several commits gets its branch name as its
+   title. Write each layer's title and body as the hand-over above describes
+   and set them with `gh pr edit <number> --title <title> --body-file <file>`.
++- **Keep the stack mergeable as a unit.** The user merges a stack from
++  GitHub in one step: the whole stack, or any number of layers from the
++  bottom up. GitHub shows a layer that lacks the current head of the layer
++  below it as needing a rebase, and the stack cannot merge as a unit until
++  it is rebased. So keep the stack in sync: every open layer contains the
++  current head of the open layer below it. Carry every new commit on a
++  layer up through each layer above it right away, as the update below
++  describes, and never leave a layer behind its parent. Never plan or
++  propose a merge one layer at a time, such as merging the bottom layer and
++  then retargeting the next to the default branch, and never retarget a
++  layer while a layer below it is open.
+ - **Never merge.** Never run `gh stack merge` or `gh pr merge`, whatever the
+   skill says about merging. The merge is the user's checkpoint.
+ 
+@@ -202,8 +213,12 @@ Within those rules, work a stack this way:
+ - **Update it by rebasing.** `gh stack` keeps a stack current by rebasing
+   its layers, and it has no option to merge instead. Inside a stack, that
+   rebase is how a layer takes in a fix to the layer below it, the default
+-  branch, and a layer below it that has merged. Run
+-  `gh stack rebase --upstack` from a layer you fixed, or `gh stack rebase`
++  branch, and a layer below it that has merged. Whenever a layer with
++  layers above it gets a new commit, run `gh stack rebase --upstack` from
++  that layer at once, before the push or right after it. Add `--no-trunk`
++  where moving the local default branch would touch a checkout the user is
++  using: it fetches nothing and rebases only the layers onto each other,
++  from the local branches. Run `gh stack rebase`
+   when a layer falls behind or conflicts with its base or a layer below it
+   merges; the rebase drops a squash-merged layer's commits from the layers
+   above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
+@@ -222,6 +237,26 @@ Within those rules, work a stack this way:
+   when the pull request is in none, and it needs neither a checkout nor the
+   extension. In a checkout that tracks the stack, `gh stack view --json`
+   lists the same layers with their branches.
++- **Check that it is in sync.** GitHub's comparison is the check that
++  counts, because GitHub is where the user merges. Read each open layer's
++  base and head branches from `gh api repos/<owner>/<repo>/stacks/<number>`,
++  using the `number` the lookup above returns, and compare each layer
++  based on another layer's branch with that base:
++
++  ```sh
++  gh api "repos/<owner>/<repo>/compare/<base branch>...<head branch>" --jq .behind_by
++  ```
++
++  It prints `0` when the layer on GitHub contains its base's current head
++  on GitHub. The comparison needs neither a checkout nor the extension, so
++  it checks a chain of base branches the same way, with the branches
++  `gh pr view <number> --json baseRefName,headRefName` names. Before a
++  push, `gh stack view --json` gives a quick local check: it reads
++  `"needsRebase": false` on every layer above the bottom when the
++  checkout's own branches are in sync. It sees only those branches, so a
++  layer pushed from somewhere else, or a push that updated only some
++  branches, can read as in sync there while GitHub shows a layer behind.
++  Never report a stack in sync from it.
+ 
+ Fall back to base branches whenever `gh stack` cannot answer, and keep
+ working. That is when `gh extension list` shows no `github/gh-stack`, when a
+@@ -239,11 +274,13 @@ pull requests' base branches:
+   push each layer's branch with `git push -u origin <branch>`, and open it
+   with `gh pr create --draft --base <branch of the layer below> --head <branch>`.
+ - **Update it by merging**, as `fix-pr` updates any branch: carry a fix up
+-  by merging each layer into the one above it, from the bottom up, and take
+-  in the default branch by merging it into the bottom layer and carrying
+-  that up the same way. Run each layer's full gate before you push it. A
+-  merge needs no force-push, so review threads stay anchored to their
+-  commits.
++  right away by merging each layer into the one above it, from the bottom
++  up, and take in the default branch by merging it into the bottom layer
++  and carrying that up the same way. Run each layer's full gate before you
++  push it. A merge needs no force-push, so review threads stay anchored to
++  their commits. The chain stays in sync as a stack does, with every child
++  on its parent's current head, and the comparison under "Check that it is
++  in sync" checks it.
+ 
+ Tell the user at most once why the chain is not a stack: that
+ `gh extension install github/gh-stack` would make it one when the extension
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-fix-loop/SKILL.md
+index 04b07a8..05668dd 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-fix-loop/SKILL.md
+@@ -126,16 +126,19 @@ the recurrence it is instead of as new work.
+   stack, to the same subagent as a message; never start a second one for it.
+   Each message is another run of `fix-pr` for the pull request's current
+   head.
+-- The subagent reports each run back: the head SHA, the merge commit if it
+-  made one, the fix commits, the declined findings, and the validation
+-  results. A question for the user comes back to the main loop to ask, and
+-  the subagent goes on with the pull request's unrelated work meanwhile.
++- The subagent reports each run back: the head SHA, each layer's new head
++  when it carried a change up a stack, the merge commit if it made one, the
++  fix commits, the declined findings, and the validation results. A
++  question for the user comes back to the main loop to ask, and the
++  subagent goes on with the pull request's unrelated work meanwhile.
+ - When a pull request merges or closes, delete its line from the tracked
+   file at once. Tell its subagent to finish, remove its worktrees, and close
+-  only when no layer it owns is still open. A stack merges from the bottom,
+-  so its `fix-stack-<number>` subagent keeps that name after the bottom
+-  layer merges and goes on fixing the layers above it, starting with the
+-  base merge the retargeted child needs.
++  only when no layer it owns is still open. The user merges a stack as a
++  unit, the whole of it or any number of layers from the bottom up, so when
++  only the bottom layers merge, the `fix-stack-<number>` subagent keeps its
++  name and goes on fixing the layers left open. It starts with the update
++  the lowest of them needs onto its new base, as `../fix-pr/SKILL.md`
++  describes under "Preserve stacked ownership".
+ - When a subagent is lost, to a session restart for example, start a
+   replacement under the same name. It rebuilds its context from GitHub: each
+   open layer's review threads, the replies on them, and its review bodies.
+@@ -151,6 +154,19 @@ After each subagent report, check the pull request against the clean
+ conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
+ fix commits, declined findings, and validation results, then keep watching.
+ 
++Report a stack's readiness as one unit, the same unit its subagent fixes,
++because the user merges it as one from GitHub. Check every open layer
++against GitHub itself: its clean conditions, and GitHub's comparison of it
++with the layer below, which `../implement/SKILL.md` describes under "Stack
++dependent work". Never take sync from a local `gh stack view`, which reads
++only one checkout's branches. Say "stack #<number> is ready to merge as a
++whole" when every layer's current head is clean and every comparison
++prints `0`. Otherwise name the bottom layers that are ready, such as "#12
++and #13 at the bottom of stack #14 are ready to merge", and what holds back
++the lowest layer that is not. Name the stack by the number GitHub's stacks API
++gives it, or by its bottom pull request for a chain of base branches that
++GitHub does not record as a stack.
++
+ Delete closed or merged pull requests from the tracked file. An empty file is
+ idle, not an instruction to stop; remain ready to append pull requests this
+ conversation creates or adopts later. Stop the loop only when the user asks, a
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 950ce65..794131c 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 2 -->
++<!-- projector:begin 3 -->
+ ## Projector conventions
+ 
+ This repository keeps its project plans in Git with
+@@ -23,9 +23,10 @@ line breaks.
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+-it, and let `gh stack` carry the fix up by rebasing the layers above. Chain
+-pull requests by base branch, and update them by merging, only where
+-`gh stack` is unavailable.
++it, and let `gh stack` carry the fix up right away by rebasing every layer
++above, so each layer stays on the current head of the one below and the
++stack can merge as a unit. Chain pull requests by base branch, and update
++them by merging, only where `gh stack` is unavailable.
+ 
+ Projector generates this section. To change it, change the template in
+ Projector and run `project init`.
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index c020588..715044d 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -14,6 +14,7 @@
+ PINNED = {
+     1: "af0cc51a4646f05d1570453cfb941d9e4fcecb272349387e784d87d5567598c4",
+     2: "3037e13c821131396c4fa069607e37535d64a48ab8dba063ee337260deac4ae0",
++    3: "29fe4f2f6610598f250a55c91dee55226555b92c6c71b0fc9c16d245073182fa",
+ }
+ 
+ 
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index c33d241..2049204 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import json
++import re
+ import tomllib
+ import unittest
+ from pathlib import Path
+@@ -18,6 +19,10 @@
+     "summarize-pr",
+     "write",
+ }
++# A skill cites another skill's section as: `../<skill>/SKILL.md` describes
++# under "<heading>". The heading may be at any level.
++SECTION_CITATION = re.compile(r'`\.\./([\w-]+)/SKILL\.md` describes under "([^"]+)"')
++HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.MULTILINE)
+ 
+ 
+ class PackagingTests(unittest.TestCase):
+@@ -131,6 +136,32 @@ def test_every_citation_of_the_stack_section_names_a_heading_implement_has(self)
+             prose = " ".join(citing.read_text().split())
+             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
+ 
++    def test_every_citation_of_another_skills_section_names_a_heading_it_has(self) -> None:
++        cited = set()
++        for citing in sorted((ROOT / "skills").rglob("*.md")):
++            prose = " ".join(citing.read_text().split())
++            for skill, heading in SECTION_CITATION.findall(prose):
++                cited.add((skill, heading))
++                target = (ROOT / "skills" / skill / "SKILL.md").read_text()
++                with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
++                    self.assertIn(heading, HEADING.findall(target))
++        self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
++
++    def test_a_citation_resolves_to_a_heading_at_any_level_but_not_to_prose(self) -> None:
++        skill = "# Skill\n\n## Section\n\n### Subsection\n\nProse that mentions ## Elsewhere.\n"
++        headings = HEADING.findall(skill)
++        for heading, resolves in (
++            ("Section", True),
++            ("Subsection", True),
++            ("Elsewhere", False),
++            ("Missing", False),
++        ):
++            citing = f'as `../review-pr/SKILL.md` describes under\n"{heading}".'
++            [(skill_name, cited)] = SECTION_CITATION.findall(" ".join(citing.split()))
++            with self.subTest(heading=heading):
++                self.assertEqual(("review-pr", heading), (skill_name, cited))
++                self.assertEqual(resolves, cited in headings)
++
+     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
+         for name in PUBLISHED_SKILLS:
+             lines = (ROOT / "skills" / name / "SKILL.md").read_text().splitlines()
