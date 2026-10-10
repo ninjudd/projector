@@ -173,18 +173,19 @@ and `start-fix-loop` find and update a stack's layers, and fall back when
   as one, so open no layer that way while `gh stack` works.
 - **Adopt a chain.** Make pull requests already chained by base branch into
   a stack with `gh stack link` and their numbers, bottom first.
-- **Carry a fix up it.** After a fix on a lower layer, run
-  `gh stack rebase --upstack` and then `gh stack push` from that layer, and
-  after a layer merges, run `gh stack sync`. In a checkout that does not
-  track the stack yet, `gh stack checkout <number>` sets it up from GitHub.
 - **Update it by rebasing.** `gh stack` keeps a stack current by rebasing
-  its layers and pushing each branch with `--force-with-lease`, and it has
-  no option to merge instead. Inside a stack, that rebase is how a layer
-  takes in the layer below it and the default branch alike: when a layer
-  falls behind or conflicts with its base, run `gh stack rebase` and then
-  `gh stack push`, and resolve a conflict the rebase stops on as
-  `../gh-stack/SKILL.md` describes under "Handle rebase conflicts". Never
-  merge a base into a layer of a stack `gh stack` works on.
+  its layers, and it has no option to merge instead. Inside a stack, that
+  rebase is how a layer takes in a fix to the layer below it, the default
+  branch, and a layer below it that has merged. Run
+  `gh stack rebase --upstack` from a layer you fixed, or `gh stack rebase`
+  when a layer falls behind or conflicts with its base or a layer below it
+  merges; the rebase drops a squash-merged layer's commits from the layers
+  above it. Resolve a conflict the rebase stops on as `../gh-stack/SKILL.md`
+  describes under "Handle rebase conflicts". Then run the full gate on every
+  layer the rebase rewrote, and only once each passes, run `gh stack push`,
+  which pushes each branch with `--force-with-lease`. Never merge a base into
+  a layer of a stack `gh stack` works on. In a checkout that does not track
+  the stack yet, `gh stack checkout <number>` sets it up from GitHub.
 - **Find its layers.** Ask GitHub which stack holds a pull request:
 
   ```sh
@@ -214,8 +215,9 @@ pull requests' base branches:
 - **Update it by merging**, as `fix-pr` updates any branch: carry a fix up
   by merging each layer into the one above it, from the bottom up, and take
   in the default branch by merging it into the bottom layer and carrying
-  that up the same way. A merge needs no force-push, so review threads stay
-  anchored to their commits.
+  that up the same way. Run each layer's full gate before you push it. A
+  merge needs no force-push, so review threads stay anchored to their
+  commits.
 
 Tell the user at most once why the chain is not a stack: that
 `gh extension install github/gh-stack` would make it one when the extension

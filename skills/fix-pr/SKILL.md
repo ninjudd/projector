@@ -100,9 +100,10 @@ head the merge produces, and that head is the one the next review reads.
    no force-push, so review threads stay anchored to their commits. A layer
    of a stack is the exception while `gh stack` works: `gh stack` keeps a
    stack current by rebasing it and has no option to merge, so its rebase is
-   how the layer takes in its base, the default branch included. Update the
-   layer as `../implement/SKILL.md` describes under "Stack dependent work",
-   and merge only where `gh stack` is unavailable. A stacked pull request's
+   how the layer takes in its base, the default branch included. Run
+   `gh stack rebase` in place of the merge, as `../implement/SKILL.md`
+   describes under "Stack dependent work", and push nothing yet; merge only
+   where `gh stack` is unavailable. A stacked pull request's
    base is its parent's branch until the parent merges. GitHub then
    retargets it to the default branch, but only when the merge deletes the
    parent's branch. Where the repository keeps merged branches, retarget the
@@ -114,10 +115,13 @@ head the merge produces, and that head is the one the next review reads.
    editing it by hand, as the repository's instructions describe. When the
    two sides make choices only the user can reconcile, stop and ask.
 3. Run the repository's full test, lint, format, documentation, and
-   validation gate. A merge without textual conflicts can still break, for
-   example when one side renames a function and the other adds a call to it.
+   validation gate, on every layer the rebase rewrote for a stack. A merge
+   or rebase without textual conflicts can still break, for example when one
+   side renames a function and the other adds a call to it.
 4. Commit the merge, push the branch, and confirm that `mergeable` reads
-   `MERGEABLE`.
+   `MERGEABLE`. A stack's rebase leaves no merge to commit: once the gate
+   passes on every rewritten layer, push them all with `gh stack push`, and
+   confirm `mergeable` on each.
 
 A conflict has no thread to reply to, so the merge commit is its record.
 Re-read the pull request body's `Testing` commands afterwards, because a merge
@@ -202,18 +206,17 @@ Fix code on the stack branch that introduced it. Find the layers above it,
 and carry each fix up through every one of them, as `../implement/SKILL.md`
 describes under "Stack dependent work": by rebasing with `gh stack` where it
 works, and by merging each layer into the one above it where it does not.
-Then rerun each affected layer's full gate. Do not patch parent code inside a
-child merely to avoid updating the layers above.
+Either way, run each affected layer's full gate before you push it. Do not
+patch parent code inside a child merely to avoid updating the layers above.
 
-After a parent merges, run `gh stack sync`, which rebases the layers above
-onto the new base and drops a squash-merged parent's commits from them as
-`../gh-stack/SKILL.md` describes under "Squash-merge recovery". Then verify
-each child points at the intended base and remains mergeable. Where
-`gh stack` cannot sync the stack and the parent was squash-merged, merge the
-new base into the child even though `mergeable` reads `MERGEABLE`: until then
-the child's diff still carries the parent's original commits, and no conflict
-event will say so. Never merge any layer; merging remains the user's
-checkpoint.
+After a parent merges, update the layers above it the same way: the rebase
+replays them onto the new base and drops a squash-merged parent's commits
+from them. Then verify each child points at the intended base and remains
+mergeable. Where `gh stack` is unavailable and the parent was squash-merged,
+merge the new base into the child even though `mergeable` reads `MERGEABLE`:
+until then the child's diff still carries the parent's original commits, and
+no conflict event will say so. Never merge any layer; merging remains the
+user's checkpoint.
 
 ## Report the result
 
