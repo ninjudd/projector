@@ -800,17 +800,17 @@ file's Git blob id, with each CRLF line ending turned into LF. The file's
 entry in the page's `data.json` gets a `context` naming that address, the
 file's line count, and each run of lines its hunks leave hidden. The build
 prints how many files it served this way and their total size.
-The page draws an expander in each hidden run, above, between, and below the
-hunks. Expand down reveals the 20 lines below the hunk above, expand up the
-20 lines above the hunk below, and expand all the rest of the run. The page
-fetches the file the first time a reader expands one of its runs. A page
-`site page` writes has no site to fetch from, so it draws no expanders.
 It reads only `summary.json`, so it also reports each summary stored only as
 `spec.json`, the name older releases wrote. To show such a summary, publish it
 again with a current release, as
 [the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
+The page draws an expander in each hidden run, above, between, and below the
+hunks. Expand down reveals the 20 lines below the hunk above, expand up the
+20 lines above the hunk below, and expand all the rest of the run. The page
+fetches the file the first time a reader expands one of its runs. A page
+`site page` writes has no site to fetch from, so it draws no expanders.
 
 For pages or files the repository generates rather than commits, `site build`
 first runs the shell command `site.prepare` names, in the checkout, through

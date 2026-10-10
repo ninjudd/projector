@@ -1002,6 +1002,16 @@ function statusHtml(state, review) {
                 if (refocus)
                     (row.querySelector(`[data-expand="${how}"]`) ?? row.querySelector('[data-expand="all"]'))?.focus();
             };
+            // Closing the gap removes its controls, so focus moves on to the file's
+            // next expander, or to its header when this was the last.
+            const close = function () {
+                const refocus = row.contains(document.activeElement);
+                const expanders = Array.from(file.querySelectorAll('tr.expander'));
+                const next = expanders[expanders.indexOf(row) + 1];
+                closeGap(gapTable);
+                if (refocus)
+                    (next?.querySelector('[data-expand]') ?? file.querySelector('.ftoggle'))?.focus();
+            };
             row.addEventListener('click', function (ev) {
                 const how = ev.target instanceof Element ? ev.target.closest('[data-expand]')?.dataset.expand : undefined;
                 if (how === undefined)
@@ -1022,7 +1032,7 @@ function statusHtml(state, review) {
                         start = to + 1;
                     }
                     if (start > end)
-                        closeGap(gapTable);
+                        close();
                     else
                         redraw(how, false);
                     markTokens(file);

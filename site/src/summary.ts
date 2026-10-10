@@ -920,6 +920,15 @@ function wireSummary(views: Record<string, ContextView>): void {
       row.innerHTML = view.expanderCells(gap, end - start + 1, failed);
       if (refocus) (row.querySelector<HTMLElement>(`[data-expand="${how}"]`) ?? row.querySelector<HTMLElement>('[data-expand="all"]'))?.focus();
     };
+    // Closing the gap removes its controls, so focus moves on to the file's
+    // next expander, or to its header when this was the last.
+    const close = function (): void {
+      const refocus = row.contains(document.activeElement);
+      const expanders = Array.from(file.querySelectorAll('tr.expander'));
+      const next = expanders[expanders.indexOf(row) + 1];
+      closeGap(gapTable);
+      if (refocus) (next?.querySelector<HTMLElement>('[data-expand]') ?? file.querySelector<HTMLElement>('.ftoggle'))?.focus();
+    };
     row.addEventListener('click', function (ev) {
       const how = ev.target instanceof Element ? ev.target.closest<HTMLElement>('[data-expand]')?.dataset.expand : undefined;
       if (how === undefined) return;
@@ -936,7 +945,7 @@ function wireSummary(views: Record<string, ContextView>): void {
           tableBody(hunkTable(gapTable.previousElementSibling)).insertAdjacentHTML('beforeend', rows);
           start = to + 1;
         }
-        if (start > end) closeGap(gapTable);
+        if (start > end) close();
         else redraw(how, false);
         markTokens(file);
       }, function () {
