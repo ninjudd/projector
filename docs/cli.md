@@ -759,16 +759,28 @@ current one. A pull request with no summary on the site links to GitHub, and
 a pull request with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
-then the verdict of the newest Projector review of its head, **Clean** or
-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
-no Projector review names the head. When that review is incremental, the
-header reads **Clean · incremental from a8cf3d5**, where the second part names
-the head of the full review it builds on and links that review, while the row
-on Reviews shows **Clean** alone. A review counts only when its author owns
-the repository, belongs to its organization, or collaborates on it, because
-anyone can review a public repository's pull request. The build reads the
-pull request's state and reviews through `gh` and shows no status when `gh`
-cannot answer. **Docs** renders `README.md`
+then the verdict on its head, linked to the review on GitHub that decides it.
+Each model that reviewed the head counts by its newest Projector review of it,
+and the verdict is **Changes requested** when any of those requests changes
+and **Clean** otherwise. A head no Projector review names is **Unreviewed**.
+Models are told apart by their model ID, lowercased and without a trailing
+bracketed variant such as `[1m]`. When one model reviewed the head and its
+review is incremental, the header reads **Clean · incremental from a8cf3d5**,
+where the second part names the head of the full review it builds on and
+links that review. When several models reviewed the head, the header still
+shows the one status, marked with an asterisk, as in **Changes requested\***,
+but as a button rather than a link to one review. Hovering over it, moving
+keyboard focus to it, or clicking or tapping it shows a list with a row for
+each model, changes requested first: the model's name, its verdict drawn as
+the status is and linked to its review, and for an incremental review the full
+review it builds on. A click or a tap keeps the list open until you click or
+move focus elsewhere. Tab moves from the status into the list's links, and
+skips them while the list is hidden. Escape hides the list. The row on
+Reviews shows the status alone, unmarked, as a link. A review counts only
+when its author owns the repository, belongs to its organization, or
+collaborates on it, because anyone can review a public repository's pull
+request. The build reads the pull request's state and reviews through `gh`
+and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as
 **Overview** and appears only when there is more than that readme to list, and
@@ -1045,10 +1057,10 @@ the default branch when the site builds.
 a review loop does not rebuild them as helpers of its own:
 
 ```sh
-project review setup 66 --model claude-opus-5-5 --loop main-loop
+project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
 project review move 66
 project review census 66 --json
-project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
+project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
 project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
@@ -1068,6 +1080,20 @@ access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
 of a head the loop already published a verdict on.
 
+`--model` is the model ID of the session reviewing, and each model is a
+reviewer of its own. Two IDs name the same reviewer when they match
+lowercased and without a trailing bracketed variant, so `claude-opus-5-5`
+and `claude-opus-5-5[1m]` are one reviewer and `gpt-5.5` is another; the
+effort and the Projector version are not part of it. Each model keeps its own
+state, lock, and scratch worktree, so two models review one head side by side
+on one machine. The start comment's marker names the model with `model=`, and
+`setup` refuses while another session's live start comment names the same
+model, naming that comment. A start comment is live until its model posts a
+verdict on its head, or until a day passes since it was last edited, the age
+at which a lock is stale. `setup` refuses a model ID that is empty, holds
+whitespace, or makes a folder name that starts with `.`, and deletes a start
+comment this machine's state recorded for the model and never published.
+
 The start comment and the review's signature line name the Projector version
 that `project --version` reports, the model from `--model`, and the reasoning
 effort from `CLAUDE_EFFORT` in the environment, which Claude Code sets for the
@@ -1080,8 +1106,10 @@ head, rechecks trust, edits the start comment in place to name it, re-reads the
 comment to confirm the edit, and updates the state file. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments. `release`
-clears the pull request's review lock.
+`path:line`; with `--json` each thread also carries its comments. It counts
+every model's threads alike and takes `--model` like the commands around it,
+so a review loop passes the same flags to each. `release` clears the locks of
+one model's review of the pull request.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,
@@ -1096,8 +1124,10 @@ when the pull request closed or its head moved, when a finding's line is
 outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
 has no `{census}` outside quoted code, when the verdict disagrees with the finding
-count, or when the reviewer already has a verdict on the head that this loop's
-record does not account for; outside a loop, `--second-verdict <review-id>`
+count, or when the reviewer already has a verdict by this model on the head
+that this loop's record does not account for. A verdict by another model is a
+second opinion and never collides, and one whose marker names no model
+collides with every model. Outside a loop, `--second-verdict <review-id>`
 publishes beside an earlier verdict the body names. On a self-review it
 submits a `COMMENT` and then marks the pull request ready or returns it to
 draft; on another author's pull request it posts `REQUEST_CHANGES` or a
@@ -1195,20 +1225,31 @@ from the checkout containing the working directory, or `--checkout`, and
 refuses outside one; the repository is that checkout's `origin`, and `--repo`
 must name the same one. Every later command reads the checkout, worktree, and
 repository from the state file, finding it by `--repo` or by the pull request's
-number, so it runs from any directory. A command that posts runs `gh` as the
+number, and by `--model` or the one model with a review of the pull request
+set up on this machine, so it runs from any directory. With several models
+set up, it refuses, naming them, until `--model` picks one. State an earlier
+release wrote is not read, so a review set up before an upgrade runs `setup`
+again. A command that posts runs `gh` as the
 reviewer, `--reviewer` or `review.username` or else the authenticated user,
 with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
 so the account the rest of the session uses is left alone.
 
-A review holds a lock for its pull request and head from `setup` until it is
-published, recording the host, the loop, and when it was taken, so a second
-instance for the same head exits. A refused `setup` releases it, a lock older
-than a day is stale, and `release` clears one left by a session that stopped.
-`--loop <id>` names the review loop; each loop keeps its record of published
-reviews under that id. State, locks, loop records, and scratch worktrees live
-under `$XDG_STATE_HOME/projector/reviews`, or
-`~/.local/state/projector/reviews`, and `--state-dir` moves them. Every refusal
-exits 1 and says what to do.
+A review holds a lock for its pull request, head, and model from `setup` until
+it is published, recording the host, the loop, and when it was taken, so a
+second instance of the same model for the same head exits. A refused `setup`
+releases it, a lock older than a day is stale, and `release` clears the locks
+of one model's review left by a session that stopped. `--loop <id>` names the
+review loop; each loop keeps its record of published reviews under that id,
+and each entry names its model. State, locks, loop records, and scratch
+worktrees live under `$XDG_STATE_HOME/projector/reviews`, or
+`~/.local/state/projector/reviews`, and `--state-dir` moves them. A model's
+state and locks are under `prs/<owner>/<repo>/<pr>/<model-key>/` and its
+worktrees under `worktrees/<owner>/<repo>/<pr>/<model-key>/`. The model key
+is the ID lowercased and without its bracketed variant, with every character
+but a letter, a digit, `.`, `_`, and `-` made `-`. Two IDs that make one key,
+such as `a/b` and `a-b`, cannot both be set up for one pull request on one
+machine: the second `setup` refuses. Every refusal exits 1 and says what to
+do.
 
 ## Consume JSON
 
