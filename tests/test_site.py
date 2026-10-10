@@ -942,7 +942,7 @@ class ContextBuildTests(unittest.TestCase):
     def build(self) -> str:
         printed = io.StringIO()
         with redirect_stdout(printed):
-            _, failures = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
+            _, failures, _ = site_build.build_site(self.out, summaries=self.summaries, base="/projector/")
         self.assertEqual([], failures)
         return printed.getvalue()
 
