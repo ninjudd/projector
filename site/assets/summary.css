@@ -189,8 +189,8 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
 .gbody > .prose { margin-top: 14px; }
 .gnotes { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding-top: 14px; background: var(--surface); overflow: hidden; }
-/* Lined up with a note's text: the diff's 92px gutter and its code cell's 8px padding. */
-.gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; padding-left: 100px; }
+/* Inset from the card's edge as the diff's cells are from a file card's. */
+.gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; padding-left: 8px; }
 /* A section's notes, laid out like the notes in a file's diff: each tag in a column as wide as
    the diff's gutter, right against the text, and the text where the code starts in the files below. */
 .notes { margin: 0; padding: 0; list-style: none; }
