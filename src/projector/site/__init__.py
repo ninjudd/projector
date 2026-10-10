@@ -177,7 +177,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     them each page carries `pr.state`, and `review`, the newest Projector
     review of its head: `unreviewed` when none names the head. A page has
     neither when the lookup is missing or cannot ask. Each page also carries
-    `defaultBranch`, `trunk`, where a merged pull request's files now live.
+    `defaultBranch`, `trunk`, where a merged pull request whose summary records
+    no `baseRef` now has its files.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))

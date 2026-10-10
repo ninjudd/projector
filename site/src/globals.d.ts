@@ -56,7 +56,7 @@ interface SummaryData {
    * built; absent when the build could not ask GitHub.
    */
   pr: { repo: string; number: number; title: string; head: string; base?: string; headRef?: string; baseRef?: string; state?: 'open' | 'merged' | 'closed' };
-  /** The repository's default branch when the site was built, where a merged pull request's files now live. */
+  /** The repository's default branch when the site was built, where a merged pull request whose summary records no `baseRef` now has its files. */
   defaultBranch?: string;
   files: SummaryFile[];
   groups: SummaryGroup[];

@@ -732,11 +732,13 @@ and, for a file in a project's folder, **View project**, which opens that
 project on the site. That is the deepest project the site has a page for, so a
 nested project owns its own files, not the project around it. **View file on
 GitHub** shows the file as it is now: on the pull request's head branch while
-it is open, and on the repository's default branch once the build finds it
-merged, since the merge usually deletes the branch. A pull request closed
-without merging, or an unmerged one whose summary records no `headRef`, links
-its head commit. A file the pull request deleted links the merge base, the
-last commit that has it. `search/` searches every document the site
+it is open, and once the build finds it merged, on the branch it merged into,
+its `baseRef`, since the merge usually deletes its own. That is the default
+branch, or a stacked pull request's parent branch, and the default branch when
+the summary records no `baseRef`. A pull request closed without merging, or an
+unmerged one whose summary records no `headRef`, links its head commit. A file
+the pull request deleted links the merge base, the last commit that has it.
+`search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.

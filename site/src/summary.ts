@@ -27,18 +27,20 @@ function renderSummary(data: SummaryData): void {
     return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
   }
   // A file as it is now. While the pull request is open, that is on its head
-  // branch, and once it merges, on the default branch, since the merge usually
-  // deletes the branch. A closed pull request never reached the default branch,
-  // so its files link its head commit, as do those of a summary that did not
-  // record its branch and of a merged one whose build did not record the default
-  // branch. A file the pull request deleted is in none of those, so it links the
-  // merge base, the last commit that has it.
+  // branch, and once it merges, on the branch it merged into, since the merge
+  // usually deletes its own: the default branch, or for a stacked pull request
+  // its parent's branch, or the default branch when the summary did not record
+  // its base. A closed pull request never reached its base, so its files link
+  // its head commit, as do those of a summary that did not record its branch and
+  // of a merged one with neither its base nor the default branch recorded. A file
+  // the pull request deleted is in none of those, so it links the merge base,
+  // the last commit that has it.
   function blobUrl(f: SummaryFile): string {
     const headRef = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : null;
     const trunk = data.defaultBranch !== undefined && data.defaultBranch !== '' ? data.defaultBranch : null;
     let ref = pr.head;
     if (f.deleted === true && pr.base !== undefined && pr.base !== '') ref = pr.base;
-    else if (pr.state === 'merged') ref = trunk ?? pr.head;
+    else if (pr.state === 'merged') ref = baseRef ?? trunk ?? pr.head;
     else if (pr.state !== 'closed' && headRef !== null) ref = headRef;
     return `${repoUrl}/blob/${[...ref.split('/'), ...f.path.split('/')].map(encodeURIComponent).join('/')}`;
   }
