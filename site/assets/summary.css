@@ -101,13 +101,13 @@ a.rstatus:hover { text-decoration: underline; }
 .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .prblock .stack.projects + .stack { margin-top: 6px; }
 /* Wide enough for a four-digit number, so every row's title starts at the same place. */
-.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: 36px 1fr; gap: 6px; align-items: baseline; padding: 8px 6px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
+.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: 36px 1fr; gap: 6px; align-items: baseline; padding: 8px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
 .prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
 .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
 .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
 /* A step up from the stack rows, so a project reads as the heading over its pull requests. */
-.prblock .stack.projects li > a { grid-template-columns: 1fr; padding: 9px 10px 9px 12px; font-size: 13.5px; }
+.prblock .stack.projects li > a { grid-template-columns: 1fr; padding: 9px 8px; font-size: 13.5px; }
 /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
 .prblock .stack.projects:first-child { margin-top: -6px; }
 .prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
