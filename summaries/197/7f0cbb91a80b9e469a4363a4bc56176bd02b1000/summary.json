@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "Files changed pane",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 197,
+  "title": "Add a Files changed pane to a summary page and simplify its header and sidebar",
+  "head": "7f0cbb91a80b9e469a4363a4bc56176bd02b1000",
+  "headRef": "summary-files-pane",
+  "base": "3710a64b15a0fb228c8909050283eef67d2ff1e6",
+  "baseRef": "summary-stack-sidebar",
+  "basePr": 196
+ },
+ "overview": {
+  "summary": [
+   "A summary page, the guided review page that the Projector site renders from a summary's JSON, groups a pull request's files into sections in reading order. Before this change, a reader who wanted one file had to know which section held it. Each section listed only its own files, and nothing listed the files that start collapsed, such as generated code, tests, and docs, apart from the rest.",
+   "This change adds a <b>Files changed</b> pane to the overview, under the line counts. It lists every file in the diff by path, with its new or deleted badge and its added and removed line counts. A circle beside each file fills with a check once the file is marked Reviewed. The files that start collapsed sit in a closed list labelled <b>Generated, test, and docs</b>. Clicking a file unfolds its section, opens the file, and scrolls to it, even when the URL hash already names that file.",
+   "The change also makes the page around the pane quieter:",
+   "<ul><li><b>Header.</b> The heading and the browser tab show the pull request's title, not the summary's <code>name</code>. The links read Conversation, Files, and Compare. The All reviews link goes, along with the <code>indexUrl</code> field that fed it.</li><li><b>Sidebar.</b> The repo#number line, the Reviewed counter and its bar, and the overview-card links go. Overview links to the top of the page, and Files links to the line counts.</li><li><b>Overview.</b> The line counts lose their heading, and the legend below the overview goes. The last section is at least one window tall, so a jump to it brings it to the top.</li><li><b>Site bar.</b> On a summary page, the bar's ends line up with the page content, and the search box no longer sits high.</li></ul>",
+   "The pull request is stacked on #196, which adds the stack list and moves the version list in the sidebar."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Collapsed file</b>: a file card whose diff starts hidden. By default that is a file whose kind is <code>generated</code>, <code>test</code>, or <code>docs</code>. A summary overrides the default per file with <code>collapsed</code>.</li><li><b>Folded section</b>: a group whose body is hidden, for example after the reader marks it Reviewed.</li><li><b><code>fid</code></b>: a file card's element id, <code>f-</code> plus ten hex digits of the SHA-1 of its path, which <code>src/projector/summary.py</code> generates.</li><li><b>Site bar</b>: the Projector site's menu bar, which <code>site.css</code> styles and which sits above a summary page on a hosted site.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of an earlier head found the pane itself clean.</li><li>The review of this head opened one finding: <code>format.md</code> still says a summary's <code>name</code> titles the page and the browser tab. It appears as a concern note under the title line in <code>summary.ts</code>.</li><li>The full validation gate passed at this head: <code>npm run check</code>, <code>npm run build</code> with no change to <code>summary.js</code>, 455 Python tests, <code>project check</code>, and both plugin validations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "pane",
+   "title": "The page renderer",
+   "kicker": "The Files changed pane, and the header, sidebar, and overview around it.",
+   "intro": [
+    "The renderer in <code>site/src/summary.ts</code> builds the whole page as one HTML string in <code>renderSummary</code>. Then <code>wireSummary</code> attaches the click handlers and restores each checkbox from <code>localStorage</code>. The pane follows the same split.",
+    "<ol><li><b>Rendering.</b> <code>renderFilesPane</code> collects every file from every group, sorts the files by path, and splits them into an open list and a closed list with <code>startsCollapsed</code>. That function holds the rule each file card already used, so a file sits in the closed list exactly when its card starts collapsed. <code>renderOverview</code> places the pane right after the line-count card, which carries the <code>files</code> id that the sidebar's Files link targets.</li><li><b>Navigation.</b> Each row links to its file card's <code>fid</code>. A click pushes the hash with <code>history.pushState</code> and calls <code>reveal</code>, which unfolds the section, opens the file, and scrolls to it. A plain hash change runs the same <code>reveal</code>, but without a forced scroll, because the browser has already scrolled.</li><li><b>Reviewed state.</b> <code>syncJump</code> copies a file card's <code>reviewed</code> class to its pane row, whose circle the stylesheet then fills with a check. It runs in <code>markFile</code> and when the page restores Reviewed state on load.</li></ol>",
+    "The header now takes its title from <code>pr.title</code>, which the build requires, and falls back to <code>name</code> only when the title is empty. <code>pr_title</code> in the Python site builder applies the same rule to the page's <code>&lt;title&gt;</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The validation gate passed at this head in a scratch worktree: <code>npm run check</code> reported no findings, <code>npm run build</code> left <code>site/assets/summary.js</code> unchanged, and all 455 Python tests passed with no skip."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds the pane, <code>startsCollapsed</code>, <code>syncJump</code>, and <code>reveal</code>. Retitles the header, trims the sidebar, and drops the legend and the Reviewed counter.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 62,
+       "text": "<code>startsCollapsed</code> returns the same expression that <code>renderFile</code> computed inline before, so the pane's open and closed lists match how each card starts. Checked by comparing the removed and added lines."
+      },
+      {
+       "kind": "context",
+       "line": 171,
+       "text": "The line-count card takes the element id <code>files</code>. A summary group or overview card with the id <code>files</code> or <code>overview</code> gets a duplicate id, and the build does not refuse either one."
+      },
+      {
+       "kind": "context",
+       "line": 253,
+       "text": "<code>#top</code> needs no element with that id. Browsers scroll to the top of the document for that fragment, and <code>reveal</code> finds no element and does nothing."
+      },
+      {
+       "kind": "flag",
+       "line": 254,
+       "text": "The page now takes its title from <code>pr.title</code>. But <code>skills/summarize-pr/format.md</code> still says that <code>name</code> is the page title and becomes the browser tab. An author who follows the guide gets a title they did not choose. Update the <code>name</code> entry there. This concern is an open review finding."
+      },
+      {
+       "kind": "verify",
+       "line": 319,
+       "text": "Every place that sets a file card's <code>reviewed</code> class also calls <code>syncJump</code>: here in <code>markFile</code>, and in the restore on load. A section's Reviewed box never marks a file, so it needs no sync. Checked by searching for every <code>classList.toggle('reviewed'</code>."
+      },
+      {
+       "kind": "context",
+       "line": 668,
+       "text": "The handler calls <code>preventDefault</code> on every click, so a Ctrl-click or a Cmd-click on a row stays in the same tab instead of opening a new one."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Styles the pane, its collapsed sublist, and the check circle, which shares its style with the sidebar's section checks. It also removes the Reviewed counter's and the legend's rules and makes the last section at least one window tall."
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Drops <code>indexUrl</code> from <code>SummaryData</code>."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "collapsed": true,
+     "note": "Compiled from <code>site/src/summary.ts</code> by <code>npm run build</code>."
+    }
+   ]
+  },
+  {
+   "id": "builder",
+   "title": "The site builder and the site bar",
+   "kicker": "Titles each page from the pull request, drops indexUrl, and aligns the site bar.",
+   "intro": [
+    "The Python site builder in <code>src/projector/site/__init__.py</code> writes each summary page's HTML shell and its <code>data.json</code>. It now titles each shell with <code>pr_title</code>, and stops writing <code>indexUrl</code>, which only fed the All reviews link that this change removes.",
+    "On a hosted site, the site bar sits above a summary page. <code>site.css</code> pads the bar so that its ends line up with the summary's content, which is 1440 pixels wide at most. It also sets the search form's margin outright, because summary pages render in quirks mode, where a form gets a bottom margin."
+   ],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>pr_title</code> and uses it for each page's <code>&lt;title&gt;</code>. Stops writing <code>indexUrl</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The review index rows still read <code>name</code>, so a summary's <code>name</code> now appears where the site lists reviews, but not on its own page."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Aligns the site bar with a summary page's content, and fixes the search box's margin."
+    },
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill documentation",
+   "kicker": "The summarize-pr skill and its format guide describe the new page.",
+   "intro": [
+    "The <code>summarize-pr</code> skill tells the agent that writes a summary which files start collapsed, and now adds that the <b>Files changed</b> list keeps those files in a closed list of their own. Its format guide now says that the page adds the list of files, and that an overview card's <code>id</code> is only its anchor, with no sidebar link."
+   ],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    },
+    {
+     "path": "skills/summarize-pr/format.md"
+    }
+   ]
+  }
+ ]
+}
