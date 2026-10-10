@@ -52,6 +52,7 @@ def make_summary(groups: list[dict]) -> dict:
     return {
         "version": 1,
         "name": "Core Summary",
+        "project": "",
         "pr": {"repo": "owner/repo", "number": 7, "title": "Change the core", "head": "a" * 40, "base": "b" * 40, "baseRef": "main"},
         "overview": {"summary": ["It changes <code>Check</code>."], "cards": []},
         "groups": groups,
@@ -286,6 +287,113 @@ class AtHeadTests(unittest.TestCase):
                 site.build_page(make_summary(GOOD_GROUPS), Path(tempfile.mkdtemp()))
 
 
+class StackChoiceTests(unittest.TestCase):
+    """The project and title a summary records for its stack, from `init` to a page built alone."""
+
+    def test_init_leaves_the_project_undecided(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "pr.diff").write_text(DIFF)
+
+        with mock.patch.object(summary, "pr_metadata", return_value=make_summary([])["pr"]), \
+             redirect_stdout(io.StringIO()):
+            code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary",
+                             str(tmp / "summary.json"), "--diff", str(tmp / "pr.diff")])
+
+        self.assertEqual(0, code)
+        skeleton = json.loads((tmp / "summary.json").read_text())
+        self.assertEqual(("", None), (skeleton["name"], skeleton["project"]), "publish refuses the skeleton as it is")
+
+    def page(self, **fields: object) -> dict:
+        """The data `project site page` embeds for a summary with `fields`."""
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "summary.json").write_text(json.dumps(make_summary(GOOD_GROUPS) | fields))
+        (tmp / "pr.diff").write_text(DIFF)
+        with redirect_stdout(io.StringIO()):
+            code = cli.main(["site", "page", "--summary", str(tmp / "summary.json"), "--out", str(tmp / "site"),
+                             "--diff", str(tmp / "pr.diff"), "--at-head"])
+        self.assertEqual(0, code, "site page builds whatever the summary's project")
+        return embedded(tmp / "site")
+
+    def test_a_page_built_alone_is_headed_by_its_name_whatever_its_project(self) -> None:
+        for project in (None, "", "alpha"):
+            with self.subTest(project=project):
+                payload = self.page(project=project, name="Core work")
+                self.assertEqual({"title": "Core work"}, payload["header"], "a page alone has no site's projects")
+                self.assertEqual([{"header": {"title": "Core work"}, "members": [7]}], payload["segments"])
+
+    def test_a_page_built_alone_without_a_name_is_headed_by_its_title(self) -> None:
+        payload = self.page(name="")
+
+        self.assertEqual({"title": "Change the core"}, payload["header"])
+        self.assertEqual("", payload["name"], "the page keeps the name as written")
+
+
+def fake_gh(stdout: str, stderr: str = "", code: int = 0) -> tuple[dict[str, str], Path]:
+    """An environment whose PATH finds a `gh` that prints `stdout` and `stderr` and exits with `code`,
+    and the file where it writes each argument it is given, one to a line."""
+    folder = Path(tempfile.mkdtemp())
+    (folder / "out").write_text(stdout)
+    (folder / "err").write_text(stderr)
+    script = folder / "gh"
+    script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{folder}/args"\ncat "{folder}/out"\n'
+                      f'cat "{folder}/err" >&2\nexit {code}\n')
+    script.chmod(0o755)
+    return {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}, folder / "args"
+
+
+class RepoStacksTests(unittest.TestCase):
+    """The repository's stacks on GitHub, read for the site build."""
+
+    def build_lookup(self) -> object:
+        """The stacks lookup `build_checkout` hands the site build for owner/repo."""
+        handed: dict = {}
+
+        def build_site(out: Path, **kwargs: object) -> tuple[list, list, list]:
+            handed.update(kwargs)
+            return [], [], []
+
+        with mock.patch.object(site, "build_site", side_effect=build_site):
+            cli.build_checkout(Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()), None, "/", "owner/repo")
+        return handed["stacks_lookup"]
+
+    def test_one_paginated_request_reads_every_page(self) -> None:
+        pages = [[{"number": 40, "pull_requests": [{"number": 9}, {"number": 10}]}],
+                 [{"number": 30, "pull_requests": [{"number": 6}]}]]
+        env, args = fake_gh("".join(json.dumps(page) + "\n" for page in pages))
+        lookup = self.build_lookup()
+
+        with mock.patch.dict(os.environ, env):
+            listed = summary.repo_stacks("owner/repo")
+            looked_up = lookup()
+
+        self.assertEqual((pages[0] + pages[1], 2), listed, "every stack from both pages, and how many requests")
+        self.assertEqual(listed, looked_up)
+        self.assertEqual(["api", "--paginate", "-H", "X-GitHub-Api-Version: 2026-03-10",
+                          "repos/owner/repo/stacks?per_page=100", "--jq", "@json"], args.read_text().splitlines())
+
+    def test_a_listing_github_cannot_give_whole_leaves_the_build_none(self) -> None:
+        page = json.dumps([{"number": 40, "pull_requests": [{"number": 9}]}])
+        lookup = self.build_lookup()
+        for case, answer in (
+                ("a host without the endpoint", ('{"message": "Not Found"}', "gh: Not Found (HTTP 404)", 1)),
+                ("a failure on the second page", (page + "\n", "gh: Server Error (HTTP 502)", 1)),
+                ("a network error", ("", "error connecting to api.github.com", 1)),
+                ("an answer that is not a list", ('{"message": "Moved Permanently"}\n', "", 0)),
+                ("an answer that is not JSON", ("<html>\n", "", 0)),
+                ("no answer at all", ("", "", 0))):
+            env, _ = fake_gh(*answer)
+            with self.subTest(case), mock.patch.dict(os.environ, env):
+                with self.assertRaises(summary.SummaryError):
+                    summary.repo_stacks("owner/repo")
+                self.assertIsNone(lookup())
+
+    def test_a_build_without_gh_has_no_stacks(self) -> None:
+        lookup = self.build_lookup()
+
+        with mock.patch.dict(os.environ, {"PATH": tempfile.mkdtemp()}):
+            self.assertIsNone(lookup())
+
+
 class SiteTests(unittest.TestCase):
     def write_summary(self, root: Path, head: str, name: str) -> Path:
         data = make_summary(GOOD_GROUPS)
@@ -313,8 +421,9 @@ class SiteTests(unittest.TestCase):
                       (built_site / "reviews" / "7" / "index.html").read_text(), "the newest head, rendered in place")
         index = (built_site / "index.html").read_text()
         listed = json.loads((built_site / "site.json").read_text())["reviews"]
-        self.assertEqual([(7, "New", "1970-01-01T00:03:20Z", 2)],
-                         [(w["number"], w["name"], w["updated"], w["heads"]) for w in listed], "dated by the newest head")
+        self.assertEqual([(7, {"title": "New"}, "1970-01-01T00:03:20Z", 2)],
+                         [(w["number"], w["header"], w["updated"], w["heads"]) for w in listed],
+                         "dated by the newest head, and headed by its name")
         self.assertTrue((built_site / ".nojekyll").exists())
         page = (built_site / "reviews" / "7" / ("a" * 40) / "index.html").read_text()
         self.assertNotIn("summary-data", page)
@@ -487,16 +596,23 @@ class PublishTests(unittest.TestCase):
         self.output = ""
         self.err = ""
 
-    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, **kwargs: object) -> object:
+    def publish(self, head: str, repo: Path | None = None, diff: str = DIFF, fields: dict | None = None,
+                **kwargs: object) -> object:
         """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`
         and its warnings in `self.err`.
 
         GitHub serves `diff` as the pull request's, and a diff other than DIFF gets a summary of one group.
+        `fields` replaces the summary's own, and a field given as `...` is left out.
         """
         groups = GOOD_GROUPS if diff == DIFF else [
             {"id": "all", "title": "All", "files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}]
         data = make_summary(groups)
         data["pr"]["head"] = head
+        for key, value in (fields or {}).items():
+            if value is ...:
+                del data[key]
+            else:
+                data[key] = value
         path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
         path.write_text(json.dumps(data))
         cwd = os.getcwd()
@@ -775,6 +891,37 @@ class PublishTests(unittest.TestCase):
         run(self.repo, "git", "remote", "set-url", "origin", "git@github.com:someone/else.git")
         with self.assertRaisesRegex(summary.SummaryError, "origin is someone/else, but the summary is for owner/repo"):
             self.publish("a" * 40)
+
+    def test_refuses_a_summary_that_has_not_chosen_its_project(self) -> None:
+        first = self.publish("d" * 40)
+
+        for value, found in ((None, "the summary's `project` is null"), (..., "the summary has no `project`"),
+                             (7, "the summary's `project` is 7")):
+            with self.subTest(project=value), self.assertRaisesRegex(
+                    summary.SummaryError, f"{found}; set it to the name of the one project this pull request "
+                                          "carries out, as `project list` names it, or to \"\" when it carries none"):
+                self.publish("c" * 40, fields={"project": value})
+
+        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
+
+    def test_refuses_a_name_too_short_or_too_long_to_title_a_stack(self) -> None:
+        first = self.publish("d" * 40)
+
+        for name, said in (("", "`name` is empty; set it to two to six words that name the work of the whole stack, "
+                                "at most 60 characters"),
+                           ("   ", "`name` is empty"),
+                           ("x" * 61, "`name` is 61 characters; shorten it to at most 60")):
+            with self.subTest(name=name), self.assertRaisesRegex(summary.SummaryError, said):
+                self.publish("c" * 40, fields={"name": name})
+
+        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
+        self.assertIsNotNone(self.publish("c" * 40, fields={"name": "x" * 60}), "60 characters fit")
+
+    def test_publishes_a_project_the_checkout_does_not_have_yet(self) -> None:
+        # A spec pull request records the plan it adds, which its base lacks until it merges.
+        commit = self.publish("c" * 40, fields={"project": "a-plan-this-pull-request-adds"})
+
+        self.assertEqual(commit, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
 
     def test_stores_the_heads_attributes_beside_the_diff_when_the_checkout_has_the_head(self) -> None:
         (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\ngen/** -linguist-generated\n")

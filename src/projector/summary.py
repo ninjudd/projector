@@ -39,6 +39,11 @@ ATTRIBUTES_FILE = "attributes.json"
 # changed file a summary page can expand, and the largest file it stores.
 HEAD_DIR = "head"
 CONTEXT_MAX_BYTES = 1024 * 1024
+# The longest `name` `publish` accepts. The site shows a summary's name as its
+# stack's title, so it must fit a header.
+NAME_MAX = 60
+# The REST API version the stacks endpoint is documented under.
+STACKS_API_VERSION = "2026-03-10"
 # Publishes running at once, as a review loop's subagents run them, race to
 # move the summaries ref, so a push that loses is rebuilt on the new tip and
 # tried again, up to this many pushes in all.
@@ -747,6 +752,23 @@ def pr_status(repo: str, number: int) -> dict:
             "reviews": [r for page in found for r in page["reviews"]]}
 
 
+def repo_stacks(repo: str) -> tuple[list, int]:
+    """Every stack of pull requests GitHub records for `repo`, as its stacks API lists them, and how many requests that took.
+
+    One paginated request reads them all, 100 to a page. It raises when any
+    page fails or is not a list, so GitHub answers for every stack or for none.
+    """
+    output = gh("api", "--paginate", "-H", f"X-GitHub-Api-Version: {STACKS_API_VERSION}",
+                f"repos/{repo}/stacks?per_page=100", "--jq", "@json")
+    try:
+        pages = [json.loads(page) for page in output.splitlines() if page.strip()]
+    except ValueError as error:
+        raise SummaryError(f"GitHub's list of {repo}'s stacks is not JSON: {error}") from error
+    if not pages or not all(isinstance(page, list) for page in pages):
+        raise SummaryError(f"GitHub's list of {repo}'s stacks is not a list")
+    return [stack for page in pages for stack in page], len(pages)
+
+
 def pr_metadata(repo: str, number: int, stack: bool = True) -> dict:
     raw = json.loads(gh("pr", "view", str(number), "--repo", repo, "--json", "title,headRefOid,headRefName,baseRefName"))
     meta = {
@@ -995,8 +1017,9 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, 
         generated = generated_attributes([f["path"] for f in files], str(pr["head"]), str(pr["repo"]), root)
     classify(files, generated)
     overview, groups = sanitized(summary)
+    name = summary.get("name")
     payload = {
-        "name": summary.get("name") or f"{pr['repo'].split('/')[-1]}#{pr['number']} summary",
+        "name": name if isinstance(name, str) else "",
         "pr": pr,
         "overview": overview,
         "groups": groups,
@@ -1122,6 +1145,27 @@ def summary_pr(summary: dict) -> dict:
     return pr
 
 
+def require_stack_choices(summary: dict) -> None:
+    """Refuse a summary that has not chosen its project, or whose `name` cannot head its stack.
+
+    `init` writes a null `project`, so a summary nobody chose a project for
+    never publishes as one that carries none. The project need not be one
+    this checkout has, because a pull request can add the plan it carries out.
+    """
+    project = summary.get("project")
+    if not isinstance(project, str):
+        found = "summary has no `project`" if "project" not in summary else \
+            f"summary's `project` is {json.dumps(project)}"
+        raise SummaryError(f"the {found}; set it to the name of the one project this pull request carries out, as "
+                           "`project list` names it, or to \"\" when it carries none")
+    name = summary.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise SummaryError(f"the summary's `name` is empty; set it to two to six words that name the work of the "
+                           f"whole stack, at most {NAME_MAX} characters")
+    if len(name) > NAME_MAX:
+        raise SummaryError(f"the summary's `name` is {len(name)} characters; shorten it to at most {NAME_MAX}")
+
+
 def push_decision(repo: str) -> tuple[str | None, str]:
     """The URL of the site `publish` pushes a summary to `repo` for, or None and why the summary stays local.
 
@@ -1197,6 +1241,7 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
     """
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     pr = summary_pr(summary)
+    require_stack_choices(summary)
     slug = repo_slug(git("remote", "get-url", remote))
     if slug and slug.lower() != pr["repo"].lower():
         raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
@@ -1453,6 +1498,7 @@ def init(repo: str, number: int, summary_path: str, diff_path: str | None = None
     summary = {
         "version": SUMMARY_VERSION,
         "name": "",
+        "project": None,
         "pr": meta,
         "overview": {"summary": [], "cards": []},
         "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
