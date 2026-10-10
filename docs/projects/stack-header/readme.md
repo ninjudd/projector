@@ -22,8 +22,9 @@ to as many projects as it finds. `project_linker` in
 `src/projector/site/__init__.py` gives a pull request every project whose
 folder holds a file its diff changes, plus any its summary names in a
 `projects` list that no skill writes or documents. The sidebar draws one row
-per such project above the stack, and the index draws them in a Projects
-column. The rule fails in both directions:
+per such project above the stack, and each project's page lists the reviews
+linked to it. The index shows no project at all. The rule fails in both
+directions:
 
 - **Too many projects.** A change that edits plans in passing links to each
   plan it edits. In this repository, the pull request that renamed the design
@@ -168,8 +169,7 @@ around the escaped title. Otherwise it returns a `<span>` around the escaped
 title.
 
 **Reviews index.** `reviewsTable` in `site/src/site.ts` starts each stack's
-table body with a header row, for a pull request alone too. The examples show
-the index with the three columns that #215 gives it, as § 6 describes:
+table body with a header row, for a pull request alone too:
 
 ```html
 <tbody>
@@ -179,11 +179,10 @@ the index with the three columns that #215 gives it, as § 6 describes:
 </tbody>
 ```
 
-The header cell spans every column, its `colspan` equal to the number of
-columns in the head row. It starts at the left edge of the first column and
-has no divider beneath it, so it reads as the title of the rows below. The
-Projects column goes, and each row shows its pull request's number and title,
-because the header now carries the stack's project or title:
+The header cell spans all three columns. It starts at the left edge of the
+first column and has no divider beneath it, so it reads as the title of the
+rows below. Each row keeps its pull request's number and title, and the
+divider below each stack stays where it is:
 
 ```text
  Pull request                                            Status              Updated
@@ -198,13 +197,21 @@ because the header now carries the stack's project or title:
  ─────────────────────────────────────────────────────────────────────────────────────
 ```
 
-When the index's state filter hides some of a stack's pull requests, the
-header stays above the rest. When it hides all of them, it hides the header
-too.
+The header row takes the top padding that each stack's first row has today.
+`site.css` gives that padding with
+`table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }`, and the
+header row becomes every body's first row, with a `th` rather than a `td`. So
+`table.tbl.reviews tr.stackhead th` gets the 6 pixels of top padding, and the
+`tr:first-child td` rule goes. The first pull request's row then sits directly
+under the header, as each row sits under the one above it.
+
+When the **Open** and **Closed** boxes hide some of a stack's pull requests,
+the header stays above the rest. When they hide all of them, they hide the
+header too.
 
 **Summary sidebar.** `renderPage` in `site/src/summary.ts` replaces
-`projectsList`, which draws one `<ul class="stack projects">` row per
-project, with one header above the stack list:
+`projectsList`, which draws a `<ul class="stack projects">` with one
+`<a class="srow">` row per project, with one header above the stack list:
 
 ```html
 <div class="prblock">
@@ -248,29 +255,29 @@ hover state. Like a stack row's title, a header shows at most three lines.
 | Reader | Today | After the change |
 | --- | --- | --- |
 | Summary page sidebar | One `.stack.projects` row per entry in the page data's `projects` | One header, from `header` |
-| Reviews index row | `name` as the link text, the pull request's title under it, and a Projects column from the row's `projects` | The pull request's number and title. The header row carries the project or title. No Projects column. |
+| Reviews index | Each row's pull request number and title, with no project and no `name` | Unchanged rows, under a header row that carries the stack's project or title |
 | Project page's list of reviews | The reviews whose `projects` include the project, each as `#N` and its `name`, or its title when `name` is empty | The reviews whose `header` is the project, each as `#N` and the pull request's title |
 | Page `<title>` and the summary's `h1` | The pull request's title, falling back to `name` | The pull request's title. `validate` requires it, so the fallback never runs, and the change removes it from `pr_title` and `renderPage`. |
 | A file card's **View project** link | The deepest project whose folder holds the file | Unchanged. It says where the file lives, not what the stack is for. |
 | Search | Indexes the docs and the project files | Unchanged. It reads neither field. |
 | `prepare_page` | Sets an empty `name` to `<repo>#<n> summary` | Passes `name` through as written, so § 2.2, step 3 can tell an empty name from a set one |
 
-The change removes the page data's `projects` list, the `projects` and `name`
-fields of a `site.json` row, the `projectsList` and `projectLinks` functions,
-and the `.prblock .stack.projects` rules in `site/assets/summary.css`. The
-build still reads a summary's `projects` list, but only in § 2.2, step 2, for
-a summary with no `project`.
+The change removes the page data's `projects` list, the `projects` list that
+`build_summaries` keeps on each entry for `build_site`, the `name` field of a
+`site.json` row, the `projectsList` function, and the `.prblock .stack.projects`
+rules in `site/assets/summary.css`. The build still reads a summary's
+`projects` list, but only in § 2.2, step 2, for a summary with no `project`.
 
 ### 2.5 Files that change
 
 | File | Change |
 | --- | --- |
 | `src/projector/summary.py` | `init` writes `"project": null`. `publish` checks `project` and `name` against `NAME_MAX` and says what to set. `prepare_page` stops setting a default `name`. |
-| `src/projector/site/__init__.py` | `project_linker` returns a summary's own project. A new `stack_header` takes a group's members and returns its header. `build_summaries` computes the groups before it writes pages, writes `header`, and prints the warning. `review_row` writes `header` and drops `name` and `projects`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
+| `src/projector/site/__init__.py` | `project_linker` returns a summary's own project. A new `stack_header` takes a group's members and returns its header. `build_summaries` computes the groups before it writes pages, writes `header` in place of each entry's `projects`, and prints the warning. `review_row` writes `header` and drops `name`. `build_site` lists each project's reviews by header. `pr_title` drops its `name` fallback. `build_page` gives a standalone page its header. |
 | `site/src/summary.ts` | `stackHeaderHtml`. The sidebar's header replaces `projectsList`. The page title drops its `name` fallback. |
-| `site/src/site.ts` | `reviewsTable` starts each body with its header row. `reviewRow` drops `name` and the Projects cell. A project page lists its reviews by pull request title. `projectLinks` goes. |
-| `site/src/globals.d.ts` | A `StackHeader` type. `header` replaces `projects` in `SummaryData`, and replaces `name` and `projects` in `SiteReview`. |
-| `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals and adds no divider. |
+| `site/src/site.ts` | `reviewsTable` starts each body with its header row. A project page lists its reviews by pull request title. |
+| `site/src/globals.d.ts` | A `StackHeader` type. `header` replaces `projects` in `SummaryData`, and replaces `name` in `SiteReview`. |
+| `site/assets/summary.css`, `site/assets/site.css` | `.prblock .stackhead` replaces the `.prblock .stack.projects` rules. A `table.tbl.reviews tr.stackhead th` rule overrides the head row's small capitals, takes the body's top padding in place of the `tbody tr:first-child td` rule, and adds no divider. |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
 | `skills/summarize-pr/SKILL.md`, `skills/summarize-pr/format.md` | The `project` field, the title meaning of `name`, and the three choices in § 2.1, in both "Build the summary" and step 2 of "Update the page when the pull request moves". |
 | `docs/cli.md` | The Reviews index, the sidebar, and the project pages as § 2.3 and § 2.4 describe them. |
@@ -373,7 +380,7 @@ sidebar and index tests do:
 | Render a page whose header is a project | `<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>` comes before the stack list, and no `stack projects` list is drawn |
 | Render a page whose header is a title | `<div class="stackhead"><span>Summary 9</span></div>`, with no link |
 | Render a header whose title holds `<script>` | The text is escaped, on the sidebar and on the index |
-| Draw the Reviews index with a stack and a pull request alone | Each table body starts with `<tr class="stackhead"><th colspan="…" scope="rowgroup">`, whose `colspan` equals the head row's columns. The project header links and the title header does not. The head row has no Projects column. |
+| Draw the Reviews index with a stack and a pull request alone | Each table body starts with `<tr class="stackhead"><th colspan="3" scope="rowgroup">`. The project header links and the title header does not. |
 | Draw the index with a stack's bottom pull request filtered out | The header stays above the stack's other rows |
 
 The build tests cover what the site does with the values a stack's layers
@@ -409,23 +416,6 @@ path gains a network call, a file read, or a Git command.
 
 ## 6. Rollout
 
-The open pull request #215 changes the same Reviews index code. It removes the
-Projects column and `reviews[].projects` from `site.json`, draws each row as a
-number and title like a sidebar stack row, changes the table to three columns,
-draws a divider only below each stack, replaces **Show merged and closed**
-with **Open** and **Closed** boxes, and rewords `name` in `format.md` to say it
-labels a summary only in a project's list of reviews. This plan describes the
-change against `main`, so it also lists the Projects column's removal.
-
-1. If #215 lands first, this change drops its own removal of the Projects
-   column and of `reviews[].projects`, puts the header row at the top of each
-   of #215's table bodies with a `colspan` of 3, and keeps #215's divider below
-   each stack. It replaces #215's wording of `name` with the title meaning
-   from § 2.1, and lists a project's reviews by pull request title, so nothing
-   reads `name` from `site.json`.
-2. If this change lands first, #215 merges `main` and keeps the header row as
-   the first row of each table body.
-
 The skill and the CLI change in the same pull request, so one release carries
 both. An agent that runs an older skill against the new CLI meets the refusal
 for a `null` `project`, and the message says what to set. An older site build
@@ -449,8 +439,8 @@ on 2026-10-10:
   change no plan and get their titles.
 - **What links today.** `project_linker` adds each project whose folder holds
   a changed file, after the names in a summary's `projects` list. The page data
-  carries the result as `projects`. `build_site` copies the names into each
-  row of `site.json` and lists each project's reviews from them.
+  carries the result as `projects`, and `build_site` lists each project's
+  reviews from the same names. A `site.json` row carries no projects.
   `test_a_summary_can_name_a_project_its_diff_does_not_touch` pins the order:
   named projects first, unknown names dropped, then the ones the diff
   touches.
