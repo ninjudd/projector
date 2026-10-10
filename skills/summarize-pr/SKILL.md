@@ -91,9 +91,10 @@ push to, or approve the pull request unless the user asks.
      that line in the diff. A note about one file goes on that file. Only a
      note that ties several files together stays on the group.
    - **Collapse noise.** Generated code, tests and documentation start
-     collapsed unless a file's `collapsed` says otherwise. Give the files a
-     reviewer must read a one-line `note` that says what the file is for and
-     what changed in it, not a list of the names it defines.
+     collapsed unless a file's `collapsed` says otherwise, and the page's
+     **Files changed** list keeps them in a closed list of their own. Give
+     the files a reviewer must read a one-line `note` that says what the
+     file is for and what changed in it, not a list of the names it defines.
    - **Open the overview with orientation.** Say first what the part of the
      system this pull request touches is for, what problem the change
      solves, and how, in plain words. Then give the few facts every group

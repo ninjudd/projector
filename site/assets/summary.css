@@ -101,6 +101,23 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
 
 /* overview */
 .overview { display: flex; flex-direction: column; gap: 20px; }
+.filespane { margin-bottom: 20px; scroll-margin-top: var(--stick-top); }
+.filespane > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
+.filespane > summary::-webkit-details-marker, .fcollapsed > summary::-webkit-details-marker { display: none; }
+.filespane > summary h3 { margin: 0; }
+.filespane > summary .chev, .fcollapsed > summary .chev { align-self: center; margin: 0 2px; }
+.filespane:not([open]) > summary .chev, .fcollapsed:not([open]) > summary .chev { transform: rotate(-45deg); }
+.filespane .fcount { color: var(--muted); font-size: 13px; }
+.ftree { list-style: none; margin: 10px 0 0; padding: 0; max-height: 420px; overflow-y: auto; }
+.ftree a { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 4px 8px; margin: 0 -8px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13px; }
+.ftree a:hover { background: var(--surface-2); }
+.ftree .fpath { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ftree .fpath .dir { color: var(--muted); }
+.ftree .stat { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ftree a.reviewed .fpath { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--underline); }
+.ftree a.reviewed .stat::after { content: ""; display: inline-block; width: 12px; height: 12px; margin-left: 6px; vertical-align: -2px; border-radius: 50%; background: var(--ok) var(--check-icon) center / 8px 8px no-repeat; }
+.fcollapsed { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.fcollapsed > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; color: var(--muted); font-size: 13px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; box-shadow: var(--shadow); }
 .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
 .prose p { margin: 0 0 12px; max-width: 72ch; }

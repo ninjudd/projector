@@ -57,12 +57,18 @@
                 return `<li class="${k}">${box}<span class="chip ${k}">${CHIPS[k] ?? k}</span><span class="ntext">${c.text}</span></li>`;
             }).join('') + '</ul>';
         }
+        // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.
+        function startsCollapsed(entry, f) {
+            return entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
+        }
+        function splitPath(path) {
+            const slash = path.lastIndexOf('/');
+            return [slash >= 0 ? path.slice(0, slash + 1) : '', path.slice(slash + 1)];
+        }
         function renderFile(entry) {
             const f = fileAt(entry.path);
-            const collapsed = entry.collapsed ?? (f.kind === 'generated' || f.kind === 'test' || f.kind === 'docs');
-            const slash = f.path.lastIndexOf('/');
-            const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
-            const base = f.path.slice(slash + 1);
+            const collapsed = startsCollapsed(entry, f);
+            const [dir, base] = splitPath(f.path);
             const checks = entry.checks ?? [];
             // A note with a line sits under that line of the diff; the rest sit at the top of the file.
             const atLine = {};
@@ -167,7 +173,7 @@
             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
                 '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'lines'],
-                [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated (collapsed)'], [num(s.docs), 'documentation lines']];
+                [num(s.hand), 'hand-written lines'], [num(s.test), 'test lines'], [num(s.generated), 'generated'], [num(s.docs), 'documentation lines']];
             out += '<div class="card"><h3>Shape of the change</h3><div class="statgrid">' +
                 tiles.map(function (t) { return `<div class="stat-tile"><div class="v">${t[0]}</div><div class="l">${t[1]}</div></div>`; }).join('') +
                 '</div></div>';
@@ -179,6 +185,35 @@
             }
             out += '<div class="legend"><span><span class="badge new">new</span> new file</span><span><span class="badge generated">generated</span> generated output</span><span><span class="badge test">test</span> collapsed by default</span><span><span class="badge docs">docs</span> collapsed by default</span><span>Click a file or section header to expand or collapse it; "Reviewed" collapses it and remembers that. Click a name in the code to mark every place it appears; click it again or press Escape to clear the marks.</span></div>';
             return out;
+        }
+        // Every file in the diff, by path, each linking to its card; the files the
+        // diff starts collapsed sit in a closed list of their own below the rest.
+        function renderFilesPane() {
+            const rows = data.groups.flatMap(function (g) {
+                return g.files.map(function (entry) { const f = fileAt(entry.path); return { f: f, collapsed: startsCollapsed(entry, f) }; });
+            }).sort(function (a, b) { return a.f.path < b.f.path ? -1 : a.f.path > b.f.path ? 1 : 0; });
+            if (rows.length === 0)
+                return '';
+            function row(f) {
+                const [dir, base] = splitPath(f.path);
+                const mark = f.new === true ? '<span class="badge new">new</span>' : f.deleted === true ? '<span class="badge deleted">deleted</span>' : '';
+                return `<li><a class="fjump" href="#${f.id}" data-fid="${f.id}" title="${esc(f.path)}">` +
+                    `<span class="fpath"><span class="dir">${esc(dir)}</span><span class="base">${esc(base)}</span></span><span class="fbadge">${mark}</span>` +
+                    `<span class="stat"><span class="plus">+${num(f.adds)}</span> <span class="minus">−${num(f.dels)}</span></span></a></li>`;
+            }
+            function list(group) {
+                return '<ul class="ftree">' + group.map(function (r) { return row(r.f); }).join('') + '</ul>';
+            }
+            const open = rows.filter(function (r) { return !r.collapsed; });
+            const closed = rows.filter(function (r) { return r.collapsed; });
+            const count = (n) => `${num(n)} file${n === 1 ? '' : 's'}`;
+            return '<details class="card filespane" id="files" open>' +
+                `<summary><span class="chev" aria-hidden="true"></span><h3>Files changed</h3><span class="fcount">${count(rows.length)}</span></summary>` +
+                (open.length > 0 ? list(open) : '') +
+                (closed.length > 0
+                    ? `<details class="fcollapsed"><summary><span class="chev" aria-hidden="true"></span>Collapsed in the diff: generated, test, and docs files · ${count(closed.length)}</summary>${list(closed)}</details>`
+                    : '') +
+                '</details>';
         }
         function headsList() {
             const heads = data.heads ?? [];
@@ -200,7 +235,7 @@
             const nav = data.groups.map(function (g, i) {
                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
             }).join('');
-            const extra = '<a href="#overview">Overview</a>' + (data.overview?.cards ?? []).filter(function (c) { return c.id !== undefined && c.id !== ''; }).map(function (c) {
+            const extra = '<a href="#files">Files changed</a><a href="#overview">Overview</a>' + (data.overview?.cards ?? []).filter(function (c) { return c.id !== undefined && c.id !== ''; }).map(function (c) {
                 return `<a href="#${esc(c.id)}">${c.title}</a>`;
             }).join('');
             const title = esc(data.name !== undefined && data.name !== '' ? data.name : `Review of ${prRef}`);
@@ -215,7 +250,7 @@
                 `<div class="extra">${extra}</div>` +
                 `<div class="progress"><span>Reviewed</span><b id="progress-count">0 / ${String(data.groups.length)}</b></div><div class="bar"><i id="progress-bar"></i></div>` +
                 `<ol>${nav}</ol></nav></aside>` +
-                `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+                `<main>${renderFilesPane()}<div class="overview" id="overview">${renderOverview()}</div>` +
                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div>` +
                 `<footer>Generated from the diff at head <span class="mono">${short(pr.head)}</span> on ${esc(data.generatedAt ?? '')} by Projector's <span class="mono">summarize-pr</span> skill. Syntax colours come from highlight.js; green and red row tints mark added and removed lines.</footer>` +
                 '</main></div></div>';
@@ -281,10 +316,17 @@
             if (!collapsed)
                 highlightFile(f);
         }
+        // The files pane marks each file reviewed beside its card.
+        function syncJump(f) {
+            const jump = document.querySelector(`.fjump[data-fid="${f.dataset.fid ?? ''}"]`);
+            if (jump !== null)
+                jump.classList.toggle('reviewed', f.classList.contains('reviewed'));
+        }
         // Reviewing a file collapses it; un-reviewing one opens it to be read again.
         function markFile(f, reviewed) {
             fileBox(f).checked = reviewed;
             f.classList.toggle('reviewed', reviewed);
+            syncJump(f);
             set('f:' + (f.dataset.fid ?? ''), reviewed);
             setCollapsed(f, reviewed);
         }
@@ -330,6 +372,7 @@
                 const reviewed = get('f:' + (f.dataset.fid ?? '')) === '1';
                 fileBox(f).checked = reviewed;
                 f.classList.toggle('reviewed', reviewed);
+                syncJump(f);
                 if (reviewed)
                     setCollapsed(f, true);
             });
@@ -667,13 +710,11 @@
         }
         if (window.hljs !== undefined)
             setTimeout(pump, 0);
-        // A hash pointing into a folded section unfolds it, and one pointing at a
-        // collapsed file opens it.
-        function openHashTarget() {
-            const h = location.hash.replace('#', '');
-            if (h === '')
-                return;
-            const el = document.getElementById(h);
+        // Showing an element unfolds the section around it and opens it when it is a
+        // collapsed file. The browser scrolls to a hash itself, so it is scrolled to
+        // here only when `scroll` asks or a section had to unfold first.
+        function reveal(id, scroll) {
+            const el = document.getElementById(id);
             if (el === null)
                 return;
             const g = el.closest('.group');
@@ -682,10 +723,26 @@
                 setFolded(g, false, true);
             if (el.classList.contains('file'))
                 setCollapsed(el, false);
-            if (unfold)
+            if (scroll || unfold)
                 el.scrollIntoView({ block: 'start' });
         }
+        function openHashTarget() {
+            const h = location.hash.replace('#', '');
+            if (h !== '')
+                reveal(h, false);
+        }
         window.addEventListener('hashchange', openHashTarget);
+        // A file in the files pane opens and scrolls to its card on every click, even
+        // when the hash already names it and the browser would do nothing.
+        document.querySelectorAll('.fjump').forEach(function (a) {
+            a.addEventListener('click', function (ev) {
+                const fid = a.dataset.fid ?? '';
+                ev.preventDefault();
+                if (location.hash !== '#' + fid)
+                    history.pushState(null, '', '#' + fid);
+                reveal(fid, true);
+            });
+        });
         openHashTarget();
         refreshProgress();
     }
