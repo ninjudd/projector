@@ -1,0 +1,106 @@
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 3b7fdaa..d42861f 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -574,13 +574,22 @@ to summarize is too small to send for review. Summarize when both hold.
+    a Projector site there is nowhere to publish unattended, so skip the
+    summary rather than publishing an Artifact nobody asked for.
+ 
++While both hold, the summary is not optional. Summarize every pull request
++you review, whoever opened it. A summary matters most on another author's
++pull request, because that is how its reviewers read the change. Neither
++the author, a brief, nor your own judgment is a reason to skip or hold one.
++The one off switch is `review.summarize = false` in `.projector.toml`,
++and the user sets it.
++
+ Then follow `summarize-pr` for this head, with two differences from a
+ summary a person asks for:
+ 
+ - **Update rather than start over.** When the summaries ref already holds a
+-  summary for an earlier head of this pull request, start from that summary and
+-  update it as the skill's "Update the page when the pull request moves"
+-  section describes, so a fix-cycle head costs a revision, not a rewrite.
++  summary of this pull request, start from its newest version and update it
++  as the skill's "Update the page when the pull request moves" section
++  describes, so a fix-cycle head costs a revision, not a rewrite. The newest
++  version can come from another session or account, and can be at this very
++  head. Build on it all the same.
+ - **Carry the review into it.** Every finding thread still open after this
+   review, from the query in § Verify earlier findings, becomes a `flag` check on its
+   file at its `line`, saying what the finding says, so a reader sees what
+@@ -591,9 +600,26 @@ Publish it with `project summary publish`, after the review. It then
+ links the summary from the pull request, so a reader on GitHub finds it:
+ one comment per pull request, which a later head's summary reposts at the
+ end, deleting the old one, and one line at the very bottom of the
+-description. Do not post the link yourself. A summary that fails to build
+-or publish never changes the review's verdict: say in your report that the
+-summary failed and why, and leave the review as it was.
++description. Do not post the link yourself.
++
++The description edit is intended, on every pull request. `publish` appends
++its link block after everything else in the description, below a trailer
++such as a `Ticket:` line too. It removes the block an earlier publish left
++and changes nothing else. It does not count as editing the pull request
++body, so a brief that forbids body edits does not cover it. Never hold the
++publish for such a brief, and never move or delete the block by hand. The
++next publish puts it back at the end.
++
++A repository's own instructions outrank this skill. Where its `AGENTS.md`,
++`CLAUDE.md`, or other instructions forbid agents to edit pull request
++descriptions, skip the summary, because `publish` always edits the
++description. Say in your report that you skipped it and why, and ask the
++user either to set `review.summarize = false` or to waive the rule for the
++link block.
++
++A summary that fails to build or publish never changes the review's
++verdict: say in your report that the summary failed and why, and leave the
++review as it was.
+ 
+ ## Gate readiness claims in plans
+ 
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 1799aee..220583d 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -121,6 +121,15 @@ reads the new head against that history instead of rediscovering it.
+   review id, and how many threads it opened; `publish` has already added the
+   id to the loop's record. A question for the user comes back to the main
+   loop to ask.
++- Each subagent summarizes every pull request it reviews, as `review-pr`
++  describes, another author's included. The loop never pauses or holds
++  summaries on its own judgment. The one off switch is `review.summarize =
++  false` in `.projector.toml`, which the user sets. A brief that
++  forbids editing the pull request body names the summary's link block as
++  an exception, because `project summary publish` writes that block at the
++  end of every description on purpose. Where the repository's own
++  instructions forbid description edits, a subagent skips the summary and
++  asks the user, as `review-pr` describes.
+ - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+   to finish: delete any start comment it still holds and remove its scratch
+   worktrees. Then close the subagent and delete the pull request's line from
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 20cf579..b44793f 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -308,6 +308,21 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+ 
+ ## Update the page when the pull request moves
+ 
++Start from the newest version of the summary on the summaries ref, whoever
++published it. Another session or account can have summarized the pull
++request already, at an earlier head or at this one. To get that version,
++fetch the ref, find the folder most recently written for the pull request,
++and copy its summary. `HEAD_SHA` is the head that folder names:
++
++```sh
++git fetch origin refs/projector/summaries
++git log -1 --name-only --format= FETCH_HEAD -- summaries/NUMBER/
++git show FETCH_HEAD:summaries/NUMBER/HEAD_SHA/summary.json > WORKDIR/summary.json
++```
++
++When that folder is already this head, revise its summary in place of
++starting a new one, and skip step 1.
++
+ 1. List what changed since the summary's head:
+    `git log --oneline OLD_HEAD..NEW_HEAD` and
+    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
