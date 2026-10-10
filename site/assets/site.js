@@ -300,8 +300,10 @@
     }
     function depth(name) { return name.split('/').length - 1; }
     function ownerName(p) { return p.owner ?? ''; }
+    // One table for each status. The Owner column appears only in a repository
+    // whose plans name owners. Every column but the project's has a set width,
+    // the same in every table, so the columns line up from one status to the next.
     function showProjects() {
-        // The Owner column appears only in a repository whose plans name owners.
         const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
         const groups = STATUS_ORDER.map(function (status) {
             const rows = site.projects.filter(function (p) { return p.status === status; });
@@ -312,14 +314,15 @@
             if (rows.length === 0)
                 return '';
             return `<section class="pgroup"><h2>${esc(status)} <span class="count">${String(rows.length)}</span></h2>` +
-                '<div class="tblwrap"><table class="tbl projects"><tr><th>Project</th><th>Priority</th>' +
-                `${owners ? '<th>Owner</th>' : ''}<th>Name</th></tr>` +
+                '<div class="tblwrap"><table class="tbl projects">' +
+                `<colgroup><col><col class="priority">${owners ? '<col class="owner">' : ''}<col class="name"></colgroup>` +
+                `<thead><tr><th>Project</th><th>Priority</th>${owners ? '<th>Owner</th>' : ''}<th class="name">Name</th></tr></thead><tbody>` +
                 rows.map(function (p) {
                     return `<tr data-search="${esc(`${p.name} ${p.title} ${ownerName(p)}`.toLowerCase())}">` +
                         `<td style="padding-left:${String(0.75 + depth(p.name) * 1.25)}rem"><a href="${esc(`${base}projects/${p.name}/`)}">${esc(p.title)}</a></td>` +
                         `<td>${badge('priority', p.priority)}</td>${owners ? `<td class="owner">${esc(ownerName(p))}</td>` : ''}` +
-                        `<td class="mono">${esc(p.name)}</td></tr>`;
-                }).join('') + '</table></div></section>';
+                        `<td class="mono name">${esc(p.name)}</td></tr>`;
+                }).join('') + '</tbody></table></div></section>';
         }).join('');
         const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>. ` +
             'Status says how finished a project is; priority says when it is scheduled.</p>' +

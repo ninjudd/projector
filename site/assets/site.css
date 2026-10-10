@@ -116,8 +116,25 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 .pintro summary:hover { color: var(--accent); }
 .pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
+/* Every status's table sets the same width for each column but the project's,
+   which takes the rest and wraps its title, so the columns line up from one
+   status to the next. The priority fits LATER and its heading, the owner a
+   login of thirteen characters, and the name a slug of twenty; a longer owner
+   or name wraps, at a hyphen where it has one. A nested project's indent sits
+   inside the project's column. In a window 760px wide or narrower, where a
+   section's sidebar moves above its page, the name is left out and the owner
+   narrows, so the title keeps room. */
+table.tbl.projects { table-layout: fixed; }
+table.tbl.projects col.priority { width: 6.5em; }
+table.tbl.projects col.owner { width: 8em; }
+table.tbl.projects col.name { width: 14em; }
+table.tbl.projects td { overflow-wrap: anywhere; }
 table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
-table.tbl.projects td.owner { color: var(--muted); white-space: nowrap; }
+table.tbl.projects td.owner { color: var(--muted); }
+@media (max-width: 760px) {
+  table.tbl.projects .name { display: none; }
+  table.tbl.projects col.owner { width: 6em; }
+}
 /* The reviews table sets every column's width but the pull request's, which
    takes the rest and wraps its title, so checking Open or Closed never moves a
    column. The status fits CHANGES REQUESTED, and the time one such as "Oct 10,
