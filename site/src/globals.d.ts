@@ -55,6 +55,8 @@ interface SummaryData {
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };
   stats: { files: number; adds: number; dels: number; hand: number; test: number; generated: number; docs: number };
   heads?: { head: string; url: string; current: boolean }[];
+  /** Every pull request in this one's stack, from the default branch up; absent or empty when it stands alone. */
+  stack?: { number: number; title: string; url: string; current: boolean }[];
   projects?: { name: string; title: string; url: string }[];
   indexUrl?: string;
   generatedAt?: string;

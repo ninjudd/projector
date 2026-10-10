@@ -322,6 +322,29 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
+    def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
+        self.publish(9, "c" * 40, headRef="feature-a")
+        self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
+        self.publish(11, "e" * 40, headRef="feature-c", baseRef="feature-b")
+        self.publish(12, "f" * 40, headRef="feature-d", baseRef="feature-b")
+        self.publish(13, "a" * 40, headRef="feature-e", baseRef="feature-x", basePr=7)
+        self.publish(20, "b" * 40, headRef="alone")
+        self.stacks()
+
+        def stack(number: int, head: str) -> list[dict]:
+            return json.loads((self.out / "reviews" / str(number) / head / "data.json").read_text())["stack"]
+
+        rows = stack(10, "d" * 40)
+        self.assertEqual([9, 10, 11, 12], [r["number"] for r in rows], "beneath first, then each branch above")
+        self.assertEqual([10], [r["number"] for r in rows if r["current"]])
+        self.assertEqual({"number": 9, "title": "Change 9", "url": "/reviews/9/", "current": False}, rows[0])
+        self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(11, "e" * 40)], "the top sees the whole stack")
+        self.assertEqual([9, 10, 11, 12], [r["number"] for r in stack(9, "c" * 40)], "the bottom sees the whole stack")
+        self.assertEqual([{"number": 7, "title": "", "url": "", "current": False},
+                          {"number": 13, "title": "Change 13", "url": "/reviews/13/", "current": True}],
+                         stack(13, "a" * 40), "a pull request with no summary has no title or link")
+        self.assertEqual([], stack(20, "b" * 40), "a pull request alone has no stack")
+
     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a")
 
