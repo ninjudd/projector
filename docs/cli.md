@@ -713,9 +713,9 @@ when GitHub cannot serve a diff that large.
 `site build` builds the whole site from a checkout, this repository unless
 `--repo-root` names another, and the summaries under `--summaries`
 when there are any. Its menu has three sections. **Projects**, the home page,
-groups the projects by status, and opens each one beside a sidebar of its
-top-level project's folder: every supplemental file, subdirectory, and nested
-project. **Reviews** lists the summaries, newest pull request first, each as
+groups the projects by status, and opens each one in a summary page's layout,
+as the paragraph on project pages below describes. **Reviews** lists the
+summaries, newest pull request first, each as
 its pull request's number and title, the way a summary's sidebar lists its
 stack, with its status and when its newest version was published, in your
 time zone. The pull requests of a stack are listed together where the newest
@@ -786,9 +786,9 @@ collaborates on it, because anyone can review a public repository's pull
 request. The build reads the pull request's state and reviews through `gh`
 and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
-projects directory, which Projects covers. Each sidebar lists its readme as
-**Overview** and appears only when there is more than that readme to list, and
-the menu button at the start of the header shows and hides it. A repository
+projects directory, which Projects covers. The Docs sidebar lists its readme
+as **Overview** and appears only when there is more than that readme to list,
+and the menu button at the start of the header shows and hides it. A repository
 with no projects opens on Docs instead. A document, in Docs or in a project, is
 a Markdown file or an HTML page. The build copies those files under `content/`
 and describes them in `site.json`; the page renders Markdown in the browser and
@@ -817,9 +817,26 @@ because the folder takes `notes/`; an `index.html` beside a readme moves to
 `index/`.
 Pass `--base` with the path the site is served under, such as `/projector/`
 for a project site, so every page links to the others and to the shared
-assets under `assets/`; it defaults to `/`. Each project page lists, newest
-first and by pull request title, the reviews in every stack segment it heads,
-including a pull request in that segment that names no project of its own.
+assets under `assets/`; it defaults to `/`. A project page takes a summary
+page's layout. A title row across the top holds the breadcrumbs, the status
+and priority badges, the owner when the plan names one, **View on GitHub**,
+and the plan's title, so the plan's own first heading leaves the body when
+the body opens with it. Beside the plan, the summary's sidebar opens with the
+project's header, once. On the project's readme the header is highlighted
+and is the page's current item, and on a supplemental page it links to the
+readme. Below it, the sidebar lists every stack that holds a segment the
+project heads, newest first, each whole: every layer, merged and closed ones
+included, and a layer with no summary on the site as its number, linked to
+GitHub. Another project's segment opens with that project's header, linked
+to its page. The project's own segments show only their rows, and where one
+follows another project's segment, a thin rule above its rows ends that
+segment. A project that heads no segment shows **No reviews of this
+project.** in place of the stacks. Below them, the sidebar lists the
+project's supplemental files and nested projects, with the current page in
+bold, and its last row holds the credit and an icon that opens the page's
+history on GitHub. An HTML page in a project keeps its frame, with the
+sidebar in the column the menu button shows. At 980 pixels and narrower, the
+sidebar sits between the title row and the plan.
 A review page's header has a **…** menu with
 the pull request's conversation, files, and compare views on GitHub. Each file
 card's header has one too: **View diff on GitHub**, **View file on GitHub**,
@@ -890,12 +907,13 @@ the other Markdown files the diff adds in the project's folder. It never
 serves a proposed HTML page, image, or data file, because an HTML page runs
 on the site's origin, and a proposal has not been merged. The project sits
 in its status group with a **Proposed** badge that links the pull request's
-review. Each of its pages opens with a banner that names the pull request,
-its title and status, and the head the site shows, and its GitHub links
-point at that head. Typing `proposed` in the filter lists the proposed
-projects, and search marks their pages with the badge. A stack segment whose
-pull requests carry out a proposed project is headed by that project, linked
-to its proposed page, which lists the segment's reviews. A plan that does not
+review. Each of its pages opens its content column with a banner that names
+the pull request, its title and status, and the head the site shows, and its
+GitHub links, the history link included, point at that head. Typing
+`proposed` in the filter lists the proposed projects, and search marks their
+pages with the badge. A stack segment whose pull requests carry out a
+proposed project is headed by that project, linked to its proposed page,
+whose sidebar lists the stack. A plan that does not
 load is left out with a `::warning title=Proposed project skipped::` line
 that names the pull request. When two open pull requests propose one name,
 the lower number's plan is shown, and the banner names the other. The build

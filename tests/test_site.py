@@ -343,6 +343,14 @@ class SiteContentTests(SiteRepoCase):
         reviews = json.loads((self.out / "site.json").read_text())["reviews"]
         return {r["number"]: [row["number"] for row in self.data(r["number"])["stack"]] for r in reviews}
 
+    @staticmethod
+    def written(manifest: dict) -> dict[str, list[str]]:
+        """Each project's stacks, newest first, each written as its segments: the project its header names, or else
+        its title, then its members, with a ` · ` between segments, as `alpha/beta 9 · alpha 10`."""
+        def segment(s: dict) -> str:
+            return " ".join([s["header"].get("project", s["header"]["title"]), *map(str, s["members"])])
+        return {p["name"]: [" · ".join(map(segment, stack)) for stack in p["stacks"]] for p in manifest["projects"]}
+
     def groups(self) -> list[tuple[int, int | None]]:
         """Each review on the Reviews index, in its order, with the number its stack is grouped under."""
         return [(r["number"], r["stack"]) for r in json.loads((self.out / "site.json").read_text())["reviews"]]
@@ -584,9 +592,9 @@ class SiteContentTests(SiteRepoCase):
                           (9, 9), (10, 9), (11, 9), (12, 9)], [(r["number"], r["stack"]) for r in reviews],
                          "a stack sits where its newest pull request would, and lists its pull requests from the "
                          "bottom up; two on a base with no review here stay together, and one alone is no stack")
-        projects = {p["name"]: p["reviews"] for p in json.loads((self.out / "site.json").read_text())["projects"]}
-        self.assertEqual([31, 30, 18, 16, 15, 14, 13, 12, 11, 10, 9], projects["alpha"],
-                         "a project still lists its reviews newest first")
+        stacks = self.written(json.loads((self.out / "site.json").read_text()))
+        self.assertEqual(["alpha 25 30 31", "alpha 15 18", "alpha 16", "alpha 14", "alpha 7 13", "alpha 9 10 11 12"],
+                         stacks["alpha"], "a project lists its stacks in the index's order, newest first, each whole")
 
     def test_a_stack_numbered_out_of_order_is_listed_by_what_sits_on_what(self) -> None:
         # 35 was opened before 40 but rebased onto it, and 50 sits on 35.
@@ -641,7 +649,7 @@ class SiteContentTests(SiteRepoCase):
         manifest = self.build()
 
         beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
-        self.assertEqual({"alpha": [], "alpha/beta": [9]}, {p["name"]: p["reviews"] for p in manifest["projects"]},
+        self.assertEqual({"alpha": [], "alpha/beta": ["alpha/beta 9"]}, self.written(manifest),
                          "the recorded project, not the one whose plan the diff changes")
         data = self.data(9)
         self.assertEqual((beta, [{"header": beta, "members": [9]}]), (data["header"], data["segments"]))
@@ -683,8 +691,8 @@ class SiteContentTests(SiteRepoCase):
 
                 self.assertEqual(header, self.data(9)["header"])
                 self.assertEqual([{"header": header, "members": [9]}], self.data(9)["segments"], "one segment")
-                self.assertEqual({"alpha": [9] if header is alpha else [], "alpha/beta": [9] if header is beta else []},
-                                 {p["name"]: p["reviews"] for p in manifest["projects"]})
+                self.assertEqual({"alpha": ["alpha 9"] if header is alpha else [],
+                                  "alpha/beta": ["alpha/beta 9"] if header is beta else []}, self.written(manifest))
 
     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
         manifest = self.build()
@@ -868,7 +876,7 @@ class SiteContentTests(SiteRepoCase):
         manifest = self.layered("alpha", "")
 
         self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
-        self.assertEqual([10, 9], next(p["reviews"] for p in manifest["projects"] if p["name"] == "alpha"))
+        self.assertEqual(["alpha 9 10"], self.written(manifest)["alpha"])
 
     def test_a_merged_stack_keeps_the_header_of_its_bottom_layer(self) -> None:
         manifest = self.layered("alpha", "", merged=True)
@@ -891,10 +899,10 @@ class SiteContentTests(SiteRepoCase):
                 manifest = self.layered(*projects)
 
                 self.assert_segments(manifest, expected)
-                reviews = {p["name"]: p["reviews"] for p in manifest["projects"]}
-                self.assertEqual({"alpha": sorted((n for h, m in expected if h is alpha for n in m), reverse=True),
-                                  "alpha/beta": sorted((n for h, m in expected if h is beta for n in m), reverse=True)},
-                                 reviews, "a project lists every member of each segment it heads, newest first")
+                whole = " · ".join(" ".join([h["project"], *map(str, m)]) for h, m in expected)
+                self.assertEqual({"alpha": [whole] if any(h is alpha for h, _ in expected) else [],
+                                  "alpha/beta": [whole] if any(h is beta for h, _ in expected) else []},
+                                 self.written(manifest), "each project the stack carries out lists it once, whole")
 
     def test_a_stack_found_from_base_branches_splits_as_a_github_stack_does(self) -> None:
         self.assert_segments(self.layered("alpha", "alpha/beta", github=False), [(self.ALPHA, [9]), (self.BETA, [10])])
@@ -967,6 +975,71 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual([(10, {"title": "Summary 10"}), (9, self.ALPHA)], [(r["number"], r["header"]) for r in reviews])
         self.assertEqual([], [key for key in ("name", "projects") for r in reviews if key in r])
+
+    # A project's stacks
+
+    def test_a_project_lists_its_stack_whole(self) -> None:
+        self.assertEqual(["alpha 9 10 11"], self.written(self.layered("alpha", "alpha", "alpha"))["alpha"])
+
+    def test_a_project_lists_its_newer_stack_first(self) -> None:
+        self.publish(8, "8" * 40, "alpha", headRef="feature-8")
+
+        manifest = self.layered("alpha", "alpha", "alpha")
+
+        self.assertEqual(["alpha 9 10 11", "alpha 8"], self.written(manifest)["alpha"], "as the Reviews index orders them")
+
+    def test_a_project_lists_a_layer_without_a_summary_in_its_stack(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+
+        manifest = self.build([github_stack(30, 9, 12)])
+
+        self.assertEqual(["alpha 9 12"], self.written(manifest)["alpha"])
+
+    def test_a_project_lists_its_merged_and_closed_layers(self) -> None:
+        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "b" * 40, "alpha", headRef="feature-10", baseRef="feature-9")
+        states = {9: "merged", 10: "closed"}
+
+        with mock.patch.object(summary, "pr_status",
+                               side_effect=lambda repo, n: {"state": states[n], "base": None, "reviews": []}):
+            manifest = self.build([github_stack(30, 9, 10)])
+
+        self.assertEqual(["merged", "closed"], [r["state"] for r in manifest["reviews"]])
+        self.assertEqual(["alpha 9 10"], self.written(manifest)["alpha"])
+
+    def test_a_project_no_layer_records_lists_no_stack(self) -> None:
+        self.assertEqual([], self.written(self.layered("alpha/beta"))["alpha"])
+
+    def test_a_stack_of_two_projects_is_listed_whole_under_each(self) -> None:
+        self.assertEqual({"alpha": ["alpha/beta 9 · alpha 10"], "alpha/beta": ["alpha/beta 9 · alpha 10"]},
+                         self.written(self.layered("alpha/beta", "alpha")))
+
+    def test_a_stack_that_returns_to_a_project_is_listed_once_under_it(self) -> None:
+        self.assertEqual(["alpha 9 · alpha/beta 10 · alpha 11"],
+                         self.written(self.layered("alpha", "alpha/beta", "alpha"))["alpha"])
+
+    def test_a_stack_headed_by_its_title_alone_is_listed_under_no_project(self) -> None:
+        self.assertEqual({"alpha": [], "alpha/beta": []}, self.written(self.layered("", "")))
+
+    def test_each_stack_a_project_lists_is_the_segments_its_pages_carry(self) -> None:
+        self.publish(8, "8" * 40, "alpha/beta", headRef="feature-8")
+        self.publish(9, "9" * 40, "alpha", headRef="feature-9")
+        self.publish(10, "a" * 40, "alpha/beta", headRef="feature-10")
+
+        manifest = self.build([github_stack(30, 9, 10, 12)])
+
+        self.assertEqual({"alpha": ["alpha 9 · alpha/beta 10 12"], "alpha/beta": ["alpha 9 · alpha/beta 10 12", "alpha/beta 8"]},
+                         self.written(manifest))
+        summarized = {r["number"] for r in manifest["reviews"]}
+        for project in manifest["projects"]:
+            for stack in project["stacks"]:
+                for number in (n for s in stack for n in s["members"] if n in summarized):
+                    self.assertEqual(stack, self.data(number)["segments"], (project["name"], number))
+
+    def test_no_project_lists_its_reviews(self) -> None:
+        manifest = self.layered("alpha", "alpha/beta")
+
+        self.assertEqual([], [p["name"] for p in manifest["projects"] if "reviews" in p])
 
 
 def new_file_diff(path: str, content: str | bytes) -> str:
@@ -1047,7 +1120,9 @@ class ProposedProjectTests(SiteRepoCase):
 
         gamma = self.project(manifest, "gamma")
         self.assertEqual({"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
-                          "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
+                          "path": "docs/projects/gamma/readme.md", "files": [],
+                          "stacks": [[{"header": {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"},
+                                       "members": [9]}]],
                           "proposed": {"number": 9, "head": head, "also": []}}, gamma)
         self.assertNotIn("proposed", self.project(manifest, "alpha"))
         self.assertEqual(GAMMA.encode(), (self.out / "content/docs/projects/gamma/readme.md").read_bytes())
@@ -1075,8 +1150,8 @@ class ProposedProjectTests(SiteRepoCase):
         gamma = {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"}
         self.assertEqual([(9, gamma), (10, gamma)], [(r["number"], r["header"]) for r in manifest["reviews"]],
                          "the bottom layer's diff proposes gamma, and the upper layer records it")
-        self.assertEqual([10, 9], self.project(manifest, "gamma")["reviews"])
-        self.assertEqual([], self.project(manifest, "alpha")["reviews"])
+        self.assertEqual([[{"header": gamma, "members": [9, 10]}]], self.project(manifest, "gamma")["stacks"])
+        self.assertEqual([], self.project(manifest, "alpha")["stacks"])
 
     def test_a_merged_or_closed_pull_request_proposes_nothing(self) -> None:
         self.publish(9, {"gamma/readme.md": GAMMA})
@@ -1511,19 +1586,70 @@ class ProjectsViewTests(unittest.TestCase):
         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
 
 
+PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "badge",
+                          "proposedBadge", "nav", "header", "isHtml", "frame", "tree", "showHtml", "showPage",
+                          "showDocument", "showProjectFile", "projectNav", "proposalBanner", "reviewFor")
+
+
+def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> dict:
+    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, and return it.
+
+    The page's Markdown renders as `body`, its elements as [tag, text], by
+    default a heading and a paragraph. `page` is the markup `frame` draws,
+    with the body's place empty, and `body` what went into that place: the
+    rendered elements, after any element showProjectFile puts before them,
+    each as [tag, markup]. `ref` is the ref the Markdown rendered its links
+    at, and `title` the document's title.
+    """
+    rendered = [["H1", "Build alpha"], ["P", "Text."]] if body is None else body
+    stub = (
+        "const base = '/';\n"
+        f"const site = {json.dumps(site)};\n"
+        "const pageFiles = new Set(), siteFiles = new Set();\n"
+        "let fitFrame = null, main = null, ref = null;\n"
+        "const location = {hash: '', pathname: '/', search: ''};\n"
+        "const window = {innerHeight: 800};\n"
+        "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>', FULL_ICON = '<svg full></svg>',"
+        " EXIT_FULL_ICON = '<svg exit></svg>';\n"
+        "const root = {innerHTML: ''};\n"
+        "function element(tag, html) { return {tagName: tag, innerHTML: html, className: '', children: [], parent: null,"
+        " style: {}, get firstElementChild() { return this.children[0] ?? null; },"
+        " get firstChild() { return this.children[0] ?? null; },"
+        " appendChild: function (child) { child.parent = this; this.children.push(child); return child; },"
+        " insertBefore: function (child, next) { child.parent = this;"
+        " this.children.splice(next === null ? this.children.length : this.children.indexOf(next), 0, child); return child; },"
+        " remove: function () { this.parent.children.splice(this.parent.children.indexOf(this), 1); },"
+        " getBoundingClientRect: function () { return {top: 0}; }, addEventListener: function () {}}; }\n"
+        "const document = {title: '', body: {classList: {remove: function () {}}},"
+        " createElement: function (tag) { return element(tag.toUpperCase(), ''); },"
+        " getElementById: function () { main = element('DIV', ''); return main; }};\n"
+        "function loadMarkdown() { return {then: function (loaded) { loaded(''); }}; }\n"
+        "function renderMarkdown(text, path, at) { ref = at; const box = element('DIV', ''); box.className = 'markdown';"
+        f" {json.dumps(rendered)}.forEach(function (e) {{ box.appendChild(element(e[0], e[1])); }}); return box; }}\n"
+    )
+    program = stub + shared_js() + "\n" + page_constants() + "\n" + \
+        "\n".join(js_function(n) for n in PROJECT_PAGE_FUNCTIONS) + (
+            f"\nshowProjectFile({json.dumps(path)});"
+            "\nconst drawn = main.children.flatMap(function (c) { return c.className === 'markdown'"
+            " ? c.children.map(function (e) { return [e.tagName, e.innerHTML]; }) : [[c.tagName, c.innerHTML]]; });"
+            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title}));")
+    return json.loads(node(program))
+
+
 @unittest.skipUnless(shutil.which("node"), "the proposed project views need node")
 class ProposedViewTests(unittest.TestCase):
     HEAD = "15cb40d18e911face2cd2393af143b526d6392e9"
 
     def gamma(self, also: list[int] | None = None) -> dict:
+        header = {"project": "gamma", "title": "Ship gamma", "url": "/projects/gamma/"}
         return {"name": "gamma", "title": "Ship gamma", "status": "ready", "priority": "next", "owner": None,
-                "path": "docs/projects/gamma/readme.md", "files": [], "reviews": [9],
+                "path": "docs/projects/gamma/readme.md", "files": [], "stacks": [[{"header": header, "members": [9]}]],
                 "proposed": {"number": 9, "head": self.HEAD, "also": also or []}}
 
     @staticmethod
     def alpha() -> dict:
         return {"name": "alpha", "title": "Build alpha", "status": "ready", "priority": "now", "owner": None,
-                "path": "docs/projects/alpha/readme.md", "files": [], "reviews": []}
+                "path": "docs/projects/alpha/readme.md", "files": [], "stacks": []}
 
     @staticmethod
     def site(projects: list[dict], title: str = "Plan gamma") -> dict:
@@ -1540,9 +1666,7 @@ class ProposedViewTests(unittest.TestCase):
             "const base = '/';\n"
             f"const site = {json.dumps(site)};\n"
             "const pageFiles = new Set(), siteFiles = new Set();\n"
-            "let shown = null, drawn = '', filtered = null, rows = [];\n"
-            "function showPage(active, path, title, before, side, ref) {"
-            " shown = {banner: before.innerHTML, side: side, ref: ref}; }\n"
+            "let drawn = '', filtered = null, rows = [];\n"
             "const window = {DOMPurify: {sanitize: function (h) { return h; }}, marked: {parse: function (t) { return t; }}};\n"
             "const links = [];\n"
             "const document = {createElement: function () { return {querySelectorAll: function (selector) {"
@@ -1577,25 +1701,29 @@ class ProposedViewTests(unittest.TestCase):
 
         self.assertEqual(["gamma ship gamma  proposed"], kept)
 
-    def project_page(self, site: dict, path: str = "docs/projects/gamma/readme.md") -> dict:
-        functions = ("folderOf", "projectNamed", "ownerOf", "repoUrl", "contentUrl", "routeFor", "badge",
-                     "proposedBadge", "tree", "reviewFor", "showProjectFile", "proposalBanner")
-        return self.run_js(site, functions, f"showProjectFile({json.dumps(path)}); process.stdout.write(JSON.stringify(shown));")
+    def test_a_proposed_projects_page_opens_its_content_with_the_banner_and_links_github_at_its_head(self) -> None:
+        shown = project_page(self.site([self.alpha(), self.gamma(also=[12])]), "docs/projects/gamma/readme.md")
 
-    def test_a_proposed_projects_page_has_the_banner_and_links_github_at_its_head(self) -> None:
-        shown = self.project_page(self.site([self.alpha(), self.gamma(also=[12])]))
-
-        banner = shown["banner"]
+        self.assertEqual(["DIV", "P"], [tag for tag, _ in shown["body"]],
+                         "the banner opens the content column, above the plan, whose heading the title row shows")
+        banner = shown["body"][0][1]
         self.assertIn('<div class="proposal"><p><b>Proposed in</b> <a href="/reviews/9/">#9</a> Plan gamma · '
                       '<span class="eyebrow"><a class="rstatus changes-requested" '
                       'href="https://github.com/owner/example/pull/9#pullrequestreview-1" target="_blank" '
                       'rel="noopener">Changes requested</a></span></p>', banner)
         self.assertIn('is not on <span class="mono">main</span> yet. It shows head <span class="mono">15cb40d</span>', banner)
         self.assertIn('A plan of this name is also proposed in <a href="/reviews/12/">#12</a>.', banner)
-        self.assertLess(banner.index('class="proposal"'), banner.index("badge status-ready"),
-                        "the banner sits above the status badges")
-        self.assertIn(f'<a class="note" href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
-                      'readme.md">View on GitHub</a>', banner)
+        top = re.search(r'<header class="top">.*?</header>', shown["page"])
+        assert top is not None
+        self.assertIn('<span class="badge status-ready">ready</span>', top.group(0), "the badges sit in the title row")
+        self.assertNotIn("proposal", shown["page"], "the banner opens the content column, below the title row")
+        self.assertIn(f' · <a href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
+                      'readme.md">View on GitHub</a></div>', top.group(0))
+        self.assertIn(f'<a class="history" href="https://github.com/owner/example/commits/{self.HEAD}/docs/projects/gamma/'
+                      'readme.md"', shown["page"], "the site's branch lacks the file, so its history is at the head")
+        self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock">'
+                      '<div class="stackhead current" aria-current="page"><span>Ship gamma</span></div><div class="stackgroup">'
+                      '<ul class="stack"', shown["page"])
         self.assertEqual(self.HEAD, shown["ref"], "the page renders its links at the proposal's head")
 
     def test_a_relative_link_to_a_file_the_site_lacks_points_at_the_given_ref(self) -> None:
@@ -1611,18 +1739,20 @@ class ProposedViewTests(unittest.TestCase):
     def test_a_checkout_projects_page_has_no_banner_and_its_sidebar_badges_a_proposed_nested_project(self) -> None:
         delta = dict(self.gamma(), name="alpha/delta", title="Add delta", path="docs/projects/alpha/delta/readme.md")
 
-        shown = self.project_page(self.site([self.alpha(), delta]), "docs/projects/alpha/readme.md")
+        shown = project_page(self.site([self.alpha(), delta]), "docs/projects/alpha/readme.md")
 
-        self.assertNotIn("proposal", shown["banner"])
-        self.assertIn("/blob/main/docs/projects/alpha/readme.md", shown["banner"])
+        self.assertNotIn("proposal", json.dumps(shown))
+        self.assertIn("/blob/main/docs/projects/alpha/readme.md", shown["page"])
         self.assertEqual("main", shown["ref"])
-        self.assertIn('>Add delta</a> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>', shown["side"])
+        pages = re.search(r'<div class="navpages">(.*?)</div>', shown["page"])
+        assert pages is not None
+        self.assertIn('>Add delta</a> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>', pages.group(1))
 
     def test_a_pull_request_title_shows_as_text(self) -> None:
-        shown = self.project_page(self.site([self.gamma()], title="<script>alert(1)</script>"))
+        shown = project_page(self.site([self.gamma()], title="<script>alert(1)</script>"), "docs/projects/gamma/readme.md")
 
-        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", shown["banner"])
-        self.assertNotIn("<script>", shown["banner"])
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", shown["body"][0][1])
+        self.assertNotIn("<script>", json.dumps(shown))
 
     def test_a_search_result_for_a_proposed_page_carries_the_badge(self) -> None:
         index = [{"route": "projects/gamma/", "title": "Ship gamma", "kind": "project", "text": "Gamma text",
@@ -1634,6 +1764,256 @@ class ProposedViewTests(unittest.TestCase):
         self.assertIn('<span class="note">project</span> <a class="badge proposed" href="/reviews/9/">Proposed #9</a>'
                       '<div class="snippet">', results[0])
         self.assertNotIn("badge", results[1])
+
+
+MINIMAL_SUMMARY = {"pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": "c" * 40},
+                   "files": [], "groups": [], "segments": [{"header": {"title": "Summary 9"}, "members": [9]}],
+                   "header": {"title": "Summary 9"},
+                   "stats": {"files": 0, "adds": 0, "dels": 0, "hand": 0, "test": 0, "generated": 0, "docs": 0}}
+
+
+@unittest.skipUnless(shutil.which("node"), "the project page tests need node")
+class ProjectPageTests(unittest.TestCase):
+    """A project's page in a summary page's layout, with a summary's sidebar of its stacks and pages."""
+
+    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+    BETA = {"project": "alpha/beta", "title": "Build beta", "url": "/projects/alpha/beta/"}
+    README = "docs/projects/alpha/readme.md"
+
+    @staticmethod
+    def project(name: str, title: str, files: tuple[tuple[str, str], ...] = (), stacks: list | None = None,
+                owner: str | None = None) -> dict:
+        return {"name": name, "title": title, "status": "in-progress", "priority": "now", "owner": owner,
+                "path": f"docs/projects/{name}/readme.md", "stacks": stacks or [],
+                "files": [{"path": f"docs/projects/{name}/{file}", "title": file_title,
+                           "route": f"projects/{name}/{file.rsplit('.', 1)[0]}/"} for file, file_title in files]}
+
+    def site(self, alpha: list | None = None, beta: list | None = None, title: str = "Build alpha",
+             owner: str | None = None, more: tuple[dict, ...] = ()) -> dict:
+        """site.json with `alpha` and its nested `alpha/beta`, each with its stacks and files, and the reviews of
+        #8 to #11. Alpha's files are notes.md, research/survey.md, and an HTML page, demo.html."""
+        projects = [self.project("alpha", title, (("notes.md", "Alpha notes"), ("research/survey.md", "Survey"),
+                                                  ("demo.html", "Alpha demo")), alpha, owner),
+                    self.project("alpha/beta", "Build beta", (("design.md", "Beta design"),), beta), *more]
+        reviews = [{"number": n, "title": f"Change {n}", "header": self.ALPHA, "heads": 1, "stack": None,
+                    "updated": "2026-10-10T12:00:00Z"} for n in (11, 10, 9, 8)]
+        return {"repo": "owner/example", "branch": "main", "content": "content", "readme": None, "docs": [],
+                "projectsDir": "docs/projects", "projectsReadme": None, "projects": projects, "files": [],
+                "reviews": reviews}
+
+    @staticmethod
+    def stack(*segments: tuple[dict, list[int]]) -> list[dict]:
+        return [{"header": header, "members": members} for header, members in segments]
+
+    ALPHA_HERE = '<div class="stackhead current" aria-current="page"><span>Build alpha</span></div>'
+    ALPHA_LINK = '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+    BETA_LINK = '<div class="stackhead"><a href="/projects/alpha/beta/">Build beta</a></div>'
+
+    @staticmethod
+    def sidebar(page: str) -> str:
+        found = re.search(r'<aside class="side"[^>]*>(.*?)</aside>', page)
+        assert found is not None, page
+        return found.group(1)
+
+    @staticmethod
+    def outline(side: str) -> list[str]:
+        """The sidebar's headers and rows in order: each header's markup, `|` where a stack starts, `-` where a
+        list opens with a rule, and `#n` for each row."""
+        found = re.findall(r'(<div class="stackhead[^>]*>.*?</div>)|(<div class="stackgroup">)|(<ul class="stack split")|'
+                           r'<span class="snum">(#\d+)</span>', side)
+        return [head or ("|" if group else "-" if split else row) for head, group, split, row in found]
+
+    def drawn(self, site: dict, path: str = README, body: list[list[str]] | None = None) -> tuple[dict, str]:
+        """The page drawn for `path`, and its sidebar, which holds exactly one current item."""
+        shown = project_page(site, path, body)
+        side = self.sidebar(shown["page"])
+        self.assertEqual(1, side.count("aria-current"), side)
+        return shown, side
+
+    # The layout
+
+    def test_a_readme_takes_a_summary_pages_layout_under_its_title_row(self) -> None:
+        shown, _ = self.drawn(self.site([self.stack((self.ALPHA, [9, 10, 11]))]))
+
+        page = shown["page"]
+        self.assertTrue(page.startswith('<header class="sitebar scrolls"><span class="sitebtn menuspace"'), page)
+        self.assertIn('<main class="sitemain withnav"><div class="wrap"><header class="top"><div><div class="eyebrow">'
+                      '<a href="/">Projects</a> / <span class="mono">alpha</span> · '
+                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span> · '
+                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md">View on GitHub</a>'
+                      '</div><h1>Build alpha</h1></div></header>'
+                      '<div class="layout"><aside class="side"><nav class="nav" aria-label="Project">', page)
+        self.assertTrue(page.endswith('</nav></aside><div class="sidebody" id="sidebody"></div></div></div></main>'), page)
+        self.assertNotIn("sitefoot", page, "the sidebar's footer row carries the credit")
+        self.assertNotIn("phead", page)
+        self.assertEqual("Build alpha · owner/example", shown["title"])
+
+    def test_a_readme_names_its_owner_in_the_title_row(self) -> None:
+        shown, _ = self.drawn(self.site(owner="octocat"))
+
+        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat · <a href=', shown["page"])
+
+    def test_a_summary_page_and_a_project_page_draw_one_title_row(self) -> None:
+        summary_top = re.search(r'<header class="top">.*?</header>', rendered_summary(MINIMAL_SUMMARY))
+        project_top = re.search(r'<header class="top">.*?</header>', self.drawn(self.site())[0]["page"])
+        assert summary_top is not None and project_top is not None
+
+        def skeleton(top: str) -> str:
+            top = re.sub(r'<div class="sub">.*</div></header>$', '</header>', top)
+            return re.sub(r'<div class="eyebrow">.*?</div><h1>.*?</h1>', '<div class="eyebrow"></div><h1></h1>', top)
+
+        self.assertIn('<div class="sub">', summary_top.group(0))
+        self.assertEqual('<header class="top"><div><div class="eyebrow"></div><h1></h1></div></header>',
+                         skeleton(summary_top.group(0)))
+        self.assertEqual(skeleton(summary_top.group(0)), skeleton(project_top.group(0)))
+
+    def test_the_plan_leaves_out_its_first_heading_which_the_title_row_shows(self) -> None:
+        for case, body, expected in (
+                ("an h1 first", [["H1", "Build alpha"], ["P", "Text."], ["H2", "1. Outcome"]],
+                 [["P", "Text."], ["H2", "1. Outcome"]]),
+                ("a paragraph, then an h1", [["P", "Intro."], ["H1", "Build alpha"]],
+                 [["P", "Intro."], ["H1", "Build alpha"]]),
+                ("an h2 first", [["H2", "1. Outcome"], ["P", "Text."]], [["H2", "1. Outcome"], ["P", "Text."]])):
+            with self.subTest(case):
+                self.assertEqual(expected, self.drawn(self.site(), body=body)[0]["body"])
+
+    def test_a_supplemental_pages_title_row_ends_its_breadcrumbs_in_the_file(self) -> None:
+        shown, _ = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/notes.md",
+                              [["H1", "Alpha notes"], ["P", "Text."]])
+
+        self.assertIn('<div class="eyebrow"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+                      '<span class="mono">notes.md</span> · <a href="https://github.com/owner/example/blob/main/docs/projects/alpha/'
+                      'notes.md">View on GitHub</a></div><h1>Alpha notes</h1>', shown["page"])
+        self.assertEqual([["P", "Text."]], shown["body"])
+
+    def test_an_html_page_keeps_its_frame_with_the_sidebar_in_its_column(self) -> None:
+        shown, _ = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/demo.html")
+
+        page = shown["page"]
+        self.assertIn('class="sitebtn sidetoggle" aria-controls="siteside" aria-expanded="false"', page)
+        self.assertIn('<main class="sitemain withside wide collapsed"><aside class="side" id="siteside">'
+                      '<nav class="nav" aria-label="Project">', page)
+        self.assertNotIn('<header class="top">', page)
+        self.assertEqual(["DIV", "IFRAME"], [tag for tag, _ in shown["body"]])
+        self.assertEqual('<div class="crumbs"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+                         '<span class="mono">demo.html</span></div><div class="pmeta"><a class="note" href="https://github.com/owner/example/blob/'
+                         'main/docs/projects/alpha/demo.html">View on GitHub</a></div>', shown["body"][0][1])
+
+    # The sidebar
+
+    def test_a_readme_opens_its_sidebar_with_its_own_header_current_and_its_stack_as_rows(self) -> None:
+        shown, side = self.drawn(self.site([self.stack((self.ALPHA, [9, 10, 11]))]))
+
+        self.assertTrue(side.startswith(f'<nav class="nav" aria-label="Project"><div class="prblock">{self.ALPHA_HERE}'
+                                        '<div class="stackgroup"><ul class="stack" aria-label="Pull requests in this stack">'),
+                        side)
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", "#10", "#11"], self.outline(side),
+                         "a stack that is all this project's shows only rows")
+        self.assertEqual(["/reviews/9/", "/reviews/10/", "/reviews/11/"], re.findall(r'<a class="srow" href="([^"]*)">', side))
+        self.assertNotIn("srow current", side, "no pull request is this page")
+        self.assertNotIn("plist", shown["page"])
+
+    def test_a_project_lists_each_of_its_stacks_below_its_one_header(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9, 10, 11])), self.stack((self.ALPHA, [8]))]))
+
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", "#10", "#11", "|", "#8"], self.outline(side),
+                         "the header shows once, above the stacks, newest first")
+
+    def test_a_stack_of_two_projects_heads_only_the_other_projects_segment_with_a_link(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.BETA, [9]), (self.ALPHA, [10]))]))
+
+        self.assertEqual([self.ALPHA_HERE, "|", self.BETA_LINK, "#9", "-", "#10"], self.outline(side))
+        self.assertIn(f'{self.ALPHA_HERE}<div class="stackgroup">{self.BETA_LINK}'
+                      '<ul class="stack" aria-label="Pull requests for Build beta">', side)
+
+    def test_a_projects_segment_after_another_projects_opens_with_a_rule_not_its_header(self) -> None:
+        # As #222, recording `project-page-sections`, sits on #219, recording `project-page-nav`.
+        _, side = self.drawn(self.site([self.stack((self.BETA, [9]), (self.ALPHA, [10]))]))
+
+        self.assertIn(f'{self.BETA_LINK}<ul class="stack" aria-label="Pull requests for Build beta"><li><a class="srow" '
+                      'href="/reviews/9/"><span class="snum">#9</span><span class="stitle">Change 9</span></a></li></ul>'
+                      '<ul class="stack split" aria-label="Pull requests for Build alpha"><li><a class="srow" '
+                      'href="/reviews/10/">', side, "a rule, not alpha's name, ends beta's segment above #10")
+        self.assertEqual(1, side.count(">Build alpha<"), "the project's name shows once, at the top")
+        css = (SITE_JS.parent / "summary.css").read_text()
+        self.assertIn(".prblock .stack.split { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }",
+                      css)
+
+    def test_a_stack_that_returns_to_the_project_never_repeats_its_header(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]), (self.BETA, [10]), (self.ALPHA, [11])),
+                                        self.stack((self.ALPHA, [8]))]))
+
+        self.assertEqual([self.ALPHA_HERE, "|", "#9", self.BETA_LINK, "#10", "-", "#11", "|", "#8"], self.outline(side),
+                         "a rule ends beta's segment, and none opens a stack, which its group's divider does")
+
+    def test_a_nested_project_heads_its_sidebar_and_lists_only_its_own_pages(self) -> None:
+        stack = self.stack((self.BETA, [9]), (self.ALPHA, [10]))
+
+        _, side = self.drawn(self.site([stack], [stack]), "docs/projects/alpha/beta/readme.md")
+
+        self.assertEqual(['<div class="stackhead current" aria-current="page"><span>Build beta</span></div>',
+                          "|", "#9", self.ALPHA_LINK, "#10"], self.outline(side))
+        pages = re.search(r'<div class="navpages">(.*?)</div>', side)
+        assert pages is not None
+        self.assertEqual(['<a href="/projects/alpha/beta/design/">Beta design</a>'],
+                         re.findall(r"<a [^>]*>.*?</a>", pages.group(1)))
+
+    def test_a_layer_without_a_review_links_github_with_no_title(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9, 12]))]))
+
+        self.assertIn('<a class="srow" href="https://github.com/owner/example/pull/12"><span class="snum">#12</span>'
+                      '<span class="stitle"></span></a>', side)
+
+    def test_a_project_without_stacks_shows_its_header_and_says_so(self) -> None:
+        _, side = self.drawn(self.site())
+
+        self.assertIn('<div class="prblock"><div class="stackhead current" aria-current="page"><span>Build alpha</span>'
+                      '</div><p class="snone">No reviews of this project.</p></div>', side)
+        self.assertNotIn('<ul class="stack"', side)
+
+    def test_a_supplemental_page_links_the_project_and_is_current_among_the_pages(self) -> None:
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/notes.md")
+
+        self.assertEqual([self.ALPHA_LINK, "|", "#9"], self.outline(side))
+        self.assertIn('<div class="navpages"><ul class="sidetree">', side)
+        self.assertIn('<a href="/projects/alpha/notes/" class="active" aria-current="page">Alpha notes</a>', side)
+
+    def test_a_projects_pages_are_its_files_and_nested_projects_without_its_readme(self) -> None:
+        _, side = self.drawn(self.site())
+
+        pages = re.search(r'<div class="navpages">(.*?)</div>', side)
+        assert pages is not None
+        self.assertEqual(["Alpha demo", "Alpha notes", "Build beta", "Beta design", "Survey"],
+                         re.findall(r"<a [^>]*>(.*?)</a>", pages.group(1)))
+        self.assertNotIn('href="/projects/alpha/"', pages.group(1), "the project's headers link its readme")
+
+    def test_a_project_with_only_its_readme_lists_no_pages(self) -> None:
+        _, side = self.drawn(self.site(more=(self.project("gamma", "Ship gamma"),)), "docs/projects/gamma/readme.md")
+
+        self.assertNotIn("navpages", side)
+
+    def test_the_sidebar_ends_with_the_credit_and_the_pages_history(self) -> None:
+        for path in (self.README, "docs/projects/alpha/notes.md"):
+            with self.subTest(path):
+                _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), path)
+
+                self.assertIn('<div class="navfoot"><div class="credit">Generated by <a href="https://projector.bot">'
+                              'Projector</a></div><a class="history" href="https://github.com/owner/example/commits/main/'
+                              f'{path}" aria-label="History on GitHub" title="History on GitHub"><svg', side)
+                self.assertTrue(side.endswith("</svg></a></div></nav>"), side)
+
+    def test_a_project_title_is_escaped(self) -> None:
+        title = "<script>alert(1)</script>"
+        for stacks in ([self.stack((dict(self.BETA, title=title), [9]), (dict(self.ALPHA, title=title), [10]))], []):
+            with self.subTest(stacks=len(stacks)):
+                shown, side = self.drawn(self.site(stacks, title=title))
+
+                self.assertIn('<div class="stackhead current" aria-current="page">'
+                              "<span>&lt;script&gt;alert(1)&lt;/script&gt;</span></div>", side)
+                if stacks:
+                    self.assertIn('<a href="/projects/alpha/beta/">&lt;script&gt;alert(1)&lt;/script&gt;</a>', side)
+                self.assertIn("<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>", shown["page"])
+                self.assertNotIn("<script>", shown["page"])
 
 
 @unittest.skipUnless(shutil.which("node"), "the header test needs node")
@@ -2478,10 +2858,11 @@ class FileHeaderTests(SiteRepoCase):
         data["segments"][0]["header"] = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
         html = rendered_summary(data)
 
-        self.assertIn('<div class="prblock"><div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
+        self.assertIn('<div class="prblock"><div class="stackgroup">'
+                      '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
                       '<ul class="stack" aria-label="Pull requests in this stack"><li class="srow current" '
-                      'aria-current="page"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul></div>',
-                      html)
+                      'aria-current="page"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>'
+                      '</div></div>', html)
         self.assertNotIn("stack projects", html)
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
@@ -2489,8 +2870,8 @@ class FileHeaderTests(SiteRepoCase):
         data = self.build()
         self.assertEqual({"title": "Summary 9"}, data["header"], "its diff changes two projects' files")
 
-        self.assertIn('<div class="prblock"><div class="stackhead"><span>Summary 9</span></div><ul class="stack"',
-                      rendered_summary(data))
+        self.assertIn('<div class="prblock"><div class="stackgroup"><div class="stackhead"><span>Summary 9</span></div>'
+                      '<ul class="stack"', rendered_summary(data))
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
     def test_the_sidebar_escapes_a_header_s_title(self) -> None:
@@ -2511,7 +2892,7 @@ class FileHeaderTests(SiteRepoCase):
                          {"number": 11, "title": "", "url": "https://github.com/owner/example/pull/11", "current": False}]
         html = rendered_summary(data)
 
-        self.assertIn('<div class="prblock">'
+        self.assertIn('<div class="prblock"><div class="stackgroup">'
                       '<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
                       '<ul class="stack" aria-label="Pull requests for Build alpha">'
                       '<li><a class="srow" href="/reviews/7/"><span class="snum">#7</span><span class="stitle">Change 7'
@@ -2520,7 +2901,7 @@ class FileHeaderTests(SiteRepoCase):
                       '<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>'
                       '<ul class="stack" aria-label="Pull requests for Finish beta">'
                       '<li><a class="srow" href="https://github.com/owner/example/pull/11"><span class="snum">#11</span>'
-                      '<span class="stitle"></span></a></li></ul></div>', html,
+                      '<span class="stitle"></span></a></li></ul></div></div>', html,
                       "each segment's header, then its rows in order, the current one marked in its own segment")
 
     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
@@ -2588,11 +2969,35 @@ class SummarySidebarTests(unittest.TestCase):
         # current row in a different weight could wrap onto more lines than
         # the same title in another row.
         self.assertIn("font-weight: 600;", title.group(1))
-        current = re.search(r"^\.prblock \.stack li\.current \{([^}]*)\}", css, re.M)
+        current = re.search(r"^\.prblock \.stack li\.current(?:, [^,{]+)* \{([^}]*)\}", css, re.M)
         self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
         self.assertNotIn("font-weight", current.group(1))
         current_title = re.search(r"^\.prblock \.stack li\.current \.stitle \{", css, re.M)
         self.assertIsNone(current_title, "the current row's title is styled like every other title")
+
+
+class TreeColumnStyleTests(unittest.TestCase):
+    """A project's page holds a summary's sidebar, an aside.side, inside the site's main element, so the rules of
+    the docs' tree column must not reach it."""
+
+    @staticmethod
+    def selectors() -> list[str]:
+        css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "site.css").read_text(), flags=re.S)
+        return [selector.strip() for rule in re.findall(r"([^{}]+)\{", css) for selector in rule.split(",")]
+
+    def test_the_columns_rules_name_it_as_the_main_elements_child(self) -> None:
+        side = [s for s in self.selectors() if re.search(r"\.side\b", s)]
+
+        self.assertTrue(side, "site.css has no .side rule")
+        self.assertEqual([], [s for s in side if not re.match(r"\.sitemain(\.[a-z-]+|:not\(\.[a-z-]+\))* > \.side\b", s)])
+
+    def test_the_trees_list_and_link_rules_name_the_tree(self) -> None:
+        styled = [s for s in self.selectors()
+                  if re.search(r"\.side", s) and re.search(r"(^|[\s>+~])(ul|li|a)(?![\w-])", s) and ".sidetop" not in s]
+
+        self.assertEqual([], [s for s in styled if ".sidetree" not in s])
+        for selector in (".sidetree ul", ".sidetree li", ".sidetree a"):
+            self.assertIn(selector, styled)
 
 
 def review_url(review_id: int) -> str:
