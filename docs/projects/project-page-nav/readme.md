@@ -10,8 +10,11 @@ same code: the project as its header, every stack of pull requests that
 carries the project out, the project's other pages, and the footer row, beside
 the plan.
 
-This plan builds on `stack-header` (#216), which gives each stack one header,
-and is implemented after it.
+This plan builds on [`stack-header`](../stack-header/readme.md), the plan
+#216 merged, which gives each stack one header. It is implemented after that
+plan's implementation. A list of the plan's sections in the sidebar, and how a
+nested project's sidebar reaches its siblings, are left to the draft plan
+`project-page-sections`, which builds on this one.
 
 ## 1. Problem
 
@@ -191,8 +194,8 @@ The page head in the main column keeps its breadcrumbs, badges, owner, and
 ### 2.4 The build lists each project's stacks
 
 `stack-header` already works out, in `build_summaries` in
-`src/projector/site/__init__.py`, each stack's members and its header before
-it writes a page. Each summary page's `stack` holds its stack's members, from
+`src/projector/site/__init__.py`, each stack's members, through `find_stacks`,
+and its header, through `stack_header`, before it writes a page. Each summary page's `stack` holds its stack's members, from
 the bottom layer up, members without a summary included. Each entry carries
 the stack's `header`, and `stack`, the number of the first review in its stack
 on the index, or None when it is alone there. The entries come in the Reviews
@@ -355,9 +358,9 @@ meets two conditions, which this plan does not design:
   - The Reviews index's **Open** and **Closed** boxes. They would hide the
     merged layers of a stack the sidebar keeps whole, and a sidebar has no
     room for controls. The index keeps them for its long list.
-  - A status on each row. The summary sidebar shows none, and the rows are
-    one shared component, so a status would change both sidebars. That is a
-    change of its own.
+  - A status on each row, for now. The summary sidebar shows none, and the
+    rows are one shared component, so a status would change both sidebars. A
+    later change can add one to both.
 - **A pull request follows its stack's header.** `stack-header` decides one
   header per stack, from its lowest layer that names a project, and warns when
   the layers disagree. Showing each stack on its header's page only keeps the
@@ -383,6 +386,11 @@ meets two conditions, which this plan does not design:
     the parent's readme the header and the tree's **Overview** entry would
     both be current. The breadcrumbs already link to the parent.
   - Keeping the tree as its own column beside the sidebar.
+
+  A nested project's page therefore reaches its siblings and its top-level
+  project through the breadcrumbs for now. The draft plan
+  `project-page-sections` settles that navigation together with a list of the
+  plan's sections.
 - **The tabs go, and the footer row stays.** On a summary page, **Overview**
   and **Files** jump to the summary's top and to its file list. A plan has
   neither a file list nor a top other than the page's top, so the tabs would
@@ -390,10 +398,11 @@ meets two conditions, which this plan does not design:
   history is the plan's counterpart to a summary's versions. A summary lists
   its versions in place because the build has them. The build copies a plan
   without its history, so the icon links to GitHub's.
-- **No list of the plan's sections.** A summary's sidebar lists its numbered
-  sections. A plan numbers its own sections, and its headings exist only once
-  its Markdown renders after the page loads, so the sidebar would redraw after
-  the plan arrives. A contents list for plans is a change of its own.
+- **No list of the plan's sections yet.** A summary's sidebar lists its
+  numbered sections. A plan's list needs its own design: the browser has the
+  plan's headings only once its Markdown renders after the page loads, and
+  the list shares the sidebar with the project's pages. The draft plan
+  `project-page-sections` takes it up.
 - **The current header is a highlighted span.** A link to the page you are on
   goes nowhere. The summary sidebar draws its current row as a highlighted
   item with `aria-current`, and the header follows it.
@@ -490,8 +499,9 @@ loads `summary.js`, so the moved helpers add nothing to load.
 
 ## 6. Rollout
 
-1. `stack-header` is implemented and merges. Its `header` field, its stacks
-   from GitHub, and `stackHeaderHtml` are this plan's inputs.
+1. `stack-header`'s implementation merges. That plan merged in #216, and its
+   `header` field, `find_stacks`, and `stackHeaderHtml` are this plan's
+   inputs.
 2. This plan is implemented in one pull request. `site.json`'s `stacks`, the
    page that reads it, and the compiled scripts ship together, because a
    build copies the CLI's own assets.
