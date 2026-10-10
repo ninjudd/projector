@@ -73,8 +73,7 @@
             if (checks.length === 0)
                 return '';
             return '<ul class="notes">' + checks.map(function (c) {
-                const box = noteBox(c, scope);
-                return `<li class="${kindOf(c)}">${box !== '' ? box : '<span class="nbox"></span>'}${chip(c)}<span class="ntext">${c.text}</span></li>`;
+                return `<li class="${kindOf(c)}">${chip(c)}<span class="ntext">${c.text}</span>${noteBox(c, scope)}</li>`;
             }).join('') + '</ul>';
         }
         // A file starts collapsed when the summary says so, or else when it is generated, a test, or docs.

@@ -187,19 +187,23 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .group.folded .gbody { display: none; }
 .kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
 .gbody > .prose { margin-top: 14px; }
-.gnotes { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--surface); }
-.gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
-/* A section's notes: one list, each note tagged with its kind. */
-.notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
-.notes li { display: grid; grid-template-columns: 16px 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
+.gnotes { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding-top: 14px; background: var(--surface); overflow: hidden; }
+/* Lined up with a note's text: the diff's 92px gutter and its code cell's 8px padding. */
+.gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; padding-left: 100px; }
+/* A section's notes, laid out like the notes in a file's diff: each tag in a column as wide as
+   the diff's gutter, right against the text, and the text where the code starts in the files below. */
+.notes { margin: 0; padding: 0; list-style: none; }
+.notes li { display: grid; grid-template-columns: 92px 1fr auto; column-gap: 8px; align-items: start; padding: 13px 8px 13px 0; background: var(--surface-2); font-size: 13.5px; line-height: 1.5; }
+.notes li.flag { background: var(--accent-soft); }
+.notes li .chip { justify-self: end; margin: 0 6px 0 0; }
 .nbox { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--ok); }
 input.nbox { cursor: pointer; }
+.notes li .nbox { margin: 2px 0 0 4px; }
 .notes li.checked .chip, .notes li.checked .ntext { opacity: .5; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; line-height: 1.2; margin-top: 3px; white-space: nowrap; text-align: center; }
 .chip.context { background: var(--info-bg); color: var(--info); }
 .chip.verify { background: var(--ok-bg); color: var(--ok); }
 .chip.flag { background: var(--accent-soft); color: var(--accent); }
-@media (max-width: 480px) { .notes li { grid-template-columns: 16px 1fr; gap: 4px 10px; } .notes .ntext { grid-column: 2; } }
 
 /* file bar */
 .filebar { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--muted); }

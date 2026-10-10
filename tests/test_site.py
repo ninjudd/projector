@@ -718,7 +718,7 @@ class FileHeaderTests(SiteRepoCase):
             "pr": {"repo": "owner/example", "number": 9, "title": "Change 9", "head": "c" * 40, "base": "b" * 40,
                    "baseRef": "main", **pr},
             "overview": {"summary": [], "cards": []},
-            "groups": [{"id": "all", "title": "All", "files": [
+            "groups": [{"id": "all", "title": "All", "checks": [{"kind": "context", "text": "About the section."}], "files": [
                 {"path": p, "collapsed": False,
                  **({"checks": [{"kind": "context", "text": "The new value.", "line": 1},
                                 {"kind": "verify", "text": "The whole file."}]} if p == "src/app#1.py" else
@@ -844,6 +844,9 @@ class FileHeaderTests(SiteRepoCase):
                       '<tr class="noterow verify"><td class="ngut" colspan="2"><span class="chip verify">verified</span></td>'
                       '<td class="nte"><span class="ntext">The whole file.</span></td></tr></table>', html,
                       "a note on the whole file sits above the diff in the diff's own columns")
+        self.assertIn('<div class="gnotes"><h4>Notes</h4><ul class="notes"><li class="context"><span class="chip context">'
+                      'context</span><span class="ntext">About the section.</span></li></ul></div>', html,
+                      "a section's note leads with its tag, like a note in a diff")
 
 
 class SummarySidebarTests(unittest.TestCase):
