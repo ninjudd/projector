@@ -26,15 +26,19 @@ const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requeste
 // of it requests changes and Clean otherwise, linked to the review that
 // decides it, or Unreviewed when no Projector review names the head. Nothing
 // when the build could not ask GitHub, so a status it does not know never
-// reads as unreviewed. A verdict's link is described by the element whose id
-// is `describedBy`, when one is given.
-function statusHtml(state: PullState | undefined, review: ReviewStatus | undefined, describedBy = ''): string {
+// reads as unreviewed. A verdict that several models gave ends in an
+// asterisk, says to a screen reader how many models gave it, and is
+// described by their list, the element whose id `several` names.
+function statusHtml(state: PullState | undefined, review: Verdict | undefined,
+  several?: { list: string; count: number }): string {
   if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
   if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
   if (review === undefined) return '';
   if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
-  const described = describedBy !== '' ? ` aria-describedby="${esc(describedBy)}"` : '';
-  return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}</a>`;
+  const described = several !== undefined ? ` aria-describedby="${esc(several.list)}"` : '';
+  const marked = several !== undefined
+    ? `<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span>` : '';
+  return `<a class="rstatus ${review.status}"${described} href="${esc(review.url)}" target="_blank" rel="noopener">${VERDICT_WORDS[review.status]}${marked}</a>`;
 }
 
 (function (): void {
@@ -349,23 +353,23 @@ function renderSummary(data: SummaryData): void {
   // The header, as the page's statement of how well the head was checked,
   // shows the one status the Reviews index shows, and also links the full
   // review a clean incremental review builds on. When several models reviewed
-  // the head, a model count follows the status, and hovering or focusing
-  // either shows each model's verdict, linked to its review. The list stays
-  // in the page, so a keyboard tabs into its links, and both name it with
+  // the head, the status ends in an asterisk, and hovering over it or
+  // focusing it shows each model's verdict, drawn as the status is and
+  // linked to that model's review. The list stays in the page, so a keyboard
+  // tabs from the status into its links, and the status names it with
   // aria-describedby; wireSummary lets Escape hide it.
   function reviewStatus(): string {
     const review = data.review;
     const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
       review.models.length > 1 ? review.models : null;
-    const status = statusHtml(pr.state, review, several !== null ? 'review-models' : '');
+    const status = statusHtml(pr.state, review, several !== null ? { list: 'review-models', count: several.length } : undefined);
     if (status === '') return '';
     if (several !== null) {
       const rows = several.map(function (m) {
         const from = m.status === 'clean' && m.incrementalFrom !== undefined ? ` · ${incrementalLink(m.incrementalFrom)}` : '';
-        return `<span class="rmodel">${ext(m.url, esc(m.model))} · <span class="rstatus ${m.status}">${VERDICT_WORDS[m.status]}</span>${from}</span>`;
+        return `<span class="rmodel">${esc(m.model)} · <span class="eyebrow">${statusHtml(undefined, m)}</span>${from}</span>`;
       }).join('');
-      return ` · <span class="rmodels">${status}<span class="rmodelcount" tabindex="0" aria-describedby="review-models">` +
-        `${String(several.length)} models</span><span class="rmodellist" id="review-models">${rows}</span></span>`;
+      return ` · <span class="rmodels">${status}<span class="rmodellist" id="review-models">${rows}</span></span>`;
     }
     const from = review?.status === 'clean' && pr.state !== 'merged' && pr.state !== 'closed' ? review.incrementalFrom : undefined;
     return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
@@ -595,7 +599,7 @@ function wireSummary(): void {
   // visibility: hidden, so Tab skips its links, and Escape on one of them
   // first moves focus back to the status, which stays in sight.
   document.querySelectorAll<HTMLElement>('.rmodels').forEach(function (box) {
-    const list = box.querySelector('.rmodellist'), status = box.querySelector<HTMLElement>('.rstatus');
+    const list = box.querySelector('.rmodellist'), status = box.querySelector<HTMLElement>(':scope > .rstatus');
     box.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Escape') return;
       if (list?.contains(document.activeElement) === true) status?.focus();

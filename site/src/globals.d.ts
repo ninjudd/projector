@@ -70,6 +70,9 @@ type ReviewStatus =
   | { status: 'changes-requested'; url: string; models: ModelStatus[] }
   | { status: 'unreviewed' };
 
+/** What `statusHtml` draws a verdict from: a head's status, or one model's. */
+type Verdict = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
+
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
