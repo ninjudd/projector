@@ -55,6 +55,13 @@ function statusHtml(state, review) {
         }
         function short(sha) { return (sha ?? '').slice(0, 9); }
         function lineNumber(n) { return n === null || n === 0 ? '' : String(n); }
+        // One side of a hunk header as Git writes it: the first line and the count,
+        // with the count left out when it is 1, and for a side with no lines, the
+        // line before it.
+        function rangeText(first, last) {
+            const count = last - first + 1;
+            return `${String(count === 0 ? last : first)}${count === 1 ? '' : `,${String(count)}`}`;
+        }
         function ext(href, text, cls) {
             return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
         }
@@ -95,6 +102,8 @@ function statusHtml(state, review) {
         const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
         const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
             '<path d="M10 6.75V10l2.25 1.5"/></svg>';
+        // Two arrows folding in on a line: the expanded lines closing up again.
+        const COLLAPSE_ICON = `${ICON}<path d="M6.5 3L10 6.5 13.5 3"/><path d="M6.5 17L10 13.5 13.5 17"/><path d="M4 10h12"/></svg>`;
         const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
             '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
         // An expander's controls: down from the hunk above, up from the hunk below, and the whole gap.
@@ -209,8 +218,51 @@ function statusHtml(state, review) {
                 badges += '<span class="badge deleted">deleted</span>';
             if (f.kind !== '')
                 badges += `<span class="badge ${f.kind}">${f.kind}</span>`;
-            const hunkTables = f.hunks.map(function (h) {
-                const rows = [`<tr class="hunk">${gutter}<td class="code">${esc(h.header)}</td></tr>`];
+            // A row's tray is its line-number gutter. A hunk's header row holds the
+            // controls of the gap above the hunk, and a row after the last hunk those
+            // of the gap below it. Expand down and expand up each reveal STEP lines
+            // beside the hunk above or below; once STEP or fewer are left, expand all
+            // is the only control. The file's first header also holds the control that
+            // collapses the file, shown once something in it is expanded, as
+            // `collapse` says; it is undefined for every other row.
+            function trayCells(gap, left, text, failed, collapse) {
+                const expands = gap === undefined ? [] : EXPANDS.filter(function ([how]) {
+                    if (how === 'all')
+                        return true;
+                    return left > STEP && (how === 'down' ? gap.before > 0 : gap.before < f.hunks.length);
+                });
+                const buttons = (collapse === undefined ? '' : `<button class="xbtn xcollapse" type="button"${collapse ? '' : ' hidden'} ` +
+                    `aria-label="Collapse expanded lines" title="Collapse expanded lines">${COLLAPSE_ICON}</button>`) +
+                    expands.map(function ([how, label, icon]) {
+                        return `<button class="xbtn" type="button" data-expand="${how}" aria-label="${label}" title="${label}">${icon}</button>`;
+                    }).join('');
+                const note = failed ? '<span class="xfail">This file could not be loaded. Try again.</span>' : '';
+                return `<td class="ln${buttons === '' ? '' : ' xctl'}" colspan="${String(sides)}">${buttons}</td><td class="code">${esc(text)}${note}</td>`;
+            }
+            // A hunk's header as its range now stands, keeping the text Git puts after
+            // the second @@, such as the enclosing function.
+            function headerText(i, r) {
+                const after = (f.hunks[i]?.header ?? '').replace(/^@@ [^@]* @@/, '');
+                return `@@ -${rangeText(r.oldFirst, r.oldLast)} +${rangeText(r.newFirst, r.newLast)} @@${after}`;
+            }
+            function range(i) {
+                const h = f.hunks[i];
+                if (h === undefined)
+                    throw new Error(`${f.path} has no hunk ${String(i)}`);
+                const oldFirst = h.oldLines === 0 ? h.oldStart + 1 : h.oldStart;
+                const newFirst = h.newLines === 0 ? h.newStart + 1 : h.newStart;
+                return { oldFirst: oldFirst, oldLast: oldFirst + h.oldLines - 1, newFirst: newFirst, newLast: newFirst + h.newLines - 1 };
+            }
+            const gaps = f.context?.gaps ?? [];
+            function gapBefore(i) {
+                const at = gaps.findIndex(function (g) { return g.before === i; });
+                return [at, gaps[at]];
+            }
+            const hunkTables = f.hunks.map(function (h, i) {
+                const [at, gap] = gapBefore(i);
+                const marks = f.context !== undefined ? ` data-hunk="${String(i)}"${gap !== undefined ? ` data-gap="${String(at)}"` : ''}` : '';
+                const tray = trayCells(gap, gap !== undefined ? gap.end - gap.start + 1 : 0, h.header, false, f.context !== undefined && i === 0 ? false : undefined);
+                const rows = [`<tr class="hunk"${marks}>${tray}</tr>`];
                 h.lines.forEach(function (l) {
                     const t = l[0];
                     if (t === 'm') {
@@ -222,23 +274,14 @@ function statusHtml(state, review) {
                     rows.push(codeRow(cls, sign, l, esc(l[3])));
                     rows.push(notesAt(l));
                 });
+                if (i === f.hunks.length - 1) {
+                    const [last, below] = gapBefore(f.hunks.length);
+                    if (below !== undefined) {
+                        rows.push(`<tr class="gaptail" data-gap="${String(last)}">${trayCells(below, below.end - below.start + 1, '', false, undefined)}</tr>`);
+                    }
+                }
                 return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
             });
-            // A gap's expander: its controls in the gutter, and how many lines it
-            // hides or that the file could not load. Expand down and expand up each
-            // reveal STEP lines beside the hunk above or below; once STEP or fewer are
-            // left, expand all is the only control.
-            function expanderCells(gap, left, failed) {
-                const buttons = EXPANDS.filter(function ([how]) {
-                    if (how === 'all')
-                        return true;
-                    return left > STEP && (how === 'down' ? gap.before > 0 : gap.before < f.hunks.length);
-                }).map(function ([how, label, icon]) {
-                    return `<button class="xbtn" type="button" data-expand="${how}" aria-label="${label}" title="${label}">${icon}</button>`;
-                }).join('');
-                const info = failed ? 'This file could not be loaded. Try again.' : `${num(left)} hidden line${left === 1 ? '' : 's'}`;
-                return `<td class="ln xctl" colspan="${String(sides)}">${buttons}</td><td class="code xinfo">${info}</td>`;
-            }
             // Revealed lines are context rows, each line passed through the
             // highlighter's markup or escaped.
             function contextRows(lines, html, from, to, oldFrom) {
@@ -247,17 +290,11 @@ function statusHtml(state, review) {
                     rows.push(codeRow('ctx', ' ', ['c', oldFrom + n - from, n, ''], html?.[n - 1] ?? esc(lines[n - 1])));
                 return rows.join('');
             }
-            const gaps = f.context?.gaps ?? [];
-            function expanderAt(before) {
-                const at = gaps.findIndex(function (g) { return g.before === before; });
-                const gap = gaps[at];
-                return gap === undefined ? '' : `<table class="${tableClass} gap">${columns}<tr class="expander" data-gap="${String(at)}">` +
-                    `${expanderCells(gap, gap.end - gap.start + 1, false)}</tr></table>`;
+            const hunks = hunkTables.join('') || '<p class="fnote">No content changes.</p>';
+            if (f.context !== undefined) {
+                views[f.id] = { context: f.context, lang: f.lang, bodyHtml: hunks, range: range, headerText: headerText, trayCells: trayCells,
+                    contextRows: contextRows };
             }
-            if (f.context !== undefined)
-                views[f.id] = { context: f.context, lang: f.lang, expanderCells: expanderCells, contextRows: contextRows };
-            const hunks = hunkTables.length === 0 ? '<p class="fnote">No content changes.</p>'
-                : hunkTables.map(function (table, i) { return expanderAt(i) + table; }).join('') + expanderAt(hunkTables.length);
             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
                 '<div class="fsentinel" aria-hidden="true"></div>' +
                 '<header class="fhead">' +
@@ -980,7 +1017,7 @@ function statusHtml(state, review) {
         }
         function hunkTable(el) {
             if (!(el instanceof HTMLTableElement))
-                throw new Error('An expander has no hunk beside it');
+                throw new Error('A gap has no hunk beside it');
             return el;
         }
         function tableBody(table) {
@@ -989,79 +1026,157 @@ function statusHtml(state, review) {
                 throw new Error('A hunk table has no rows');
             return body;
         }
-        // A closed gap leaves no seam. Between two hunks, the lower one's header
-        // goes and its rows join the upper table, so the two read as one; above the
-        // first hunk, its header goes, since the table then starts at line 1.
-        function closeGap(gapTable) {
-            const upper = gapTable.previousElementSibling, lower = gapTable.nextElementSibling;
-            gapTable.remove();
-            if (!(lower instanceof HTMLTableElement))
-                return;
-            lower.querySelector('tr.hunk')?.remove();
-            if (!(upper instanceof HTMLTableElement))
-                return;
-            tableBody(upper).append(...Array.from(lower.rows));
-            lower.remove();
+        // A header's range starts as its hunk's and grows as lines are revealed
+        // beside it; the grown range lives on the header row.
+        function rangeOf(view, header) {
+            const d = header.dataset;
+            if (d.oldFirst === undefined)
+                return view.range(Number(d.hunk));
+            return { oldFirst: Number(d.oldFirst), oldLast: Number(d.oldLast), newFirst: Number(d.newFirst), newLast: Number(d.newLast) };
         }
-        // Expand down adds lines to the end of the hunk above. Expand up adds them
-        // to the start of the hunk below, above its header and the lines an earlier
-        // expand up added. Expand all adds the rest of the gap to the hunk above, or
-        // below for the gap above the first hunk.
-        document.querySelectorAll('tr.expander').forEach(function (row) {
-            const file = row.closest('.file');
-            const gapTable = row.closest('table');
-            const view = file !== null ? views[file.dataset.fid ?? ''] : undefined;
-            const gap = view?.context.gaps[Number(row.dataset.gap)];
-            if (file === null || gapTable === null || view === undefined || gap === undefined)
-                throw new Error('An expander sits outside its file');
-            let start = gap.start, end = gap.end;
-            // Redrawing replaces the controls, so focus stays on the control the
-            // reader used, or on expand all once it is the only one. No focus move
-            // scrolls, so the page stays on the lines just revealed.
-            const redraw = function (how, failed) {
-                const refocus = row.contains(document.activeElement);
-                row.innerHTML = view.expanderCells(gap, end - start + 1, failed);
-                if (refocus)
-                    (row.querySelector(`[data-expand="${how}"]`) ?? row.querySelector('[data-expand="all"]'))?.focus({ preventScroll: true });
-            };
-            // Closing the gap removes its controls. A reader on the keyboard moves on
-            // to the file's next expander, or to its header after the last; a mouse
-            // click, which focuses the button too, leaves focus where the browser puts it.
-            const close = function () {
-                const refocus = row.contains(document.activeElement) && focusVisible(document.activeElement);
-                const expanders = Array.from(file.querySelectorAll('tr.expander'));
-                const next = expanders[expanders.indexOf(row) + 1];
-                closeGap(gapTable);
-                if (refocus)
-                    (next?.querySelector('[data-expand]') ?? file.querySelector('.ftoggle'))?.focus({ preventScroll: true });
-            };
-            row.addEventListener('click', function (ev) {
-                const how = ev.target instanceof Element ? ev.target.closest('[data-expand]')?.dataset.expand : undefined;
-                if (how === undefined)
+        function setRange(header, r) {
+            header.dataset.oldFirst = String(r.oldFirst);
+            header.dataset.oldLast = String(r.oldLast);
+            header.dataset.newFirst = String(r.newFirst);
+            header.dataset.newLast = String(r.newLast);
+        }
+        // Redraws a row's tray and text from what the row records: the gap it
+        // holds, the lines that gap has left, and for a header, its range. Focus
+        // stays on the control the reader used, or on expand all once it is the
+        // only one, and no focus move scrolls the page away from revealed lines.
+        function drawTray(file, view, row, how, failed) {
+            const gap = row.dataset.gap !== undefined ? view.context.gaps[Number(row.dataset.gap)] : undefined;
+            const left = gap === undefined ? 0 : Number(row.dataset.end ?? gap.end) - Number(row.dataset.start ?? gap.start) + 1;
+            const header = row.classList.contains('hunk');
+            const text = header ? view.headerText(Number(row.dataset.hunk), rangeOf(view, row)) : '';
+            const collapse = header && row === file.querySelector('tr.hunk') ? file.dataset.expanded === '1' : undefined;
+            const refocus = row.contains(document.activeElement);
+            row.innerHTML = view.trayCells(gap, left, text, failed, collapse);
+            if (refocus)
+                (row.querySelector(`[data-expand="${how}"]`) ?? row.querySelector('[data-expand="all"]'))?.focus({ preventScroll: true });
+        }
+        // Expand up adds lines just under the header of the hunk below the gap,
+        // where the lines an earlier expand up added follow them, and moves that
+        // header's start up. Expand down adds lines to the end of the hunk above,
+        // and moves that hunk's end down. Expand all adds the rest of the gap to the
+        // hunk above, or below for the gap above the first hunk. The lines a gap has
+        // left to reveal live on the row that holds its controls, so a collapsed
+        // file starts over from its gaps.
+        function expand(file, view, row, gap, how) {
+            void headLines(view.context.url).then(function (lines) {
+                // An earlier click may have closed the gap, or the file collapsed, while this one waited.
+                const table = row.closest('table');
+                if (!row.isConnected || row.dataset.gap === undefined || table === null)
                     return;
-                void headLines(view.context.url).then(function (lines) {
-                    // An earlier click may have revealed the rest while this one waited.
-                    if (start > end)
-                        return;
-                    const from = how === 'up' ? Math.max(start, end - STEP + 1) : start;
-                    const to = how === 'down' ? Math.min(end, start + STEP - 1) : end;
-                    const rows = view.contextRows(lines, headHtml(view, lines), from, to, gap.oldStart + from - gap.start);
-                    if (how === 'up' || (how === 'all' && gap.before === 0)) {
-                        tableBody(hunkTable(gapTable.nextElementSibling)).insertAdjacentHTML('afterbegin', rows);
-                        end = from - 1;
-                    }
-                    else {
-                        tableBody(hunkTable(gapTable.previousElementSibling)).insertAdjacentHTML('beforeend', rows);
-                        start = to + 1;
-                    }
-                    if (start > end)
-                        close();
+                let start = Number(row.dataset.start ?? gap.start), end = Number(row.dataset.end ?? gap.end);
+                const from = how === 'up' ? Math.max(start, end - STEP + 1) : start;
+                const to = how === 'down' ? Math.min(end, start + STEP - 1) : end;
+                const oldFrom = gap.oldStart + from - gap.start, oldTo = oldFrom + to - from;
+                const rows = view.contextRows(lines, headHtml(view, lines), from, to, oldFrom);
+                file.dataset.expanded = '1';
+                if (how === 'up' || (how === 'all' && gap.before === 0)) {
+                    row.insertAdjacentHTML('afterend', rows);
+                    setRange(row, { ...rangeOf(view, row), oldFirst: oldFrom, newFirst: from });
+                    end = from - 1;
+                }
+                else {
+                    const tail = row.classList.contains('gaptail');
+                    const upper = tail ? table : hunkTable(table.previousElementSibling);
+                    if (tail)
+                        row.insertAdjacentHTML('beforebegin', rows);
                     else
-                        redraw(how, false);
-                    markTokens(file);
-                }, function () {
-                    redraw(how, true);
-                });
+                        tableBody(upper).insertAdjacentHTML('beforeend', rows);
+                    const above = upper.querySelector('tr.hunk');
+                    if (above !== null) {
+                        setRange(above, { ...rangeOf(view, above), oldLast: oldTo, newLast: to });
+                        drawTray(file, view, above, '', false);
+                    }
+                    start = to + 1;
+                }
+                row.dataset.start = String(start);
+                row.dataset.end = String(end);
+                if (start > end)
+                    closeTray(file, view, row, table);
+                else
+                    drawTray(file, view, row, how, false);
+                const first = file.querySelector('tr.hunk');
+                if (first !== null && first !== row)
+                    drawTray(file, view, first, '', false);
+                markTokens(file);
+            }, function () {
+                if (row.isConnected)
+                    drawTray(file, view, row, how, true);
+            });
+        }
+        // A closed gap leaves no seam. Between two hunks, the lower header goes and
+        // its rows join the table above, whose header then covers both. Below the
+        // last hunk, the row that held the controls goes. Above the first hunk, the
+        // header stays, now starting at line 1, since it holds the file's collapse
+        // control. A reader on the keyboard moves on to the file's next control row,
+        // or to the file's header after the last; a mouse click, which focuses the
+        // button too, leaves focus where the browser puts it.
+        function closeTray(file, view, row, table) {
+            const refocus = row.contains(document.activeElement) && focusVisible(document.activeElement);
+            const trays = Array.from(file.querySelectorAll('tr[data-gap]'));
+            const next = trays[trays.indexOf(row) + 1];
+            delete row.dataset.gap;
+            const upper = table.previousElementSibling;
+            if (row.classList.contains('gaptail')) {
+                row.remove();
+            }
+            else if (upper instanceof HTMLTableElement) {
+                const above = upper.querySelector('tr.hunk');
+                if (above !== null) {
+                    const below = rangeOf(view, row);
+                    setRange(above, { ...rangeOf(view, above), oldLast: below.oldLast, newLast: below.newLast });
+                    drawTray(file, view, above, '', false);
+                }
+                row.remove();
+                tableBody(upper).append(...Array.from(table.rows));
+                table.remove();
+            }
+            else {
+                drawTray(file, view, row, '', false);
+            }
+            if (refocus)
+                (next?.querySelector('[data-expand]') ?? file.querySelector('.ftoggle'))?.focus({ preventScroll: true });
+        }
+        // Collapsing a file puts back its hunks, headers, and controls as first
+        // drawn, keeping the text already fetched for any later expand. The control
+        // clicked stays where it was on the screen, and focus moves to the file
+        // header's toggle only for a reader on the keyboard.
+        function collapseFile(file, view, body, collapse) {
+            const refocus = focusVisible(collapse);
+            const before = (collapse.closest('tr') ?? collapse).getBoundingClientRect().top;
+            body.innerHTML = view.bodyHtml;
+            delete file.dataset.expanded;
+            delete file.dataset.hl;
+            highlightFile(file);
+            markTokens(file);
+            const first = file.querySelector('tr.hunk');
+            if (first !== null)
+                window.scrollBy(0, first.getBoundingClientRect().top - before);
+            if (refocus)
+                file.querySelector('.ftoggle')?.focus({ preventScroll: true });
+        }
+        document.querySelectorAll('.file').forEach(function (file) {
+            const view = views[file.dataset.fid ?? ''];
+            const body = file.querySelector('.fbody');
+            if (view === undefined || body === null)
+                return;
+            body.addEventListener('click', function (ev) {
+                const control = ev.target instanceof Element ? ev.target.closest('.xbtn') : null;
+                const row = control?.closest('tr');
+                if (control == null || row == null)
+                    return;
+                if (control.classList.contains('xcollapse')) {
+                    collapseFile(file, view, body, control);
+                    return;
+                }
+                const how = control.dataset.expand;
+                const gap = view.context.gaps[Number(row.dataset.gap)];
+                if (how !== undefined && gap !== undefined)
+                    expand(file, view, row, gap, how);
             });
         });
         // Showing an element unfolds the section around it and opens it when it is a

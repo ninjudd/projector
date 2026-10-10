@@ -812,11 +812,16 @@ again with a current release, as
 [the site guide](site.md#republish-summaries-stored-as-specjson) describes.
 Each site page loads its `data.json` when it opens, where a `site page` embeds
 its data so it opens from disk.
-The page draws an expander in each hidden run, above, between, and below the
-hunks. Expand down reveals the 20 lines below the hunk above, expand up the
-20 lines above the hunk below, and expand all the rest of the run. The page
-fetches the file the first time a reader expands one of its runs. A page
-`site page` writes has no site to fetch from, so it draws no expanders.
+The page puts the controls of each hidden run in the line-number gutter of the
+`@@` header below it, and those of the run below the last hunk in a row of
+their own. Expand down reveals the 20 lines below the hunk above, expand up the
+20 lines above the hunk below, and expand all the rest of the run. Each header
+rewrites its `@@ -a,b +c,d @@` range as lines join its hunk, and a closed run
+between two hunks joins them under one header. Once any line of a file is
+revealed, the gutter of its first header offers a control that collapses the
+file back to its hunks as first drawn. The page fetches the file the first time
+a reader expands one of its runs. A page `site page` writes has no site to
+fetch from, so it draws no controls.
 
 The Projects page also lists each project that an open pull request
 proposes, so a plan in review is on the page where readers look for plans.

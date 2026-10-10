@@ -297,3 +297,23 @@ The design held, with three details settled in the build and the page. A
 file whose hunks leave no gap gets no `context`. The build refuses a stored
 path that leads out of `head/` (§ 2.2). Expand up inserts above the lines an
 earlier expand up revealed, as well as above the header (§ 2.3).
+
+## 9. Controls in the header gutter
+
+The page keeps its controls quiet, in room the diff already has. Three
+details refine § 2.3:
+
+- **Controls in the gutter.** A gap's controls sit in the line-number gutter
+  of the `@@` header row below it, rather than on a row of their own. The gap
+  below the last hunk has no header after it, so it keeps a row whose gutter
+  holds expand down and expand all, with an empty code cell.
+- **Headers that follow the lines.** Each header rewrites its
+  `@@ -a,b +c,d @@` range as lines join its hunk. Expand up adds lines just
+  under the header of the hunk below and moves its start up; expand down adds
+  lines to the end of the hunk above and moves its end down. A closed gap
+  between two hunks removes the lower header and the upper one covers both.
+  The first hunk's header stays when the gap above it closes, now starting at
+  line 1, because it holds the collapse control.
+- **Collapse.** Once a line of a file is revealed, the gutter of its first
+  header shows an icon that restores the file's hunks, headers, and controls
+  as first drawn, from the text already fetched.

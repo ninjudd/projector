@@ -1562,7 +1562,7 @@ index 1111111..2222222 100644
 -line 11
 +LINE 11
  line 12
-@@ -50,3 +50,3 @@
+@@ -50,3 +50,3 @@ def fifty():
  line 50
 -line 51
 +LINE 51
@@ -1601,22 +1601,45 @@ class ExpanderTests(unittest.TestCase):
         start = re.search(f'<article class="file[^"]*" id="{self.fid[path]}"', html).start()
         return html[start:html.index("</article>", start)]
 
-    def test_each_gap_draws_an_expander_with_the_controls_its_place_allows(self) -> None:
+    def test_each_gap_puts_the_controls_its_place_allows_in_the_gutter_of_the_header_below_it(self) -> None:
         html = rendered_summary(self.data)
         card = self.card(html, "lines.txt")
 
-        order = [gap or hunk for gap, hunk in re.findall(r'<table class="diff (gap)"|<tr class="(hunk)"', card)]
-        self.assertEqual(["gap", "hunk", "gap", "hunk", "gap"], order, "an expander above, between, and below the hunks")
-        expanders = re.findall(r'<tr class="expander" data-gap="(\d)">(.*?)</tr>', card)
-        self.assertEqual(["0", "1", "2"], [gap for gap, _ in expanders])
-        controls = [re.findall(r'data-expand="(\w+)" aria-label="([^"]+)"', cells) for _, cells in expanders]
-        self.assertEqual([[("all", "Expand all")],
-                          [("down", "Expand down"), ("up", "Expand up"), ("all", "Expand all")],
-                          [("down", "Expand down"), ("all", "Expand all")]], controls,
+        self.assertEqual(2, card.count('<table class="diff">'), "no table or row of its own for a gap")
+        trays = re.findall(r'<tr class="(hunk|gaptail)"((?: data-\w+="\d+")*)><td class="ln xctl" colspan="2">(.*?)</td>'
+                           r'<td class="code">([^<]*)</td></tr>', card)
+        self.assertEqual([("hunk", ' data-hunk="0" data-gap="0"', "@@ -10,3 +10,3 @@"),
+                          ("hunk", ' data-hunk="1" data-gap="1"', "@@ -50,3 +50,3 @@ def fifty():"),
+                          ("gaptail", ' data-gap="2"', "")],
+                         [(kind, marks, text) for kind, marks, _, text in trays],
+                         "the gap above each hunk in its header's gutter, and the gap below the last in a row of its own")
+        controls = [re.findall(r'data-expand="(\w+)" aria-label="([^"]+)" title="([^"]+)"', tray) for _, _, tray, _ in trays]
+        self.assertEqual([[("all", "Expand all", "Expand all")],
+                          [("down", "Expand down", "Expand down"), ("up", "Expand up", "Expand up"),
+                           ("all", "Expand all", "Expand all")],
+                          [("down", "Expand down", "Expand down"), ("all", "Expand all", "Expand all")]], controls,
                          "no expand up below the last hunk, and only expand all for 20 lines or fewer")
-        self.assertEqual(["9 hidden lines", "37 hidden lines", "48 hidden lines"],
-                         [re.search(r'<td class="code xinfo">([^<]*)</td>', cells).group(1) for _, cells in expanders])
-        self.assertNotIn("expander", self.card(html, "plain.txt"), "a file without context draws no expander")
+        self.assertIn('<tr class="hunk"><td class="ln" colspan="2"></td><td class="code">@@ -1 +1 @@</td></tr>',
+                      self.card(html, "plain.txt"), "a file without context draws its header as it always has")
+        self.assertNotIn("xbtn", self.card(html, "plain.txt"))
+
+    def test_a_header_shows_its_range_as_revealed_lines_grow_it(self) -> None:
+        texts = json.loads(rendered_summary(self.data, then=(
+            f"const view = views[{json.dumps(self.fid['lines.txt'])}];\n"
+            "const first = view.range(1);\n"
+            "process.stdout.write(JSON.stringify([view.headerText(1, first),\n"
+            "  view.headerText(1, {...first, oldFirst: 30, newFirst: 30}),\n"
+            "  view.headerText(0, {...view.range(0), oldLast: 32, newLast: 32}),\n"
+            "  view.headerText(0, {oldFirst: 1, oldLast: 52, newFirst: 1, newLast: 52}),\n"
+            "  view.headerText(0, {oldFirst: 5, oldLast: 4, newFirst: 4, newLast: 4})]));")))
+
+        self.assertEqual(["@@ -50,3 +50,3 @@ def fifty():",
+                          "@@ -30,23 +30,23 @@ def fifty():",
+                          "@@ -10,23 +10,23 @@",
+                          "@@ -1,52 +1,52 @@",
+                          "@@ -4,0 +4 @@"], texts,
+                         "lines above a hunk move its start, lines below grow its count, a side with no lines names "
+                         "the line before it, and the text after the second @@ stays")
 
     def test_revealed_lines_are_escaped_context_rows_numbered_on_both_sides(self) -> None:
         rows = rendered_summary(self.data, then=(
@@ -1635,6 +1658,21 @@ class ExpanderTests(unittest.TestCase):
             "['x'], ['<span class=\"hljs-keyword\">x</span>'], 1, 1, 1));"))
 
         self.assertIn('<span class="src"><span class="hljs-keyword">x</span></span>', rows)
+
+    def test_a_file_with_context_has_a_hidden_collapse_control_and_its_diff_as_first_drawn(self) -> None:
+        html = rendered_summary(self.data)
+        card = self.card(html, "lines.txt")
+
+        self.assertIn('<tr class="hunk" data-hunk="0" data-gap="0"><td class="ln xctl" colspan="2"><button class="xbtn '
+                      'xcollapse" type="button" hidden aria-label="Collapse expanded lines" title="Collapse expanded lines">'
+                      '<svg', card, "the control leads the first header's gutter, hidden until a gap is expanded")
+        self.assertEqual(1, card.count("xcollapse"))
+        self.assertNotIn("xcollapse", self.card(html, "plain.txt"))
+        body = card[card.index(f'<div class="fbody" id="{self.fid["lines.txt"]}-body">'):]
+        body = body[body.index(">") + 1:body.rindex("</div>")]
+        self.assertEqual(body, rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].bodyHtml);")),
+                         "collapsing puts back exactly the hunks and expanders the page first drew")
 
     def test_only_a_file_with_context_has_a_view(self) -> None:
         self.assertEqual([self.fid["lines.txt"]], json.loads(rendered_summary(
