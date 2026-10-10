@@ -362,12 +362,15 @@ The site reads no start comments or threads, so it never shows `waiting`.
 | `start-fix-loop`'s watcher | No change. It reports every unresolved thread as `FINDING`, whichever model opened it, and announces each review by its id, so each model's review is one `REVIEW` line. `DRAFT` follows the draft state, which the rule sets, and `VERDICT` follows GitHub's `reviewDecision`. |
 | `start-review-loop`'s watcher | No change to the script. It reports an answer on any model's finding thread to every model's loop. Each loop's subagent decides from `project review census --wait` whether the answer is its to act on, as § 2.2 says. |
 | Summary page header | Built from `models`, as below. |
-| Reviews index | Another pull request in flight adds a badge from each head's `status`. `status` keeps its meaning, so the badge needs no change. |
+| Reviews index | Each row shows its newest head's status through `statusHtml` in `site/src/summary.ts`, the function the header uses. The row keeps the one word, `status`, linked to `url`, because a row has room for one word. `status` keeps its meaning, so the row needs no change. |
 | Summaries | No change. There is one summary per head. Each model's review updates the newest summary, as `review-pr` already does when the newest version comes from another session, and its flags come from every open finding thread. |
 
-The summary page's header shows the verdict alone when one model reviewed
-the head, as it does today. With several models, it groups them by verdict,
-changes requested first. Each model's name links to that model's review.
+A merged or closed pull request shows **Merged** or **Closed** in both
+places, as it does on `main`. Otherwise the summary page's header shows the
+verdict alone when one model reviewed the head, as it does today. With
+several models, it groups them by verdict, changes requested first, and each
+model's name links to that model's review. The first word of the header is
+the word the Reviews index shows.
 
 ```
 #66 · Clean
@@ -378,32 +381,42 @@ changes requested first. Each model's name links to that model's review.
 
 ### 2.6 With incremental reviews
 
-The incremental review plan in pull request #212 (`incremental-review`)
-carries a clean verdict across a minimal push instead of running a full
-review. The two plans fit together without either one changing the other's
-design:
+The incremental review plan, `docs/projects/incremental-review/readme.md`,
+lets a loop publish a short clean verdict for a minimal push in place of a
+full review. The two plans fit together without either one changing the
+other's design:
 
-- **A carry builds on its own model's review.** That plan carries only from
-  the same loop's full review, by the same model, at the same effort and
-  Projector version. A model's carry never rests on another model's review,
-  so a second model still reviews every head in full until its own earlier
-  full review allows it to carry.
-- **A carried verdict is a verdict.** Its review marker names the head and
-  the model, so the sign-off rule counts it like any other.
-- **A carry cannot sign off past another model's finding.** The carry rules
-  check this model's census. The sign-off rule still counts every open
-  thread, so a carried clean verdict leaves the head `waiting` while another
-  model's finding is open.
-- **The two plans share their parsing.** That plan adds `verdict_marker(body)`
-  and `reviewer_reviews`, one listing of the account's Projector reviews. This
-  plan has `verdict_marker` also return the model, and feeds that one listing
-  to the collision check, the carry rules, and the sign-off. Whichever plan
-  lands second extends what the first one added.
-- **The site names the carry per model.** That plan's `carriedFrom` moves onto
-  the model's entry in `models`, and the header names it after the model.
+- **An incremental review builds on its own model's full review.** That
+  plan's rules require the earlier full review to be in this loop's record
+  and to name the same Projector version, model, and effort. A model's
+  incremental review never rests on another model's review, so a second model
+  reviews every head in full until its own full review allows an incremental
+  one.
+- **An incremental review is a verdict.** Its review marker names the head
+  and the model, so the sign-off rule counts it like any other. Its
+  `projector-incremental` line does not change that.
+- **An incremental review cannot sign off past another model's finding.**
+  That plan's rule that no finding is open reads this model's census, the
+  threads marked `mine`, and a thread this model may adopt counts as its own
+  for that rule. So a stopped model's open finding leads to a full review,
+  which adopts it. The sign-off rule still counts every open thread, so an
+  incremental clean verdict leaves the head `waiting` while the finding of a
+  model still reviewing is open.
+- **The two plans share their parsing.** That plan adds
+  `verdict_marker(body)`, which returns a body's verdict, head, and
+  incremental-from head, and `reviewer_reviews`, one listing of the account's
+  Projector reviews. This plan has `verdict_marker` also return the model, and
+  feeds that one listing to the collision check, the incremental rules, and
+  the sign-off. Whichever plan is built second extends what the first one
+  added.
+- **The site names an incremental review per model.** That plan adds
+  `incrementalFrom` to a head's clean status. Here it sits on the model's
+  entry in `models`, and on the status as well when one model reviewed the
+  head. The header names it after the model:
+  `#66 · Clean (claude-opus-5-5 incremental from a8cf3d5, gpt-5.5)`.
 
-A carry finishes in under a minute, so it is the review most likely to wait
-for a peer. It waits only when the pull request is a draft.
+An incremental review finishes in under a minute, so it is the review most
+likely to wait for a peer. It waits only when the pull request is a draft.
 
 ### 2.7 Files that change
 
@@ -411,8 +424,8 @@ for a peer. It waits only when the pull request is a draft.
 | --- | --- |
 | `src/projector/review.py` | `identity()` and `model_key()`. `Paths` takes the model and puts the state, lock, request, and worktree paths under it. A resolver picks the model for commands after setup. `start_comment()` writes `model=`. `start_comments()` lists them with their model, SHA, and time, and applies the live rule. `setup` refuses another session's live start comment by the same model and records `head_started_at`. `move` updates it. `verdict_marker()` also returns the model. `check_collision` compares identities. `activity()` reads when each model last posted and whether it owes a review, and `verifier()` applies the rules in § 2.8, for `census`, `adopt`, and `signoff()`. `census` gives each thread the fields in § 2.4, counts the threads marked `mine`, and waits with `--wait`. `adopt()` runs the steps in § 2.8. `publish` writes `model=` into each finding marker, applies `signoff()` with the peer wait, records `model` in the loop's record, and reports the sign-off. `status()` returns the object in § 2.4. The layout comment at the top of the module describes the new paths. |
 | `src/projector/cli.py` | `--model` on `move`, `census`, `release`, `publish`, and `gate`. `census --wait`. `review adopt <number> <thread-id>` with `--result` and `--body`. `review status <number>` with `--reviewer` and `--json`. `publish`, `census`, and `adopt` read `review.peer_wait`. |
-| `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker`, groups each head's verdicts by model, and gives `status`, `url`, and `models`. |
-| `site/src/globals.d.ts`, `site/src/summary.ts` | The `models` field and the header text in § 2.5. |
+| `src/projector/site/__init__.py` | `review_statuses` reads each body with `verdict_marker`, groups each head's verdicts by model, and gives `status`, `url`, and `models`. `review_row` passes the same `review` to the Reviews index, as it does on `main`. |
+| `site/src/globals.d.ts`, `site/src/summary.ts` | `ReviewStatus` gains `models`. `statusHtml` keeps the one word for the Reviews index, and the header adds the model groups in § 2.5. |
 | `site/assets/summary.js` | Rebuilt with `npm run build`. |
 | `skills/review-pr/SKILL.md` | A section on reviewing as one model among several: the identity, the collision check per model, which threads you re-check and when you adopt one with `project review adopt`, and the sign-off rule in place of "draft means changes are needed". The labels section gives the start, finding, and verify markers their `model=`, and the adoption reply its `adopted-from=`. The leftover start comment rule compares the comment's model. Run `publish`, `adopt`, and `census --wait` with a timeout of at least `review.peer_wait` plus two minutes. |
 | `skills/start-review-loop/SKILL.md` | Pass `--model` to every `project review` command. On `RESPONDED`, run `census --wait` first and re-review only as § 2.2 says. Find the last reviewed SHA from this model's verdicts. The collision paragraph says another loop of the same model. Give each model's loop its own id, such as `<repo>-review-<model-key>`, because two loops that write one record can lose an entry. |
@@ -608,8 +621,8 @@ adopts, and every later reader agrees with it without a clock.
   review, and each transition notifies its reviewers. Leaving it matches what
   a ready pull request does today while a new head is reviewed.
 - **Wait a bounded time for earlier peers, inside publish.** A clean verdict
-  can land before a slower loop has noticed the push. A carried verdict from
-  #212 takes under a minute, less than a watcher interval. A ready pull
+  can land before a slower loop has noticed the push. An incremental review
+  takes under a minute, less than a watcher interval. A ready pull
   request can be merged at once, so a second opinion that arrives a minute
   later can arrive after the merge. The deadline counts from when the review
   began, so a long review spends it while it runs. These alternatives were
@@ -642,10 +655,12 @@ adopts, and every later reader agrees with it without a clock.
   find each other only at publish, after both reviews ran. The live start
   comment shows the duplicate before the second review starts.
 - **Show one status and each model on the site.** `status` stays one word,
-  so the header and the Reviews index badge in flight keep working. `models`
-  says which model objected. Showing only per-model verdicts would make every
-  reader aggregate them again, and showing only the aggregate would hide who
-  objected.
+  so the Reviews index, which shows each row's status, keeps working.
+  `models` says which model objected, on the summary page where there is room
+  for it. Showing only per-model verdicts would make every reader aggregate
+  them again, and showing only the aggregate would hide who objected. The
+  index row keeps the one word, because a row holds one status and the page
+  it links to names the models.
 - **Keep one summary per head.** A summary describes the change, not a
   review, and `review-pr` already builds on a summary another session
   published. One summary per model would multiply pages without new content.
@@ -673,7 +688,7 @@ The tests run in temporary Git repositories against the fake GitHub in
 | 11 | Publish on another author's pull request with `review.allow_approve = true`. | A clean verdict while another model requests changes or is reviewing posts a `COMMENT`. The last model to go clean posts an `APPROVE`. The draft state does not change. |
 | 12 | Run `project review status`. | The text in § 2.4, and with `--json` each field in its table. A model with only earlier-head activity shows `pending` and leaves `signoff` alone. |
 | 13 | Answer a `gpt-5.5` finding while `gpt-5.5` is still reviewing, then run `project review census --wait --json` as `claude-opus-5-5`. | `watch-prs.sh` reports `RESPONDED` to both loops, as today. Census returns once `gpt-5.5` posts, with the thread `adopt: no`, so `claude-opus-5-5` does not re-review. An answer on a `claude-opus-5-5[1m]` finding, or on one that names no model, is `mine` and `answered`, so it re-reviews. When `claude-opus-5-5` has a clean verdict on H and `gpt-5.5` resolves the last open thread, its own, `watch-prs.sh` reports `RESPONDED` to both loops, and `claude-opus-5-5` posts no start comment and does not re-review. |
-| 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header line in § 2.5. |
+| 14 | Build a site whose head has verdicts from two models. | `review_statuses` gives the aggregate `status`, its `url`, and `models` in order. A test under node renders each header line in § 2.5, and the Reviews index row of the same head shows the header's first word. A merged pull request shows **Merged** in both. |
 | 15 | By hand, run a Claude Code review loop and a Codex review loop on a scratch pull request in a scratch repository. | Both review each head without a collision. A finding from one model keeps the pull request in draft after the other model's clean verdict. After the fix, both go clean and the pull request is ready. Then stop the Codex loop, push a fix that does not hold for one of its findings, and the Claude loop reopens that finding as an adoption. The implementing pull request's Testing section records these steps. |
 | 16 | Review H as `claude-opus-5-5` while `gpt-5.5` has a verdict on an earlier head, a declined open finding, and nothing on H. Run `adopt --result accepted` on that finding. | Census marks the thread `adopt: wait` until the window closes, then `now`. `adopt` waits out the window, posts a reply whose marker carries `model=claude-opus-5-5 adopted-from=gpt-5.5` and whose first line names both models, and resolves the thread. Census then marks it `mine`, and `status` shows `gpt-5.5` as `stopped`. On a resolved finding whose fix does not hold, `adopt --result reopened` unresolves it. |
 | 17 | Run `adopt` while `gpt-5.5` has a live start comment on H, or have `gpt-5.5` post a start comment, verdict, or verify reply during the wait. | `adopt` refuses and leaves the thread and its replies unchanged. Census marks the thread `adopt: no`. |
@@ -738,7 +753,7 @@ shows the newest verdict of any model for each head until it moves the pin.
 
 ## 7. Open questions
 
-None blocks implementation. These are deferred on purpose:
+None blocks implementation. This one is deferred on purpose:
 
 - **A configured list of required models.** A key such as `review.models`
   could name the models every head needs, which would also cover a pull
@@ -746,8 +761,6 @@ None blocks implementation. These are deferred on purpose:
   review usually takes longer than a second loop needs to notice the pull
   request and post its start comment. The operator decides whether to add the
   key, if a first head is ever signed off before a second model starts.
-- **Per-model detail on the Reviews index.** The badge in flight shows each
-  head's `status`. Naming the models there waits until that badge lands.
 
 ## 8. Background
 
@@ -763,8 +776,9 @@ Reading the code settled these points, beyond those § 1 names:
   worktree while it summarizes the pull request, so a second model's setup
   can remove it under the first.
 - `review_statuses` in `src/projector/site/__init__.py` keeps the newest
-  Projector review of each head, whichever model wrote it, and the summary
-  page's header shows its verdict.
+  Projector review of each head, whichever model wrote it. The summary page's
+  header and the Reviews index row both show its verdict through
+  `statusHtml`.
 - `watch-prs.sh` counts an author's reply on any open Projector finding
   thread as an answer, so an answer on one model's finding sends `RESPONDED`
   to every model's loop. The plan keeps that and lets `census --wait` decide
