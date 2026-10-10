@@ -13,6 +13,7 @@ from projector import instructions
 # the new hash here; this test is what says so.
 PINNED = {
     1: "af0cc51a4646f05d1570453cfb941d9e4fcecb272349387e784d87d5567598c4",
+    2: "3037e13c821131396c4fa069607e37535d64a48ab8dba063ee337260deac4ae0",
 }
 
 

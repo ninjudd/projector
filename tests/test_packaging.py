@@ -88,6 +88,17 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual({"project": "projector.cli:main"}, project["scripts"])
         self.assertEqual("projector-cli", project["name"])
 
+    def test_every_citation_of_the_stack_section_names_a_heading_implement_has(self) -> None:
+        implement = (ROOT / "skills" / "implement" / "SKILL.md").read_text()
+        self.assertIn("\n## Stack dependent work\n", implement)
+        for citing in (
+            ROOT / "src" / "projector" / "templates" / "agents-block.md",
+            ROOT / "skills" / "fix-pr" / "SKILL.md",
+            ROOT / "skills" / "start-fix-loop" / "SKILL.md",
+        ):
+            prose = " ".join(citing.read_text().split())
+            self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
+
     def test_every_required_skill_has_matching_frontmatter_name(self) -> None:
         for name in PUBLISHED_SKILLS:
             lines = (ROOT / "skills" / name / "SKILL.md").read_text().splitlines()

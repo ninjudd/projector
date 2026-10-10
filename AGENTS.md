@@ -97,8 +97,7 @@ NUL-containing reference fixtures where relevant.
 ## Hand work over for review
 
 Open pull requests; never merge them. The user owns the merge checkpoint.
-Create dependent work as a real GitHub stack when it crosses a reviewability
-boundary, and keep tests and documentation with the code they verify.
+Keep tests and documentation with the code they verify.
 
 Open your own pull request as a draft, and draft every layer of a stack you
 open. A review loop marks a pull request ready on a clean head, so the draft
@@ -117,10 +116,9 @@ state the commands leave behind. Do not put stack scaffolding in the body
 because squash merges preserve that body as the commit message.
 
 For review findings, verify first, commit locally, reply with the commit, push,
-resolve the thread, and re-fetch it in that order. Fix stacked code on the
-branch that introduced it and rebase every layer above it.
+resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 1 -->
+<!-- projector:begin 2 -->
 ## Projector conventions
 
 This repository keeps its project plans in Git with
@@ -141,6 +139,13 @@ body as prose that explains why the change exists, because a squash merge makes
 it the commit message. Match the line wrapping already used around a Markdown
 edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
 line breaks.
+
+Open dependent work that is too large to review as one pull request as a
+GitHub stack with `gh stack`, as Projector's `implement` skill describes
+under "Stack dependent work". Fix stacked code on the branch that introduced
+it, and let `gh stack` carry the fix up by rebasing the layers above. Chain
+pull requests by base branch, and update them by merging, only where
+`gh stack` is unavailable.
 
 Projector generates this section. To change it, change the template in
 Projector and run `project init`.
