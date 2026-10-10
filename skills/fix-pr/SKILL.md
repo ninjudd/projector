@@ -1,15 +1,17 @@
 ---
 name: fix-pr
-description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, and decline the rest with evidence. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
+description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
 ---
 
 # Fix a pull request
 
 Bring one pull request's current head to where a review can sign it off.
 Merge its base when the branch conflicts, and answer every outstanding
-finding with a pushed fix or a declined reply. The fix runs once and starts
-no watcher. `start-fix-loop` runs this skill whenever its watcher reports
-work on a pull request.
+finding with a pushed fix or a declined reply. Implement or defer each
+suggestion a review lists, and hold the pull request in draft while you
+build a change no review has read. The fix runs once and starts no watcher.
+`start-fix-loop` runs this skill whenever its watcher reports work on a pull
+request.
 
 ## Choose the pull request
 
@@ -65,6 +67,14 @@ are resolved. The work outstanding on the head is:
 - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
   one whose findings exist only in its body.
 - **A body-only finding** in a `COMMENT` review.
+- **Every suggestion you have not decided** in the newest Projector review
+  of the current head by each model, as
+  [Decide each suggestion](#decide-each-suggestion) describes.
+- **A change the owner asks for** in the conversation.
+- **Your open hold comment.** The changes it lists are outstanding until a
+  push carries them, and the comment itself until you delete it, as
+  [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
+  describes.
 
 Findings arrive from two kinds of reviewer and both are answered the same way.
 A **cross-author** reviewer — a teammate, Codex, Bugbot, or a review loop run by
@@ -79,15 +89,13 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
 of a body-only finding in a pull-request-level comment because there is no
 thread to reply to or resolve.
 
-A `Suggestions` list in a Projector review body is not a body-only finding,
-and no item on it is outstanding work. Weigh each item yourself: take it when
-the improvement is worth a push and the review cycle that follows, and leave
-it when it is not. A clean verdict above such a list is a clean head either
-way, and an item you leave needs no reply.
+A `Suggestions` list in a Projector review body is not a body-only finding.
+Its items never hold a head back from clean and need no reply, but you
+decide each one.
 
 Draft state is not itself a finding. It says the head has not been signed
 off, so look for the work in the threads and review bodies. A draft with no
-outstanding finding is waiting on the review loop to re-review, not on a code
+outstanding work is waiting on the review loop to re-review, not on a code
 change. When nothing is outstanding, say so and stop.
 
 ## Merge the base when the branch conflicts
@@ -126,6 +134,124 @@ head the merge produces, and that head is the one the next review reads.
 A conflict has no thread to reply to, so the merge commit is its record.
 Re-read the pull request body's `Testing` commands afterwards, because a merge
 can change a count or a path they name.
+
+## Decide each suggestion
+
+A Projector review lists its P3 items, changes the code is correct without,
+under a `## Suggestions` heading in its body. A suggestion never holds a head
+back from clean, so a review can sign a head off and mark the pull request
+ready above a list of them. Each one still gets a decision: you implement it
+or you defer it. Decide every suggestion in the newest Projector review of
+the current head by each model. An incremental review lists none, so read
+its suggestions from the full review it builds on, which its lead links.
+
+- **Implement** a suggestion that is small and clearly right. That is the
+  default. Verify it first, as you verify a finding under
+  [Verify and fix findings](#verify-and-fix-findings): quote the lines it
+  names and confirm that the change it describes is correct there. Then hold
+  the pull request, as the next section describes, and build the change the
+  way you build a fix, through the full gate.
+- **Defer** a suggestion that is large, reaches beyond this change, needs a
+  decision you cannot make, or does not hold up when you verify it. Record
+  it in your report with a one-line reason, and post nothing about it on the
+  pull request.
+
+An instruction from the owner in the conversation overrides the default, in
+either direction: "defer the suggestions" or "take the second one". A
+suggestion you deferred on an earlier head stays deferred when a later
+review lists it again, unless the owner says otherwise.
+
+Neither decision needs a reply. A suggestion has no thread, so the push that
+carries an implemented one, and the review of that push, are its record.
+
+## Hold the pull request while changes are built
+
+A review that signs a head off marks the pull request ready, and from then
+on the owner can merge it. A change you make after that review is one it
+never read: a suggestion you implement, or a change the owner asks for. So
+the pull request must not look ready to merge while you build that change.
+Hold it before you start:
+
+1. Mark it draft:
+
+   ```sh
+   gh pr ready <number> --undo
+   ```
+
+2. Post one comment that lists every change you are about to build. Write
+   its body to a file in exactly this shape, with nothing else: the opening
+   line, a bullet for each change, and the marker on the last line.
+
+   ```markdown
+   Held in draft while the following changes are implemented:
+
+   - Skip fenced code blocks when the packaging test looks for headings
+   - Name the held layer in the stack's readiness report
+
+   <!-- projector-hold v=1 -->
+   ```
+
+   Post it as the operator, who authored the pull request, with `-F`,
+   which reads the file, and read it back:
+
+   ```sh
+   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id
+   gh api repos/<owner>/<repo>/issues/comments/<id> --jq .body
+   ```
+
+   The last line of the body you read back must be the marker.
+   `-f body=@<file>` posts the file's path instead, and a comment without
+   the marker holds nothing.
+3. When another change comes in while the hold is open, add its bullet to
+   the same comment rather than posting a second one, and read it back the
+   same way:
+
+   ```sh
+   gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
+   ```
+
+   When the owner drops a listed change, remove its bullet the same way,
+   and when none is left, delete the comment as step 5 shows.
+
+4. Build each change, run the full gate, commit, and push.
+5. As soon as the push that carries every listed change succeeds, delete
+   the comment, before you resolve threads or report:
+
+   ```sh
+   gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
+   ```
+
+Projector reads the hold. While the pull request's author has a comment
+carrying `<!-- projector-hold v=1 -->` open on it, `project review status`
+reports its head as `held` instead of `clean`, and `project review publish`
+keeps it a draft however clean a review of it is. The review loop asks for
+no re-review of an unchanged head while the hold is open, and asks for one
+when the hold is lifted without a push. Only a comment by the pull request's
+author counts, because anyone can comment. Once you delete it, the review of
+the head you pushed signs the pull request off. To find the hold again, take
+the operator's comment that carries the marker:
+
+```sh
+gh api repos/<owner>/<repo>/issues/<number>/comments --paginate \
+  --jq '.[] | select(.body | contains("<!-- projector-hold v=1 -->")) | {id, login: .user.login}'
+```
+
+Hold a pull request even when it is already a draft. A draft that is waiting
+on its review would be marked ready by a clean verdict, and the comment is
+what stops that. Hold only when a change is coming, though: when you defer
+every suggestion and the owner asks for nothing, post no comment and leave
+the draft state as it is. Your report lists the deferrals.
+
+Never mark the pull request ready yourself, when you delete the hold or at
+any other time. The review loop's clean verdict on the head you pushed does
+that.
+
+In a stack, hold the layer that gets the change. The user merges a stack
+from the bottom up, so a held layer holds every layer above it too, and
+those layers need no comment of their own. Carry the change up through them,
+as [Preserve stacked ownership](#preserve-stacked-ownership) describes, and
+delete the hold once the push that carries every listed change into the
+held layer succeeds.
 
 ## Verify and fix findings
 
@@ -185,6 +311,9 @@ them. A Projector finding or another tool's thread is resolved either way.
 Reply before pushing so a reviewer triggered by the push sees the reasoning,
 but push promptly because the named commit is briefly local-only. If a push
 fails, post that fact, leave the thread unresolved, and report the blocker.
+When a hold is open and the push carries the last change it lists, delete
+the hold before you resolve anything, so the review of that push can sign
+the head off.
 
 Fixing an external reviewer's finding is not a reason to ask that reviewer for
 another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
@@ -235,6 +364,8 @@ A pull request is clean only when:
   its current head, for each login that posted a Projector review on the
   pull request,
 - no unresolved threads remain,
+- no hold comment is open on it, and in a stack none is open on a layer
+  below it, because a held layer holds every layer above it,
 - in a stack, it and every layer below it are in sync on GitHub, so the
   stack shows none of them needing a rebase: GitHub's comparison, which
   `../implement/SKILL.md` describes under "Stack dependent work", prints
@@ -246,8 +377,10 @@ A pull request is clean only when:
 
 `project review status <number> --reviewer <login>` applies a review loop's
 sign-off rule to the current head, over the verdicts and start comments that
-`<login>` posted: `clean` when every model reviewing it gave a clean verdict
-and no Projector finding thread is open. A loop counts only its own account's
+`<login>` posted: `clean` when every model reviewing it gave a clean verdict,
+no Projector finding thread is open, and no hold comment is open. It reports
+`held` while the pull request's author has a hold comment open, which waits
+on the push that carries its changes. A loop counts only its own account's
 verdicts, so run it once for each account whose reviews in the listing you
 fetched carry a `projector-review` marker: your own when a self-review loop
 reviews the pull request, and a teammate's when their loop reviews it. With
@@ -266,7 +399,9 @@ as any other cross-author verdict would.
 
 Report the head SHA, each layer's new head when you carried a change up a
 stack, the merge commit if you made one, the fix commits, the declined
-findings, the Suggestions you took and left, and the validation results. A
+findings, the suggestions you implemented, each suggestion you deferred with
+its one-line reason, any hold you posted, edited, or deleted and the changes
+it listed, and the validation results. A
 stale `CHANGES_REQUESTED`, or a pull request still in draft after all
 fixes, is a wait for re-review rather than another code change. Do not
 manufacture an empty commit to trigger it.
@@ -277,7 +412,9 @@ sign-off nothing gave it. If you opened it as a draft, you do not undraft it —
 not when the reason you drafted it is resolved. That is the case that feels
 justified: the red test you drafted around is passing, so the draft reads as
 stale state left over from a fixed problem. It is not. It is a standing
-request for review that has not been answered yet.
+request for review that has not been answered yet. A pull request you held
+is the same: deleting the hold is your part, and the review of the head you
+pushed is what marks it ready.
 
 ## Never
 

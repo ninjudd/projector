@@ -121,9 +121,12 @@ returns the pull request to draft when any model's verdict on the head
 requests changes, marks it ready when every one is clean, and leaves it as it
 is while a model is still reviewing the head or a finding thread is open.
 With one model reviewing, that is the old rule: a review with findings marks
-it draft, a clean review marks it ready. Nothing else enters into it — not
-when a review first saw the pull request, not who last changed the state, not
-whether it was ever a draft. Never set it yourself with `gh pr ready`.
+it draft, a clean review marks it ready. The one exception is a hold: while
+the author is building a change no review has read, `fix-pr` keeps the pull
+request a draft with a hold comment, and a clean review leaves it a draft
+until the hold is deleted. Nothing else enters into it — not when a review
+first saw the pull request, not who last changed the state, not whether it
+was ever a draft. Never set it yourself with `gh pr ready`.
 
 Draft carries the outcome there because GitHub refuses `APPROVE` and
 `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
@@ -157,19 +160,26 @@ it.
 
 One rule over GitHub's state decides the sign-off, and every `publish`
 applies it after it submits, so the last model to finish sets the draft
-state. It reads the reviewer account's verdicts and start comments and every
-Projector finding thread, from any account. A start comment is live until
-its model posts a verdict on its head, or until a day has passed since it was
-last edited, and a model is reviewing the head while its start comment on the
-head is live. Each model's newest verdict on the head counts, and the head is:
+state. It reads the reviewer account's verdicts and start comments, every
+Projector finding thread, from any account, and the pull request author's
+hold comments. A start comment is live until its model posts a verdict on
+its head, or until a day has passed since it was last edited, and a model is
+reviewing the head while its start comment on the head is live. Each model's
+newest verdict on the head counts, and the head is:
 
 - **`changes-requested`** when any model's newest verdict on it requests
   changes. A self-review returns to draft.
-- **`waiting`** when none does, and a model is reviewing the head or a
+- **`held`** when none does, and the pull request's author has a hold
+  comment open: one carrying `<!-- projector-hold v=1 -->`, which `fix-pr`
+  posts while it builds a change for the pull request, such as a suggestion
+  it implements. A self-review returns to draft and stays one until the
+  author deletes the hold. Only the author's comment counts, because anyone
+  can comment.
+- **`waiting`** when neither applies, and a model is reviewing the head or a
   Projector finding thread is open. The draft state stays as it is.
 - **`clean`** when at least one model has a verdict on the head, every
   model's newest verdict on it is clean, no model is reviewing it, and no
-  finding thread is open. A self-review is marked ready.
+  finding thread or hold is open. A self-review is marked ready.
 - **`unreviewed`** when no model has a verdict on the head.
 
 A loop that has not noticed a push yet has posted nothing for the new head.
@@ -768,7 +778,8 @@ from the sign-off rule in
 rule decides: the pull request is marked ready with `gh pr ready <number>`
 once every model reviewing the head is clean, after the peer wait, and is
 left as it is while another model is still reviewing it or a finding thread
-is open. That transition is the sign-off a reader sees in the pull-request
+is open. While its author's hold is open it is returned to draft, or left
+one. That transition is the sign-off a reader sees in the pull-request
 list.
 
 **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say

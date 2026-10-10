@@ -87,7 +87,9 @@ The watcher is level-triggered:
 - `CONFLICT` reports a branch that conflicts with its base. It clears when a
   push makes the branch mergeable again.
 - `REVIEW` reports a review body that has no inline thread, the shape every
-  `COMMENT` review posts.
+  `COMMENT` review posts. A Projector review whose body lists `Suggestions`
+  is work even under a clean verdict, because `fix-pr` implements or defers
+  each one.
 - `DRAFT` reports a pull request a review loop has not signed off. It clears
   when the pull request is marked ready, which a review loop's `publish`
   does once every model reviewing the current head has signed it off.
@@ -96,7 +98,9 @@ The watcher is level-triggered:
 A `DRAFT` line alone is not work. It says the head has not been signed off,
 and any work behind it arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or
 `REVIEW` line. A draft with nothing else outstanding is waiting on the review
-loop to re-review, not on a code change.
+loop to re-review, not on a code change. A pull request that a subagent's
+hold keeps in draft reports `DRAFT` too, and its work is already with that
+subagent: the changes the hold lists.
 
 ## Give each pull request its own subagent
 
@@ -126,11 +130,18 @@ the recurrence it is instead of as new work.
   stack, to the same subagent as a message; never start a second one for it.
   Each message is another run of `fix-pr` for the pull request's current
   head.
+- Send a change the owner asks for on a tracked pull request to its subagent
+  the same way, starting the subagent if the pull request has none yet.
+  `fix-pr` holds the pull request in draft while it builds the change, as
+  `../fix-pr/SKILL.md` describes under "Hold the pull request while changes
+  are built".
 - The subagent reports each run back: the head SHA, each layer's new head
   when it carried a change up a stack, the merge commit if it made one, the
-  fix commits, the declined findings, and the validation results. A
-  question for the user comes back to the main loop to ask, and the
-  subagent goes on with the pull request's unrelated work meanwhile.
+  fix commits, the declined findings, the suggestions it implemented, each
+  one it deferred with its reason, any hold it posted, edited, or deleted,
+  and the validation results. A question for the user comes back to the
+  main loop to ask, and the subagent goes on with the pull request's
+  unrelated work meanwhile.
 - When a pull request merges or closes, delete its line from the tracked
   file at once. Tell its subagent to finish, remove its worktrees, and close
   only when no layer it owns is still open. The user merges a stack as a
@@ -152,7 +163,11 @@ request with work, in the order the events arrived.
 
 After each subagent report, check the pull request against the clean
 conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
-fix commits, declined findings, and validation results, then keep watching.
+fix commits, declined findings, deferred suggestions, and validation
+results, then keep watching. A pull request with an open hold comment is not
+clean, however clean its review: `project review status` reports it `held`.
+Say so, and why: "#12 is held in draft while 2 changes are implemented",
+naming the changes the hold lists.
 
 Report a stack's readiness as one unit, the same unit its subagent fixes,
 because the user merges it as one from GitHub. Check every open layer
@@ -163,9 +178,13 @@ only one checkout's branches. Say "stack #<number> is ready to merge as a
 whole" when every layer's current head is clean and every comparison
 prints `0`. Otherwise name the bottom layers that are ready, such as "#12
 and #13 at the bottom of stack #14 are ready to merge", and what holds back
-the lowest layer that is not. Name the stack by the number GitHub's stacks API
-gives it, or by its bottom pull request for a chain of base branches that
-GitHub does not record as a stack.
+the lowest layer that is not. A hold on a layer holds the stack from that
+layer up, because the user merges from the bottom, so name the held layer
+and the changes its hold lists: "#12 at the bottom of stack #14 is ready to
+merge; the stack is held at #13 while 2 changes are implemented". Name the
+stack by the number GitHub's stacks API gives it, or by its bottom pull
+request for a chain of base branches that GitHub does not record as a
+stack.
 
 Delete closed or merged pull requests from the tracked file. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this

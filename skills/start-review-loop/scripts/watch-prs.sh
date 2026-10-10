@@ -13,7 +13,9 @@
 #              thread is the author's rather than the reviewer's. No head
 #              event is coming, so this asks for a re-review of the same
 #              head. Once per answer, and never alongside NEW PR or NEW HEAD,
-#              which already say to review that head.
+#              which already say to review that head. A hold the author lifts
+#              is an answer too, and while a hold is open nothing is: the
+#              author is building changes, so the head waits on them.
 #   CLOSED     a tracked pull request is no longer open
 #   BRANCH     the watched worktree changed branch
 #   TRACKED    a problem with the tracked file: a line that is not
@@ -141,9 +143,16 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # your own pull request, so reviewDecision never leaves NONE. reviewDecision
 # carries a cross-author review, where REQUEST_CHANGES works and draft state
 # is untouched — the skill forbids drafting another author's pull request.
+#
+# The last field is "held" while the pull request's author has a hold comment
+# open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
+# otherwise. Only the author's comment counts, because anyone can comment. A
+# hold lives only while its changes are built, so the newest 100 comments
+# hold it.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
-    state isDraft reviewDecision headRefOid headRefName
+    state isDraft reviewDecision headRefOid headRefName author{login}
+    comments(last:100){ nodes{ author{login} body } }
     reviewThreads(first:100){ nodes{ isResolved
       comments(first:1){ nodes{ databaseId body } }
       lastComment: comments(last:1){ nodes{ databaseId body } } } } } } }'
@@ -154,7 +163,11 @@ PR_JQ='.data.repository.pullRequest
       | ((.lastComment // .comments).nodes[-1])
       | select(.body | test("projector-(finding|verify)") | not)
       | .databaseId // 0] | max // "-") as $answer
-  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer)"'
+  | (.author.login // "") as $author
+  | (if $author != "" and any(.comments.nodes[];
+         (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
+     then "held" else "-" end) as $held
+  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held)"'
 
 # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
 # can be told apart from a pull request that does not exist.
@@ -258,11 +271,12 @@ EOF
     known=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $3}' "$STATE" 2>/dev/null)
     kref=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $4}' "$STATE" 2>/dev/null)
     # Field 5 is the answer a RESPONDED line was last emitted for, as
-    # <sha>:<reply id>, or "-". Comparing it against the current head and
-    # newest reply is what makes that fire once per answer: a re-review that
-    # requests changes again does not re-announce, a further reply on the same
-    # head does, and a new push resets it because the row's SHA changed. A
-    # bare SHA is the older form of <sha>:-.
+    # <sha>:<reply id>, "held" while a hold is open, or "-". Comparing it
+    # against the current head and newest reply is what makes that fire once
+    # per answer: a re-review that requests changes again does not
+    # re-announce, a further reply on the same head does, and a new push
+    # resets it because the row's SHA changed. A bare SHA is the older form
+    # of <sha>:-.
     flag=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $5}' "$STATE" 2>/dev/null)
     [ -n "$flag" ] || flag="-"
 
@@ -280,7 +294,7 @@ EOF
 "
       continue
     fi
-    read -r pstate pdraft pdecision sha ref unresolved answer <<EOF
+    read -r pstate pdraft pdecision sha ref unresolved answer held <<EOF
 $row
 EOF
     [ -n "${answer:-}" ] || answer="-"
@@ -316,7 +330,16 @@ EOF
     # self-reviewed draft ready, while on a cross-author changes request
     # marking it ready is forbidden and a clean re-review is a COMMENT
     # recommending a human approval.
-    if [ -n "$known" ] && [ "$known" = "$sha" ]; then
+    #
+    # An open hold says the author is building changes, so the head waits on
+    # the author and nothing is a response; the flag records that a hold was
+    # seen. Lifting it is the response: a hold lifted without a push, or one
+    # that kept the new head's review in draft, leaves no other event to come.
+    # A head event's pass records the hold too, because the push that carries
+    # the changes can land a cycle before the hold is deleted.
+    if [ "$held" = "held" ]; then
+      flag="held"
+    elif [ -n "$known" ] && [ "$known" = "$sha" ]; then
       rstate=""
       if [ "$unresolved" = "0" ] || [ "$answer" != "-" ]; then
         if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
@@ -338,6 +361,7 @@ EOF
           seen="$flag"; now="$key"
           how="and the author replied on an open finding"
         fi
+        [ "$flag" = "held" ] && how="now that its hold is lifted"
         if [ "$seen" != "$now" ]; then
           if [ "$rstate" = "changes-requested" ]; then
             echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested $how; re-review this head, and a clean one is a COMMENT, never an approval"

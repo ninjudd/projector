@@ -27,7 +27,13 @@ install docs`.
 answers one pull request's findings, verifying each by the same protocol, and
 merges the base into a branch that conflicts with it; `start-fix-loop` runs
 it, one subagent per pull request, whenever its watcher reports work on one
-this conversation owns. The reviewer settles its own
+this conversation owns. `fix-pr` also implements or defers each suggestion
+a review lists. While it builds a change that no review has read, such as a
+suggestion it implements or a change you ask for, it holds the pull request
+in draft with a comment that lists the changes, so the pull request never
+looks ready to merge while the changes are coming. It deletes the comment
+once they are pushed, and a clean review of that push marks the pull
+request ready. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
 what it checked rather than on who clicked resolve. In a repository with a

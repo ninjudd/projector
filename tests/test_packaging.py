@@ -146,6 +146,7 @@ class PackagingTests(unittest.TestCase):
                 with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
                     self.assertIn(heading, HEADING.findall(target))
         self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
+        self.assertIn(("fix-pr", "Hold the pull request while changes are built"), cited)
 
     def test_a_citation_resolves_to_a_heading_at_any_level_but_not_to_prose(self) -> None:
         skill = "# Skill\n\n## Section\n\n### Subsection\n\nProse that mentions ## Elsewhere.\n"

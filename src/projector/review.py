@@ -36,6 +36,9 @@ from .core import ProjectorError, distribution_version
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
+# The last line of the comment that holds a pull request in draft while changes for it are built, as
+# fix-pr/SKILL.md § Hold the pull request while changes are built writes it.
+HOLD_MARKER = "<!-- projector-hold v=1 -->"
 # The mark that opens both the start comment and the review's signature line, as
 # review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
@@ -469,6 +472,21 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
                 and review.get("at") and parse_time(review["at"]) >= created):
             return False
     return True
+
+
+# Holds
+
+def holds(repo: str, number: int, author: str) -> list[dict]:
+    """The hold comments on the pull request, from every page, each with its `id` and `url`. Only the
+    pull request's `author` holds it: anyone can comment, so another account's comment carrying the
+    marker holds nothing."""
+    if not author:
+        return []
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
+                   "--jq", f'.[] | select(.body // "" | contains("{HOLD_MARKER}")) '
+                           '| {id, url: .html_url, login: .user.login} | @json']).splitlines()
+    return [{"id": comment["id"], "url": comment.get("url")} for comment in map(json.loads, filter(str.strip, rows))
+            if (comment.get("login") or "").lower() == author.lower()]
 
 
 # Resolving which review a command means
@@ -1146,14 +1164,16 @@ def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) 
     return models
 
 
-def signoff(models: dict[str, dict], open_threads: int) -> str:
+def signoff(models: dict[str, dict], open_threads: int, held: bool = False) -> str:
     """The rule review-pr § Review as one model among several states: `changes-requested` when any
-    model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
-    or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
-    and `unreviewed` when no model has one."""
+    model's newest verdict on the head requests changes, `held` while a hold comment is open, `waiting`
+    while a model is reviewing the head or a Projector finding thread is open, `clean` when every
+    model's newest verdict on it is clean, and `unreviewed` when no model has one."""
     verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
     if "changes-requested" in verdicts:
         return "changes-requested"
+    if held:
+        return "held"
     if open_threads or any(m["reviewing"] for m in models.values()):
         return "waiting"
     return "clean" if verdicts else "unreviewed"
@@ -1176,12 +1196,13 @@ def peer_wait(value: object) -> int:
 
 
 def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
-         posted: Optional[dict] = None) -> dict:
+         posted: Optional[dict] = None, *, author: str) -> dict:
     """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
     says `clean`.
 
-    The rule reads the reviewer's verdicts and start comments; `posted` stands
-    in for this review's verdict before it is submitted. While the rule says
+    The rule reads the reviewer's verdicts and start comments, and the hold
+    comments of the pull request's `author`; `posted` stands in for this
+    review's verdict before it is submitted. While the rule says
     `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
     until `deadline`: a peer's start comment makes it `waiting`, a peer's
     verdict joins the rule, and a peer that posts nothing by the deadline is
@@ -1194,7 +1215,7 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
         reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
             + ([posted] if posted else [])
         models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
-        result = signoff(models, open_threads)
+        result = signoff(models, open_threads, bool(holds(repo, number, author)))
         pending = pending_peers(models, me) if result == "clean" else []
         waited = int((now() - started).total_seconds())
         if not pending or now() >= deadline:
@@ -1216,7 +1237,7 @@ def thread_model(thread: dict) -> Optional[str]:
 
 def status(repo: str, number: int, reviewer: str) -> dict:
     """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
-    part in it and every open Projector finding thread."""
+    part in it, every open Projector finding thread, and every open hold comment."""
     try:
         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
@@ -1224,6 +1245,7 @@ def status(repo: str, number: int, reviewer: str) -> dict:
     head = pr["head"]["sha"]
     models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+    held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
     rows = []
     for key in sorted(models):
         m = models[key]
@@ -1237,8 +1259,9 @@ def status(repo: str, number: int, reviewer: str) -> dict:
             row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
         rows.append(row)
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
-            "signoff": signoff(models, len(threads)), "models": rows,
-            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
+            "signoff": signoff(models, len(threads), bool(held)), "models": rows,
+            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
+            "holds": held}
 
 
 def status_lines(result: dict) -> list[str]:
@@ -1257,6 +1280,8 @@ def status_lines(result: dict) -> list[str]:
     if threads:
         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
+    for hold in result["holds"]:
+        lines.append(f"  held in draft by comment {hold['id']} until the changes it lists are pushed")
     return lines
 
 
@@ -1444,7 +1469,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
                 # replace another model's standing change request: approve only when the rule, counting
                 # this verdict as posted, signs the head off.
                 posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
-                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
+                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted,
+                             author=(pr.get("user") or {}).get("login") or "")
                 if ahead["moved"]:
                     raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
                                       f"other models; run `project review move {number}` and review the new head")
@@ -1473,13 +1499,17 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     # The rule counts this review as read back, whether or not the reviews listing shows it yet.
     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
               "login": reviewer, "body": read["body"]}
-    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+    current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+    draft = bool(current.get("draft"))
     # Only a draft is about to be signed off, so only a draft waits for its peers.
     signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
-                  deadline if published.get("self") and draft else now(), posted)
+                  deadline if published.get("self") and draft else now(), posted,
+                  author=(current.get("user") or {}).get("login") or "")
     draft_wanted = None
     if published.get("self") and not signed["moved"]:
-        draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
+        # A hold says changes for the pull request are still being built, so it stays a draft however
+        # clean this head is.
+        draft_wanted = {"changes-requested": True, "held": True, "clean": False}.get(signed["signoff"])
     if draft_wanted is not None and draft_wanted != draft:
         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
     if draft_wanted is not None:

@@ -1137,15 +1137,19 @@ publishes beside an earlier verdict the body names.
 
 On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
 rule to the head it published on. The rule reads the reviewer's verdicts and
-start comments and every Projector finding thread. A start comment is live
-until its model posts a verdict on its head, or until a day passes since its
-last edit, and a model is reviewing the head while its start comment there is
-live. With each model's newest verdict on the head counting, the head is
-`changes-requested` when any of those requests changes, `waiting` when none
-does and a model is reviewing it or a finding thread is open, `clean` when
-every one is clean, and `unreviewed` when there is none. `changes-requested`
-returns the pull request to draft, `clean` marks it ready, and `waiting`
-leaves it as it is, so the last model to finish sets the draft state. Before
+start comments, every Projector finding thread, and the pull request
+author's hold comments. A start comment is live until its model posts a
+verdict on its head, or until a day passes since its last edit, and a model
+is reviewing the head while its start comment there is live. A hold comment
+is one that carries `<!-- projector-hold v=1 -->`, which `fix-pr` posts
+while it builds a change for the pull request. With each model's newest
+verdict on the head counting, the head is `changes-requested` when any of
+those requests changes, `held` when none does and the author has a hold
+comment open, `waiting` when neither applies and a model is reviewing it or
+a finding thread is open, `clean` when every one is clean, and `unreviewed`
+when there is none. `changes-requested` and `held` return the pull request
+to draft, `clean` marks it ready, and `waiting` leaves it as it is, so the
+last model to finish sets the draft state. Before
 it marks a draft ready, `publish` waits for each peer: another model with a
 verdict on an earlier head, or a live start comment on another head, and
 nothing on this one. It re-reads the start comments and verdicts every 15
@@ -1166,7 +1170,8 @@ after submitting exits non-zero, and running it again finishes that review
 rather than posting another.
 
 `status` prints the sign-off of the pull request's current head, by the same
-rule, with each model's part in it and the open finding threads:
+rule, with each model's part in it, the open finding threads, and any open
+hold comment:
 
 ```
 $ project review status 66
@@ -1177,7 +1182,9 @@ $ project review status 66
 ```
 
 A model with a verdict or a start comment only on an earlier head is
-`pending`, and does not change the sign-off. It reads the pull request, its
+`pending`, and does not change the sign-off. A hold comment adds a line,
+such as `held in draft by comment 4411 until the changes it lists are
+pushed`, and makes the sign-off `held`. It reads the pull request, its
 reviews, its issue comments, and its threads, finds the reviewer as `setup`
 does, from `--reviewer`, then `review.username`, then the authenticated user,
 and runs from any directory. It exits 0 whatever the sign-off, and 1 only
@@ -1187,9 +1194,10 @@ when it cannot read the pull request. With `--json` it prints one object:
 | --- | --- |
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
-| `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
+| `signoff` | `clean`, `changes-requested`, `held`, `waiting`, or `unreviewed`. |
 | `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
+| `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review

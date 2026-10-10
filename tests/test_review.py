@@ -109,9 +109,10 @@ class FakeGitHub:
             del self.comments[int(args[3].rsplit("/", 1)[1])]
             return ""
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+            marker = re.search(r'contains\("([^"]+)"\)', args[4]).group(1)
             return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
                                        "body": body, **self.comment_info[i]}) + "\n"
-                           for i, body in self.comments.items() if "projector-start" in body)
+                           for i, body in self.comments.items() if marker in body)
         if args[:2] == ["auth", "token"]:
             return f"token-{args[-1]}\n"
         if args == ["api", "user", "--jq", ".login"]:
@@ -1000,6 +1001,12 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
             "seconds=60 covered=1/1 -->\n")
 
 
+# The comment fix-pr posts while it builds a change for the pull request.
+HOLD = ("Held in draft while the following changes are implemented:\n\n"
+        "- Skip fenced code blocks when looking for headings\n\n"
+        "<!-- projector-hold v=1 -->\n")
+
+
 class ModelTests(PublishCase):
     """Each model is a reviewer of its own: its own state, lock, worktree, and collision check."""
 
@@ -1268,6 +1275,40 @@ class SignoffTests(SignoffCase):
 
         self.assertEqual("clean", self.json_publish("clean")["signoff"])
 
+    def test_the_authors_hold_keeps_a_clean_head_a_draft_without_waiting_for_peers(self) -> None:
+        # fix-pr holds a pull request while it builds a change a clean review cannot have read.
+        for draft in (True, False):
+            with self.subTest(draft=draft):
+                self.setUp()
+                self.github.pr["draft"] = draft
+                self.add_verdict("gpt-5.5", sha=self.earlier)
+                self.github.comment(HOLD)
+                self.begin_now()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                result = self.json_publish("clean")
+
+                self.assertEqual(("held", True), (result["signoff"], result["draft"]))
+                self.assertTrue(self.github.pr["draft"])
+                self.assertEqual([], self.slept, "a held head is not about to be signed off")
+                self.assertEqual(not draft, any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
+
+    def test_a_hold_from_anyone_but_the_author_holds_nothing(self) -> None:
+        self.github.comment(HOLD, login="passerby")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
+        self.assertFalse(self.github.pr["draft"])
+
+    def test_a_change_request_outranks_a_hold(self) -> None:
+        self.github.comment(HOLD)
+        self.add_verdict("gpt-5.5", verdict="changes-requested")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual("changes-requested", self.json_publish("clean")["signoff"])
+
     def test_two_models_that_publish_together_sign_off_whichever_order_they_apply_the_rule_in(self) -> None:
         for gpt_verdict, signed in (("clean", "clean"), ("changes-requested", "changes-requested")):
             for first in ("claude-opus-5-5", "gpt-5.5"):
@@ -1384,6 +1425,8 @@ class CrossAuthorSignoffTests(SignoffCase):
     def test_a_clean_verdict_approves_only_when_every_model_on_the_head_is_clean(self) -> None:
         cases = {"changes requested": (lambda: self.add_verdict("gpt-5.5", verdict="changes-requested"), "COMMENT"),
                  "reviewing": (lambda: self.start("gpt-5.5"), "COMMENT"),
+                 "held by its author": (lambda: self.github.comment(HOLD, login="teammate"), "COMMENT"),
+                 "held by the reviewer": (lambda: self.github.comment(HOLD), "APPROVE"),
                  "clean": (lambda: self.add_verdict("gpt-5.5"), "APPROVE"),
                  "alone": (lambda: None, "APPROVE")}
         for name, (arrange, event) in cases.items():
@@ -1473,6 +1516,34 @@ class StatusTests(SignoffCase):
 
         self.assertEqual("unreviewed", mine["signoff"], "the operator's own loop has not reviewed it")
         self.assertEqual("clean", theirs["signoff"], "the teammate's loop found the head clean")
+
+    def test_an_open_hold_is_held_and_named_until_the_author_deletes_it(self) -> None:
+        self.add_verdict("claude-opus-5-5")
+        hold = self.github.comment(HOLD)
+        self.github.comment(HOLD, login="passerby")
+
+        code, out, err = self.status()
+        held = json.loads(self.status("--json")[1])
+        del self.github.comments[hold]
+        lifted = json.loads(self.status("--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(f"#1 at {self.head[:7]}: held", out.splitlines()[0])
+        self.assertEqual(f"  held in draft by comment {hold} until the changes it lists are pushed",
+                         out.splitlines()[-1])
+        self.assertEqual(("held", [{"id": hold, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{hold}"}]),
+                         (held["signoff"], held["holds"]))
+        self.assertEqual(("clean", []), (lifted["signoff"], lifted["holds"]))
+
+    def test_the_hold_fix_pr_posts_is_the_one_the_sign_off_and_the_review_watcher_read(self) -> None:
+        skills = Path(cli.__file__).resolve().parents[2] / "skills"
+        fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
+        watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
+
+        self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
+        self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr's hold comment opens with the line HOLD does")
+        self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr's hold comment ends with HOLD_MARKER")
+        self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
 
     def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")
