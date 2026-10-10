@@ -14,6 +14,11 @@ from projector import cli, site, summary
 
 ROOT = Path(__file__).parents[1]
 
+# Without a doctype a browser lays the page out in quirks mode, and without the
+# viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
+STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
+                  '<meta name="viewport" content="width=device-width, initial-scale=1">\n')
+
 DIFF = """diff --git a/src/core.go b/src/core.go
 index 1111111..2222222 100644
 --- a/src/core.go
@@ -138,7 +143,7 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(0, code, err)
         html = (site / "index.html").read_text()
-        self.assertTrue(html.startswith("<title>Core Summary</title>"))
+        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Core Summary</title>\n"), html[:200])
         self.assertTrue((site / "summary.js").is_file())
         self.assertTrue((site / "summary.css").is_file())
         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
@@ -291,6 +296,7 @@ class SiteTests(unittest.TestCase):
         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
             self.assertIn(site.icon_link(), built)
+            self.assertTrue(built.startswith(STANDARDS_HEAD), built[:200])
 
     def test_a_summary_published_with_its_diff_builds_without_github(self) -> None:
         tmp = Path(tempfile.mkdtemp())
