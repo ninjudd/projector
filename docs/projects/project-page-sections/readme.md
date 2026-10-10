@@ -1,0 +1,172 @@
+---
+status: draft
+priority: later
+---
+
+# List a plan's sections and its nearby projects in the sidebar
+
+A project page's sidebar lists the sections of the plan you are reading, as a
+summary's sidebar lists its sections, and lets a nested project's page reach
+its parent and sibling projects. This draft outlines the questions the two
+raise and how they meet. It settles none of them.
+
+It builds on [`project-page-nav`](../project-page-nav/readme.md), which gives
+each project page a summary's title row and sidebar: every stack of pull
+requests that holds a segment of the project, each under its segments'
+headers, then the project's own supplemental files and nested projects, and
+the footer row. On the project's readme, the project's own headers are
+current.
+
+## 1. Problem
+
+`project-page-nav` leaves two things out of the project page's sidebar, and
+the user wants them designed together, because they share the sidebar's space
+and its sense of where you are.
+
+- **No list of the plan's sections.** A summary's sidebar lists its numbered
+  sections, so a reader jumps to any of them. A plan has none. This
+  repository's plans run to 500 to 800 lines at the long end, with 4 to 14
+  `##` sections each, so a reader scrolls to find **4. Acceptance criteria**.
+- **A nested project's sidebar no longer reaches its siblings.** Today's tree
+  column lists the whole top-level project's folder on every page of it, so a
+  sibling project is one click away. `project-page-nav` lists only the
+  current project's own files and nested projects, so the reader goes through
+  the breadcrumbs to the parent and then to the sibling.
+
+## 2. Solution
+
+Not settled. The sections below list each question, the options, and their
+trade-offs. Section 3 collects the decisions they need.
+
+### 2.1 Where the headings come from
+
+The browser has a plan's headings only once it renders the Markdown, after
+`site.json` arrives and the plan's file loads. The sidebar draws before that.
+
+| Option | How it works | Trade-off |
+| --- | --- | --- |
+| Read them after the render | `showDocument` fills the list from the rendered headings, whose ids `site.ts` already sets | No build change, and the links match by construction. `showDocument` already redraws the whole frame, sidebar included, when the Markdown arrives, because `frame` rewrites `root.innerHTML` in place of the `Loading…` page. The list arrives in that same redraw, so only the sidebar blocks below it move, at the moment the plan itself appears. |
+| Extract them at build time | The build, which already reads every plan for `title_from_text` and for `search_index`, puts each plan's headings in `site.json` | The list draws on first paint. The build must find the same headings the browser renders, and the links must match the rendered ids (§ 2.2). |
+| Both | The build's list draws first, and the rendered headings replace it | No jump, and the links always match in the end. Two sources for one list, and a redraw whenever they disagree. |
+
+Extraction has to skip fenced code. The `agent-instructions` plan holds
+`## Projector conventions` inside a fenced block, as an example of what
+`project init` writes. Setext headings, a line of `-` under text, also render
+as `<h2>`, and raw `<h2>` tags pass through.
+
+### 2.2 Anchors that match the rendered plan
+
+`renderMarkdown` gives every rendered heading without an id one from `slug`:
+its text in lower case, with characters other than letters, digits, `_`,
+spaces, and hyphens dropped, and each run of spaces made one hyphen. Links
+into plans already use these ids, so a change to them breaks those links. Two
+headings with the same text share one id today.
+
+| Option | How the sidebar's link finds its heading | Trade-off |
+| --- | --- | --- |
+| The build mirrors `slug` | Python strips the heading's inline Markdown and slugs the result | Two copies of one rule. The strip has to match what the browser renders as the heading's text: code spans, emphasis, links, and entities. JavaScript's `\w` matches ASCII only, and Python's needs `re.ASCII` to agree. |
+| The browser slugs the build's source | The build sends each heading's raw inline source. The sidebar renders it with `marked.parseInline` and DOMPurify, takes its text, and slugs it with the same `slug`. | One rule, and the text matches the rendered heading exactly. One inline render per heading on first paint, which is tens per plan. |
+| The build assigns the ids | The build gives each heading an id, and the browser applies them to the rendered top-level `<h2>` elements in order | Links always land, and duplicates can get distinct ids. It depends on the build finding exactly the headings the browser renders, and it can change the id of an unusual heading, which breaks links to it. |
+
+### 2.3 Which headings to list
+
+- **`##` only.** Every plan has them, as its numbered sections: 4 to 14 per
+  plan here. The list stays short.
+- **`##` and `###`.** Nine plans here have subsections, up to 8 each, so a
+  plan's list could pass 20 rows. The subsections could indent under their
+  section, or show only under the section you are in.
+
+Plans number their own sections, as `2. Solution`. A summary's list puts a
+number in a column of its own, the `nnum` span. The plan's number could move
+into that column, leaving the title beside it, or the heading could show as
+written with the number column empty. A section with no number needs a rule
+either way.
+
+### 2.4 Marking the current section
+
+A summary page does not mark the section you are scrolled to. Its list marks
+each section you have reviewed, with the check dot in its last column. A plan
+has no reviewed state, so its list would draw no dots.
+
+- **No current section.** It matches the summary page and adds no script.
+- **Mark it as you scroll.** An `IntersectionObserver` watches the headings
+  and highlights the section in view. The list is shared, so the summary page
+  would gain it too, or the two lists would differ. A marked section carries
+  `aria-current="location"`. `project-page-nav` says exactly one item in the
+  sidebar carries `aria-current="page"`, and that rule would become one
+  `page` and at most one `location`.
+
+### 2.5 Reusing the summary's section list
+
+The summary's list is an `<ol>` of links, each holding the `nnum`, `ntitle`,
+and `ncheck` spans, drawn inline in `renderPage` and styled by the `.nav ol`
+rules in `site/assets/summary.css`. At 980 pixels and narrower, those rules
+lay the list out as a grid of columns. A shared `sectionListHtml`, beside
+`project-page-nav`'s `sideNavHtml`, would draw both lists from one copy: the
+summary's with its check dots, the plan's without. Either source in § 2.1
+feeds it.
+
+### 2.6 What a nested project's sidebar lists
+
+| Option | What the sidebar lists | Trade-off |
+| --- | --- | --- |
+| Its own pages | The current project's files and nested projects, as `project-page-nav` does | One project in the pages list. A stack that spans the current project and its parent or a sibling shows that project's header as a link, so the stacks reach a neighbor only when a stack spans the two. Any other sibling is two clicks away, through the breadcrumbs. |
+| The whole top-level tree | The top-level project's folder, as today's tree column does, below the current project's stacks | Siblings are one click away. The title row and the stacks' current headers name the child while the tree starts at the parent, and on the parent's readme a project header and the tree's **Overview** entry would both be current. |
+| Its own pages, and its neighbors | Its own pages, then a short block naming the parent and the siblings | Siblings are one click away, and the title row and the pages still agree. A third kind of block in the sidebar. |
+| The whole tree, folded | The top-level tree, open along the path to the current project and closed elsewhere | Today's reach without today's length. The tree's own entry for the current project repeats the title row. |
+
+### 2.7 How the sections and the pages share the sidebar
+
+- **Separate blocks.** The stacks, the sections, the pages, and the footer,
+  in that order. The sections sit where a summary's sit, below its stacks. On
+  a page that is not the readme, the sections are that page's.
+- **Sections inside the tree.** The current page's entry in the pages list
+  opens to show its sections, as many documentation sites do. Each page's
+  sections stay with it. The readme has no entry in the pages list, because
+  the project's headers link to it, so its sections need a place of their
+  own, above the stacks or below them.
+- **Length on a wide screen.** A few stacks, each with one or more headers,
+  14 sections, and a tree can pass the window's height. The sidebar sticks
+  and scrolls on its own, so a long sidebar works, but whichever block comes
+  last is the one a reader scrolls to reach.
+- **Length on a narrow screen.** At 980 pixels and narrower, `summary.css`
+  makes the sidebar static, `project-page-nav` puts it before the plan, and
+  the `.nav ol` rules lay a section list out as a grid of columns. Fourteen
+  sections then push the plan further down the page, below the stacks and
+  the pages.
+
+Only one item may be the current page: on the readme, the first of the
+project's headers, and on any other page, the file's entry. The current
+section, if § 2.4 marks one, is a location within it.
+
+### 2.8 Pages without sections
+
+An HTML page in a project renders in a frame, so the site does not see its
+headings, and its sidebar lists no sections. A supplemental Markdown page has
+headings of its own, and § 2.7 decides whether its sidebar lists them.
+
+## 3. Open questions
+
+The user decides each, and the plan moves to `ready` once all are answered.
+
+1. **Where the headings come from**, after the render, at build time, or both
+   (§ 2.1).
+2. **How the links match the rendered ids** (§ 2.2).
+3. **Which levels to list, and how to show the plan's numbers** (§ 2.3).
+4. **Whether to mark the current section as you scroll**, and if so on
+   summary pages too (§ 2.4).
+5. **What a nested project's sidebar lists** (§ 2.6).
+6. **How the sections and the pages share the sidebar**, and whether a
+   supplemental page lists its own sections (§ 2.7 and § 2.8).
+
+## 4. Background
+
+- **Heading counts.** On 2026-10-10, on `main` with `project-page-nav`, this
+  repository's plans held 4 to 14 `##` lines each, and eight held `###`
+  subsections, up to 8 each. This plan makes nine. One `##` line, in
+  `agent-instructions`, sits in a fenced code block.
+- **Ids today.** `renderMarkdown` in `site/src/site.ts` sets
+  `h.id = slug(h.textContent)` on each rendered heading that has no id.
+- **The summary's list.** `renderPage` in `site/src/summary.ts` draws the
+  sections as `<ol>` items with the `nnum`, `ntitle`, and `ncheck` spans, and
+  no script on the page marks a section as current while you scroll.
