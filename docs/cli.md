@@ -1241,10 +1241,10 @@ head, the kind, and the counts, and a lead that links the full review and
 states the change's size, the kind, and any resolved conflict. It always posts
 a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
 approval is what remains." on another author's pull request, and on a
-self-review marks the pull request ready. It refuses, keeping the lock, when a
-rule fails, when the body is empty, too long, or holds a signature line, a
-marker, or `{census}`, and when given `--threads`, `--covered`,
-`--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
+self-review applies the sign-off rule, as any clean verdict does. It refuses,
+keeping the lock, when a rule fails, when the body is empty, too long, or
+holds a signature line, a marker, or `{census}`, and when given `--threads`,
+`--covered`, `--second-verdict`, or `--verdict changes-requested`. Without `--incremental`,
 `--verdict` and `--covered` are required, and a body that holds a
 `projector-incremental` line is refused like one that holds its own marker.
 

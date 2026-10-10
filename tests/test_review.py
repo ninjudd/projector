@@ -72,6 +72,8 @@ class FakeGitHub:
         self.fail: str | None = None
         # Runs once, right after the next review is submitted, as another session acting at that moment.
         self.after_post = None
+        # Reviews the listing leaves out, as one GitHub has not indexed yet.
+        self.unlisted: set[int] = set()
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append((list(args), token))
@@ -81,7 +83,8 @@ class FakeGitHub:
             login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
                                        "body": r["body"]}) + "\n"
-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"])
+                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
+                           and r["id"] not in self.unlisted)
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
@@ -97,7 +100,8 @@ class FakeGitHub:
             return json.dumps({"id": review_id})
         if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/1/reviews/"):
             review_id = int(args[1].rsplit("/", 1)[1])
-            return json.dumps(next(r for r in self.reviews if r["id"] == review_id))
+            found = next(r for r in self.reviews if r["id"] == review_id)
+            return json.dumps(dict(found, html_url=review_page(review_id), submitted_at=found.get("at")))
         if args[:2] == ["pr", "ready"]:
             self.pr["draft"] = "--undo" in args
             return ""
@@ -673,8 +677,8 @@ class PublishTests(PublishCase):
         ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
         reread = next(i for i, c in enumerate(steps) if c == f"api repos/{REPO}/pulls/1/reviews/901")
         delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
-        self.assertLess(ready, reread)
-        self.assertLess(reread, delete, "the start comment goes only after draft state and the re-read")
+        self.assertLess(reread, ready, "the rule counts the review as read back")
+        self.assertLess(ready, delete, "the start comment goes only after the re-read and draft state")
         self.assertIn("published review 901", out)
 
     def test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_request_to_draft(self) -> None:
@@ -1225,6 +1229,15 @@ class SignoffTests(SignoffCase):
                 self.assertEqual(draft, self.github.pr["draft"])
                 self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
 
+    def test_the_rule_counts_the_review_it_read_back_when_the_listing_lags(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.after_post = lambda: self.github.unlisted.add(self.github.reviews[-1]["id"])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
+        self.assertFalse(self.github.pr["draft"])
+
     def test_every_model_clean_on_the_head_marks_it_ready(self) -> None:
         self.add_verdict("gpt-5.5")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1396,6 +1409,19 @@ class CrossAuthorSignoffTests(SignoffCase):
         self.assertEqual("COMMENT", self.json_publish("clean")["event"])
         self.assertEqual([15], self.slept)
 
+    def test_a_head_that_moves_during_the_approval_wait_refuses_and_points_at_move(self) -> None:
+        self.add_verdict("gpt-5.5", sha=self.earlier)
+        self.begin_now()
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.hooks[1] = lambda: self.github.pr["head"].update(sha="f" * 40)
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code)
+        self.assertIn("project review move 1", err)
+        self.assertEqual(1, len(self.github.reviews), "only gpt-5.5's earlier verdict")
+        self.assertTrue(self.lock(self.head).exists())
+
 
 class StatusTests(SignoffCase):
     def status(self, *extra: str) -> tuple[int, str, str]:
@@ -1436,6 +1462,17 @@ class StatusTests(SignoffCase):
 
         self.assertEqual("clean", result["signoff"])
         self.assertEqual(["clean", "pending"], [m["state"] for m in result["models"]])
+
+    def test_fix_prs_status_command_reads_the_account_whose_loop_reviewed_the_pull_request(self) -> None:
+        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
+        self.assertIn("`project review status <number> --reviewer <login>` reports `clean`", skill)
+        self.add_verdict("claude-opus-5-5", login="teammate")
+
+        mine = json.loads(self.status("--json")[1])
+        theirs = json.loads(self.status("--json", "--reviewer", "teammate")[1])
+
+        self.assertEqual("unreviewed", mine["signoff"], "the operator's own loop has not reviewed it")
+        self.assertEqual("clean", theirs["signoff"], "the teammate's loop found the head clean")
 
     def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")

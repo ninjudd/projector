@@ -1191,7 +1191,8 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
     `moved`."""
     started = now()
     while True:
-        reviews = reviewer_reviews(repo, number, reviewer) + ([posted] if posted else [])
+        reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
+            + ([posted] if posted else [])
         models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
         result = signoff(models, open_threads)
         pending = pending_peers(models, me) if result == "clean" else []
@@ -1444,7 +1445,10 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
                 # this verdict as posted, signs the head off.
                 posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
                 ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
-                event = "APPROVE" if ahead["signoff"] == "clean" and not ahead["moved"] else "COMMENT"
+                if ahead["moved"]:
+                    raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
+                                      f"other models; run `project review move {number}` and review the new head")
+                event = "APPROVE" if ahead["signoff"] == "clean" else "COMMENT"
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
                                  "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
@@ -1463,18 +1467,21 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         write_state(paths, state)
     published = state["published"]
     token = reviewer_token(reviewer)
+    read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
+    if f"sha={sha}" not in (read.get("body") or ""):
+        raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
+    # The rule counts this review as read back, whether or not the reviews listing shows it yet.
+    posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+              "login": reviewer, "body": read["body"]}
     draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
     # Only a draft is about to be signed off, so only a draft waits for its peers.
     signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
-                  deadline if published.get("self") and draft else now())
+                  deadline if published.get("self") and draft else now(), posted)
     draft_wanted = None
     if published.get("self") and not signed["moved"]:
         draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
     if draft_wanted is not None and draft_wanted != draft:
         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
-    posted = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"])
-    if f"sha={sha}" not in (posted or {}).get("body", ""):
-        raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
     if draft_wanted is not None:
         draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
         if draft != draft_wanted:
