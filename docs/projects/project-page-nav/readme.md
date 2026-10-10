@@ -183,12 +183,12 @@ is anything else, such as a paragraph or an `<h2>`, the body stays as it
 renders.
 
 `showPage` and `showDocument` pass `top` and `nav` through, and `showHtml`
-passes `nav`. An HTML page keeps the frame it has today, which fills the window and can go
-full screen, and keeps today's head of breadcrumbs and **View on GitHub**
-above its frame. Its collapsible column holds the sidebar in place of the
-tree, as an `<aside class="side" id="siteside">` rather than a `<nav>`,
-because the sidebar is itself the navigation landmark. The column starts
-hidden, and the header's menu button shows it, as it does today.
+passes `nav`. An HTML page keeps the frame it has today, which fills the
+window and can go full screen, and keeps today's head of breadcrumbs and
+**View on GitHub** above its frame. Its collapsible column holds the sidebar
+in place of the tree, as an `<aside class="side" id="siteside">` rather than
+a `<nav>`, because the sidebar is itself the navigation landmark. The column
+starts hidden, and the header's menu button shows it, as it does today.
 
 ### 2.3 What the sidebar shows
 
