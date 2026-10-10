@@ -2002,15 +2002,41 @@ class InitSiteTests(SiteRepoCase):
                           "public": True, "website": "unchanged"}, report["site"])
 
     def test_init_updates_a_workflow_projector_wrote_in_an_earlier_shape(self) -> None:
+        shapes = {"before the new paths": summary.workflow_text("v0", "main").replace(
+            ", .projector.toml, .github/workflows/projector-site.yml", "")}
+        shapes.update((f"earlier shape {i}", text) for i, text in enumerate(earlier_workflows()))
         self.workflow().parent.mkdir(parents=True)
-        self.workflow().write_text(summary.workflow_text("v0", "main").replace(
-            ", .projector.toml, .github/workflows/projector-site.yml", ""))
+        for name, text in shapes.items():
+            with self.subTest(name):
+                self.workflow().write_text(text)
 
-        code, out, err = self.init(FakeGitHub(pages=SITE_READY))
+                code, out, err = self.init(FakeGitHub(pages=SITE_READY))
 
-        self.assertEqual(0, code, err)
-        self.assertIn(f"updated {summary.WORKFLOW_PATH}\n", out)
-        self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
+                self.assertEqual(0, code, err)
+                self.assertIn(f"updated {summary.WORKFLOW_PATH}\n", out)
+                self.assertEqual(summary.workflow_text("v0", "main"), self.workflow().read_text())
+
+    def test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote(self) -> None:
+        warning = (f"warning: {summary.WORKFLOW_PATH}: the site workflow is an earlier shape and does not deploy "
+                   "when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]")
+        hand_edited = earlier_workflows()[-1].replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
+        cases = {f"earlier shape {i}": (text, True) for i, text in enumerate(earlier_workflows())}
+        cases.update({"current shape": (summary.workflow_text("v0", "main"), False),
+                      "edited by hand": (hand_edited, False), "no workflow": (None, False)})
+        for name, (text, warns) in cases.items():
+            with self.subTest(name):
+                if text is None:
+                    self.workflow().unlink(missing_ok=True)
+                else:
+                    self.workflow().parent.mkdir(parents=True, exist_ok=True)
+                    self.workflow().write_text(text)
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = cli.main(["--root", str(self.repo), "check"])
+
+                self.assertEqual(0, code, err.getvalue())
+                self.assertEqual(warns, warning in err.getvalue().splitlines(), err.getvalue())
+                self.assertEqual(warns, "site-workflow-outdated" in err.getvalue(), err.getvalue())
 
     def test_init_keeps_a_workflow_edited_by_hand(self) -> None:
         # A workflow that sets up a toolchain for site.prepare, as a repository
@@ -2320,6 +2346,13 @@ class InitSiteTests(SiteRepoCase):
         self.assertEqual("http://projects.example.com/", cli.site_address("http://projects.example.com"))
 
 
+def earlier_workflows(projects_dir: str | None = None) -> list[str]:
+    """Each earlier shape of the site workflow, as Projector wrote it for `projects_dir` with the newest paths."""
+    paths = ", ".join(summary.watched_paths(projects_dir))
+    return [template.format(event=summary.DISPATCH_EVENT, ref="v0", branch="main", paths=paths)
+            for template in summary.PREVIOUS_WORKFLOWS]
+
+
 class WorkflowTests(unittest.TestCase):
     def test_the_action_hands_its_prepare_input_to_the_build_after_its_checkout(self) -> None:
         action = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text()
@@ -2383,6 +2416,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("    types: [projector-summaries]\n", text)
         self.assertNotIn(summary.LEGACY_DISPATCH_EVENT, text)
 
+    def test_a_pull_request_in_the_repository_deploys_when_it_closes_and_a_forks_does_not(self) -> None:
+        text = summary.workflow_text("v0", "main")
+        fork = "github.event.pull_request.head.repo.full_name != github.repository"
+
+        self.assertIn("  pull_request_target:\n    types: [closed]\n", text)
+        self.assertNotIn("  pull_request:\n", text, "a pull_request run checks out the pull request's merge ref")
+        self.assertIn("  publish:\n    if: github.event_name != 'pull_request_target' || "
+                      "github.event.pull_request.head.repo.full_name == github.repository\n", text)
+        self.assertIn("concurrency:\n  group: ${{ github.event_name == 'pull_request_target' && "
+                      f"{fork} && format('fork-{{0}}', github.run_id) || 'pages' }}}}\n  cancel-in-progress: false\n",
+                      text)
+        self.assertEqual(["contents: read", "pull-requests: read", "pages: write", "id-token: write"],
+                         text.split("permissions:\n", 1)[1].split("concurrency:", 1)[0].strip().split("\n  "),
+                         "a closed pull request deploys with the permissions every other run has")
+
     def test_docs_changes_on_the_default_branch_rebuild_the_site(self) -> None:
         text = summary.workflow_text("v0", "trunk")
         self.assertIn("  push:\n    branches: [trunk]\n    paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]\n", text)
@@ -2408,10 +2456,18 @@ class WorkflowTests(unittest.TestCase):
             "walkthroughs step": summary.PREVIOUS_WORKFLOWS[1].format(
                 event="projector-walkthroughs", ref="v0", branch="main", paths="README.md, 'docs/**'"),
             "no push trigger": summary.PREVIOUS_WORKFLOWS[0].format(event="projector-walkthroughs", ref="0123abc"),
+            "no closed trigger": summary.PREVIOUS_WORKFLOWS[2].format(
+                event="projector-summaries", ref="v0.5.3", branch="trunk", paths=", ".join(summary.watched_paths("plans"))),
         }
         for name, text in shapes.items():
             with self.subTest(name):
-                self.assertTrue(summary.generated_workflow(text, "plans" if "plans" in text else None))
+                projects_dir = "plans" if "plans" in text else None
+                self.assertTrue(summary.generated_workflow(text, projects_dir))
+                # The paths are not part of the shape: either list deploys when a pull request closes.
+                self.assertEqual("current" if name in ("current", "before the new paths") else "earlier",
+                                 summary.workflow_shape(text, projects_dir))
+        for text in earlier_workflows():
+            self.assertEqual("earlier", summary.workflow_shape(text))
 
         setup = current.replace("    steps:\n", "    steps:\n      - uses: actions/setup-python@v5\n")
         self.assertFalse(summary.generated_workflow(setup), "a toolchain step for site.prepare")
