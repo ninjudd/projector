@@ -83,9 +83,6 @@ a.rstatus:hover { text-decoration: underline; }
 .prblock > :first-child { margin-top: 0; }
 .prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
 .prref:hover { text-decoration: underline; }
-.prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.prmeta a { color: inherit; text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
-.prmeta a:hover { text-decoration: underline; }
 .nav .versions { margin: 10px 0 0; padding: 10px 6px 0; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
 .versions > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
 .versions > summary::-webkit-details-marker { display: none; }
@@ -97,11 +94,15 @@ a.rstatus:hover { text-decoration: underline; }
 .versions .mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
 .versions .vwhen { white-space: nowrap; }
 .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
-.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: baseline; padding: 8px 6px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
+.prblock .stack.projects + .stack { margin-top: 6px; }
+/* Wide enough for a four-digit number, so every row's title starts at the same place. */
+.prblock .stack li > a, .prblock .stack li.current { display: grid; grid-template-columns: 36px 1fr; gap: 6px; align-items: baseline; padding: 8px 6px; margin: 0 -6px; border-radius: 6px; font-size: 12.5px; line-height: 1.35; color: var(--muted); text-decoration: none; }
 .prblock .stack li > a:hover { background: var(--surface-2); color: var(--text); }
 .prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
 .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
+.prblock .stack.projects .snum { align-self: start; padding-top: 1px; }
+.prblock .stack.projects .snum svg { display: block; }
 .prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prbar { display: none; }
 @media (max-width: 980px) {

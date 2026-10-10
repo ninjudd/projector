@@ -804,6 +804,20 @@ class FileHeaderTests(SiteRepoCase):
                       'title="Change 9"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
                       rendered_summary(data))
 
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
+        html = rendered_summary(self.build())
+
+        projects = re.search(r'<ul class="stack projects" aria-label="Projects this pull request changes">(.*?)</ul>', html)
+        self.assertIsNotNone(projects, "the projects list is missing")
+        rows = re.findall(r'<li><a href="([^"]+)" title="([^"]+)"><span class="snum"><svg[^>]*>.*?</svg></span>'
+                          r'<span class="stitle">([^<]+)</span></a></li>', projects.group(1))
+        self.assertEqual([("/projects/alpha/", "Build alpha", "Build alpha"),
+                          ("/projects/alpha/beta/", "Finish beta", "Finish beta")], rows)
+        self.assertLess(projects.start(), html.index('<ul class="stack" aria-label="Pull requests in this stack">'),
+                        "the projects come first in the sidebar")
+        self.assertNotIn("Projects:", html)
+
     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
     def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
         html = rendered_summary(self.build())
