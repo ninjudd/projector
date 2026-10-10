@@ -89,6 +89,8 @@ class SiteBuildTests(SiteRepoCase):
         for needed in ('src="/assets/site.js"', "marked", "purify.min.js", 'href="/assets/site.css"', 'rel="icon"',
                        'data-base="/"'):
             self.assertIn(needed, home)
+        self.assertLess(home.index('src="/assets/summary.js"'), home.index('src="/assets/site.js"'),
+                        "site.js draws with the helpers summary.js shares")
         for asset in ("site.js", "site.css", "summary.js", "summary.css"):
             self.assertTrue((self.out / "assets" / asset).is_file(), asset)
 
@@ -271,8 +273,8 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual(0, code)
         return json.loads((self.out / "site.json").read_text())
 
-    def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, int | None], list[str]]:
-        """Each review's stackedOn, and the head branches the build asked GitHub about."""
+    def stacks(self, pulls: dict[str, str] | None = None) -> tuple[dict[int, list[int]], list[str]]:
+        """The pull requests in each review's stack, as its page lists them, and the head branches the build asked GitHub about."""
         asked: list[str] = []
 
         def lookup(*args: str) -> str | None:
@@ -285,18 +287,23 @@ class SiteContentTests(SiteRepoCase):
         with mock.patch.object(summary, "gh_lookup", side_effect=lookup):
             reviews = self.build()["reviews"]
         self.assertTrue(all("baseRef" not in r for r in reviews), "the page shows pull requests, not branch names")
-        return {r["number"]: r["stackedOn"] for r in reviews}, asked
 
-    def test_a_review_names_the_review_its_pull_request_is_stacked_on(self) -> None:
+        def stack(number: int) -> list[int]:
+            page = next((self.out / "reviews" / str(number)).glob("*/data.json"))
+            return [row["number"] for row in json.loads(page.read_text())["stack"]]
+
+        return {r["number"]: stack(r["number"]) for r in reviews}, asked
+
+    def test_a_review_shares_a_stack_with_the_review_its_pull_request_is_stacked_on(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
         self.publish(10, "d" * 40, headRef="feature-b", baseRef="feature-a")
 
-        self.assertEqual(({9: None, 10: 9}, []), self.stacks(), "a review's head branch answers without GitHub")
+        self.assertEqual(({9: [9, 10], 10: [9, 10]}, []), self.stacks(), "a review's head branch answers without GitHub")
 
     def test_a_summary_that_recorded_the_pull_request_beneath_it_needs_no_lookup(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a", basePr=7)
 
-        self.assertEqual(({10: 7}, []), self.stacks())
+        self.assertEqual(({10: [7, 10]}, []), self.stacks())
 
     def test_an_older_summary_asks_github_once_per_base_branch(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a")
@@ -305,14 +312,15 @@ class SiteContentTests(SiteRepoCase):
 
         stacked, asked = self.stacks({"feature-a": "7"})
 
-        self.assertEqual({10: 7, 11: 7, 12: None}, stacked, "a base branch no pull request uses marks nothing")
+        self.assertEqual({10: [7, 10, 11], 11: [7, 10, 11], 12: []}, stacked,
+                         "a base branch no pull request uses marks nothing")
         self.assertEqual(["feature-a", "release"], sorted(asked))
 
     def test_a_pull_request_on_the_default_branch_is_never_stacked_or_looked_up(self) -> None:
         self.publish(9, "c" * 40, headRef="main")
         self.publish(10, "d" * 40)
 
-        self.assertEqual(({9: None, 10: None}, []), self.stacks({"main": "9"}))
+        self.assertEqual(({9: [], 10: []}, []), self.stacks({"main": "9"}))
 
     def test_a_default_branch_misjudged_is_still_not_a_stack(self) -> None:
         # A checkout on a feature branch that never recorded origin's HEAD takes feature for the default.
@@ -321,7 +329,7 @@ class SiteContentTests(SiteRepoCase):
                         "commit", "-q", "--allow-empty", "-m", "start"], check=True)
         self.publish(10, "d" * 40)
 
-        self.assertEqual(({10: None}, ["main"]), self.stacks({}),
+        self.assertEqual(({10: []}, ["main"]), self.stacks({}),
                          "on a checkout that does not know its default branch, main is asked about and is no pull request's head")
 
     def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -> None:
@@ -330,7 +338,7 @@ class SiteContentTests(SiteRepoCase):
                         "refs/remotes/origin/trunk"], check=True)
         self.publish(9, "c" * 40, baseRef="trunk")
 
-        self.assertEqual(({9: None}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+        self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
     def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
         """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
@@ -429,7 +437,54 @@ class SiteContentTests(SiteRepoCase):
     def test_a_stack_github_cannot_answer_for_shows_nothing(self) -> None:
         self.publish(10, "d" * 40, baseRef="feature-a")
 
-        self.assertEqual({10: None}, self.stacks(None)[0])
+        self.assertEqual({10: []}, self.stacks(None)[0])
+
+    def test_the_reviews_index_lists_each_stack_together_from_the_default_branch_up(self) -> None:
+        self.publish(9, "a" * 40, headRef="feature-a")
+        self.publish(10, "b" * 40, headRef="feature-b", baseRef="feature-a")
+        self.publish(11, "c" * 40, headRef="feature-c", baseRef="feature-b")
+        self.publish(12, "d" * 40, headRef="feature-d", baseRef="feature-b")
+        self.publish(13, "e" * 40, headRef="feature-e", baseRef="feature-x", basePr=7)
+        self.publish(14, "f" * 40, headRef="alone")
+        self.publish(15, "a" * 40, headRef="feature-p")
+        self.publish(16, "b" * 40, headRef="between")
+        self.publish(18, "c" * 40, headRef="feature-q", baseRef="feature-p")
+        self.publish(30, "d" * 40, headRef="feature-s", baseRef="feature-r", basePr=25)
+        self.publish(31, "e" * 40, headRef="feature-t", baseRef="feature-r", basePr=25)
+        self.stacks()
+
+        reviews = json.loads((self.out / "site.json").read_text())["reviews"]
+
+        self.assertEqual([(30, 30), (31, 30), (15, 15), (18, 15), (16, None), (14, None), (13, None),
+                          (9, 9), (10, 9), (11, 9), (12, 9)], [(r["number"], r["stack"]) for r in reviews],
+                         "a stack sits where its newest pull request would, and lists its pull requests from the "
+                         "bottom up; two on a base with no review here stay together, and one alone is no stack")
+        projects = {p["name"]: p["reviews"] for p in json.loads((self.out / "site.json").read_text())["projects"]}
+        self.assertEqual([31, 30, 18, 16, 15, 14, 13, 12, 11, 10, 9], projects["alpha"],
+                         "a project still lists its reviews newest first")
+
+    def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
+        self.publish(9, "d" * 40)
+        self.publish(10, "e" * 40)
+        states = {9: "open", 10: "merged"}
+
+        def pr_status(repo: str, number: int) -> dict:
+            return {"state": states[number], "reviews": [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)]}
+
+        with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+            reviews = self.build()["reviews"]
+
+        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
+                         [(r["number"], r["state"], r["review"]) for r in reviews],
+                         "each row carries what its newest head's page does")
+
+    def test_the_reviews_index_leaves_out_a_status_github_cannot_tell(self) -> None:
+        self.publish(9, "c" * 40)
+
+        review = self.build()["reviews"][0]
+
+        self.assertNotIn("state", review)
+        self.assertNotIn("review", review)
 
     def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
         self.publish(9, "c" * 40)
@@ -489,6 +544,13 @@ class SiteContentTests(SiteRepoCase):
 
 
 SITE_JS = Path(__file__).parents[1] / "site" / "assets" / "site.js"
+SUMMARY_JS = SITE_JS.with_name("summary.js")
+
+
+def shared_js() -> str:
+    """The helpers at the top of the compiled summary.js, which every page loads before site.js."""
+    text = SUMMARY_JS.read_text()
+    return text[:text.index("\n(function () {")]
 
 
 def js_function(name: str) -> str:
@@ -552,7 +614,8 @@ class ProjectsViewTests(unittest.TestCase):
             "function frame(active, title, body) { drawn = body; return {querySelector: function () {"
             " return {addEventListener: function () {}}; }}; }\n"
         )
-        program = stub + "\n".join(js_function(n) for n in ("esc", "badge", "depth", "ownerName", "showProjects")) + \
+        program = stub + shared_js() + "\n" + \
+            "\n".join(js_function(n) for n in ("badge", "depth", "ownerName", "showProjects")) + \
             "\nshowProjects(); process.stdout.write(drawn);"
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -597,7 +660,7 @@ class HeaderTests(unittest.TestCase):
             " FULL_ICON = '<svg full></svg>';\n"
             "function nav() { return ''; }\n"
         )
-        program = stub + js_function("esc") + "\n" + js_function("header") + \
+        program = stub + shared_js() + "\n" + js_function("header") + \
             f"\nprocess.stdout.write(header({args}));"
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -626,7 +689,7 @@ class HeaderTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "the highlight test needs node")
 class HighlightTests(unittest.TestCase):
     def highlight(self, text: str, words: list[str]) -> str:
-        program = js_function("esc") + "\n" + js_function("highlight") + \
+        program = shared_js() + "\n" + js_function("highlight") + \
             f"\nprocess.stdout.write(highlight({json.dumps(text)}, {json.dumps(words)}));"
         return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -639,6 +702,136 @@ class HighlightTests(unittest.TestCase):
 
     def test_the_text_is_escaped_and_matching_ignores_case(self) -> None:
         self.assertEqual("&lt;b&gt;<mark>Plan</mark>&lt;/b&gt;", self.highlight("<b>Plan</b>", ["plan"]))
+
+
+def node(program: str) -> str:
+    """What `program` writes to stdout under node, in UTC and US English, so a time it formats is the same everywhere."""
+    env = dict(os.environ, TZ="UTC", LC_ALL="en_US.UTF-8")
+    return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True, env=env).stdout
+
+
+@unittest.skipUnless(shutil.which("node"), "the reviews view test needs node")
+class ReviewsViewTests(unittest.TestCase):
+    def draw(self, reviews: list[dict]) -> dict[str, str]:
+        """The Reviews index for `reviews`, drawn by the compiled showReviews.
+
+        `page` is the view around the list, `first` the list as it opens, and
+        `all` the list once the reader checks the box that shows merged and
+        closed pull requests.
+        """
+        stub = (
+            "const base = '/';\n"
+            f"const site = {{repo: 'owner/example', projects: [], reviews: {json.dumps(reviews)}}};\n"
+            "const list = {innerHTML: ''};\n"
+            "const box = {checked: false, addEventListener: function (type, listener) { this.changed = listener; }};\n"
+            "let page = '';\n"
+            "function frame(active, title, body) { page = body; return {querySelector: function (selector) {"
+            " return selector === '.reviewlist' ? list : page.includes('showdone') ? box : null; }}; }\n"
+        )
+        functions = ("projectNamed", "projectLinks", "isDone", "reviewRow", "reviewsTable", "showReviews")
+        program = stub + shared_js() + "\n" + "\n".join(js_function(n) for n in functions) + (
+            "\nshowReviews(); const first = list.innerHTML;"
+            " box.checked = true; if (box.changed) box.changed();"
+            " process.stdout.write(JSON.stringify({page: page, first: first, all: list.innerHTML}));")
+        return json.loads(node(program))
+
+    @staticmethod
+    def review(number: int, stack: int | None = None, state: str | None = None, review: dict | None = None) -> dict:
+        """A row of site.json's reviews; without a `state`, GitHub could not be asked."""
+        row = {"number": number, "name": f"Summary {number}", "title": f"Change {number}", "heads": 1, "projects": [],
+               "stack": stack, "updated": "2023-11-14T22:21:40Z"}
+        if state is not None:
+            row["state"] = state
+            row["review"] = review or {"status": "unreviewed"}
+        return row
+
+    @staticmethod
+    def bodies(html: str) -> list[tuple[bool, list[int]]]:
+        """Each table body of the list: whether it is a stack's, and the pull requests in its rows."""
+        return [(stack != "", [int(n) for n in re.findall(r'<tr><td><a href="/reviews/(\d+)/">', rows)])
+                for stack, rows in re.findall(r'<tbody( class="stack")?>(.*?)</tbody>', html)]
+
+    def test_a_stack_shares_one_table_body_and_a_merged_or_closed_review_waits_to_be_shown(self) -> None:
+        drawn = self.draw([self.review(30, 30, "open"), self.review(31, 30, "open"), self.review(16, None, "closed"),
+                           self.review(9, 9, "merged"), self.review(10, 9, "open"), self.review(11, 9, "open")])
+
+        self.assertIn('<label class="showdone"><input type="checkbox"> Show merged and closed '
+                      '<span class="count">2</span></label>', drawn["page"])
+        self.assertEqual([(True, [30, 31]), (True, [10, 11])], self.bodies(drawn["first"]),
+                         "a stack keeps its open reviews together when a merged one is left out")
+        self.assertEqual([(True, [30, 31]), (False, [16]), (True, [9, 10, 11])], self.bodies(drawn["all"]))
+
+    def test_each_row_shows_its_status_and_when_it_was_updated_in_the_readers_time_zone(self) -> None:
+        clean = {"status": "clean", "url": review_url(1)}
+        drawn = self.draw([self.review(12, None, "open", clean), self.review(11), self.review(10, None, "merged", clean)])
+
+        self.assertIn("<thead><tr><th>#</th><th>Review</th><th>Status</th><th>Projects</th><th>Updated</th></tr></thead>",
+                      drawn["all"])
+        statuses = re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>', drawn["all"])
+        self.assertEqual([f'<a class="rstatus clean" href="{review_url(1)}" target="_blank" rel="noopener">Clean</a>',
+                          "", '<span class="rstatus merged">Merged</span>'], statuses,
+                         "a status GitHub could not tell is left blank, and a merged pull request's verdict gives way")
+        self.assertRegex(drawn["all"], r'<td class="date"><time datetime="2023-11-14T22:21:40Z">Nov 14, 2023, 10:21\sPM</time></td>')
+        for gone in ("Head", "Stacked on", "summarize-pr"):
+            self.assertNotIn(gone, drawn["page"] + drawn["all"])
+
+    def test_a_list_of_only_merged_or_closed_reviews_says_so(self) -> None:
+        drawn = self.draw([self.review(9, None, "merged")])
+
+        self.assertEqual('<p class="note">Every review here is of a merged or closed pull request.</p>', drawn["first"])
+        self.assertEqual([(False, [9])], self.bodies(drawn["all"]))
+
+    def test_no_box_to_check_when_nothing_is_merged_or_closed(self) -> None:
+        drawn = self.draw([self.review(9, None, "open"), self.review(8)])
+
+        self.assertNotIn("showdone", drawn["page"])
+        self.assertEqual([(False, [9]), (False, [8])], self.bodies(drawn["first"]))
+
+    def test_a_stack_draws_no_divider_between_its_rows(self) -> None:
+        css = (SITE_JS.parent / "site.css").read_text()
+
+        self.assertIn("table.tbl.reviews tbody.stack tr:not(:last-child) td { border-bottom: 0; }", css)
+
+
+@unittest.skipUnless(shutil.which("node"), "the shared helper test needs node")
+class SharedHelperTests(unittest.TestCase):
+    def test_merged_or_closed_takes_the_place_of_the_verdict(self) -> None:
+        program = shared_js() + (
+            "\nprocess.stdout.write(JSON.stringify([statusHtml('merged', {status: 'clean', url: 'u'}),"
+            " statusHtml('closed', undefined), statusHtml('open', {status: 'changes-requested', url: 'https://x/?a&b'}),"
+            " statusHtml('open', {status: 'unreviewed'}), statusHtml(undefined, undefined)]));")
+
+        self.assertEqual(['<span class="rstatus merged">Merged</span>', '<span class="rstatus closed">Closed</span>',
+                          '<a class="rstatus changes-requested" href="https://x/?a&amp;b" target="_blank" '
+                          'rel="noopener">Changes requested</a>', '<span class="rstatus unreviewed">Unreviewed</span>',
+                          ""], json.loads(node(program)))
+
+    def test_every_site_page_carries_the_summary_pages_credit(self) -> None:
+        stub = ("const root = {innerHTML: ''}, main = {innerHTML: ''};\n"
+                "const document = {title: '', body: {classList: {remove: function () {}}},"
+                " getElementById: function () { return main; }};\n"
+                "let fitFrame = null;\nconst site = {repo: 'owner/example'};\n"
+                "function header() { return ''; }\n")
+        program = stub + shared_js() + "\n" + js_function("frame") + \
+            "\nframe('docs', 'Docs', 'body'); process.stdout.write(root.innerHTML);"
+
+        self.assertTrue(node(program).endswith(
+            '<footer class="sitefoot">Generated by <a href="https://projector.bot">Projector</a></footer>'))
+
+    def test_summary_js_does_nothing_on_a_page_without_a_summary_but_look_for_one(self) -> None:
+        # Every site page loads summary.js for the helpers above, so on a page
+        # with no summary it must not draw, fetch, or listen for anything.
+        program = (
+            "const touched = [], asked = [];\n"
+            "function watch(name, value) { return new Proxy(value, {get: function (target, key) {"
+            " touched.push(name + '.' + String(key)); return target[key]; }}); }\n"
+            "const document = watch('document', {getElementById: function (id) { asked.push(id); return null; }});\n"
+            "const window = watch('window', {}), localStorage = watch('localStorage', {});\n"
+            "function fetch() { touched.push('fetch'); return new Promise(function () {}); }\n"
+            + SUMMARY_JS.read_text() +
+            "\nprocess.stdout.write(JSON.stringify({touched: touched, asked: asked}));")
+
+        self.assertEqual({"touched": ["document.getElementById"], "asked": ["summary"]}, json.loads(node(program)))
 
 
 def run_git(cwd: Path, *args: str, when: int | None = None) -> str:
@@ -687,7 +880,6 @@ index 1111111..2222222 100644
 """
 HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/survey.md",
                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
-SUMMARY_JS = SITE_JS.with_name("summary.js")
 
 
 def rendered_summary(data: dict) -> str:
@@ -697,7 +889,7 @@ def rendered_summary(data: dict) -> str:
     end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
-               "const window = {};\n" + "\n".join(lines[start:end + 1]) +
+               "const window = {};\n" + shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
                f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
 
@@ -787,6 +979,18 @@ class FileHeaderTests(SiteRepoCase):
                 self.assertIn(f'href="{expected}"', rendered_summary(data))
                 shutil.rmtree(self.out)
 
+    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
+    def test_the_page_shows_merged_or_closed_in_place_of_its_verdict_and_the_sites_credit(self) -> None:
+        for state, expected in (("open", '<span class="rstatus unreviewed">Unreviewed</span>'),
+                                ("merged", '<span class="rstatus merged">Merged</span>'),
+                                ("closed", '<span class="rstatus closed">Closed</span>')):
+            with self.subTest(state=state):
+                html = rendered_summary(self.build(state=state))
+                self.assertIn(f" · {expected}</div><h1>", html)
+                self.assertIn('<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>', html)
+                shutil.rmtree(self.out)
+        self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
+
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
         data = self.build()
@@ -840,7 +1044,7 @@ class SummarySidebarTests(unittest.TestCase):
 
     def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
         # The home page loads summary.css as well, and its Reviews table draws
-        # each "Stacked on #N" note as a `div.stack`, so a rule written for the
+        # each stack's rows in a `tbody.stack`, so a rule written for the
         # sidebar's stack list names the sidebar block the list sits in.
         css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
         stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
@@ -888,6 +1092,11 @@ def served_summary(number: int, head: str) -> dict:
                    "base": "b" * 40, "baseRef": "main"},
             "groups": [{"id": "all", "title": "All",
                         "files": [{"path": "docs/projects/alpha/readme.md"}, {"path": "src/app.py"}]}]}
+
+
+# When `published_remote` commits each head, as the Reviews index dates it.
+C_PUBLISHED = "2023-11-14T22:13:20Z"
+D_PUBLISHED = "2023-11-14T22:21:40Z"
 
 
 class ServeTests(SiteRepoCase):
@@ -987,7 +1196,10 @@ class ServeTests(SiteRepoCase):
 
     def published_remote(self, ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT,
                          name: str = "summary.json") -> Path:
-        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`, each stored as `name`."""
+        """A remote of this checkout whose `ref` holds two heads of pull request 9 under `root`, each stored as `name`.
+
+        Head c is committed at C_PUBLISHED and head d at D_PUBLISHED.
+        """
         remote = Path(tempfile.mkdtemp())
         run_git(remote, "init", "--quiet")
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_500, "d" * 40)):
@@ -1005,7 +1217,7 @@ class ServeTests(SiteRepoCase):
     def assert_serves_both_heads(self, ref: str, root: str) -> None:
         site = self.site(summaries=serve.extract_summaries(self.repo, ref, Path(tempfile.mkdtemp()), root))
         manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
-        self.assertEqual([("d" * 40, 2)], [(w["head"], w["heads"]) for w in manifest["reviews"]],
+        self.assertEqual([(D_PUBLISHED, 2)], [(w["updated"], w["heads"]) for w in manifest["reviews"]],
                          "each summary is dated by its own commit, not the ref's newest")
         self.assertEqual(200, self.fetch(site, "/", f"/reviews/9/{'c' * 40}/")[0])
 
@@ -1032,7 +1244,7 @@ class ServeTests(SiteRepoCase):
         with redirect_stdout(io.StringIO()):
             cli.build_checkout(self.repo.resolve(), out, remote / summary.PAGES_ROOT, "/", "owner/example")
         reviews = json.loads((out / "site.json").read_text())["reviews"]
-        self.assertEqual([("d" * 40, 2)], [(review["head"], review["heads"]) for review in reviews],
+        self.assertEqual([(D_PUBLISHED, 2)], [(review["updated"], review["heads"]) for review in reviews],
                          "dated from Git, as the site action builds a checkout of the ref")
 
     def test_reads_the_old_walkthroughs_ref_and_reports_its_spec_json_summaries_as_skipped(self) -> None:
@@ -1132,19 +1344,19 @@ class ServeTests(SiteRepoCase):
 
         def reviews() -> list[tuple[str, int]]:
             manifest = json.loads(self.fetch(site, "/", "/site.json")[1])
-            return [(review["head"], review["heads"]) for review in manifest["reviews"]]
+            return [(review["updated"], review["heads"]) for review in manifest["reviews"]]
 
         self.assertEqual([], reviews(), "nothing is fetched yet")
         self.assertIsNone(site.refresh(), "no change, no rebuild")
 
         self.assertEqual("", published.fetch())
         self.assertIsNotNone(site.refresh(), "the ref that appeared after startup is a change")
-        self.assertEqual([("d" * 40, 2)], reviews())
+        self.assertEqual([(D_PUBLISHED, 2)], reviews())
 
         run_git(remote, "update-ref", summary.PAGES_REF, "HEAD~1")
         self.assertEqual("", published.fetch())
         self.assertIsNotNone(site.refresh(), "a fetched ref that moved is a change")
-        self.assertEqual([("c" * 40, 1)], reviews())
+        self.assertEqual([(C_PUBLISHED, 1)], reviews())
 
     def test_a_served_site_shows_a_summary_published_after_the_server_started(self) -> None:
         self.published_remote()
@@ -1171,7 +1383,7 @@ class ServeTests(SiteRepoCase):
                 if reviews():
                     break
                 time.sleep(0.1)
-            self.assertEqual(["d" * 40], [review["head"] for review in reviews()])
+            self.assertEqual([D_PUBLISHED], [review["updated"] for review in reviews()])
         finally:
             process.terminate()
             process.communicate(timeout=10)
@@ -1249,7 +1461,7 @@ class RouteTests(SiteRepoCase):
         for project in manifest["projects"]:
             paths += [project["path"], *(f["path"] for f in project["files"])]
         program = f"var site = {json.dumps(manifest)}, base = '/projector/';\n" + \
-            "\n".join(js_function(n) for n in ("esc", "repoUrl", "routeFor")) + \
+            shared_js() + "\n" + "\n".join(js_function(n) for n in ("repoUrl", "routeFor")) + \
             f"\nprocess.stdout.write(JSON.stringify({json.dumps(paths)}.map(routeFor)));"
         return json.loads(subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout)
 

@@ -168,15 +168,19 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
                     lookup=None, repo_root: Path | None = None, status_lookup=None) -> tuple[list[dict], list[str]]:
     """Build every summary that can be built; report and skip the rest.
 
-    Each entry carries `stackedOn`, from `stack_bases` with `trunk` and
-    `lookup`, and each page lists the pull requests in its stack. A file is
+    The entries come in the order the Reviews index lists them, as
+    `stack_groups` puts them, from `stack_bases` with `trunk` and `lookup`.
+    Each carries `stack`, the number of the first review in its stack, or
+    None when no other review is in it, and each page lists the pull
+    requests in its stack. A file is
     generated as the `attributes.json` that `publish` stored beside a summary
     says, or, for a summary without one, as the checkout at `repo_root` reads
     its .gitattributes. `status_lookup` returns a pull request's state and
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
     them each page carries `pr.state`, and `review`, the newest Projector
     review of its head: `unreviewed` when none names the head. A page has
-    neither when the lookup is missing or cannot ask.
+    neither when the lookup is missing or cannot ask, and each entry carries
+    its newest head's `state` and `review` the same way.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
@@ -248,9 +252,35 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
             page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}reviews/{number}/{newest}/data.json"), encoding="utf-8")
         entries.append({"number": int(number), "name": latest.get("name") or "", "pr": latest["pr"],
-                        "heads": len(versions), "updated": versions[0][0], "stackedOn": bases.get(int(number)),
+                        "review": latest.get("review"), "heads": len(versions), "updated": versions[0][0],
                         "projects": [p["name"] for p in latest["projects"]]})
-    return entries, failures
+    by_number = {e["number"]: e for e in entries}
+    ordered = []
+    for group in stack_groups(bases, prs):
+        for number in group:
+            ordered.append(dict(by_number[number], stack=group[0] if len(group) > 1 else None))
+    return ordered, failures
+
+
+def stack_groups(bases: dict[int, int], prs: dict[int, dict]) -> list[list[int]]:
+    """The pull requests in `prs`, which have reviews, in the order the Reviews index lists them, one list per stack.
+
+    The index lists the newest pull request first, and a stack sits where its
+    newest pull request would, its pull requests together in `stack_rows`
+    order, from the one on the default branch up. A pull request in a stack
+    without a review here, known only as a base, is left out, and one alone
+    is a stack of its own.
+    """
+    placed: set[int] = set()
+    groups = []
+    for number in sorted(prs, reverse=True):
+        if number in placed:
+            continue
+        rows = [row["number"] for row in stack_rows(number, bases, prs)] or [number]
+        group = [n for n in rows if n in prs and n not in placed]
+        placed.update(group)
+        groups.append(group)
+    return groups
 
 
 def stack_rows(number: int, bases: dict[int, int], prs: dict[int, dict], base: str = "/") -> list[dict]:
@@ -528,6 +558,7 @@ def home_page(repo: str, base: str) -> str:
 <script src="{MARKED}"></script>
 <script src="{PURIFY}"></script>
 <script src="{HLJS}/highlight.min.js"></script>
+<script src="{assets}summary.js"></script>
 <script src="{assets}site.js"></script>
 """
 
@@ -540,6 +571,24 @@ def site_routes(docs: list[dict], projects: list[dict]) -> list[str]:
         routes.add(f"projects/{project['name']}/")
         routes.update(file["route"] for file in project["files"])
     return sorted(routes)
+
+
+def review_row(entry: dict) -> dict:
+    """A review's row on the Reviews index, in site.json.
+
+    `updated` is when its newest head was published, in UTC. `state` and
+    `review` are its pull request's and its newest head's, as its page
+    carries them, and are left out when the build could not ask GitHub.
+    """
+    row = {"number": entry["number"], "name": entry["name"], "title": entry["pr"]["title"],
+           "heads": entry["heads"], "projects": entry["projects"], "stack": entry["stack"],
+           "updated": datetime.datetime.fromtimestamp(entry["updated"], datetime.timezone.utc)
+           .strftime("%Y-%m-%dT%H:%M:%SZ")}
+    if entry["pr"].get("state") is not None:
+        row["state"] = entry["pr"]["state"]
+    if entry["review"] is not None:
+        row["review"] = entry["review"]
+    return row
 
 
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
@@ -571,7 +620,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
                             status_lookup=status_lookup) if summaries and summaries.is_dir() else ([], [])
     entries, failures = built
     for project in described:
-        project["reviews"] = [e["number"] for e in entries if project["name"] in e["projects"]]
+        project["reviews"] = sorted((e["number"] for e in entries if project["name"] in e["projects"]), reverse=True)
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
@@ -586,13 +635,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
         "projects": described,
         "projectsReadme": projects_readme,
         "files": files,
-        "reviews": [
-            {"number": e["number"], "name": e["name"], "title": e["pr"]["title"], "head": e["pr"]["head"],
-             "heads": e["heads"], "projects": e["projects"],
-             "stackedOn": e["stackedOn"],
-             "updated": datetime.datetime.fromtimestamp(e["updated"], datetime.timezone.utc).date().isoformat()}
-            for e in entries
-        ],
+        "reviews": [review_row(e) for e in entries],
     }
     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     index = search_index(repo_root, readme, docs, described, projects_readme) if repo_root else []
