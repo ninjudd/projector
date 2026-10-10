@@ -579,6 +579,23 @@ class SummarySidebarTests(unittest.TestCase):
         self.assertIsNotNone(title, "summary.css has no .nav .ntitle rule")
         self.assertIn("overflow-wrap: anywhere;", title.group(1))
 
+    def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
+        # The home page loads summary.css as well, and its Reviews table draws
+        # each "Stacked on #N" note as a `div.stack`, so a rule written for the
+        # sidebar's stack list names the sidebar block the list sits in.
+        css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / "summary.css").read_text(), flags=re.S)
+        stack = [selector.strip() for rule in re.findall(r"([^{}]+)\{", css)
+                 for selector in rule.split(",") if re.search(r"\.stack\b", selector)]
+        self.assertTrue(stack, "summary.css has no .stack rule")
+        self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
+
+    def test_a_stack_row_shows_its_whole_title(self) -> None:
+        css = (SITE_JS.parent / "summary.css").read_text()
+        title = re.search(r"^\.prblock \.stack \.stitle \{([^}]*)\}", css, re.M)
+        self.assertIsNotNone(title, "summary.css has no .prblock .stack .stitle rule")
+        self.assertIn("overflow-wrap: anywhere;", title.group(1))
+        self.assertNotIn("line-clamp", title.group(1))
+
 
 def served_summary(number: int, head: str) -> dict:
     """A summary for pull request `number` at `head` that builds against PLAN_DIFF."""
