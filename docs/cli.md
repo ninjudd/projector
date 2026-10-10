@@ -735,11 +735,11 @@ shows the one status, followed by a muted count such as **2 models**.
 Hovering over the status or the count, or moving keyboard focus to either,
 shows a list with a row for each model, changes requested first: the model's
 name linked to its review, its verdict, and for an incremental review the full
-review it builds on. Escape hides the list. The row on Reviews shows the
-status alone. A review counts
-only when its author owns the repository, belongs to its organization, or
-collaborates on it, because anyone can review a public repository's pull
-request. The build reads the pull request's state and reviews through `gh`
+review it builds on. Tab moves from the count into the list's links, and skips
+them while the list is hidden. Escape hides the list. The row on Reviews shows
+the status alone. A review counts only when its author owns the repository,
+belongs to its organization, or collaborates on it, because anyone can review
+a public repository's pull request. The build reads the pull request's state and reviews through `gh`
 and shows no status when `gh` cannot answer. **Docs** renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. Each sidebar lists its readme as

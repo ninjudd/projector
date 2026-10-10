@@ -591,9 +591,16 @@ function wireSummary(): void {
   });
 
   // Escape hides the models a hover or focus shows beside the header's status,
-  // until the pointer leaves it or focus moves out of it.
+  // until the pointer leaves it or focus moves out of it. A hidden list is
+  // visibility: hidden, so Tab skips its links, and Escape on one of them
+  // first moves focus back to the status, which stays in sight.
   document.querySelectorAll<HTMLElement>('.rmodels').forEach(function (box) {
-    box.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') box.classList.add('dismissed'); });
+    const list = box.querySelector('.rmodellist'), status = box.querySelector<HTMLElement>('.rstatus');
+    box.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      if (list?.contains(document.activeElement) === true) status?.focus();
+      box.classList.add('dismissed');
+    });
     box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); });
     box.addEventListener('focusout', function (ev) {
       if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget))) box.classList.remove('dismissed');

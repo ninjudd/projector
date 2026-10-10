@@ -380,10 +380,12 @@ several models, a muted count follows the status. Hovering over the status or
 the count, or focusing either from the keyboard, shows a list of the models,
 changes requested first, each with its name linked to its review, its
 verdict, and for an incremental review the full review it builds on. The list
-stays in the page, hidden until shown, so a keyboard tabs into its links, and
-the status and the count name it with `aria-describedby`. Escape hides it. A
-`title` attribute would reach neither a keyboard nor a touch screen, and a tap
-on the count focuses it, which shows the list.
+stays in the page, so a keyboard tabs from the count into its links, and the
+status and the count name it with `aria-describedby`. While it is hidden it
+is `visibility: hidden`, so Tab never lands on a link nobody can see. Escape
+hides it, moving focus back to the status first when focus is on one of its
+links. A `title` attribute would reach neither a keyboard nor a touch screen,
+and a tap on the count focuses it, which shows the list.
 
 ```
 #66 · Clean

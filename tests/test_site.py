@@ -1814,8 +1814,12 @@ class FileHeaderTests(SiteRepoCase):
         self.assertNotIn("rmodels", merged, "a merged pull request lists no models")
         self.assertEqual('<span class="rstatus merged">Merged</span>', index_row)
         css = (SITE_JS.parent / "summary.css").read_text()
-        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { opacity: 1;", css,
+        self.assertIn(".rmodels:hover .rmodellist, .rmodels:focus-within .rmodellist { visibility: visible; }", css,
                       "a pointer or the keyboard shows the list, never a title attribute")
+        hidden = re.search(r"^\.rmodellist \{[^}]*\}", css, re.M).group(0)
+        self.assertIn("visibility: hidden;", hidden, "a hidden list's links leave the tab order")
+        self.assertIn(".rmodels.dismissed .rmodellist { visibility: hidden; }", css)
+        self.assertIn("status?.focus()", SUMMARY_JS.read_text(), "Escape on a model's link moves focus to the status")
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
