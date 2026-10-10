@@ -1,0 +1,112 @@
+{
+ "version": 1,
+ "name": "Summary comment stays last on the timeline",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 192,
+  "title": "Keep the summary comment last on the pull request's timeline",
+  "head": "8f8277dacad8db0eff93a78142b0ae66419378a6",
+  "headRef": "summary-comment-timeline",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When <code>project summary publish</code> pushes a summary to a repository's hosted Projector site, it also posts a comment on the pull request that links the summary page. The comment is meant to be the last thing a reader sees in the pull request's conversation, so each publish posts the link again at the end and deletes the account's older summary comments.",
+   "A rerun for the same head skips the repost when the comment is already at the end. Before this change, \"at the end\" meant the newest <em>issue comment</em>. Reviews, ready-for-review, review requests, and other events never counted, so in a review loop the summary comment could sit above a later review while the publish reported that the comment already linked the summary.",
+   "Now <code>comment_summary</code> reads the pull request's issue timeline, which lists comments, reviews, pushes, and events in order. It leaves the comment alone only when the comment names this head and is the last item a reader of the conversation can see. Everything else counts as visible except a short list of bookkeeping events and pending reviews, so an unknown event makes the publish repost. The cost of that bias is one fresh comment, and only when a publish runs.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Timeline item after the summary comment</th><th>Rerun on the same head</th></tr></thead><tbody><tr><td>Another comment, a submitted review, a push, <code>ready_for_review</code>, <code>review_requested</code>, a Vercel <code>deployed</code>, any unknown event</td><td class=\"r\">Reposts</td></tr><tr><td><code>subscribed</code>, <code>unsubscribed</code>, <code>mentioned</code>, <code>comment_deleted</code>, a review in state <code>pending</code></td><td class=\"r\">Leaves the comment</td></tr></tbody></table></div>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review at this head",
+    "html": "<p>The Projector review of 8f8277d is clean, with no finding threads. It lists one suggestion: the REST timeline does not return <code>comment_deleted</code> items, so that entry in <code>INVISIBLE_EVENTS</code> is a harmless guard, and its comment and the test fake describe behavior the API does not show.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "timeline-rule",
+   "title": "Decide from the timeline whether the comment is last",
+   "kicker": "The one function that posts, keeps, and deletes summary comments",
+   "intro": [
+    "<code>comment_summary</code> in <code>src/projector/summary.py</code> is the only code that writes the summary comment. The command <code>project summary publish</code> calls it once per run, after the summary is pushed to the hosted site. This group changes which list of pull request items it reads and which of those items count as visible.",
+    "Two lists come out of one timeline read. <code>visible</code> holds every item a reader of the conversation sees, and its last entry decides whether to repost. <code>comments</code> holds the ids of this account's summary comments, which are the ones a repost deletes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Reads the issue timeline instead of the issue comments, and filters out events the conversation does not show.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 980,
+       "text": "<code>INVISIBLE_EVENTS</code> lists the timeline events that do not bury the comment. The REST timeline did not return <code>comment_deleted</code> items on #185, #186, or #189, although GraphQL counts them, so that entry guards against an event the API does not show today."
+      },
+      {
+       "kind": "verify",
+       "line": 1011,
+       "text": "The jq filter, run as written against the real timelines of #170, #172, #185, #186, and #189, parses every item. It returns a body only for this account's summary comments, and <code>committed</code> items, which have no <code>id</code>, come through as <code>null</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1026,
+       "text": "Only a rerun on the same head reaches the keep branch, because a new head changes the link text. When the comment is kept, the code deletes the account's other summary comments. Otherwise it posts the new comment first and then deletes every summary comment the timeline read found."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Model the timeline in the tests",
+   "kicker": "A fake timeline for comment_summary, with cases for each kind of item",
+   "intro": [
+    "<code>CommentSummaryTests</code> fakes the <code>gh</code> calls that <code>comment_summary</code> makes, holding the pull request's timeline as a list. Posting appends a <code>commented</code> item, and deleting removes it and appends a <code>comment_deleted</code> item. New cases cover a later review, ready-for-review with a review request, and a push, which each repost, and subscriptions, mentions, and a pending review, which each leave the comment alone."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 21 tests in <code>CommentSummaryTests</code> pass at this head. Removing the <code>INVISIBLE_EVENTS</code> filter fails three of them, and removing the pending-review filter fails one."
+      },
+      {
+       "kind": "context",
+       "line": 890,
+       "text": "The fake appends a <code>comment_deleted</code> item on every delete. The real REST timeline did not return these items on the pull requests checked, so <code>test_the_deletion_a_repost_leaves_behind_does_not_bury_the_new_comment</code> covers a case the API does not produce today."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Describe the rule in the documentation",
+   "kicker": "The CLI reference and the summarize-pr skill",
+   "intro": [
+    "Both documents said the comment stays the newest comment. They now say it stays the last item on the pull request's timeline, and name the events that make a rerun post the link again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 633,
+       "text": "Matches the code: comments, submitted reviews, pushes, and ready-for-review bury the comment, and pending reviews, subscriptions, and mentions do not."
+      }
+     ]
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md"
+    }
+   ]
+  }
+ ]
+}

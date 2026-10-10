@@ -1,0 +1,341 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 793f923..e18184c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -626,13 +626,18 @@ Once the site is hosted, publish the summary again to push it.
+ 
+ When `summary publish` pushes to a hosted site, it then comments a link to
+ the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
+-It keeps one such comment per account and pull request, as the newest
+-comment: each publish posts the link again at the end, and then deletes the
+-account's older summary comments. A rerun on the same head posts nothing
+-while its comment is still the newest. It also puts the same link at the very
+-bottom of the pull request's description, after a blank line, and removes the
+-link an earlier publish left there. Where the account cannot edit the
+-description, it prints why and leaves the description as it was.
++It keeps one such comment per account and pull request, as the pull
++request's last message: each publish posts the link again at the end, and
++then deletes the account's older summary comments. A rerun on the same head
++posts nothing while its comment is still the last item on the pull request's
++timeline. Anything the conversation shows after the comment, such as another
++comment, a submitted review, a push, or a ready-for-review event, makes the
++rerun post the link again. A pending review, a subscription, or a mention
++does not, because readers of the conversation do not see it.
++`summary publish` also puts the same link at the very bottom of the pull
++request's description, after a blank line, and removes the link an earlier
++publish left there. Where the account cannot edit the description, it prints
++why and leaves the description as it was.
+ It sends two `repository_dispatch` events, `projector-summaries` and
+ `projector-walkthroughs`, because a site workflow written before summaries
+ were renamed listens only for the second; a later release stops sending it.
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 20cf579..095db51 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -280,12 +280,14 @@ published again.
+ 
+ Last, `publish` comments a link to the summary on the pull request, so a
+ reader on GitHub finds the page. The pull request keeps one such comment
+-per account, always as its newest comment: each publish posts the link
++per account, always as its last message: each publish posts the link
+ again at the end and deletes the older comment. Publishing the same head
+-again posts nothing while its comment is still the newest. `publish` also
+-puts the same link at the very bottom of the pull request's description,
+-replacing the one an earlier publish left there. Where the account cannot
+-edit the description, `publish` says so and keeps the comment.
++again posts nothing while its comment is still the pull request's last
++timeline item. A later review, comment, push, or ready-for-review event
++makes it post the link again. `publish` also puts the same link at the
++very bottom of the pull request's description, replacing the one an
++earlier publish left there. Where the account cannot edit the
++description, `publish` says so and keeps the comment.
+ 
+ Setting a repository up is once, with admin rights, and only when the user
+ asks for it. From a checkout whose `origin` is the repository, run:
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 2e6772c..4c650bd 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -973,17 +973,27 @@ def describe_summary(repo: str, number: int, head: str, site: str) -> str:
+     return f"linked the summary of {head[:7]} at the end of the description"
+ 
+ 
++# Timeline events GitHub does not render on the pull request's conversation, so
++# they do not bury the summary comment: subscriptions and mentions are
++# notification bookkeeping, and a publish that deletes its own older summary
++# comment leaves a `comment_deleted` behind.
++INVISIBLE_EVENTS = frozenset({"subscribed", "unsubscribed", "mentioned", "comment_deleted"})
++
++
+ def comment_summary(repo: str, number: int, head: str, site: str | None = None) -> str:
+     """Link the summary from a comment on the pull request, so a reader on GitHub finds it.
+ 
+     The pull request keeps one such comment per account, naming the head it
+-    summarizes, and keeps it the newest comment: each publish posts the link
+-    afresh at the end and then deletes the account's older summary comments,
+-    so the pull request is never without one. A comment that already names
+-    this head and is the newest on the pull request is left alone, and only
+-    the account's older summary comments are deleted. A
+-    repository whose site is not hosted gets no comment. `site` is the site's
+-    URL when the caller already looked it up. Returns what it did.
++    summarizes, and keeps it the pull request's last message: each publish
++    posts the link afresh at the end and then deletes the account's older
++    summary comments, so the pull request is never without one. A comment that
++    already names this head and is still the last visible item on the pull
++    request's timeline is left alone, and only the account's older summary
++    comments are deleted. Any later comment, submitted review, or other event
++    GitHub shows on the conversation, such as a ready-for-review or a review
++    request, buries it; a pending review and the events in `INVISIBLE_EVENTS`
++    do not. A repository whose site is not hosted gets no comment. `site` is
++    the site's URL when the caller already looked it up. Returns what it did.
+     """
+     if site is None:
+         url, reason = hosting(repo)
+@@ -995,24 +1005,29 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None)
+     page = review_page(site, number)
+     body = summary_link(head, page)
+     login = gh("api", "user", "--jq", ".login").strip()
+-    # Every comment, oldest first, with its body only when it is this
+-    # account's summary comment: the newest decides whether one is at the end.
+-    rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq",
+-              f'.[] | if (.user.login | ascii_downcase) == "{login.lower()}" '
+-              f'and (.body | test("<!-- {SUMMARY_MARKER} v=1 ")) then [.id, .body] else [.id, null] end | @json')
+-    comments = [json.loads(row) for row in rows.splitlines() if row.strip()]
+-
+-    def delete(older: list[list]) -> str:
+-        """Delete the account's summary comments among `older`, and name them."""
+-        stale = [comment_id for comment_id, current in older if current is not None]
++    # Every timeline item, oldest first, as its event, its id, a review's state,
++    # and its body only when it is this account's summary comment, whose id is
++    # the issue comment's: the last visible item decides whether one is at the end.
++    rows = gh("api", "--paginate", f"repos/{repo}/issues/{number}/timeline", "--jq",
++              f'.[] | [.event, .id, ((.state // "") | ascii_downcase), '
++              f'if .event == "commented" and ((.user.login // "") | ascii_downcase) == "{login.lower()}" '
++              f'and ((.body // "") | test("<!-- {SUMMARY_MARKER} v=1 ")) then .body else null end] | @json')
++    items = [json.loads(row) for row in rows.splitlines() if row.strip()]
++    visible = [item for item in items
++               if item[0] not in INVISIBLE_EVENTS and not (item[0] == "reviewed" and item[2] == "pending")]
++    comments = [item[1] for item in items if item[3] is not None]
++
++    def delete(stale: list[int]) -> str:
++        """Delete the account's summary comments `stale`, and name them."""
+         for comment_id in stale:
+             gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
+         return ", ".join(f"comment {comment_id}" for comment_id in stale)
+ 
+-    if comments and comments[-1][1] is not None and comments[-1][1].strip() == body.strip():
++    if visible and visible[-1][3] is not None and visible[-1][3].strip() == body.strip():
+         # A delete that failed on an earlier run can have left an older one behind.
+-        deleted = delete(comments[:-1])
+-        return (f"comment {comments[-1][0]} already links the summary of {head[:7]}"
++        last = visible[-1][1]
++        deleted = delete([comment_id for comment_id in comments if comment_id != last])
++        return (f"comment {last} already links the summary of {head[:7]}"
+                 f"{f', deleting {deleted}' if deleted else ''}: {page}")
+     posted = json.loads(gh("api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}") or "{}")
+     deleted = delete(comments)
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index d824eb1..4ee4208 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -864,10 +864,10 @@ def test_a_site_with_no_pages_url_leaves_the_description_alone(self) -> None:
+ 
+ 
+ class CommentSummaryTests(unittest.TestCase):
+-    """The pull request's comments stand in a list; the fake answers the calls comment_summary makes."""
++    """The pull request's timeline stands in a list; the fake answers the calls comment_summary makes."""
+ 
+     def setUp(self) -> None:
+-        self.comments = [{"id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
++        self.timeline: list[dict] = [{"event": "commented", "id": 1, "user": {"login": "teammate"}, "body": "Nice."}]
+         self.calls: list[str] = []
+         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
+         self.next_id = 101
+@@ -875,19 +875,25 @@ def setUp(self) -> None:
+     def gh(self, *args: str) -> str:
+         if args == ("api", "user", "--jq", ".login"):
+             return "operator\n"
+-        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/comments"):
+-            return "".join(json.dumps([c["id"], c["body"] if c["user"]["login"] == "operator"
+-                                       and "<!-- projector-summary v=1 " in c["body"] else None]) + "\n"
+-                           for c in self.comments)
++        if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/timeline"):
++            return "".join(json.dumps([item.get("event"), item.get("id"), (item.get("state") or "").lower(),
++                                       item["body"] if item.get("event") == "commented"
++                                       and item["user"]["login"].lower() == "operator"
++                                       and "<!-- projector-summary v=1 " in item["body"] else None]) + "\n"
++                           for item in self.timeline)
+         if args[:3] == ("api", "-X", "DELETE"):
+             comment_id = int(args[3].rsplit("/", 1)[1])
+             self.calls.append(f"delete {comment_id}")
+-            self.comments.remove(next(c for c in self.comments if c["id"] == comment_id))
++            self.timeline.remove(next(item for item in self.timeline
++                                      if item.get("event") == "commented" and item["id"] == comment_id))
++            # GitHub records the deletion on the timeline, where only the actor's own feed shows it.
++            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id, "actor": {"login": "operator"}})
+             return ""
+         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
+-            new = {"id": self.next_id, "user": {"login": "operator"}, "body": args[3].removeprefix("body=")}
++            new = {"event": "commented", "id": self.next_id, "user": {"login": "operator"},
++                   "body": args[3].removeprefix("body=")}
+             self.next_id += 1
+-            self.comments.append(new)
++            self.timeline.append(new)
+             self.calls.append(f"post {new['id']}")
+             return json.dumps({"html_url": f"https://github.com/owner/repo/pull/7#issuecomment-{new['id']}"})
+         raise AssertionError(f"unexpected gh call {args}")
+@@ -897,8 +903,17 @@ def comment(self, head: str = HEAD) -> str:
+              mock.patch.object(summary, "hosting", return_value=self.hosted):
+             return summary.comment_summary("owner/repo", 7, head)
+ 
++    def add_comment(self, comment_id: int, body: str, login: str = "teammate", at: int | None = None) -> None:
++        """Add a comment to the timeline, at the end or at index `at`."""
++        item = {"event": "commented", "id": comment_id, "user": {"login": login}, "body": body}
++        self.timeline.insert(len(self.timeline) if at is None else at, item)
++
++    def comment_ids(self) -> list[int]:
++        return [item["id"] for item in self.timeline if item.get("event") == "commented"]
++
+     def summary_comments(self) -> list[str]:
+-        return [c["body"] for c in self.comments if "projector-summary" in c["body"]]
++        return [item["body"] for item in self.timeline
++                if item.get("event") == "commented" and "projector-summary" in item["body"]]
+ 
+     def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
+         result = self.comment()
+@@ -913,56 +928,121 @@ def test_the_first_summary_posts_a_comment_linking_it(self) -> None:
+ 
+     def test_a_later_head_reposts_the_comment_at_the_end_and_deletes_the_old_one(self) -> None:
+         self.comment()
+-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "Pushed a fix."})
++        self.add_comment(2, "Pushed a fix.")
+ 
+         result = self.comment("b" * 40)
+ 
+         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls, "the new link is up before the old goes")
+-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
++        self.assertEqual([1, 2, 102], self.comment_ids())
+         self.assertIn("sha=" + "b" * 40, self.summary_comments()[0])
+         self.assertIn("moved the link to the summary of bbbbbbb to a new comment at the end, deleting comment 101",
+                       result)
+ 
+     def test_a_rerun_on_the_same_head_moves_a_buried_comment_to_the_end(self) -> None:
+         self.comment()
+-        self.comments.append({"id": 2, "user": {"login": "teammate"}, "body": "One question."})
++        self.add_comment(2, "One question.")
++
++        self.comment()
++
++        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
++        self.assertEqual([1, 2, 102], self.comment_ids())
++
++    def test_a_later_review_buries_the_comment_and_it_moves_to_the_end(self) -> None:
++        self.comment()
++        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "review-bot"}, "state": "commented",
++                              "body": "Two findings."})
++
++        result = self.comment()
++
++        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
++        self.assertEqual([1, 102], self.comment_ids())
++        self.assertIn("moved the link to the summary of aaaaaaa to a new comment at the end, deleting comment 101",
++                      result)
++
++    def test_marking_the_pull_request_ready_buries_the_comment(self) -> None:
++        self.comment()
++        self.timeline.append({"event": "ready_for_review", "id": 3, "actor": {"login": "operator"}})
++        self.timeline.append({"event": "review_requested", "id": 4, "actor": {"login": "operator"}})
++
++        self.comment()
++
++        self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
++
++    def test_a_push_after_the_comment_buries_it(self) -> None:
++        self.comment()
++        self.timeline.append({"event": "committed", "sha": "b" * 40, "message": "Fix the typo."})
+ 
+         self.comment()
+ 
+         self.assertEqual(["post 101", "post 102", "delete 101"], self.calls)
+-        self.assertEqual([1, 2, 102], [c["id"] for c in self.comments])
++
++    def test_events_the_conversation_does_not_show_leave_the_comment_last(self) -> None:
++        self.comment()
++        self.timeline.append({"event": "subscribed", "id": 3, "actor": {"login": "teammate"}})
++        self.timeline.append({"event": "mentioned", "id": 4, "actor": {"login": "teammate"}})
++        self.timeline.append({"event": "unsubscribed", "id": 5, "actor": {"login": "teammate"}})
++
++        result = self.comment()
++
++        self.assertEqual(["post 101"], self.calls)
++        self.assertIn("comment 101 already links the summary of aaaaaaa", result)
++
++    def test_a_pending_review_leaves_the_comment_last(self) -> None:
++        self.comment()
++        self.timeline.append({"event": "reviewed", "id": 3, "user": {"login": "teammate"}, "state": "pending"})
++
++        self.comment()
++
++        self.assertEqual(["post 101"], self.calls, "only its author sees a pending review")
++
++    def test_the_deletion_a_repost_leaves_behind_does_not_bury_the_new_comment(self) -> None:
++        self.comment()
++        self.add_comment(2, "One question.")
++        self.comment()
++        self.calls.clear()
++
++        result = self.comment()
++
++        self.assertEqual("comment_deleted", self.timeline[-1]["event"], "the old comment's deletion comes last")
++        self.assertEqual([], self.calls)
++        self.assertIn("comment 102 already links the summary of aaaaaaa", result)
+ 
+     def test_every_older_summary_comment_of_the_account_is_deleted(self) -> None:
+         for comment_id in (5, 6):
+-            self.comments.append({"id": comment_id, "user": {"login": "operator"},
+-                                  "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
++            self.add_comment(comment_id, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator")
+ 
+         result = self.comment()
+ 
+         self.assertEqual(["post 101", "delete 5", "delete 6"], self.calls)
+-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
++        self.assertEqual([1, 101], self.comment_ids())
+         self.assertIn("deleting comment 5, comment 6", result)
+ 
+     def test_a_rerun_deletes_an_older_summary_comment_a_failed_delete_left_behind(self) -> None:
+         self.comment()
+-        self.comments.insert(1, {"id": 5, "user": {"login": "operator"},
+-                                 "body": f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld."})
++        self.add_comment(5, f"<!-- projector-summary v=1 sha={'c' * 40} -->\nOld.", login="operator", at=1)
++        self.timeline.append({"event": "mentioned", "id": 3, "actor": {"login": "teammate"}})
+         self.calls.clear()
+ 
+         result = self.comment()
+ 
+-        self.assertEqual(["delete 5"], self.calls, "the newest comment stays, and the straggler goes")
+-        self.assertEqual([1, 101], [c["id"] for c in self.comments])
++        self.assertEqual(["delete 5"], self.calls, "the last comment stays, and the straggler goes")
++        self.assertEqual([1, 101], self.comment_ids())
+         self.assertIn("comment 101 already links the summary of aaaaaaa, deleting comment 5", result)
+ 
++    def test_the_accounts_login_matches_in_any_case(self) -> None:
++        self.add_comment(5, f"<!-- projector-summary v=1 sha={HEAD} -->\n📽️ **Projector summary** of aaaaaaa: {PAGE}\n",
++                         login="Operator")
++
++        self.assertIn("comment 5 already links the summary of aaaaaaa", self.comment())
++        self.assertEqual([], self.calls)
++
+     def test_another_accounts_summary_comment_is_left_alone(self) -> None:
+-        self.comments.append({"id": 2, "user": {"login": "teammate"},
+-                              "body": f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs."})
++        self.add_comment(2, f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.")
+ 
+         self.comment()
+ 
+         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
+-        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.comments[1]["body"])
++        self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.timeline[1]["body"])
+ 
+     def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
+         with mock.patch.object(summary, "gh", side_effect=self.gh), \
