@@ -48,19 +48,19 @@ targets `main`, so base branches would list it alone.
 
 ## 2. Solution
 
-Each summary records the one project its stack carries out, or none, and a
-short title for the stack. The site build takes each stack's pull requests
-and their order from GitHub's stacks. For a pull request that GitHub puts in
-no stack, and for every pull request when GitHub cannot answer, it falls back
-to base branches, as it does today, and never fails. It splits each stack
-into segments, one for each run of layers that carry the same project, and
-gives each segment a header (§ 8). A stack whose layers name no project has
-one title header. The Reviews index draws each header above its segment's
-rows, and a summary page's sidebar draws each above its segment's part of the
-stack list, in place of the project rows. A project header links to the
-project's page. A title header is plain text. A merged stack stays one stack.
-A summary published before the change gets its header by a fixed rule from
-the fields it already has, so nothing needs to be published again.
+Each summary records the one project its pull request carries out, or none,
+and a short title for the stack. The site build takes each stack's pull
+requests and their order from GitHub's stacks. For a pull request that GitHub
+puts in no stack, and for every pull request when GitHub cannot answer, it
+falls back to base branches, as it does today, and never fails. It splits
+each stack into segments, one for each run of layers that carry the same
+project, and gives each segment a header (§ 8). A stack whose layers name no
+project has one title header. The Reviews index draws each header above its
+segment's rows, and a summary page's sidebar draws each above its segment's
+part of the stack list, in place of the project rows. A project header links
+to the project's page. A title header is plain text. A merged stack stays one
+stack. A summary published before the change gets its header by a fixed rule
+from the fields it already has, so nothing needs to be published again.
 
 ### 2.1 A summary records one project and a title
 
@@ -600,8 +600,11 @@ requests, so the implementing pull request can report both for this
 repository. When GitHub cannot answer, the build costs what it costs today.
 
 The header adds one pass over each stack's members and one dictionary lookup
-per summary. Each page's data and each `site.json` row gain one object of up
-to three short strings. `publish` adds two field checks and no network call.
+per summary. Each `site.json` row gains one object of up to three short
+strings. Each page's data gains that object and `segments`, which holds one
+header for each segment and the number of every member of the stack, a few
+dozen bytes for a stack of a few layers. `publish` adds two field checks and
+no network call.
 
 ## 6. Rollout
 
@@ -783,7 +786,10 @@ the same project.
 
 **Summary sidebar.** `stackSegmentsHtml` draws a header above each segment's
 part of the stack list, and the current pull request's row is highlighted in
-its own segment:
+its own segment. A stack of one segment keeps the one list that § 2.4 shows,
+labeled `Pull requests in this stack`. In a stack of several segments, each
+segment's list is labeled with its header's title, so a screen reader names
+the project or title that each list belongs to:
 
 ```html
 <div class="prblock">
