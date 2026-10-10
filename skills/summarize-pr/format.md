@@ -83,10 +83,11 @@ it. The summary is JSON:
   `"old"`, and then renders under that line; `build` refuses a line the diff
   does not show. A group's notes take no `line`. A group's older `concepts`
   list still builds, as `context` notes.
-- The reader marks each file Reviewed, which collapses it. Marking a group
-  Reviewed closes the group and its files without marking any file, and a
-  group is marked for the reader once all its files are. The reader can
-  also check off each `flag` note; `context` and `verify` notes have no box.
+- The reader marks each file reviewed with the checkbox in its header,
+  which collapses it. Marking a group reviewed closes the group and its
+  files without marking any file, and a group is marked for the reader
+  once all its files are. The reader can also check off each `flag` note;
+  `context` and `verify` notes have no box.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
 - A file is generated when the repository's `.gitattributes` marks it

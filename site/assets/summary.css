@@ -186,9 +186,12 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 .group.done .gnum { background: var(--ok); }
 .gname { min-width: 0; }
 .gstats { font-size: 13px; color: var(--muted); white-space: nowrap; }
-.greviewed { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); cursor: pointer; white-space: nowrap; user-select: none; }
-.greviewed input { accent-color: var(--ok); width: 16px; height: 16px; margin: 0; }
-.group.done .greviewed { background: var(--ok-bg); border-color: var(--ok); }
+/* A section's and a file's Reviewed boxes stand alone, each in a target larger than the box. */
+.greviewed, .freviewed { flex: none; display: inline-grid; place-items: center; border: 1px solid transparent; cursor: pointer; }
+.greviewed:hover, .freviewed:hover { background: var(--surface); border-color: var(--border); }
+/* Inset so the section's box sits over its files' boxes, which their cards' padding moves in from the edge. */
+.greviewed { width: 34px; height: 34px; border-radius: 8px; margin-right: 10px; }
+.greviewed input { accent-color: var(--ok); width: 18px; height: 18px; margin: 0; cursor: pointer; }
 @media (max-width: 640px) { .gstats { display: none; } }
 .group.folded .gbody { display: none; }
 .kicker { margin: 14px 0 0; color: var(--muted); max-width: 80ch; }
@@ -267,8 +270,9 @@ input.nbox { cursor: pointer; }
 .morelinks a { color: var(--muted); text-decoration: none; }
 .morelinks a:hover { color: var(--text); }
 .top .morelinks { font-size: 14px; }
-.freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
-.freviewed input { accent-color: var(--ok); margin: 0; }
+/* Pulled toward the "…" button, whose dots and box both sit inside their targets, so the two read as far apart as the row's other items. */
+.freviewed { width: 28px; height: 28px; border-radius: 6px; margin-left: -8px; }
+.freviewed input { accent-color: var(--ok); width: 15px; height: 15px; margin: 0; cursor: pointer; }
 .fnote { margin: 0; padding: 13px 14px; font-size: 15px; line-height: 1.55; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
 .fnotes { border-bottom: 1px solid var(--border); }
 /* A collapsed file keeps its description, which then ends the card, and hides its notes with its diff. */

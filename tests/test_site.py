@@ -768,6 +768,18 @@ class FileHeaderTests(SiteRepoCase):
                       'rel="noopener">Compare on GitHub</a></div>', top)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_each_reviewed_box_stands_alone_and_is_named_for_what_it_marks(self) -> None:
+        data = self.build()
+        html = rendered_summary(data)
+
+        fid = next(f["id"] for f in data["files"] if f["path"] == "src/app#1.py")
+        self.assertIn(f'<label class="freviewed"><input type="checkbox" class="file-box" id="{fid}-reviewed" '
+                      'aria-label="Mark src/app#1.py reviewed"></label>', html)
+        self.assertIn('<label class="greviewed"><input type="checkbox" class="reviewed-box" id="all-reviewed" '
+                      'aria-label="Mark section 1 reviewed"></label>', html)
+        self.assertNotIn("Reviewed</label>", html, "no box shows a visible label")
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_without_popovers_the_links_sit_in_place_instead_of_a_menu(self) -> None:
         # A browser without popovers would draw every menu open, so it gets the
         # links as a row under their short names, with no button and no menu.

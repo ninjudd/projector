@@ -180,7 +180,7 @@ function renderSummary(data: SummaryData): void {
             { href: blobUrl(f), text: 'View file on GitHub', short: 'File', external: true },
             ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', short: 'Project', external: false }] : []),
           ]) +
-          `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +
+          `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed" aria-label="Mark ${esc(f.path)} reviewed"></label>` +
         '</span>' +
       '</header>' +
       (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
@@ -203,7 +203,7 @@ function renderSummary(data: SummaryData): void {
         `<h2 class="gtitle"><button class="gtoggle" type="button" aria-expanded="true" aria-controls="${gid}-body" title="Collapse or expand">` +
           `<span class="chev" aria-hidden="true"></span><span class="gnum">${String(i + 1)}</span><span class="gname">${g.title}</span></button></h2>` +
         `<span class="gstats">${String(g.files.length)} file${g.files.length === 1 ? '' : 's'} · <span class="plus">+${num(adds)}</span> <span class="minus">−${num(dels)}</span></span>` +
-        `<label class="greviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed"> Reviewed</label>` +
+        `<label class="greviewed"><input type="checkbox" class="reviewed-box" id="${gid}-reviewed" aria-label="Mark section ${String(i + 1)} reviewed"></label>` +
       '</header>' +
       `<div class="gbody" id="${gid}-body">` +
         (g.kicker !== undefined && g.kicker !== '' ? `<p class="kicker">${g.kicker}</p>` : '') +
