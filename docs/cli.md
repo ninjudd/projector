@@ -632,7 +632,9 @@ account's older summary comments. A rerun on the same head posts nothing
 while its comment is still the newest. It also puts the same link at the very
 bottom of the pull request's description, after a blank line, and removes the
 link an earlier publish left there. Where the account cannot edit the
-description, it prints why and leaves the description as it was.
+description, it prints why and leaves the description as it was. Pass
+`--no-describe` to post the comment and leave the description alone, for a
+repository whose instructions forbid agents to edit descriptions.
 It sends two `repository_dispatch` events, `projector-summaries` and
 `projector-walkthroughs`, because a site workflow written before summaries
 were renamed listens only for the second; a later release stops sending it.

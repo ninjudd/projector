@@ -1022,6 +1022,14 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertIn("done", out)
         self.assertIn("described", out)
 
+    def test_summary_publish_no_describe_comments_and_leaves_the_description_alone(self) -> None:
+        published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""), "--no-describe")
+
+        self.assertTrue(published[0]["push"])
+        self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented)
+        self.assertEqual([], self.described, "--no-describe never edits the description")
+        self.assertIn("left the description alone", out)
+
     def test_summary_publish_pushes_where_a_hosted_sites_pages_answer_has_no_url(self) -> None:
         published, commented, _ = self.cli_publish(("", ""))
 

@@ -433,6 +433,10 @@ def parser() -> argparse.ArgumentParser:
         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
     )
     summary_publish.add_argument(
+        "--no-describe", action="store_true",
+        help="publish and comment the link as usual, but leave the pull request's description alone",
+    )
+    summary_publish.add_argument(
         "--local", action="store_true",
         help="commit the summary to this checkout's summaries ref for `site serve` to preview, and push nothing "
         "(the default when the repository does not host its site)",
@@ -876,7 +880,10 @@ def run_summary(arguments: argparse.Namespace) -> int:
         # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
-            print(summary.describe_summary(pr["repo"], pr["number"], pr["head"], site))
+            if arguments.no_describe:
+                print("left the description alone, as --no-describe asked")
+            else:
+                print(summary.describe_summary(pr["repo"], pr["number"], pr["head"], site))
     return 0
 
 

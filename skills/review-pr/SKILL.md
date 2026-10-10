@@ -579,9 +579,7 @@ you review, whoever opened it. A summary matters most on another author's
 pull request, because that is how its reviewers read the change. Neither
 the author, a brief, nor your own judgment is a reason to skip or hold one.
 The one off switch is `review.summarize = false` in `.projector.toml`,
-and the user sets it. The only other reason to skip is a repository
-instruction that forbids agents to edit pull request descriptions, which
-the end of this section covers.
+and the user sets it.
 
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
@@ -614,10 +612,8 @@ next publish puts it back at the end.
 
 A repository's own instructions outrank this skill. Where its `AGENTS.md`,
 `CLAUDE.md`, or other instructions forbid agents to edit pull request
-descriptions, skip the summary, because `publish` always edits the
-description. Say in your report that you skipped it and why, and ask the
-user either to set `review.summarize = false` or to waive the rule for the
-link block.
+descriptions, publish with `--no-describe`. The summary still publishes,
+and the comment alone links it.
 
 A summary that fails to build or publish never changes the review's
 verdict: say in your report that the summary failed and why, and leave the
