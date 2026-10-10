@@ -491,7 +491,7 @@ A model has stopped when it owes the pull request a review, has posted
 nothing since it began to owe it, and `review.peer_wait` seconds have passed
 since then. Posting means a start comment, a verdict, or a verify reply on
 the pull request. A model with a live start comment has not stopped. A model
-owes a review in two cases:
+owes a review in three cases:
 
 - **A new head.** It has a verdict on an earlier head and none on the current
   head. It began to owe the head when the adopting review began on it, the
@@ -499,6 +499,13 @@ owes a review in two cases:
 - **An answer.** An author's reply on a finding it re-checks is newer than
   anything the model has posted. It began to owe the answer when the reply
   was posted.
+- **A re-review.** Its newest verdict on the current head requests changes,
+  and none of the findings it re-checks is open, as when the author resolved
+  them by hand without a push. It began to owe the re-review when the
+  adopting review began on the head. Without this case, a model upgraded in
+  the middle of a pull request, whose old ID requested changes on the head
+  before every thread was resolved, would hold the sign-off at
+  `changes-requested` until the next push.
 
 A model whose verdict names the current head can still owe an answer, so a
 loop that stopped just after its verdict is found too.
@@ -527,10 +534,12 @@ thread, or rule 3 lets a model still reviewing adopt it.
 #### Adopting a finding
 
 A review re-checks every thread that census marks `adopt: now` by reading it,
-exactly as it re-checks its own. A resolved fix that still holds needs
-nothing more. When a thread needs an action, a decline to accept or keep or a
-fix that does not hold, the review runs one command, so that the wait, the
-claim, and the check that the claim won happen in one place:
+exactly as it re-checks its own, and settles each one with one command, so
+that the wait, the claim, and the check that the claim won happen in one
+place. That includes a resolved thread whose fix still holds, with
+`--result fixed`: its reply is what records the stop, so without it a stopped
+model's verdict on the head would still count, and every later publish would
+wait for it as a peer. The cost is one reply on each such thread, once.
 
 ```sh
 project review adopt <number> <thread-id> --result <fixed|accepted|withdrawn|kept|reopened> --body <file>
@@ -753,6 +762,10 @@ after the change. It pins that the fix loop still reports every finding.
   or an approval posted, and a peer is pending. Then it lasts at most what is
   left of `review.peer_wait` after the review's own time, with two listings
   every 15 seconds.
+- **`project review census`** reads the pull request, its reviews, its issue
+  comments, and its threads, four requests where it made one, because who
+  re-checks a thread depends on every model's posts. `publish` and the
+  incremental rules run it once each.
 - **`project review status`** makes four requests: the pull request, its
   reviews, its issue comments, and its threads. `fix-pr` runs it once for each
   report.
@@ -831,3 +844,29 @@ Reading the code settled these points, beyond those § 1 names:
 - A second machine that runs a review loop as the same account and the same
   model already trips the collision check in this repository. This plan keeps
   that behavior and catches it earlier, at setup.
+
+## 9. Implementation
+
+The plan is built in four layers of one stack, each safe to merge alone:
+
+1. **The site** (#233): `review_statuses` gives each head's combined `status`
+   and its `models`, and the summary page's header shows one status, marked
+   with an asterisk and a card of each model's verdict when several models
+   reviewed the head, as § 2.5 describes. `review.identity` lives here.
+2. **Identity and local state** (#237): each model's state, lock, request,
+   and worktree under its model key, `--model` on every later command, the
+   start, finding, and loop-record `model=`, the collision check by identity,
+   and the duplicate check at setup.
+3. **The sign-off** (#239): `signoff()`, the peer wait with
+   `review.peer_wait`, gated approvals, `project review status`, and
+   `fix-pr`'s clean test, which runs `status --reviewer` for each account
+   that posted a Projector review.
+4. **Who re-checks a finding**: the census fields and `census --wait`,
+   `project review adopt`, recorded stops in the sign-off and `status`, the
+   re-review case in § 2.8, and the skills' rules for each.
+
+The tests in `tests/test_review.py`, `tests/test_site.py`, and
+`tests/test_watchers.py` cover criteria 1 to 14 and 16 to 23. Criterion 15,
+two review loops on two hosts, is a check by hand that the operator runs once
+the release carries all four layers, so the project stays `in-progress` until
+it has run.

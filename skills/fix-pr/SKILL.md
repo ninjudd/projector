@@ -61,7 +61,9 @@ are resolved. The work outstanding on the head is:
 
 - **A merge conflict**, when `mergeable` is `CONFLICTING`. `UNKNOWN` means
   GitHub has not computed it yet, so ask again after a few seconds.
-- **Every unresolved review thread.**
+- **Every unresolved review thread**, including every Projector finding
+  whichever model opened it. When several models review the pull request,
+  which of them re-checks a finding is the review's concern, not the fix's.
 - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
   one whose findings exist only in its body.
 - **A body-only finding** in a `COMMENT` review.

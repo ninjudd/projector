@@ -465,6 +465,9 @@ def parser() -> argparse.ArgumentParser:
         "interdiff", help="measure the change since this loop's last full review and check whether the head may "
                           "have an incremental review"
     )
+    review_adopt = review_commands.add_parser(
+        "adopt", help="re-check a finding thread whose model has stopped reviewing, and take it over"
+    )
     add_output(review_commands.add_parser(
         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
     ))
@@ -480,7 +483,7 @@ def parser() -> argparse.ArgumentParser:
                                help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
     add_output(review_status)
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
-                    review_interdiff):
+                    review_interdiff, review_adopt):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -495,7 +498,8 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True,
                               help="the model ID of this session, which names the start comment and keys the "
                                    "review's state")
-    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
+    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff,
+                    review_adopt):
         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
                                              "of this pull request set up here)")
     review_setup.add_argument("--rereview", action="store_true",
@@ -513,6 +517,14 @@ def parser() -> argparse.ArgumentParser:
                                 help="files read over files changed, such as 12/12 (required without --incremental)")
     review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
                                 help="outside a loop, the earlier verdict a user agreed to publish beside")
+    review_adopt.add_argument("thread", help="the finding thread's id, as census lists it")
+    review_adopt.add_argument("--result", required=True, choices=review.ADOPT_RESULTS,
+                              help="how the re-check settles it, as a verify reply's result")
+    review_adopt.add_argument("--body", type=Path, required=True,
+                              help="the reply below the line naming both models: what at this head settles it")
+    review_census.add_argument("--wait", action="store_true",
+                               help="read again every 15 seconds until no answered thread waits on its "
+                                    "verifier's review.peer_wait window")
     review_publish.add_argument("--incremental", action="store_true",
                                 help="publish a clean incremental review of the change since this loop's last "
                                      "full review, when `project review interdiff` allows one")
@@ -867,17 +879,27 @@ def incremental_enabled(checkout: Path) -> bool:
     return value
 
 
+def config_here() -> dict:
+    """The configuration of the checkout this command runs in, or none outside one."""
+    try:
+        return load_config(review.checkout_root(Path.cwd()))
+    except ProjectorError:
+        return {}
+
+
+def reviewer_here(explicit: Optional[str]) -> str:
+    """The reviewer as `setup` finds it: `explicit`, then this checkout's review.username, then you."""
+    configured = config_here().get("review.username")
+    return explicit or (configured if isinstance(configured, str) and configured else None) \
+        or review.authenticated_login()
+
+
 def review_status(root: Path, arguments: argparse.Namespace) -> int:
     """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
-    request cannot be read. The reviewer is found as `setup` finds it."""
+    request cannot be read."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
-    try:
-        configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
-    except ProjectorError:
-        configured = None
-    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
-        or review.authenticated_login()
-    result = review.status(repo, arguments.pr, reviewer)
+    result = review.status(repo, arguments.pr, reviewer_here(arguments.reviewer),
+                           review.peer_wait(config_here().get("review.peer_wait")))
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
     return 0
 
@@ -902,10 +924,17 @@ def run_review(arguments: argparse.Namespace) -> int:
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
-            # Every model's threads are counted alike, so the model a loop passes is only checked.
-            if arguments.model is not None:
-                review.model_key(arguments.model)
-            result = review.census(repo, arguments.pr)
+            model = review.find_model(root, repo, arguments.pr, arguments.model)
+            state = review.stored_state(review.Paths(root, repo, arguments.pr, model)) if model else None
+            if state:
+                me, began = (state["reviewer"], state["model"]), review.parse_time(state["head_started_at"])
+                wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
+            else:
+                # Run before setup, as a loop does on RESPONDED, it reads as this checkout's reviewer, and
+                # a review not yet begun owes nothing to the head.
+                me, began = ((reviewer_here(None), model) if model else None), None
+                wait = review.peer_wait(config_here().get("review.peer_wait"))
+            result = review.census(repo, arguments.pr, me, began, wait, settle=arguments.wait)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -921,10 +950,22 @@ def run_review(arguments: argparse.Namespace) -> int:
                       + (f" by model {model}" if model else ""))
             return 0
         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
+        if command == "adopt":
+            state = review.read_state(paths)
+            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
+            result = review.adopt(paths, arguments.thread, arguments.result, arguments.body, wait)
+            if arguments.json_output:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"adopted thread {result['thread']} from {result['adopted_from']} ({result['result']}); "
+                      + ("resolved" if result["resolved"] else "open"))
+            return 0
         if command == "interdiff":
             state = review.read_state(paths)
             enabled = incremental_enabled(Path(state["checkout"]))
-            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
+            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
+            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled,
+                                              wait=wait)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:

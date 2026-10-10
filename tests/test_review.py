@@ -74,17 +74,19 @@ class FakeGitHub:
         self.after_post = None
         # Reviews the listing leaves out, as one GitHub has not indexed yet.
         self.unlisted: set[int] = set()
+        # Replies posted on finding threads, and each thread resolved or unresolved, with its token.
+        self.next_reply = 5001
+        self.after_reply = None
+        self.mutations: list[tuple[str, bool, str | None]] = []
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append((list(args), token))
         if self.fail and self.fail in " ".join(args):
             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
-            login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
-                                       "body": r["body"]}) + "\n"
-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
-                           and r["id"] not in self.unlisted)
+                                       "login": r["user"]["login"], "body": r["body"]}) + "\n"
+                           for r in self.reviews if "projector-review" in r["body"] and r["id"] not in self.unlisted)
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
@@ -105,9 +107,25 @@ class FakeGitHub:
         if args[:2] == ["pr", "ready"]:
             self.pr["draft"] = "--undo" in args
             return ""
+        if args[:3] == ["api", "-X", "DELETE"] and "/pulls/comments/" in args[3]:
+            comment_id = int(args[3].rsplit("/", 1)[1])
+            for node in self.thread_nodes():
+                node["comments"]["nodes"] = [c for c in node["comments"]["nodes"] if c["databaseId"] != comment_id]
+            return ""
         if args[:3] == ["api", "-X", "DELETE"]:
             del self.comments[int(args[3].rsplit("/", 1)[1])]
             return ""
+        if len(args) == 4 and args[1].startswith(f"repos/{REPO}/pulls/1/comments/") and args[1].endswith("/replies"):
+            first = int(args[1].split("/")[-2])
+            node = next(n for n in self.thread_nodes() if n["comments"]["nodes"][0]["databaseId"] == first)
+            reply_id, self.next_reply = self.next_reply, self.next_reply + 1
+            at = review.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            node["comments"]["nodes"].append({"databaseId": reply_id, "body": args[3].removeprefix("body="),
+                                              "createdAt": at, "author": {"login": token.removeprefix("token-")}})
+            if self.after_reply:
+                hook, self.after_reply = self.after_reply, None
+                hook(node)
+            return json.dumps({"id": reply_id, "created_at": at})
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
             return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
                                        "body": body, **self.comment_info[i]}) + "\n"
@@ -116,6 +134,12 @@ class FakeGitHub:
             return f"token-{args[-1]}\n"
         if args == ["api", "user", "--jq", ".login"]:
             return "operator\n"
+        if args[:2] == ["api", "graphql"] and "ReviewThread(input" in args[3]:
+            thread_id = next(a.split("=", 1)[1] for a in args if a.startswith("id="))
+            node = next(n for n in self.thread_nodes() if n["id"] == thread_id)
+            node["isResolved"] = "unresolveReviewThread" not in args[3]
+            self.mutations.append((thread_id, node["isResolved"], token))
+            return json.dumps({"data": {}})
         if args[:2] == ["api", "graphql"]:
             after = next((a.split("=", 1)[1] for a in args if a.startswith("after=")), None)
             return json.dumps(self.pages[0 if after is None else int(after)])
@@ -140,6 +164,9 @@ class FakeGitHub:
         if len(args) == 2 and args[1].startswith(f"repos/{REPO}/issues/comments/"):
             return json.dumps({"body": self.comments[int(args[1].rsplit("/", 1)[1])]})
         raise AssertionError(f"unexpected gh call: {args}")
+
+    def thread_nodes(self) -> list[dict]:
+        return [n for page in self.pages for n in page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]]
 
     def comment(self, body: str, login: str = "operator", created_at: str | None = None,
                 updated_at: str | None = None) -> int:
@@ -537,9 +564,13 @@ class GateTests(ReviewCase):
 
 
 def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
-           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
+           path: str = "src/x.py", line: int | None = 3, original: int | None = None, first: int = 9,
+           login: str = "operator", at: str = "2026-09-27T01:00:00Z", replies: tuple[dict, ...] = ()) -> dict:
+    """A review thread as the census query returns it, its finding first, posted as `login` at `at`."""
     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
-            "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
+            "line": line, "originalLine": original,
+            "comments": {"nodes": [{"databaseId": first, "body": body, "createdAt": at, "author": {"login": login}},
+                                   *replies]}}
 
 
 def page(nodes: list[dict], next_cursor: str | None) -> dict:
@@ -1141,18 +1172,20 @@ class ModelTests(PublishCase):
         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
                              r"runs on a pull request: (.*?)\. ", skill, re.S)
         commands = re.findall(r"`(\w+)`", sentence.group(1))
-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release"], commands)
+        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "adopt", "publish", "release"], commands)
         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
+        extras = {"publish": ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3"),
+                  "adopt": ("T9", "--result", "kept", "--body", str(self.body()))}
         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
         ran = {"setup": 0}
         for command in commands[1:]:
-            extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
-            ran[command] = self.later(command, *flags, *extra)[0]
+            ran[command] = self.later(command, *flags, *extras.get(command, ()))[0]
 
-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
-                         ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
+        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "adopt": 1, "publish": 0,
+                          "release": 0}, ran, "interdiff refuses with no full review to build on, gate with "
+                                              "review.gate unset, and adopt with no thread T9")
 
     def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
@@ -1452,7 +1485,8 @@ class StatusTests(SignoffCase):
                           ("gpt-5.5", "reviewing", None)],
                          [(m["model"], m["state"], m.get("review")) for m in as_json["models"]])
         self.assertEqual(started, as_json["models"][2]["comment"])
-        self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5"}], as_json["open_threads"])
+        self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5", "verifier": "gpt-5.5"}],
+                         as_json["open_threads"])
 
     def test_a_model_with_only_earlier_activity_is_pending_and_leaves_the_sign_off_alone(self) -> None:
         self.add_verdict("claude-opus-5-5")
@@ -1490,6 +1524,334 @@ class StatusTests(SignoffCase):
 
         self.assertEqual(1, code)
         self.assertIn("does not exist", err)
+
+
+class OwnershipCase(SignoffCase):
+    """Finding threads by several models, as claude-opus-5-5 reviews head H beside gpt-5.5."""
+
+    REPLY = "<!-- projector-reply v=1 -->\nDeclined: the guard in `load` already stops this."
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ids = iter(range(7001, 8000))
+        self.reply = self.dir / "reply.md"
+        self.reply.write_text("At this head `load` warms the cache before the first read, so the finding holds.\n")
+
+    def node(self, body: str, at: str, login: str = "operator") -> dict:
+        return {"databaseId": next(self.ids), "body": body, "createdAt": at, "author": {"login": login}}
+
+    def finding(self, thread_id: str, model: str | None, *replies: dict, resolved: bool = False,
+                login: str = "operator") -> dict:
+        marker = f"<!-- projector-finding v=1 priority=P2 sha={self.earlier}" + (f" model={model}" if model else "")
+        return thread(thread_id, f"{marker} -->\n**P2 · A nil deref**", resolved=resolved, first=next(self.ids),
+                      login=login, replies=replies)
+
+    def verify(self, model: str, at: str, result: str = "kept", adopted_from: str | None = None,
+               login: str = "operator") -> dict:
+        marker = (f"<!-- projector-verify v=1 result={result} sha={self.head} model={model}"
+                  + (f" adopted-from={adopted_from}" if adopted_from else "") + " -->")
+        return self.node(f"{marker}\nStill fails at this head.", at, login)
+
+    def answer(self, at: str) -> dict:
+        return self.node(self.REPLY, at)
+
+    def put(self, *nodes: dict) -> None:
+        self.github.pages = [page(list(nodes), None)]
+
+    def census(self, *extra: str) -> dict:
+        code, out, err = self.later("census", "--json", *extra)
+        self.assertEqual(0, code, err)
+        return json.loads(out)
+
+    def one(self, result: dict, thread_id: str = "T1") -> dict:
+        return next(t for t in result["threads"] if t["id"] == thread_id)
+
+    def adopt(self, result: str, thread_id: str = "T1", *extra: str) -> tuple[int, str, str]:
+        return self.later("adopt", thread_id, "--result", result, "--body", str(self.reply), *extra)
+
+    def model_state(self, status: dict, model: str) -> dict:
+        return next(m for m in status["models"] if m["model"] == model)
+
+    def thread_node(self, thread_id: str = "T1") -> dict:
+        return next(n for n in self.github.thread_nodes() if n["id"] == thread_id)
+
+    def stopped_gpt(self, *replies: dict, resolved: bool = False) -> None:
+        """gpt-5.5 reviewed an earlier head at 01:00 and opened T1, the author declined it at 01:05, and
+        gpt-5.5 has posted nothing since, so its window closed long before the clock's 01:14."""
+        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z"), *replies, resolved=resolved))
+
+
+class CensusOwnershipTests(OwnershipCase):
+    def test_a_model_still_reviewing_keeps_its_thread_and_the_count_names_the_other_models(self) -> None:
+        self.start("gpt-5.5")
+        self.put(self.finding("T1", "gpt-5.5"), self.finding("T2", "claude-opus-5-5", resolved=True))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.census()
+        _, text, _ = self.later("census")
+
+        self.assertEqual(("gpt-5.5", "gpt-5.5", False, "no"),
+                         tuple(self.one(result)[k] for k in ("model", "verifier", "mine", "adopt")))
+        self.assertTrue(self.one(result, "T2")["mine"])
+        self.assertEqual((1, 1, 0, {"total": 1, "open": 1}),
+                         (result["total"], result["resolved"], result["open"], result["others"]))
+        self.assertEqual(["1 finding thread from claude-opus-5-5: 1 resolved, 0 open. Other models: 1 thread, 1 open",
+                          "src/x.py:3 (gpt-5.5)"], text.splitlines())
+
+    def test_a_clean_verdict_passes_another_running_models_open_finding_and_prints_both_clauses(self) -> None:
+        self.start("gpt-5.5")
+        self.put(self.finding("T1", "gpt-5.5"))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertIn("0 finding threads from claude-opus-5-5: 0 resolved, 0 open. Other models: 1 thread, 1 open",
+                      self.posted()["body"])
+        self.assertEqual("waiting", result["signoff"], "gpt-5.5 is reviewing and its finding is open")
+        self.assertTrue(self.github.pr["draft"])
+
+    def test_a_clean_verdict_is_refused_on_its_own_unnamed_or_adopted_open_finding(self) -> None:
+        def adopted() -> None:
+            self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+            self.put(self.finding("T1", "gpt-5.5", self.verify("claude-opus-5-5", "2026-09-27T01:05:00Z",
+                                                               adopted_from="gpt-5.5")))
+
+        for name, arrange in {"its own": lambda: self.put(self.finding("T1", "claude-opus-5-5")),
+                              "its own at another context window":
+                                  lambda: self.put(self.finding("T1", "claude-opus-5-5[1m]")),
+                              "naming no model": lambda: self.put(self.finding("T1", None)),
+                              "adopted": adopted}.items():
+            with self.subTest(name):
+                self.setUp()
+                arrange()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                code, _, err = self.publish("clean")
+
+                self.assertEqual(1, code)
+                self.assertIn("needs no open finding of this model's", err)
+                self.assertEqual([], [r for r in self.github.reviews if "claude-opus-5-5" in r["body"]])
+
+    def test_an_open_finding_a_stopped_model_left_is_settled_before_any_verdict(self) -> None:
+        self.stopped_gpt()
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual("now", self.one(self.census())["adopt"])
+        for verdict in ("clean", "changes-requested"):
+            code, _, err = self.publish(verdict)
+            self.assertEqual(1, code)
+            self.assertIn("settle each with `project review adopt`", err)
+
+    def test_an_answer_on_this_models_thread_or_an_unnamed_one_is_its_own_to_re_review(self) -> None:
+        self.put(self.finding("T1", "claude-opus-5-5[1m]", self.answer("2026-09-27T01:05:00Z")),
+                 self.finding("T2", None, self.answer("2026-09-27T01:05:00Z")))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.census("--wait")
+
+        for thread_id in ("T1", "T2"):
+            self.assertEqual((True, True, "no"), tuple(self.one(result, thread_id)[k]
+                                                       for k in ("mine", "answered", "adopt")))
+        self.assertEqual([], self.slept)
+
+    def test_census_wait_returns_once_the_model_that_owes_the_answer_posts(self) -> None:
+        self.begin_now()
+        answered = self.clock
+        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(answered))))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        before = self.one(self.census())
+        self.hooks[1] = lambda: self.thread_node()["comments"]["nodes"].append(
+            self.verify("gpt-5.5", iso(self.clock)))
+
+        after = self.one(self.census("--wait"))
+
+        self.assertEqual(("wait", True), (before["adopt"], before["answered"]))
+        self.assertEqual((answered + timedelta(seconds=180)).isoformat(), before["adopt_at"])
+        self.assertEqual(("no", "gpt-5.5", False), (after["adopt"], after["verifier"], after["answered"]))
+        self.assertEqual([15], self.slept)
+
+    def test_census_wait_returns_when_the_window_closes_with_the_thread_adoptable(self) -> None:
+        self.begin_now()
+        self.add_verdict("gpt-5.5", verdict="changes-requested", at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.one(self.census("--wait"))
+
+        self.assertEqual(("now", None), (result["adopt"], result["verifier"]))
+        self.assertEqual(180, sum(self.slept))
+
+    def test_another_accounts_finding_is_its_models_while_it_reviews_and_adoptable_once_it_stops(self) -> None:
+        self.start("gpt-5.5")
+        self.github.comment_info[max(self.github.comment_info)]["login"] = "teammate"
+        self.add_verdict("gpt-5.5", verdict="changes-requested", login="teammate")
+        self.put(self.finding("T1", "gpt-5.5", login="teammate"))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual("no", self.one(self.census())["adopt"])
+        result = self.json_publish("clean")
+        self.assertEqual("waiting", result["signoff"], "another account's verdict does not count, its thread does")
+        self.assertTrue(self.github.pr["draft"])
+
+        self.setUp()
+        self.add_verdict("gpt-5.5", sha=self.earlier, login="teammate", at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z"), login="teammate"))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual("now", self.one(self.census())["adopt"])
+        self.assertEqual(0, self.adopt("kept")[0])
+        self.assertTrue(self.one(self.census())["mine"])
+
+
+class AdoptTests(OwnershipCase):
+    def test_adopt_waits_out_the_window_then_posts_a_reply_naming_both_models_and_settles(self) -> None:
+        self.begin_now()
+        self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, out, err = self.adopt("accepted")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(180, sum(self.slept))
+        reply = self.thread_node()["comments"]["nodes"][-1]
+        self.assertEqual(
+            f"<!-- projector-verify v=1 result=accepted sha={self.head} model=claude-opus-5-5 "
+            "adopted-from=gpt-5.5 -->\n"
+            "Re-checked by `claude-opus-5-5` for `gpt-5.5`, which has stopped reviewing this pull request.\n\n"
+            "At this head `load` warms the cache before the first read, so the finding holds.\n", reply["body"])
+        self.assertEqual([("T1", True, "token-operator")], self.github.mutations)
+        self.assertIn("adopted thread T1 from gpt-5.5 (accepted); resolved", out)
+        adopted = self.one(self.census())
+        self.assertEqual((True, "claude-opus-5-5"), (adopted["mine"], adopted["verifier"]))
+        status = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+        self.assertEqual(("stopped", "claude-opus-5-5"),
+                         tuple(self.model_state(status, "gpt-5.5").get(k) for k in ("state", "adopted_by")))
+
+    def test_a_fix_that_does_not_hold_is_reopened_and_one_that_holds_is_recorded(self) -> None:
+        for result, resolved, mutations in (("reopened", False, [("T1", False, "token-operator")]),
+                                            ("fixed", True, []), ("kept", True, [])):
+            with self.subTest(result):
+                self.setUp()
+                self.stopped_gpt(resolved=True)
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                self.assertEqual(0, self.adopt(result)[0])
+
+                self.assertEqual(mutations, self.github.mutations)
+                self.assertEqual(resolved, self.thread_node()["isResolved"])
+                self.assertIn(f"result={result} ", self.thread_node()["comments"]["nodes"][-1]["body"])
+
+    def test_adopt_refuses_while_the_model_still_reviews_and_leaves_the_thread_as_it_was(self) -> None:
+        self.stopped_gpt()
+        self.start("gpt-5.5")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        replies = len(self.thread_node()["comments"]["nodes"])
+
+        code, _, err = self.adopt("accepted")
+
+        self.assertEqual(1, code)
+        self.assertIn("gpt-5.5 still reviews this pull request", err)
+        self.assertEqual((replies, []), (len(self.thread_node()["comments"]["nodes"]), self.github.mutations))
+        self.assertEqual("no", self.one(self.census())["adopt"])
+
+    def test_adopt_refuses_when_the_model_posts_during_the_wait(self) -> None:
+        posts = {"start comment": lambda: self.start("gpt-5.5"),
+                 "verdict": lambda: self.add_verdict("gpt-5.5", at=iso(self.clock)),
+                 "verify reply": lambda: self.thread_node()["comments"]["nodes"].append(
+                     self.verify("gpt-5.5", iso(self.clock)))}
+        for name, post in posts.items():
+            with self.subTest(name):
+                self.setUp()
+                self.begin_now()
+                self.add_verdict("gpt-5.5", sha=self.earlier, at="2026-09-27T01:00:00Z")
+                self.put(self.finding("T1", "gpt-5.5", self.answer(iso(self.clock))))
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                self.hooks[2] = post
+
+                code, _, err = self.adopt("accepted")
+
+                self.assertEqual(1, code)
+                self.assertIn("still reviews", err)
+                self.assertEqual([], self.github.mutations)
+                self.assertFalse(any("adopted-from" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
+
+    def test_a_stopped_models_change_request_stops_counting_once_its_finding_is_adopted(self) -> None:
+        self.add_verdict("gpt-5.5", verdict="changes-requested", at="2026-09-27T01:00:00Z")
+        self.put(self.finding("T1", "gpt-5.5", self.answer("2026-09-27T01:05:00Z")))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        before = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+
+        self.assertEqual(0, self.adopt("kept")[0])
+        after = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+
+        self.assertEqual("changes-requested", before["signoff"])
+        self.assertEqual("waiting", after["signoff"], "only the kept finding holds it now")
+        self.assertEqual("stopped", self.model_state(after, "gpt-5.5")["state"])
+
+    def test_the_first_adoption_reply_wins_and_the_second_deletes_its_own(self) -> None:
+        self.stopped_gpt()
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        def codex_first(node: dict) -> None:
+            node["comments"]["nodes"].insert(-1, self.verify("codex-mini", iso(self.clock - timedelta(seconds=1)),
+                                                             result="accepted", adopted_from="gpt-5.5"))
+
+        self.github.after_reply = codex_first
+
+        code, _, err = self.adopt("accepted")
+
+        self.assertEqual(1, code)
+        self.assertIn("codex-mini adopted thread T1 first", err)
+        self.assertEqual([], self.github.mutations)
+        self.assertFalse(any("model=claude-opus-5-5" in c["body"] for c in self.thread_node()["comments"]["nodes"]))
+        result = self.one(self.census())
+        self.assertEqual(("codex-mini", "no"), (result["verifier"], result["adopt"]))
+
+    def test_a_returning_model_gets_its_finding_back_and_the_adopter_holds_it_when_it_stops_again(self) -> None:
+        self.stopped_gpt(self.verify("claude-opus-5-5", "2026-09-27T01:08:00Z", adopted_from="gpt-5.5"))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual("claude-opus-5-5", self.one(self.census())["verifier"])
+
+        self.start("gpt-5.5", at=iso(self.clock))
+        back = self.one(self.census())
+        status = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+        self.assertEqual(("gpt-5.5", False, "no"), (back["verifier"], back["mine"], back["adopt"]))
+        self.assertEqual("reviewing", self.model_state(status, "gpt-5.5")["state"], "not stopped: its verdicts count")
+
+        # Two days on, its start comment is stale and the author answered after it; gpt-5.5 posts nothing.
+        self.clock += timedelta(days=2)
+        self.thread_node()["comments"]["nodes"].append(self.answer(iso(self.clock - timedelta(hours=1))))
+        again = self.one(self.census())
+        self.assertEqual(("claude-opus-5-5", True), (again["verifier"], again["mine"]))
+        comments = self.thread_node()["comments"]["nodes"]
+        self.assertEqual(1, sum(1 for c in comments if "projector-verify" in c["body"]), "no new reply took it back")
+
+    def test_when_the_adopter_stops_in_turn_a_third_model_adopts_it_from_the_adopter(self) -> None:
+        self.stopped_gpt(self.verify("claude-opus-5-5", "2026-09-27T01:06:00Z", adopted_from="gpt-5.5"),
+                         self.answer("2026-09-27T01:07:00Z"))
+        self.model = "codex-mini"
+        self.assertEqual(0, self.setup_review("--loop", "codex")[0])
+
+        self.assertEqual(("now", None), tuple(self.one(self.census())[k] for k in ("adopt", "verifier")))
+        self.assertEqual(0, self.adopt("kept")[0])
+
+        self.assertIn("model=codex-mini adopted-from=claude-opus-5-5 -->",
+                      self.thread_node()["comments"]["nodes"][-1]["body"])
+        self.assertEqual(("codex-mini", True), tuple(self.one(self.census())[k] for k in ("verifier", "mine")))
+
+    def test_adopt_refuses_this_models_own_thread_and_one_naming_no_model(self) -> None:
+        for model, words in (("claude-opus-5-5", "is yours to re-check"), (None, "names no model")):
+            with self.subTest(model=model):
+                self.setUp()
+                self.put(self.finding("T1", model, self.answer("2026-09-27T01:05:00Z")))
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                code, _, err = self.adopt("accepted")
+
+                self.assertEqual(1, code)
+                self.assertIn(words, err)
 
 
 def css(**padding: int) -> str:

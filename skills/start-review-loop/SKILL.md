@@ -75,11 +75,11 @@ nothing open.
    every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
    loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
-   which reviews this loop published lives under that id in the review state
-   directory, where `project review publish` keeps it. Give each model's loop
-   an id of its own, because two loops that write one record can lose an
-   entry.
+   `census`, `interdiff`, `gate`, `adopt`, `publish`, and `release`. The
+   record of which reviews this loop published lives under that id in the
+   review state directory, where `project review publish` keeps it. Give each
+   model's loop an id of its own, because two loops that write one record can
+   lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -138,6 +138,18 @@ reads the new head against that history instead of rediscovering it.
   `--rereview`. A `NEW HEAD`
   that arrives mid-review is the moved-head case that skill's start-comment
   rule covers.
+- A `RESPONDED` reaches every model's loop, whichever model's finding the
+  author answered, and also when the last open thread is resolved. Before it
+  re-reviews, the subagent runs
+  `project review census <number> --wait --json --loop <id> --model <model-id>`
+  and `project review status <number>`. It re-reviews only when its model's
+  newest verdict on the head requests changes, when its model has no verdict
+  on the head, or when an answered thread is marked `mine` or `adopt: "now"`,
+  as `../review-pr/SKILL.md` describes under "Who re-checks a finding".
+  Otherwise the event belongs to another model: it reports that and stops,
+  posting no start comment. Give the subagent's command a timeout of at least
+  `review.peer_wait` plus two minutes, because `census --wait` waits for a
+  model that owes an answer.
 - The subagent reports each published review back: the SHA, the verdict, the
   sign-off, the review id, how many threads it opened, and for an
   incremental review the head of the full review it builds on; `publish` has

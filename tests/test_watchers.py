@@ -251,6 +251,24 @@ class WatchThreadsTests(WatcherCase):
             {tuple(row[:3]) for row in self.state_rows()},
         )
 
+    def test_reports_every_unresolved_finding_whichever_model_opened_it(self) -> None:
+        def finding(model: str) -> str:
+            return f"<!-- projector-finding v=1 priority=P2 sha={SHA_A} model={model} -->\nP2 from {model}"
+
+        # Two models still reviewing, and codex-mini, which has stopped; the watcher reads no replies.
+        self.pull_request(1, threads=[thread("T1", who="operator", body=finding("claude-opus-5-5")),
+                                      thread("T2", who="operator", line=4, body=finding("gpt-5.5")),
+                                      thread("T3", who="operator", line=5, body=finding("codex-mini"))])
+        self.track("acme/app#1")
+
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(["FINDING acme/app#1 src/x.py:3 [operator] — P2 from claude-opus-5-5",
+                          "FINDING acme/app#1 src/x.py:4 [operator] — P2 from gpt-5.5",
+                          "FINDING acme/app#1 src/x.py:5 [operator] — P2 from codex-mini"],
+                         result.stdout.splitlines())
+
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
         self.pull_request(1, draft=True, threads=[thread("T1")], reviews=[review(5)])
         self.track("acme/app#1")

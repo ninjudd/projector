@@ -41,6 +41,10 @@ FINDING_MARKER = "projector-finding"
 MARK = "📽️"
 SHORT = 12
 STALE_AFTER = timedelta(days=1)
+# `review.peer_wait`'s default, and how often a wait reads GitHub again.
+PEER_WAIT = 180
+PEER_POLL = 15
+sleep = time.sleep
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
 VARIANT = re.compile(r"\[[^\[\]]*\]$")
@@ -435,9 +439,10 @@ START_MARKER = re.compile(r"^<!-- projector-start v=1 sha=([0-9a-f]{40})(?: mode
 START_MODEL = re.compile(r"· model `([^`\n]+)` ·")
 
 
-def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
-    """The reviewer's start comments on the pull request, from every page, each with its `id`, `url`, the
-    `sha` and `model` it names, and when it was created and last edited."""
+def start_comments(repo: str, number: int, reviewer: Optional[str] = None) -> list[dict]:
+    """The start comments on the pull request, from every page, each with its `id`, `url`, `login`, the
+    `sha` and `model` it names, and when it was created and last edited: the reviewer's alone when
+    `reviewer` is given, and every account's otherwise."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
                    "--jq", '.[] | select(.body // "" | contains("projector-start")) '
                            '| {id, url: .html_url, login: .user.login, body, created_at, updated_at} '
@@ -448,10 +453,11 @@ def start_comments(repo: str, number: int, reviewer: str) -> list[dict]:
         marker = START_MARKER.search(comment.get("body") or "")
         named = START_MODEL.search(comment.get("body") or "")
         model = (marker and marker.group(2)) or (named and named.group(1))
-        if (comment.get("login") or "").lower() != reviewer.lower() or not marker or not model:
+        login = (comment.get("login") or "").lower()
+        if reviewer is not None and login != reviewer.lower() or not marker or not model:
             continue
-        comments.append({"id": comment["id"], "url": comment.get("url"), "sha": marker.group(1), "model": model,
-                         "created_at": comment["created_at"],
+        comments.append({"id": comment["id"], "url": comment.get("url"), "login": login, "sha": marker.group(1),
+                         "model": model, "created_at": comment["created_at"],
                          "updated_at": comment.get("updated_at") or comment["created_at"]})
     return comments
 
@@ -466,6 +472,7 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
     for review in reviews:
         marker = verdict_marker(review.get("body") or "")
         if (marker is not None and marker.sha == comment["sha"] and identity(marker.model) == model
+                and (review.get("login") or "").lower() == comment["login"]
                 and review.get("at") and parse_time(review["at"]) >= created):
             return False
     return True
@@ -640,12 +647,12 @@ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repositor
   pullRequest(number:$n){ reviewThreads(first:100, after:$after){
     pageInfo{ hasNextPage endCursor }
     nodes{ id isResolved isOutdated path line originalLine
-      comments(first:50){ nodes{ databaseId body } } } } } } }"""
+      comments(first:50){ nodes{ databaseId body createdAt author{ login } } } } } } } }"""
 
 
-def census(repo: str, number: int) -> dict:
-    """Every Projector finding thread on the pull request, read to the last page, with its
-    replies, so the review can verify and settle each one from this one list."""
+def finding_threads(repo: str, number: int) -> list[dict]:
+    """Every Projector finding thread on the pull request, from any account, read to the last page,
+    each with its comments, the finding first, and each comment's `id`, `body`, `login`, and `at`."""
     owner, name = repo.split("/", 1)
     threads, after = [], None
     while True:
@@ -667,22 +674,227 @@ def census(repo: str, number: int) -> dict:
                     "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
                     "outdated": bool(node.get("isOutdated")),
                     "resolved": bool(node.get("isResolved")),
-                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
+                    "comments": [{"id": c.get("databaseId"), "body": c.get("body") or "",
+                                  "login": ((c.get("author") or {}).get("login") or "").lower(),
+                                  "at": c.get("createdAt")} for c in comments],
                 })
         if not connection["pageInfo"]["hasNextPage"]:
             break
         after = connection["pageInfo"]["endCursor"]
-    resolved = sum(1 for t in threads if t["resolved"])
-    return {"total": len(threads), "resolved": resolved, "open": len(threads) - resolved, "threads": threads}
+    return threads
+
+
+def census(repo: str, number: int, me: Optional[tuple[str, str]] = None, began: Optional[datetime] = None,
+           wait: int = PEER_WAIT, settle: bool = False) -> dict:
+    """Every Projector finding thread on the pull request, with its replies and who re-checks it, so
+    the review can verify and settle each one from this one list.
+
+    `me` is the reviewer's login and the model running the review, and
+    `began` when its review began on the head. Each thread gets the fields
+    review-pr § Who re-checks a finding names: `model`, `verifier`, `mine`,
+    `adopt`, `adopt_at`, and `answered`. `total`, `resolved`, and `open`
+    count the threads marked `mine`, every thread when there is no `me`,
+    and `others` counts the rest. With `settle`, it reads again every
+    PEER_POLL seconds until no answered thread waits on its verifier's
+    window."""
+    while True:
+        act = activity(repo, number, me)
+        threads = [dict(t, **act.ownership(t, began or act.at, wait)) for t in act.threads]
+        held = [parse_time(t["adopt_at"]) for t in threads if t["answered"] and t["adopt"] == "wait"]
+        if not settle or not held:
+            break
+        sleep(max(1.0, min(PEER_POLL, (min(held) - now()).total_seconds())))
+    counted = [t for t in threads if t["mine"] or me is None]
+    others = [t for t in threads if not (t["mine"] or me is None)]
+    resolved = sum(1 for t in counted if t["resolved"])
+    return {"total": len(counted), "resolved": resolved, "open": len(counted) - resolved,
+            "others": {"total": len(others), "open": sum(1 for t in others if not t["resolved"])},
+            "model": me[1] if me else None, "threads": threads}
+
+
+def census_line(result: dict, posting: int = 0) -> str:
+    """The count a review body prints: this model's threads, with `posting` new ones among the open, and
+    the other models' on a second clause when there are any."""
+    total, open_now, others = result["total"] + posting, result["open"] + posting, result["others"]
+    noun = "thread" if total == 1 else "threads"
+    if not others["total"]:
+        return f"{total} finding {noun}: {result['resolved']} resolved, {open_now} open"
+    return (f"{total} finding {noun} from {result['model']}: {result['resolved']} resolved, {open_now} open. "
+            f"Other models: {others['total']} thread{'' if others['total'] == 1 else 's'}, {others['open']} open")
 
 
 def census_lines(result: dict) -> list[str]:
-    noun = "thread" if result["total"] == 1 else "threads"
-    lines = [f"{result['total']} finding {noun}: {result['resolved']} resolved, {result['open']} open"]
+    lines = [census_line(result)]
     for t in result["threads"]:
         if not t["resolved"]:
-            lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}")
+            notes = [n for n in (t["model"], f"adopt {t['adopt']}" if t["adopt"] != "no" else None) if n]
+            lines.append(f"{t['path']}:{t['line']}{' outdated' if t['outdated'] else ''}"
+                         + (f" ({', '.join(notes)})" if notes else ""))
     return lines
+
+
+# Who re-checks a finding
+
+def activity(repo: str, number: int, me: Optional[tuple[str, str]] = None) -> "Activity":
+    """Every model's posts on the pull request, read from GitHub now, as `me`, a login and a model, reads them."""
+    pr = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+    return Activity(pr.get("head", {}).get("sha", ""), reviewer_reviews(repo, number), start_comments(repo, number),
+                    finding_threads(repo, number), now(), (me[0].lower(), identity(me[1])) if me else None)
+
+
+VERIFY_MARKER = re.compile(r"<!--\s*projector-verify\b([^>]*?)\s*-->")
+FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
+
+
+def verify_reply(body: str) -> Optional[dict]:
+    """A verify reply's marker, as `result`, `sha`, `model`, and `adopted-from`, or None for another comment."""
+    marker = VERIFY_MARKER.search(body)
+    return dict(re.findall(r"([a-z-]+)=(\S+)", marker.group(1))) if marker else None
+
+
+def thread_model(thread: dict) -> Optional[str]:
+    """The model a finding thread's marker names, or None for one an earlier release opened."""
+    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
+    return found.group(1) if found else None
+
+
+class Activity:
+    """Every model's posts on the pull request, from every account, as review-pr § Who re-checks a
+    finding reads them. A model is a login and an identity, since one holds within one account.
+
+    `me` is the model running this review, which never reads itself as stopped."""
+
+    def __init__(self, head: str, reviews: list[dict], starts: list[dict], threads: list[dict], at: datetime,
+                 me: Optional[tuple[str, str]] = None) -> None:
+        self.head, self.threads, self.at, self.me = head, threads, at, me
+        self.verdicts: dict[tuple[str, str], list[dict]] = {}
+        self.last: dict[tuple[str, str], datetime] = {}
+        self.live: set[tuple[str, str]] = set()
+        for review in reviews:
+            marker = verdict_marker(review.get("body") or "")
+            if marker is None or not review.get("at"):
+                continue
+            key = ((review.get("login") or "").lower(), identity(marker.model))
+            self.verdicts.setdefault(key, []).append({"sha": marker.sha, "at": parse_time(review["at"]),
+                                                      "verdict": marker.verdict})
+            self.posted(key, parse_time(review["at"]))
+        for comment in starts:
+            key = (comment["login"], identity(comment["model"]))
+            self.posted(key, parse_time(comment["updated_at"]))
+            if is_live(comment, reviews, at):
+                self.live.add(key)
+        for thread in threads:
+            for comment in thread["comments"][1:]:
+                reply = verify_reply(comment["body"])
+                if reply and reply.get("model") and comment.get("at"):
+                    self.posted((comment["login"], identity(reply["model"])), parse_time(comment["at"]))
+
+    def posted(self, key: tuple[str, str], at: datetime) -> None:
+        if key not in self.last or at > self.last[key]:
+            self.last[key] = at
+
+    def opener(self, thread: dict) -> Optional[tuple[str, str]]:
+        model = thread_model(thread)
+        return (thread["comments"][0]["login"], identity(model)) if model else None
+
+    def adoptions(self, thread: dict) -> list[dict]:
+        """The thread's adoption replies in order, each with the `adopter`, the model it took the thread
+        `from`, its time `at`, and its comment `id`."""
+        holders, found = [self.opener(thread)], []
+        for comment in thread["comments"][1:]:
+            reply = verify_reply(comment["body"])
+            if not (reply and reply.get("model") and reply.get("adopted-from") and comment.get("at")):
+                continue
+            source = identity(reply["adopted-from"])
+            # The model it took over is the one of that identity that held the thread before it.
+            taken = next((h for h in reversed(holders) if h and h[1] == source), (comment["login"], source))
+            adopter = (comment["login"], identity(reply["model"]))
+            found.append({"adopter": adopter, "from": taken, "at": parse_time(comment["at"]), "id": comment["id"]})
+            holders.append(adopter)
+        return found
+
+    def rechecks(self, key: tuple[str, str]) -> list[dict]:
+        """The threads `key` re-checks while it reviews: the ones it opened and the ones it adopted."""
+        return [t for t in self.threads
+                if self.opener(t) == key or any(a["adopter"] == key for a in self.adoptions(t))]
+
+    def answers(self, thread: dict) -> list[datetime]:
+        """When the author, or anyone but a review, replied on the thread."""
+        return [parse_time(c["at"]) for c in thread["comments"][1:]
+                if c.get("at") and not verify_reply(c["body"]) and FINDING_MARKER not in c["body"]]
+
+    def owes(self, key: tuple[str, str], began: datetime) -> Optional[datetime]:
+        """Since when `key` has owed the pull request a review and posted nothing, or None. It owes the
+        head when it has a verdict on an earlier head and none on this one, a re-review when its newest
+        verdict on the head requests changes and none of its threads is open, both since `began`, and
+        an answer since the first reply on a thread it re-checks that is newer than all it posted."""
+        if key in self.live:
+            return None
+        last, verdicts = self.last.get(key), self.verdicts.get(key, [])
+        on_head = sorted((v for v in verdicts if v["sha"] == self.head), key=lambda v: v["at"])
+        threads = self.rechecks(key)
+        since = []
+        if verdicts and not on_head:
+            since.append(began)
+        if on_head and on_head[-1]["verdict"] == "changes-requested" and all(t["resolved"] for t in threads):
+            since.append(began)
+        answers = [at for t in threads for at in self.answers(t) if last is None or at > last]
+        if answers:
+            since.append(min(answers))
+        since = [at for at in since if last is None or last < at]
+        return min(since) if since else None
+
+    def recorded_stopped(self, key: tuple[str, str]) -> bool:
+        """Whether an adoption reply naming `key` is newer than anything it has posted."""
+        last = self.last.get(key)
+        return any(a["from"] == key and (last is None or a["at"] > last)
+                   for t in self.threads for a in self.adoptions(t))
+
+    def stopped(self, key: tuple[str, str], began: datetime, wait: int) -> bool:
+        if key == self.me:
+            return False
+        since = self.owes(key, began)
+        return self.recorded_stopped(key) or since is not None and self.at >= since + timedelta(seconds=wait)
+
+    def verifier(self, thread: dict, began: datetime, wait: int) -> Optional[tuple[str, str]]:
+        """Who re-checks the thread now: the model that opened it unless it has stopped, else the first
+        adopter that has not, else no one yet."""
+        opener = self.opener(thread)
+        if opener is None:
+            return None
+        for key in [opener] + [a["adopter"] for a in self.adoptions(thread)]:
+            if not self.stopped(key, began, wait):
+                return key
+        return None
+
+    def holder(self, thread: dict) -> tuple[str, str]:
+        """The model that held the thread last: its newest adopter, else the model that opened it."""
+        adoptions = self.adoptions(thread)
+        return adoptions[-1]["adopter"] if adoptions else self.opener(thread)
+
+    def ownership(self, thread: dict, began: datetime, wait: int) -> dict:
+        """The census fields for the thread, as `me` reads them."""
+        model = thread_model(thread)
+        verifier = self.verifier(thread, began, wait)
+        mine = model is None or (self.me is not None and verifier == self.me)
+        adopt, adopt_at = "no", None
+        if self.me is not None and model is not None and not mine:
+            if verifier is None:
+                adopt = "now"
+            else:
+                since = self.owes(verifier, began)
+                if since is not None:
+                    adopt, adopt_at = "wait", (since + timedelta(seconds=wait)).isoformat()
+        checks = []
+        for comment in thread["comments"][1:]:
+            reply = verify_reply(comment["body"])
+            if reply and comment.get("at") and \
+                    (verifier is None or (comment["login"], identity(reply.get("model") or "")) == verifier):
+                checks.append(parse_time(comment["at"]))
+        answers = self.answers(thread)
+        answered = bool(answers) and (not checks or max(answers) > max(checks))
+        return {"model": model, "verifier": verifier[1] if verifier else None, "mine": mine, "adopt": adopt,
+                "adopt_at": adopt_at, "answered": answered}
 
 
 # Incremental reviews
@@ -815,7 +1027,7 @@ def producer(version: str, model: str, effort: Optional[str]) -> str:
 
 
 def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
-                      reviews: Optional[list[dict]] = None) -> dict:
+                      reviews: Optional[list[dict]] = None, wait: int = PEER_WAIT) -> dict:
     """Whether the head may have an incremental review, with the change measured since this loop's
     last full review of the pull request.
 
@@ -860,7 +1072,9 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
             raise Refused(f"the full review of {full['sha'][:7]} was made by "
                           f"{producer(marker.projector, marker.model, marker.effort)}, and this run is "
                           f"{producer(*mine)}")
-        open_findings = census(repo, number)["open"]
+        # A thread this model may adopt counts as its own: a full review settles it.
+        tally = census(repo, number, (state["reviewer"], state["model"]), parse_time(state["head_started_at"]), wait)
+        open_findings = sum(1 for t in tally["threads"] if not t["resolved"] and (t["mine"] or t["adopt"] != "no"))
         if open_findings:
             raise Refused(f"{open_findings} finding thread{'' if open_findings == 1 else 's'} "
                           f"{'is' if open_findings == 1 else 'are'} open")
@@ -1056,14 +1270,14 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
 
 
-def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
-    """Every Projector review the reviewer posted on the pull request, from every page, each with
-    its `id`, `url`, `at`, and `body`."""
+def reviewer_reviews(repo: str, number: int, reviewer: Optional[str] = None) -> list[dict]:
+    """Every Projector review on the pull request, from every page, each with its `id`, `url`, `at`,
+    `login`, and `body`: the reviewer's alone when `reviewer` is given, and every account's otherwise."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
-                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
-                           '| select(.body // "" | contains("projector-review")) '
-                           '| {id, url: .html_url, at: .submitted_at, body} | @json']).splitlines()
-    return [json.loads(row) for row in rows if row.strip()]
+                   "--jq", '.[] | select(.body // "" | contains("projector-review")) '
+                           '| {id, url: .html_url, at: .submitted_at, login: .user.login, body} | @json']).splitlines()
+    reviews = [json.loads(row) for row in rows if row.strip()]
+    return [r for r in reviews if reviewer is None or (r.get("login") or "").lower() == reviewer.lower()]
 
 
 def read_record(root: Path, loop: str) -> list[dict]:
@@ -1111,12 +1325,85 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
             raise ReviewError(f"a second verdict must name the earlier review {second} in its body")
 
 
+# Adopting a finding
+
+ADOPT_RESULTS = ("fixed", "accepted", "withdrawn", "kept", "reopened")
+THREAD_MUTATION = "mutation($id:ID!){ %s(input:{threadId:$id}){ thread{ isResolved } } }"
+
+
+def adopt(paths: Paths, thread_id: str, result: str, body_path: Path, wait: int = PEER_WAIT) -> dict:
+    """Take over the re-check of a finding whose model has stopped reviewing, by the steps review-pr
+    § Who re-checks a finding gives.
+
+    It refuses a thread that is this model's own or names no model, and one
+    whose verifier still reviews: it owes no review, or has posted since it
+    began to owe one, or another model that has not stopped adopted it first.
+    While the verifier's window is open, it waits, reading again every
+    PEER_POLL seconds. It then posts the adoption reply, reads the thread
+    again, and applies `result` only when no earlier adoption by a model that
+    has not stopped is there; otherwise it deletes its reply and refuses."""
+    if result not in ADOPT_RESULTS:
+        raise ReviewError(f"--result must be one of {', '.join(ADOPT_RESULTS)}, not {result}")
+    state = read_state(paths)
+    repo, number, reviewer, model = state["repo"], paths.number, state["reviewer"], state["model"]
+    me, began = (reviewer.lower(), identity(model)), parse_time(state["head_started_at"])
+    if not body_path.is_file():
+        raise ReviewError(f"the body file {body_path} does not exist; write the reply there first")
+    body = body_path.read_text(encoding="utf-8").strip()
+    if not body:
+        raise ReviewError("the body is empty; say what at this head settles the finding")
+    if VERIFY_MARKER.search(body) or OWN_MARKER.search(body):
+        raise ReviewError("leave the marker out of the body; adopt writes it")
+
+    def thread_now(act: Activity) -> dict:
+        found = next((t for t in act.threads if t["id"] == thread_id), None)
+        if found is None:
+            raise ReviewError(f"{repo}#{number} has no Projector finding thread {thread_id}")
+        return found
+
+    while True:
+        act = activity(repo, number, (reviewer, model))
+        thread = thread_now(act)
+        if act.opener(thread) is None:
+            raise ReviewError(f"thread {thread_id} names no model, so it is every model's; settle it as your own")
+        verifier = act.verifier(thread, began, wait)
+        if verifier == me:
+            raise ReviewError(f"thread {thread_id} is yours to re-check; settle it as your own")
+        if verifier is None:
+            source = act.holder(thread)
+            break
+        since = act.owes(verifier, began)
+        if since is None:
+            raise ReviewError(f"{verifier[1]} still reviews this pull request and re-checks thread {thread_id}; "
+                              "leave it to that model")
+        sleep(max(1.0, min(PEER_POLL, (since + timedelta(seconds=wait) - now()).total_seconds())))
+    token = reviewer_token(reviewer)
+    text = (f"<!-- projector-verify v=1 result={result} sha={state['sha']} model={model} adopted-from={source[1]} -->\n"
+            f"Re-checked by `{model}` for `{source[1]}`, which has stopped reviewing this pull request.\n\n{body}\n")
+    reply = gh_json(["api", f"repos/{repo}/pulls/{number}/comments/{thread['comments'][0]['id']}/replies",
+                     "-f", f"body={text}"], token)
+    act = activity(repo, number, (reviewer, model))
+    thread = thread_now(act)
+    adoptions = act.adoptions(thread)
+    earlier = adoptions[:next((i for i, a in enumerate(adoptions) if a["id"] == reply["id"]), len(adoptions))]
+    first = next((a for a in earlier if a["adopter"] != me and not act.stopped(a["adopter"], began, wait)), None)
+    if first is not None:
+        try:
+            run_gh(["api", "-X", "DELETE", f"repos/{repo}/pulls/comments/{reply['id']}"], token)
+        except NotFound:
+            pass
+        raise ReviewError(f"{first['adopter'][1]} adopted thread {thread_id} first and re-checks it; your reply "
+                          "is deleted, so leave the thread to that model")
+    change = {"fixed": "resolveReviewThread", "accepted": "resolveReviewThread",
+              "withdrawn": "resolveReviewThread", "reopened": "unresolveReviewThread"}.get(result)
+    if change and thread["resolved"] != (change == "resolveReviewThread"):
+        run_gh(["api", "graphql", "-f", f"query={THREAD_MUTATION % change}", "-f", f"id={thread_id}"], token)
+    return {"repo": repo, "number": number, "thread": thread_id, "result": result, "reply": reply["id"],
+            "adopted_from": source[1], "resolved": thread["resolved"] if change is None
+            else change == "resolveReviewThread"}
+
+
 # The sign-off
-
-PEER_WAIT = 180
-PEER_POLL = 15
-sleep = time.sleep
-
 
 def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) -> dict[str, dict]:
     """Each model with a Projector verdict or a start comment among the reviewer's, keyed by identity.
@@ -1146,12 +1433,13 @@ def models_on(head: str, reviews: list[dict], starts: list[dict], at: datetime) 
     return models
 
 
-def signoff(models: dict[str, dict], open_threads: int) -> str:
+def signoff(models: dict[str, dict], open_threads: int, stopped: frozenset = frozenset()) -> str:
     """The rule review-pr § Review as one model among several states: `changes-requested` when any
     model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
     or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
-    and `unreviewed` when no model has one."""
-    verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
+    and `unreviewed` when no model has one. The verdicts of a model recorded as `stopped` do not
+    count, because the model that adopted its findings speaks for them."""
+    verdicts = [m["verdict"]["verdict"] for key, m in models.items() if m["verdict"] and key not in stopped]
     if "changes-requested" in verdicts:
         return "changes-requested"
     if open_threads or any(m["reviewing"] for m in models.values()):
@@ -1159,11 +1447,24 @@ def signoff(models: dict[str, dict], open_threads: int) -> str:
     return "clean" if verdicts else "unreviewed"
 
 
-def pending_peers(models: dict[str, dict], me: str) -> list[str]:
-    """The other models that reviewed an earlier head, or are reviewing another one, and have neither a
-    verdict nor a live start comment on this one: a loop that has not noticed the push yet."""
-    return sorted(key for key, m in models.items()
-                  if key != me and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
+def pending_peers(models: dict[str, dict], me: str, stopped: frozenset = frozenset()) -> list[str]:
+    """The other models, not recorded as stopped, that reviewed an earlier head, or are reviewing another
+    one, and have neither a verdict nor a live start comment on this one: a loop that has not noticed
+    the push yet."""
+    return sorted(key for key, m in models.items() if key != me and key not in stopped
+                  and (m["earlier"] or m["elsewhere"]) and not (m["verdict"] or m["reviewing"]))
+
+
+def stopped_models(act: Activity, reviewer: str, models: dict[str, dict]) -> dict[str, str]:
+    """The reviewer's models recorded as stopped, each with the model whose adoption reply recorded it."""
+    stopped = {}
+    for key in models:
+        model = (reviewer.lower(), key)
+        if act.recorded_stopped(model):
+            newest = max((a for t in act.threads for a in act.adoptions(t) if a["from"] == model),
+                         key=lambda a: a["at"])
+            stopped[key] = newest["adopter"][1]
+    return stopped
 
 
 def peer_wait(value: object) -> int:
@@ -1175,13 +1476,14 @@ def peer_wait(value: object) -> int:
     return value
 
 
-def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
+def sign(repo: str, number: int, reviewer: str, head: str, me: str, deadline: datetime,
          posted: Optional[dict] = None) -> dict:
     """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
     says `clean`.
 
-    The rule reads the reviewer's verdicts and start comments; `posted` stands
-    in for this review's verdict before it is submitted. While the rule says
+    The rule reads the reviewer's verdicts and start comments, and every
+    finding thread; `posted` stands in for this review's verdict before it is
+    submitted. While the rule says
     `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
     until `deadline`: a peer's start comment makes it `waiting`, a peer's
     verdict joins the rule, and a peer that posts nothing by the deadline is
@@ -1190,12 +1492,16 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
     seconds it `waited`, the peers still `pending`, and whether the head
     `moved`."""
     started = now()
+    threads = finding_threads(repo, number)
+    open_threads = sum(1 for t in threads if not t["resolved"])
     while True:
         reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
             + ([posted] if posted else [])
-        models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
-        result = signoff(models, open_threads)
-        pending = pending_peers(models, me) if result == "clean" else []
+        starts, at = start_comments(repo, number, reviewer), now()
+        models = models_on(head, reviews, starts, at)
+        stopped = frozenset(stopped_models(Activity(head, reviews, starts, threads, at), reviewer, models))
+        result = signoff(models, open_threads, stopped)
+        pending = pending_peers(models, me, stopped) if result == "clean" else []
         waited = int((now() - started).total_seconds())
         if not pending or now() >= deadline:
             return {"signoff": result, "models": models, "waited": waited, "pending": pending, "moved": False}
@@ -1205,30 +1511,29 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
                     "pending": pending, "moved": True}
 
 
-FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
-
-
-def thread_model(thread: dict) -> Optional[str]:
-    """The model a finding thread's marker names, or None for one an earlier release opened."""
-    found = FINDING_MODEL.search(thread["comments"][0]["body"]) if thread["comments"] else None
-    return found.group(1) if found else None
-
-
-def status(repo: str, number: int, reviewer: str) -> dict:
+def status(repo: str, number: int, reviewer: str, wait: int = PEER_WAIT) -> dict:
     """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
-    part in it and every open Projector finding thread."""
+    part in it and every open Projector finding thread with who re-checks it."""
     try:
         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
-    head = pr["head"]["sha"]
-    models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
-    threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+    head, at = pr["head"]["sha"], now()
+    reviews, starts = reviewer_reviews(repo, number), start_comments(repo, number)
+    act = Activity(head, reviews, starts, finding_threads(repo, number), at)
+    own_reviews = [r for r in reviews if (r.get("login") or "").lower() == reviewer.lower()]
+    own_starts = [c for c in starts if c["login"] == reviewer.lower()]
+    models = models_on(head, own_reviews, own_starts, at)
+    stopped = stopped_models(act, reviewer, models)
+    open_threads = [t for t in act.threads if not t["resolved"]]
     rows = []
     for key in sorted(models):
         m = models[key]
-        row = {"model": m["model"],
-               "state": "reviewing" if m["reviewing"] else m["verdict"]["verdict"] if m["verdict"] else "pending"}
+        state = "reviewing" if m["reviewing"] else "stopped" if key in stopped \
+            else m["verdict"]["verdict"] if m["verdict"] else "pending"
+        row = {"model": m["model"], "state": state}
+        if key in stopped:
+            row["adopted_by"] = stopped[key]
         verdict = m["verdict"] or m["earlier"]
         if verdict:
             row.update(review=verdict["id"], url=verdict["url"], at=verdict["at"], sha=verdict["sha"])
@@ -1237,8 +1542,9 @@ def status(repo: str, number: int, reviewer: str) -> dict:
             row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
         rows.append(row)
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
-            "signoff": signoff(models, len(threads)), "models": rows,
-            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
+            "signoff": signoff(models, len(open_threads), frozenset(stopped)), "models": rows,
+            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t),
+                              "verifier": act.ownership(t, at, wait)["verifier"]} for t in open_threads]}
 
 
 def status_lines(result: dict) -> list[str]:
@@ -1250,12 +1556,16 @@ def status_lines(result: dict) -> list[str]:
             since = parse_time(row["since"]).strftime("%H:%M UTC")
             where = "" if row["state"] == "reviewing" else f" on {row['comment_sha'][:7]}"
             detail = f"start comment {row['comment']}{where}, since {since}"
+        elif row["state"] == "stopped":
+            detail = f"findings adopted by {row['adopted_by']}"
         else:
             detail = f"review {row['review']}" + (f" on {row['sha'][:7]}" if row["sha"] != result["head"] else "")
         lines.append(f"  {row['model']:<{width}}{row['state']:<20}{detail}")
     threads = result["open_threads"]
     if threads:
-        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
+        named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "")
+                          + (f", re-checked by {t['verifier']}" if t["verifier"] and t["verifier"] != t["model"]
+                             else "") for t in threads)
         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
     return lines
 
@@ -1378,7 +1688,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     loop = loop if loop is not None else state.get("loop")
     repo, sha, reviewer = state["repo"], state["sha"], state["reviewer"]
     me = identity(state["model"])
-    deadline = parse_time(state["head_started_at"]) + timedelta(seconds=wait)
+    began = parse_time(state["head_started_at"])
+    deadline = began + timedelta(seconds=wait)
     if incremental:
         for given, flag in ((threads_path, "--threads"), (covered, "--covered"), (second, "--second-verdict")):
             if given is not None:
@@ -1414,27 +1725,31 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         incremental_from = None
         mine = ((pr.get("user") or {}).get("login") or "").lower() == reviewer.lower()
         if incremental:
-            rules = incremental_rules(root, state, loop, enabled, reviews)
+            rules = incremental_rules(root, state, loop, enabled, reviews, wait)
             if not rules["incremental"]:
                 raise ReviewError(f"an incremental review is refused: {rules['reason']}; run the full review "
                                   "on this setup")
             incremental_from = rules["from"]
             text = compose_incremental(state, body, rules, not mine, now())
-            event, open_after = "COMMENT", 0
+            event = "COMMENT"
         else:
             check_threads(threads, diff_lines(repo, number) if threads else {})
-            tally = census(repo, number)
+            tally = census(repo, number, (reviewer, state["model"]), began, wait)
+            adoptable = [t for t in tally["threads"] if t["adopt"] == "now" and not t["resolved"]]
+            if adoptable:
+                listed_threads = ", ".join(f"{t['path']}:{t['line']} ({t['model']}, thread {t['id']})"
+                                           for t in adoptable)
+                raise ReviewError(f"{len(adoptable)} open finding thread{'' if len(adoptable) == 1 else 's'} of a "
+                                  f"model that stopped reviewing {'is' if len(adoptable) == 1 else 'are'} yours to "
+                                  f"re-check: {listed_threads}; settle each with `project review adopt`")
             open_after = tally["open"] + len(threads)
             if verdict == "clean" and open_after:
-                raise ReviewError(f"a clean verdict needs no open finding, and {tally['open']} are open and "
-                                  f"{len(threads)} are being posted; settle them or request changes")
+                raise ReviewError(f"a clean verdict needs no open finding of this model's, and {tally['open']} are "
+                                  f"open and {len(threads)} are being posted; settle them or request changes")
             if verdict == "changes-requested" and not open_after:
-                raise ReviewError("changes-requested needs an open finding or a new one; with none open the head "
-                                  "is clean")
-            total = tally["total"] + len(threads)
-            noun = "thread" if total == 1 else "threads"
-            census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_after} open"
-            text = compose(state, verdict, body, covered, len(threads), census_line, now())
+                raise ReviewError("changes-requested needs an open finding of this model's or a new one; with none "
+                                  "open the head is clean")
+            text = compose(state, verdict, body, covered, len(threads), census_line(tally, len(threads)), now())
             if mine or verdict == "clean" and not allow_approve:
                 event = "COMMENT"
             elif verdict == "changes-requested":
@@ -1443,8 +1758,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
                 # One account's newest approval or change request sets reviewDecision, so an approval would
                 # replace another model's standing change request: approve only when the rule, counting
                 # this verdict as posted, signs the head off.
-                posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
-                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
+                posted = {"id": None, "url": None, "at": now().isoformat(), "login": reviewer, "body": text}
+                ahead = sign(repo, number, reviewer, sha, me, deadline, posted)
                 if ahead["moved"]:
                     raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
                                       f"other models; run `project review move {number}` and review the new head")
@@ -1463,7 +1778,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         # Recorded before anything else can fail, so a retry finishes this review rather than
         # posting a second one.
         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
-                              "from": incremental_from, "self": mine, "open": open_after}
+                              "from": incremental_from, "self": mine}
         write_state(paths, state)
     published = state["published"]
     token = reviewer_token(reviewer)
@@ -1475,8 +1790,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
               "login": reviewer, "body": read["body"]}
     draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
     # Only a draft is about to be signed off, so only a draft waits for its peers.
-    signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
-                  deadline if published.get("self") and draft else now(), posted)
+    signed = sign(repo, number, reviewer, sha, me, deadline if published.get("self") and draft else now(), posted)
     draft_wanted = None
     if published.get("self") and not signed["moved"]:
         draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])

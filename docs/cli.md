@@ -1064,6 +1064,8 @@ project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opu
 project review move 66
 project review census 66 --json
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
+project review census 66 --wait --model claude-opus-5-5
+project review adopt 66 PRRT_kwDOA… --result kept --body reply.md
 project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
@@ -1107,13 +1109,69 @@ support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
-comment to confirm the edit, and updates the state file. `census` lists every
-thread whose first comment carries the `projector-finding` marker, reading
-every page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments. It counts
-every model's threads alike and takes `--model` like the commands around it,
-so a review loop passes the same flags to each. `release` clears the locks of
-one model's review of the pull request.
+comment to confirm the edit, and updates the state file. `release` clears
+the locks of one model's review of the pull request.
+
+`census` lists every thread whose first comment carries the
+`projector-finding` marker, from any account, reading every page, and says
+which model re-checks each one, as the review set up for `--model` reads it,
+or before `setup`, as `--model` reads it as this checkout's reviewer. A model
+re-checks the findings it opened while it still reviews the pull request. A
+model has stopped when it owes the pull request a review, has posted nothing
+since it began to owe it, and `review.peer_wait` seconds have passed: it owes
+the head when it has a verdict on an earlier head and none on this one, a
+re-review when its newest verdict on the head requests changes and none of
+its threads is open, and an answer when an author's reply on a thread it
+re-checks is newer than anything it has posted. A start comment, a verdict,
+or a verify reply naming the model is a post, and a model with a live start
+comment has not stopped. A stopped model's findings pass to the first model
+whose adoption reply is on the thread and that has not stopped, or else to
+no one yet, and any model still reviewing may adopt them. With `--json` each
+thread carries its comments, each with its `login` and `at`, and:
+
+| Field | Value |
+| --- | --- |
+| `model` | The model that opened the thread, or `null` when its marker names none. |
+| `verifier` | The model that re-checks it now, or `null` when the model that opened it has stopped and no model still reviewing has adopted it. |
+| `mine` | `true` when this model is the verifier, or the thread names no model. |
+| `adopt` | `now` when this model may adopt it, `wait` when its verifier owes a review whose `review.peer_wait` window is still open, or `no`. |
+| `adopt_at` | With `wait`, when the window closes. |
+| `answered` | `true` when the author's reply is newer than the verifier's last verify reply on the thread. |
+
+`total`, `resolved`, and `open` count the threads marked `mine`, and `others`
+counts the rest. Without `--json` it prints that count, the way a review body
+states it, adding the other models' threads on a second clause when there
+are any, and each open thread's `path:line` with its model and whether this
+model may adopt it:
+
+```
+4 finding threads from claude-opus-5-5: 4 resolved, 0 open. Other models: 2 threads, 1 open
+src/projector/review.py:648 (gpt-5.5)
+```
+
+With `--wait`, `census` reads again every 15 seconds until no answered thread
+is at `wait`, so it returns once the verifier posts or its window closes.
+
+`adopt` takes over a thread `census` marks `adopt: now`, or one at `wait`
+once its window closes:
+
+```sh
+project review adopt 66 PRRT_kwDOA… --result kept --body reply.md
+```
+
+It refuses a thread this model re-checks already, one that names no model,
+and one whose verifier still reviews, and waits out an open window, refusing
+if the verifier posts meanwhile. It then posts a verify reply as the
+reviewer, opening with
+`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> adopted-from=<model-id> -->`
+and a line naming both models, followed by the body file, and reads the
+thread again. When another model that has not stopped adopted it first, it
+deletes its own reply and refuses. Otherwise it resolves the thread for
+`fixed`, `accepted`, or `withdrawn`, unresolves it for `reopened`, and leaves
+it for `kept`. The adoption reply records the stop: a model is recorded as
+stopped while an adoption reply naming it is newer than anything it has
+posted, so the sign-off leaves its verdicts out and no later publish waits
+for it, until it posts again.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,
@@ -1127,8 +1185,10 @@ the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
 when the pull request closed or its head moved, when a finding's line is
 outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
-has no `{census}` outside quoted code, when the verdict disagrees with the finding
-count, or when the reviewer already has a verdict by this model on the head
+has no `{census}` outside quoted code, when the verdict disagrees with the
+count of this model's findings, as `census` marks them `mine`, when a thread
+`census` marks `adopt: now` is open, which `adopt` settles first, or when the
+reviewer already has a verdict by this model on the head
 that this loop's record does not account for. A verdict by another model is a
 second opinion and never collides, and one whose marker names no model
 collides with every model. Outside a loop, `--second-verdict <review-id>`
@@ -1139,7 +1199,8 @@ rule to the head it published on. The rule reads the reviewer's verdicts and
 start comments and every Projector finding thread. A start comment is live
 until its model posts a verdict on its head, or until a day passes since its
 last edit, and a model is reviewing the head while its start comment there is
-live. With each model's newest verdict on the head counting, the head is
+live. A model recorded as stopped, as `adopt` records one, is left out. With
+each other model's newest verdict on the head counting, the head is
 `changes-requested` when any of those requests changes, `waiting` when none
 does and a model is reviewing it or a finding thread is open, `clean` when
 every one is clean, and `unreviewed` when there is none. `changes-requested`
@@ -1176,7 +1237,9 @@ $ project review status 66
 ```
 
 A model with a verdict or a start comment only on an earlier head is
-`pending`, and does not change the sign-off. It reads the pull request, its
+`pending`, and does not change the sign-off. A model recorded as stopped is
+`stopped`, names the model that adopted its findings as `adopted_by`, and
+its verdicts do not count. It reads the pull request, its
 reviews, its issue comments, and its threads, finds the reviewer as `setup`
 does, from `--reviewer`, then `review.username`, then the authenticated user,
 and runs from any directory. It exits 0 whatever the sign-off, and 1 only
@@ -1187,8 +1250,8 @@ when it cannot read the pull request. With `--json` it prints one object:
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
-| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
-| `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
+| `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, `pending`, or `stopped`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. A stopped model adds `adopted_by`. |
+| `open_threads` | Each open Projector finding thread's `path`, `line`, `model`, or `null` for a thread whose marker names none, and `verifier`, the model that re-checks it, or `null`. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review
@@ -1207,8 +1270,9 @@ no judgment, in this order, and refuses at the first that fails:
 is trusted; the loop's record holds a clean full review of the pull request,
 and its newest verdict is clean and on another head; that full review is on
 GitHub and its marker names this run's Projector version, model, and effort;
-no finding thread is open; the change can be measured, which takes the full
-review's recorded merge base, both heads in the checkout, and on a moved base
+no finding thread this model re-checks or may adopt is open; the change can
+be measured, which takes the full review's recorded merge base, both heads
+in the checkout, and on a moved base
 a Git that knows `merge-tree --merge-base` (2.40 or newer); the change touches
 no binary file, symlink, or submodule; and when the merge base moved, a `gate`
 run on this head exited 0. It prints the earlier full review, the `kind` of
