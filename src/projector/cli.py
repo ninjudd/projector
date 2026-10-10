@@ -481,7 +481,12 @@ def parser() -> argparse.ArgumentParser:
                               help="the source checkout to fetch into (default: the repository containing "
                                    "this directory)")
     review_setup.add_argument("--reviewer", help="the GitHub login that posts (default: review.username, then you)")
-    review_setup.add_argument("--model", required=True, help="the model id the start comment names")
+    review_setup.add_argument("--model", required=True,
+                              help="the model ID of this session, which names the start comment and keys the "
+                                   "review's state")
+    for command in (review_move, review_release, review_publish, review_gate, review_interdiff):
+        command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
+                                             "of this pull request set up here)")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
     review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
@@ -875,8 +880,18 @@ def run_review(arguments: argparse.Namespace) -> int:
             else:
                 print("\n".join(review.census_lines(result)))
             return 0
+        if command == "release":
+            model = review.find_model(root, repo, arguments.pr, arguments.model)
+            released = review.release(review.Paths(root, repo, arguments.pr, model)) if model else []
+            if arguments.json_output:
+                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
+            else:
+                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}"
+                      + (f" by model {model}" if model else ""))
+            return 0
+        paths = review.review_paths(root, repo, arguments.pr, arguments.model)
         if command == "interdiff":
-            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            state = review.read_state(paths)
             enabled = incremental_enabled(Path(state["checkout"]))
             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
             if arguments.json_output:
@@ -885,13 +900,13 @@ def run_review(arguments: argparse.Namespace) -> int:
                 print("\n".join(review.interdiff_lines(result, state["base_ref"])))
             return 0 if result["incremental"] else 1
         if command == "publish":
-            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            state = review.read_state(paths)
             try:
                 allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
             except ProjectorError:
                 allow = False
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
-            result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
+            result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
                                     arguments.incremental, enabled)
             if arguments.json_output:
@@ -904,26 +919,19 @@ def run_review(arguments: argparse.Namespace) -> int:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0
         if command == "gate":
-            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            state = review.read_state(paths)
             try:
                 configured = load_config(Path(state["checkout"])).get("review.gate")
             except ProjectorError:
                 configured = None
-            result = review.gate(root, arguments.pr, repo, configured if isinstance(configured, str) else None,
+            result = review.gate(paths, configured if isinstance(configured, str) else None,
                                  output_to_stderr=arguments.json_output)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
                 print(f"review.gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
             return result["exit_code"]
-        if command == "release":
-            released = review.release(review.Paths(root, repo, arguments.pr))
-            if arguments.json_output:
-                print(json.dumps({"released": [str(p) for p in released]}, indent=2))
-            else:
-                print(f"released {len(released)} lock{'' if len(released) == 1 else 's'} for {repo}#{arguments.pr}")
-            return 0
-        state = review.move(root, arguments.pr, repo, loop)
+        state = review.move(paths, loop)
     if arguments.json_output:
         print(json.dumps(state, indent=2))
     else:

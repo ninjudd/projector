@@ -58,19 +58,26 @@ nothing open.
    thread-aware review threads. Say how many operator pull requests are tracked
    out of the repository total.
 5. Determine the last reviewed SHA from durable GitHub state or the current
-   conversation. Review any current head without a completed exact-head review
-   immediately; do not baseline it away.
+   conversation: the newest head that a Projector verdict by this loop's
+   model names. Another model's verdict on a head is that model's review,
+   not this loop's. Review any current head without a completed exact-head
+   review by this model immediately; do not baseline it away.
 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
    is the watcher's whole scope and the record of the set. The watcher
    appends the operator's pull requests itself; append one the user assigns,
    and delete a line when its pull request closes. Start or reuse a
    persistent recurring goal that records the repository, operator, the
-   tracked file's path, and this loop's id: a name chosen once, such as
-   `<repo>-review-loop`, that the loop passes as `--loop <id>` to every
+   tracked file's path, the model ID the host reports for this session, and
+   this loop's id: a name chosen once for this model, such as
+   `<repo>-review-<model-key>`, where the model key is the model ID
+   lowercased, without a trailing bracketed variant such as `[1m]`, and with
+   every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
+   loop passes `--loop <id>` and `--model <model-id>` to every
    `project review` command. The record of which reviews this loop published
    lives under that id in the review state directory, where `project review
-   publish` keeps it.
+   publish` keeps it. Give each model's loop an id of its own, because two
+   loops that write one record can lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -119,7 +126,8 @@ reads the new head against that history instead of rediscovering it.
 - On a pull request's first `NEW PR`, start its subagent with a name that
   carries the number, such as `review-<number>`. Give it the repository, the
   pull request, the head SHA, the reviewer and operator logins, the review
-  mode, the loop's id to pass as `--loop`, and the path of
+  mode, the loop's id to pass as `--loop`, the model ID to pass as
+  `--model`, and the path of
   `../review-pr/SKILL.md`, and have it run that skill for the head.
 - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
   same subagent as a message; never start a second one for it. Each message
@@ -159,13 +167,17 @@ reads the new head against that history instead of rediscovering it.
   adds the rules. Then keep reviewing.
 
 The loop's record decides the collision check `project review publish` runs
-before it submits. An id in the record is this loop's own, and a second one on
-the same head passes only for a `RESPONDED` re-review, which `setup
---rereview` marks, so it never trips the check. An id absent from it means
-another loop under the same account is reviewing this pull request: `publish`
-refuses, and the loop holds the review and asks the user which loop
-continues. The tracked file does not prevent this: every loop that
-adopts the same author's pull requests tracks the same ones.
+before it submits, over the verdicts this loop's model posted. An id in the
+record is this loop's own, and a second one on the same head passes only for
+a `RESPONDED` re-review, which `setup --rereview` marks, so it never trips the
+check. An id absent from it means another loop of the same model under the
+same account is reviewing this pull request: `publish` refuses, and the loop
+holds the review and asks the user which loop continues. `setup` catches the
+same case earlier, when that loop's start comment shows it reviewing. The
+tracked file does not prevent this: every loop that adopts the same author's
+pull requests tracks the same ones. A loop of another model is a second
+opinion, never a collision, as `../review-pr/SKILL.md` describes under
+"Review as one model among several".
 
 The main loop routes events and records outcomes; it does not inspect code, so
 its own context stays small however many pull requests it tracks. Where the

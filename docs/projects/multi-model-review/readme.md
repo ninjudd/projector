@@ -143,7 +143,9 @@ One model's review of one head runs like this:
    this machine's state file for that model records. The refusal names the
    comment and says to delete it if that session has stopped. Setup then
    posts the start comment, whose marker now names the model, and records
-   when the review began on this head.
+   when the review began on this head. When this machine's state for the
+   model records a start comment that was never published, setup deletes it,
+   because the new review replaces that one.
 3. The subagent reviews the head as `review-pr` describes. It re-checks every
    finding thread that census marks as its own: the ones its model opened,
    the ones it adopted, and the ones that name no model, which earlier
@@ -742,8 +744,9 @@ after the change. It pins that the fix loop still reports every finding.
 
 ## 5. Cost
 
-- **Each setup** adds one paginated listing of the pull request's issue
-  comments, to find live start comments.
+- **Each setup** adds two paginated listings: the pull request's issue
+  comments, to find live start comments, and the account's reviews, to tell
+  a live start comment from one its model's verdict has ended.
 - **Each publish** adds the same listing. The listing of the account's
   reviews serves both the collision check and the rule, and the census
   already runs. The wait runs only when a draft is about to be marked ready,

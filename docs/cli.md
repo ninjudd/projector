@@ -1056,10 +1056,10 @@ the default branch when the site builds.
 a review loop does not rebuild them as helpers of its own:
 
 ```sh
-project review setup 66 --model claude-opus-5-5 --loop main-loop
+project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
 project review move 66
 project review census 66 --json
-project review publish 66 --verdict clean --body body.md --covered 12/12 --loop main-loop
+project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
 project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
@@ -1078,6 +1078,20 @@ is a branch in this repository, the pull request's author is you or has write
 access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
 of a head the loop already published a verdict on.
+
+`--model` is the model ID of the session reviewing, and each model is a
+reviewer of its own. Two IDs name the same reviewer when they match
+lowercased and without a trailing bracketed variant, so `claude-opus-5-5`
+and `claude-opus-5-5[1m]` are one reviewer and `gpt-5.5` is another; the
+effort and the Projector version are not part of it. Each model keeps its own
+state, lock, and scratch worktree, so two models review one head side by side
+on one machine. The start comment's marker names the model with `model=`, and
+`setup` refuses while another session's live start comment names the same
+model, naming that comment. A start comment is live until its model posts a
+verdict on its head, or until a day passes since it was last edited, the age
+at which a lock is stale. `setup` refuses a model ID that is empty, holds
+whitespace, or makes a folder name that starts with `.`, and deletes a start
+comment this machine's state recorded for the model and never published.
 
 The start comment and the review's signature line name the Projector version
 that `project --version` reports, the model from `--model`, and the reasoning
@@ -1107,8 +1121,10 @@ when the pull request closed or its head moved, when a finding's line is
 outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
 line, when the body is empty, carries its own signature or marker comment, or
 has no `{census}` outside quoted code, when the verdict disagrees with the finding
-count, or when the reviewer already has a verdict on the head that this loop's
-record does not account for; outside a loop, `--second-verdict <review-id>`
+count, or when the reviewer already has a verdict by this model on the head
+that this loop's record does not account for. A verdict by another model is a
+second opinion and never collides, and one whose marker names no model
+collides with every model. Outside a loop, `--second-verdict <review-id>`
 publishes beside an earlier verdict the body names. On a self-review it
 submits a `COMMENT` and then marks the pull request ready or returns it to
 draft; on another author's pull request it posts `REQUEST_CHANGES` or a
@@ -1206,20 +1222,31 @@ from the checkout containing the working directory, or `--checkout`, and
 refuses outside one; the repository is that checkout's `origin`, and `--repo`
 must name the same one. Every later command reads the checkout, worktree, and
 repository from the state file, finding it by `--repo` or by the pull request's
-number, so it runs from any directory. A command that posts runs `gh` as the
+number, and by `--model` or the one model with a review of the pull request
+set up on this machine, so it runs from any directory. With several models
+set up, it refuses, naming them, until `--model` picks one. State an earlier
+release wrote is not read, so a review set up before an upgrade runs `setup`
+again. A command that posts runs `gh` as the
 reviewer, `--reviewer` or `review.username` or else the authenticated user,
 with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
 so the account the rest of the session uses is left alone.
 
-A review holds a lock for its pull request and head from `setup` until it is
-published, recording the host, the loop, and when it was taken, so a second
-instance for the same head exits. A refused `setup` releases it, a lock older
-than a day is stale, and `release` clears one left by a session that stopped.
-`--loop <id>` names the review loop; each loop keeps its record of published
-reviews under that id. State, locks, loop records, and scratch worktrees live
-under `$XDG_STATE_HOME/projector/reviews`, or
-`~/.local/state/projector/reviews`, and `--state-dir` moves them. Every refusal
-exits 1 and says what to do.
+A review holds a lock for its pull request, head, and model from `setup` until
+it is published, recording the host, the loop, and when it was taken, so a
+second instance of the same model for the same head exits. A refused `setup`
+releases it, a lock older than a day is stale, and `release` clears the locks
+of one model's review left by a session that stopped. `--loop <id>` names the
+review loop; each loop keeps its record of published reviews under that id,
+and each entry names its model. State, locks, loop records, and scratch
+worktrees live under `$XDG_STATE_HOME/projector/reviews`, or
+`~/.local/state/projector/reviews`, and `--state-dir` moves them. A model's
+state and locks are under `prs/<owner>/<repo>/<pr>/<model-key>/` and its
+worktrees under `worktrees/<owner>/<repo>/<pr>/<model-key>/`. The model key
+is the ID lowercased and without its bracketed variant, with every character
+but a letter, a digit, `.`, `_`, and `-` made `-`. Two IDs that make one key,
+such as `a/b` and `a-b`, cannot both be set up for one pull request on one
+machine: the second `setup` refuses. Every refusal exits 1 and says what to
+do.
 
 ## Consume JSON
 
