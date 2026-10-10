@@ -16,6 +16,34 @@ interface Window {
 /** A diff line: its kind (a, d, c, or m for a meta line), old and new numbers, and text. */
 type SummaryLine = [string, number | null, number | null, string];
 
+/** A hunk: its header line, the start and line count of each side the header names, and its lines. */
+interface SummaryHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: SummaryLine[];
+}
+
+/**
+ * A run of head lines a file's hunks leave hidden: new-side lines `start` to `end`, above hunk `before`, or
+ * below the last hunk when `before` is the number of hunks. New line `start` is old line `oldStart`.
+ */
+interface SummaryGap {
+  before: number;
+  start: number;
+  end: number;
+  oldStart: number;
+}
+
+/** The head's copy of a file, served at `url` with `lines` lines, and the gaps its hunks leave. */
+interface SummaryContext {
+  url: string;
+  lines: number;
+  gaps: SummaryGap[];
+}
+
 interface SummaryFile {
   path: string;
   id: string;
@@ -26,9 +54,11 @@ interface SummaryFile {
   deleted?: boolean;
   adds: number;
   dels: number;
-  hunks: { header: string; lines: SummaryLine[] }[];
+  hunks: SummaryHunk[];
   /** The deepest project on the site whose folder holds the file; absent outside every project the site has. */
   project?: { name: string; title: string; url: string };
+  /** What lets the page reveal the lines around the hunks; absent where the summary stored no copy of the file. */
+  context?: SummaryContext;
 }
 
 /** A review note: context to hold, an invariant to verify, or a flag that needs a decision. A note with a line sits under that line of its file's diff, on the new side unless `side` is "old". */

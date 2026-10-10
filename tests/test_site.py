@@ -1158,18 +1158,110 @@ HEADER_FILES = ["docs/projects/alpha/readme.md", "docs/projects/alpha/research/s
                 "docs/projects/alpha/beta/readme.md", "docs/projects/gamma/readme.md", "src/app#1.py"]
 
 
-def rendered_summary(data: dict, popovers: bool = True) -> str:
-    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers."""
+def rendered_summary(data: dict, popovers: bool = True, then: str = "process.stdout.write(root.innerHTML);") -> str:
+    """The markup the compiled renderSummary draws for `data`, run under node, in a browser with or without popovers.
+
+    The script `then` runs after it, with the context views renderSummary returns as `views`, and writes the output.
+    """
     lines = SUMMARY_JS.read_text().splitlines()
-    start = lines.index("    function renderSummary(data) {")
-    end = next(i for i in range(start, len(lines)) if lines[i] == "    }")
+    # The renderer and the declarations above it in the page's function.
+    start = lines.index("(function () {") + 1
+    end = next(i for i in range(lines.index("    function renderSummary(data) {"), len(lines)) if lines[i] == "    }")
     program = ("const root = {innerHTML: ''};\n"
                "const document = {getElementById: function () { return root; }, body: root};\n"
                "const window = {};\n"
                f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n" +
                shared_js() + "\n" + "\n".join(lines[start:end + 1]) +
-               f"\nrenderSummary({json.dumps(data)});\nprocess.stdout.write(root.innerHTML);")
+               f"\nconst views = renderSummary({json.dumps(data)});\n{then}")
     return subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True).stdout
+
+
+EXPANDER_DIFF = """diff --git a/lines.txt b/lines.txt
+index 1111111..2222222 100644
+--- a/lines.txt
++++ b/lines.txt
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++LINE 11
+ line 12
+@@ -50,3 +50,3 @@
+ line 50
+-line 51
++LINE 51
+ line 52
+diff --git a/plain.txt b/plain.txt
+index 1111111..2222222 100644
+--- a/plain.txt
++++ b/plain.txt
+@@ -1 +1 @@
+-old
++new
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "the expander test needs node")
+class ExpanderTests(unittest.TestCase):
+    """A file the build gave `context` draws an expander in each gap; the page reveals its lines escaped."""
+
+    def setUp(self) -> None:
+        summaries = Path(tempfile.mkdtemp()) / "summaries"
+        folder = summaries / "7" / ("c" * 40)
+        (folder / "head").mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({
+            "version": 1, "pr": {"repo": "owner/example", "number": 7, "title": "Seven", "head": "c" * 40},
+            "groups": [{"id": "all", "title": "All", "files": [{"path": "lines.txt"}, {"path": "plain.txt"}]}]}))
+        (folder / "diff.patch").write_text(EXPANDER_DIFF)
+        lines = [f"LINE {n}" if n in (11, 51) else f"line {n}" for n in range(1, 101)]
+        (folder / "head" / "lines.txt").write_text("".join(f"{line}\n" for line in lines))
+        out = Path(tempfile.mkdtemp()) / "site"
+        with redirect_stdout(io.StringIO()):
+            site_build.build_site(out, summaries=summaries, base="/projector/")
+        self.data = json.loads((out / "reviews" / "7" / ("c" * 40) / "data.json").read_text())
+        self.fid = {f["path"]: f["id"] for f in self.data["files"]}
+
+    def card(self, html: str, path: str) -> str:
+        start = re.search(f'<article class="file[^"]*" id="{self.fid[path]}"', html).start()
+        return html[start:html.index("</article>", start)]
+
+    def test_each_gap_draws_an_expander_with_the_controls_its_place_allows(self) -> None:
+        html = rendered_summary(self.data)
+        card = self.card(html, "lines.txt")
+
+        order = [gap or hunk for gap, hunk in re.findall(r'<table class="diff (gap)"|<tr class="(hunk)"', card)]
+        self.assertEqual(["gap", "hunk", "gap", "hunk", "gap"], order, "an expander above, between, and below the hunks")
+        expanders = re.findall(r'<tr class="expander" data-gap="(\d)">(.*?)</tr>', card)
+        self.assertEqual(["0", "1", "2"], [gap for gap, _ in expanders])
+        controls = [re.findall(r'data-expand="(\w+)" aria-label="([^"]+)"', cells) for _, cells in expanders]
+        self.assertEqual([[("all", "Expand all")],
+                          [("down", "Expand down"), ("up", "Expand up"), ("all", "Expand all")],
+                          [("down", "Expand down"), ("all", "Expand all")]], controls,
+                         "no expand up below the last hunk, and only expand all for 20 lines or fewer")
+        self.assertEqual(["9 hidden lines", "37 hidden lines", "48 hidden lines"],
+                         [re.search(r'<td class="code xinfo">([^<]*)</td>', cells).group(1) for _, cells in expanders])
+        self.assertNotIn("expander", self.card(html, "plain.txt"), "a file without context draws no expander")
+
+    def test_revealed_lines_are_escaped_context_rows_numbered_on_both_sides(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['<script>alert(1)</script>', 'b &amp; c'], null, 1, 2, 5));"))
+
+        self.assertEqual('<tr class="ctx"><td class="ln">5</td><td class="ln">1</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">&lt;script&gt;alert(1)&lt;/script&gt;</span></td></tr>'
+                         '<tr class="ctx"><td class="ln">6</td><td class="ln">2</td><td class="code"><span class="sign"> </span>'
+                         '<span class="src">b &amp;amp; c</span></td></tr>', rows)
+        self.assertNotIn("<script>", rows)
+
+    def test_a_highlighted_line_is_drawn_from_the_highlighters_markup(self) -> None:
+        rows = rendered_summary(self.data, then=(
+            f"process.stdout.write(views[{json.dumps(self.fid['lines.txt'])}].contextRows("
+            "['x'], ['<span class=\"hljs-keyword\">x</span>'], 1, 1, 1));"))
+
+        self.assertIn('<span class="src"><span class="hljs-keyword">x</span></span>', rows)
+
+    def test_only_a_file_with_context_has_a_view(self) -> None:
+        self.assertEqual([self.fid["lines.txt"]], json.loads(rendered_summary(
+            self.data, then="process.stdout.write(JSON.stringify(Object.keys(views)));")))
 
 
 class FileHeaderTests(SiteRepoCase):
