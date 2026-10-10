@@ -1,0 +1,169 @@
+{
+ "version": 1,
+ "name": "Multi-model sign-off",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 239,
+  "title": "Sign a pull request off only when every reviewing model is clean",
+  "head": "3c8eec3b13a79776693c9950aec5307a6c219930",
+  "headRef": "multi-model-signoff",
+  "base": "6855f2149c898afa8ca755673aeb9a3a23f75318",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review loop reviews every head pushed to the operator's pull requests and publishes each review with <code>project review publish</code>. Every review posts as one GitHub account. On the operator's own pull request, GitHub allows only a <code>COMMENT</code> review, so the draft state carries the outcome: draft means the head isn't signed off, and ready means it is. This pull request is the third layer of the multi-model review work. The two earlier layers, now merged to <code>main</code>, let several models, such as Claude and Codex, review one pull request side by side without colliding.",
+   "Without this layer, <code>publish</code> still sets the draft state from its own verdict alone. If Codex requested changes and Claude then found the head clean, Claude's publish marked the pull request ready, and Codex's objection disappeared from the pull-request list. Now every <code>publish</code> applies one sign-off rule over GitHub's state after it submits, so the last model to finish sees every verdict and sets the final draft state.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Sign-off</th><th>When</th><th>Draft state on a self-review</th></tr></thead><tbody><tr><td><code>changes-requested</code></td><td>Any model's newest verdict on the head requests changes.</td><td class=\"r\">Draft</td></tr><tr><td><code>waiting</code></td><td>No model requests changes, but a model is still reviewing the head or a Projector finding thread is open.</td><td class=\"r\">Left as it is</td></tr><tr><td><code>clean</code></td><td>Every model's newest verdict on the head is clean, no model is reviewing, and no thread is open.</td><td class=\"r\">Ready, after the peer wait</td></tr><tr><td><code>unreviewed</code></td><td>No model has a verdict on the head.</td><td class=\"r\">Never the result of a publish</td></tr></tbody></table></div>",
+   "A model is <em>reviewing</em> a head while its start comment there is live. A start comment is the comment <code>setup</code> posts when a review begins. It stops being live once its model posts a verdict on that head, or a day after it was last edited. The rule also adds a <em>peer wait</em>: a loop that hasn't noticed a push yet has posted nothing, so before <code>publish</code> marks a draft ready, it waits up to <code>review.peer_wait</code> seconds (180 by default) for any model that reviewed an earlier head. A new <code>project review status</code> command prints the rule's result, and <code>fix-pr</code> now reads it to decide whether a head is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Model</b>: the reviewer's identity within one account, the model ID a review marker records, such as <code>claude-opus-5-5</code>, lowercased and without a bracketed variant such as <code>[1m]</code>.</li><li><b>Start comment</b>: the comment <code>project review setup</code> posts when a review begins. Its marker names the head and the model.</li><li><b>Peer</b>: another model that has a verdict on an earlier head, or a live start comment on another head, and nothing on this one.</li><li><b>Sign-off</b>: the rule's result for a head: <code>clean</code>, <code>changes-requested</code>, <code>waiting</code>, or <code>unreviewed</code>.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "What this layer leaves for later",
+    "html": "<ul class=\"tight\"><li>Adopting a stopped model's findings, <code>project review adopt</code>, and <code>census --wait</code> belong to the next layer. Here a clean verdict still needs every finding thread closed, so this layer only ever makes the sign-off more conservative.</li><li>The plan, <code>docs/projects/multi-model-review/readme.md</code>, stays <code>in-progress</code>.</li><li>The review of <code>bd07831</code> opened two P2 threads. <code>3c8eec3</code> fixed both, and the review of that head resolved them: <code>fix-pr</code> now reads <code>status</code> once for each account whose Projector loop reviewed the pull request, and the <code>docs/cli.md</code> sentence about incremental reviews says they apply the sign-off rule.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rule",
+   "title": "The sign-off rule and the peer wait",
+   "kicker": "How review.py decides a head's sign-off from GitHub's state, and how publish uses it",
+   "intro": [
+    "Every <code>publish</code> now ends by asking one question about the head it published on: is every model that's reviewing it satisfied? <code>models_on</code> groups the reviewer account's Projector verdicts and live start comments by model. <code>signoff</code> turns that grouping, plus the count of open finding threads, into one of the four results in the overview table.",
+    "The peer wait sits in <code>sign</code>. While the rule says <code>clean</code> and a peer is pending, it reads GitHub again every 15 seconds until the deadline: <code>review.peer_wait</code> seconds after this review began on the head. A peer's start comment turns the result into <code>waiting</code>, a peer's verdict joins the rule, and a peer that posts nothing by the deadline is treated as absent. A head that moves during the wait ends it, and <code>publish</code> then leaves the draft state alone for the new head's reviews to decide.",
+    "On another author's pull request, <code>publish</code> still leaves the draft state alone. The rule decides only whether a clean verdict may post an <code>APPROVE</code> where <code>review.allow_approve</code> is <code>true</code>. GitHub's <code>reviewDecision</code> follows one account's newest approval or change request, so one model's approval would erase another model's standing change request. <code>publish</code> therefore runs the rule <em>before</em> it submits, counting its own verdict as posted."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The rule runs after the submit so that two models finishing together still sign off. Each one sees the other's start comment as live until the other has submitted, so only the publish that runs last can reach <code>clean</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>models_on</code>, <code>signoff</code>, <code>pending_peers</code>, <code>peer_wait</code>, <code>sign</code>, <code>status</code>, and <code>status_lines</code>. <code>publish</code> now reads its own review back, applies the rule after it submits, and records whether the review was a self-review. The unused <code>self_review</code> helper is gone.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1121,
+       "text": "<code>models_on</code> keeps each model's newest verdict on this head (<code>verdict</code>) and its newest verdict on another head (<code>earlier</code>), plus a live start comment on this head (<code>reviewing</code>) or on another head (<code>elsewhere</code>). Liveness comes from <code>is_live</code>, which the layer below added."
+      },
+      {
+       "kind": "verify",
+       "line": 1149,
+       "text": "Checked the order of the tests against plan § 2.3. Any change request wins over everything else. A reviewing model or an open thread gives <code>waiting</code>. Otherwise, at least one verdict gives <code>clean</code>, and none gives <code>unreviewed</code>. <code>SignoffTests</code> covers each branch."
+      },
+      {
+       "kind": "context",
+       "line": 1203,
+       "text": "The head-moved check runs only after a sleep. A publish that never waits applies the rule to the head it published on, as <code>publish</code> did before this change."
+      },
+      {
+       "kind": "context",
+       "line": 1381,
+       "text": "The deadline counts from <code>head_started_at</code>: when <code>setup</code> posted the start comment, or when <code>move</code> edited it for this head. A review that already took longer than <code>review.peer_wait</code> doesn't wait at all."
+      },
+      {
+       "kind": "verify",
+       "line": 1448,
+       "text": "If the head moves while an approval waits for peers, <code>publish</code> refuses before it submits, keeps the lock, and points at <code>project review move</code>. <code>test_a_head_that_moves_during_the_approval_wait_refuses_and_points_at_move</code> passes on this head."
+      },
+      {
+       "kind": "verify",
+       "line": 1474,
+       "text": "The rule counts the review as read back from GitHub. <code>sign</code> drops it from the listing by <code>id</code> and adds this copy, so it counts once whether or not the listing has caught up. <code>test_the_rule_counts_the_review_it_read_back_when_the_listing_lags</code> passes with the review hidden from the listing."
+      },
+      {
+       "kind": "context",
+       "line": 1478,
+       "text": "Only a self-review on a draft waits. A ready pull request and another author's pull request pass <code>now()</code> as the deadline, so <code>sign</code> returns after one read."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>project review status</code>. Reads <code>review.peer_wait</code> from the review's checkout before <code>publish</code> runs, and prints the sign-off, how long publish waited, and which peers never posted.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 870,
+       "text": "<code>status</code> finds the reviewer the way <code>setup</code> does: <code>--reviewer</code>, then <code>review.username</code> from the checkout it runs in, then the authenticated user. It counts only that account's verdicts."
+      },
+      {
+       "kind": "verify",
+       "line": 940,
+       "text": "A bad <code>review.peer_wait</code> refuses before anything is posted. <code>PeerWaitTests</code> passes <code>\"180\"</code>, <code>-1</code>, <code>true</code>, and <code>1.5</code>, and checks that the lock stays held and no review is posted."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "<code>SignoffTests</code>, <code>PeerWaitTests</code>, <code>CrossAuthorSignoffTests</code>, and <code>StatusTests</code>, on the fake GitHub with a fake clock that the peer wait's sleeps advance."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills that read the sign-off",
+   "kicker": "review-pr, fix-pr, and start-fix-loop describe the rule in place of a single verdict",
+   "intro": [
+    "A self-review's draft state no longer means one model's verdict. It means the sign-off of every model that's reviewing the head. <code>review-pr</code> renames its section to \"Draft means the head is not signed off\" and states the rule and the peer wait. It also asks the review to run <code>publish</code> with a timeout of at least <code>review.peer_wait</code> plus two minutes.",
+    "<code>fix-pr</code> used to call a head clean when a clean verdict named it. Now it asks <code>project review status</code> for each account whose Projector loop reviewed the pull request, so a head that one model passed while another model is still reviewing isn't reported clean. <code>start-fix-loop</code>'s <code>DRAFT</code> line now clears when every reviewing model has signed off, and <code>start-review-loop</code>'s report names the sign-off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The sign-off rule, the peer wait, and <code>status</code> under \"Review as one model among several\". The publish modes and the report now name the sign-off."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The clean test reads <code>project review status --reviewer &lt;login&gt;</code> once for each account that posted a Projector review, because a loop's verdicts count only within its own account.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 227,
+       "text": "An account that posted one Projector review on an earlier head and runs no loop leaves its <code>status</code> at <code>unreviewed</code> for later heads, so <code>fix-pr</code> reports the head as waiting on that account. The review lists this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "<code>DRAFT</code> clears once every reviewing model signs off."
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "The subagent's report now names the sign-off."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Reference documentation and the plan",
+   "kicker": "docs/cli.md gains review.peer_wait, the publish rule, and review status; the plan's status table names two more fields",
+   "intro": [
+    "<code>docs/cli.md</code> adds the <code>review.peer_wait</code> configuration row and describes the sign-off rule and the peer wait in the <code>publish</code> section. It also documents <code>project review status</code>, with its text output and <code>--json</code> fields. The plan's <code>status</code> table now says that a model's verdict entry carries its <code>sha</code> and that a start comment entry carries its <code>comment_sha</code>, which is what the code returns."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>review.peer_wait</code> row, the publish rule, the <code>status</code> command and its JSON fields, and the incremental publish paragraph, which now says it applies the sign-off rule.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "note": "The <code>status</code> table's <code>models</code> row adds <code>sha</code> and <code>comment_sha</code>. The plan stays <code>in-progress</code>, because adoption is the next layer."
+    }
+   ]
+  }
+ ]
+}
