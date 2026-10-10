@@ -409,6 +409,7 @@ or a number, makes both commands refuse and name the key.
 | Page header | `review_statuses` matches each body line against the anchored `MARKER` pattern. | Matches the unchanged marker, also reads the incremental line, and adds `incrementalFrom`: the full review's head and URL. The header shows **Clean · incremental from a8cf3d5**. **Clean** links to the incremental review, and **incremental from a8cf3d5** links to the full review. A site built by an earlier release matches the same marker line and shows plain **Clean**. |
 | Fix loop watcher | A `REVIEW` event for each `COMMENTED` review with a body. | Announces the incremental review once, like any clean review. `fix-pr` reads `CLEAN` and finds nothing outstanding. |
 | `fix-pr`'s clean test | "A clean verdict names its current head." | Holds. |
+| `fix-pr`'s reviewed-head test | "The current head is the one actually reviewed." | Holds. The incremental review names the current head, and its reviewer read every line the head changed since a fully reviewed head. `fix-pr` needs no change. |
 | Review loop watcher | Heads and threads only. | Unchanged. |
 
 ### 2.7 The summary
