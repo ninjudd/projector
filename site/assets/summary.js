@@ -196,8 +196,7 @@
             const o = data.overview ?? {};
             const s = data.stats;
             const summary = (o.summary ?? []).map(block).join('');
-            let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
-                '<p><b>How to read this.</b> Each section opens with what it does and why. Notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+            let out = `<div class="card prose"><h3>What this PR does</h3>${summary}</div>`;
             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
                 [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
             out += '<div class="card stats" id="files"><div class="statgrid">' +

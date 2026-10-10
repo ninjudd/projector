@@ -814,6 +814,11 @@ class FileHeaderTests(SiteRepoCase):
         self.assertIn('<details class="versions"><summary aria-label="Versions (2)" title="Versions (2)"><svg', html)
         self.assertNotIn("Versions ·", html)
 
+    @unittest.skipUnless(shutil.which("node"), "the overview test needs node")
+    def test_the_overview_card_holds_only_what_the_summary_wrote(self) -> None:
+        self.assertIn('<div class="card prose"><h3>What this PR does</h3></div>', rendered_summary(self.build()),
+                      "the page adds no reading guide of its own")
+
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
     def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
         html = rendered_summary(self.build())
