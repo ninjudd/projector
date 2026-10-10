@@ -736,7 +736,7 @@ composite action with `--check-visibility`, which refuses to build, and so to
 deploy, when a private repository's Pages site is public or GitHub cannot say
 whether it is. For summaries it builds every
 `<number>/<head>/summary.json` against the `diff.patch` beside it, asking GitHub
-for nothing, and skips and reports any summary that fails or has no stored diff.
+for no diff, and skips and reports any summary that fails or has no stored diff.
 It marks generated files by the `attributes.json` beside a summary, or by the
 checkout's `.gitattributes` for a summary stored without one.
 It reads only `summary.json`, so it also reports each summary stored only as
