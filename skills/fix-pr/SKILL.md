@@ -223,12 +223,20 @@ user's checkpoint.
 A pull request is clean only when:
 
 - it merges into its base without a conflict,
-- a clean verdict names its current head,
+- `project review status <number>` reports `clean` for its current head,
 - no unresolved threads remain,
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
   request is no longer a draft, which is how that loop signs off.
+
+`project review status <number>` applies the review loop's sign-off rule to
+the current head: `clean` when every model reviewing it gave a clean verdict
+and no Projector finding thread is open. When nothing is outstanding and it
+reports anything else, report what it names, such as `gpt-5.5` still
+reviewing, or a model whose verdict on the head requests changes, and treat
+the head as waiting on that review, not on a code change. A Projector review
+loop that runs on Codex is one of those models.
 
 An external reviewer is not one of those conditions. A pending or absent
 re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
