@@ -46,30 +46,46 @@ body.barhidden .barshow { display: inline-flex; }
 .sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
 .sidebody { min-width: 0; }
 
-/* A section's tree beside its page: the docs, or one project's folder. The tree
-   runs down the window's left edge under the header's menu button, and the page
-   keeps its reading width, centred in the window whether or not the tree is
-   shown. Only a window too narrow to centre the page clear of the tree moves it
-   right, as little as it must. */
+/* A project's page takes a summary page's layout: summary.css's .wrap brings
+   the 1440px width and its side gutters, and its title row the room above, so
+   the main element adds neither. The plan keeps its reading width beside the
+   sidebar. */
+.sitemain.withnav { max-width: none; padding: 0; }
+.sitemain.withnav .sidebody { max-width: 880px; }
+/* The badges fit the eyebrow's line, so the title row is as tall as a summary's,
+   and sit as far from the separators beside them as the eyebrow's words do. */
+.top .eyebrow .badge { line-height: 1; margin-right: 0; }
+.top .eyebrow .badge + .badge { margin-left: 6px; }
+
+/* A section's tree beside its page: the docs. The tree runs down the window's
+   left edge under the header's menu button, and the page keeps its reading
+   width, centred in the window whether or not the tree is shown. Only a window
+   too narrow to centre the page clear of the tree moves it right, as little as
+   it must. The column's rules name it as the main element's child, so they
+   never reach a summary's sidebar inside a project's page. */
 .sitemain.withside { max-width: none; padding: 0; }
 .sitemain.withside .sidebody { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
 .sitemain.withside:not(.collapsed):not(.wide) .sidebody,
 .sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: max(240px, calc((100% - 880px) / 2)); }
-.sitemain .side {
+.sitemain > .side {
   position: fixed; top: 61px; bottom: 0; left: 0; width: 240px; align-self: stretch; overflow-y: auto;
   padding: 28px 16px; font-size: 14px; line-height: 1.4;
 }
-.sitemain .side ul { list-style: none; margin: 0; padding: 0 0 0 12px; }
-.sitemain .side > ul { padding-left: 0; }
-.sitemain .side li { margin: 5px 0; }
-.sitemain .side a { color: var(--muted); text-decoration: none; }
-.sitemain .side a:hover { color: var(--text); }
-.sitemain .side a.active { color: var(--text); font-weight: 600; }
-.sidetop { font-weight: 600; margin-bottom: 10px; }
-.sidetop a { color: var(--text); }
-.sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
 .sitemain.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
-.sitemain.collapsed .side { display: none; }
+.sitemain.collapsed > .side { display: none; }
+
+/* The tree itself, in the docs' column or a project's sidebar. Its heading, the
+   docs' Overview, is a link drawn as the tree's are. */
+.sidetree, .sidetree ul { list-style: none; margin: 0; padding: 0; }
+.sidetree ul { padding-left: 12px; }
+.sidetree li { margin: 5px 0; }
+.sidetree a, .sidetop a { color: var(--muted); text-decoration: none; }
+.sidetree a:hover, .sidetop a:hover { color: var(--text); }
+.sidetree a.active, .sidetop a.active { color: var(--text); font-weight: 600; }
+.sidetop { font-weight: 600; margin-bottom: 10px; }
+.sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+/* A project's other pages, below its stacks in the sidebar, lined up with the stacks' rows. */
+.nav .navpages { padding: 6px 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; line-height: 1.4; }
 
 /* An HTML page fills the window below the header, edge to edge, with its section
    sidebar, when shown, as a column beside it. */
@@ -77,7 +93,7 @@ body.barhidden .barshow { display: inline-flex; }
 .sitemain.wide.withside { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0; }
 .sitemain.wide.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
 .sitemain.wide .sidebody { max-width: none; margin: 0; padding: 0; }
-.sitemain.wide .side {
+.sitemain.wide > .side {
   position: static; width: auto; align-self: stretch; max-height: none; padding: 20px 16px;
   border-right: 1px solid var(--border);
 }
@@ -85,10 +101,10 @@ body.barhidden .barshow { display: inline-flex; }
 iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
 @media (max-width: 760px) {
   .sitemain.withside { display: block; }
-  .sitemain .side { position: static; width: auto; max-height: none; padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
+  .sitemain > .side { position: static; width: auto; max-height: none; padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
   .sitemain.withside:not(.collapsed):not(.wide) .sidebody,
   .sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: auto; }
-  .sitemain.wide .side { margin: 0; border-right: 0; }
+  .sitemain.wide > .side { margin: 0; border-right: 0; }
 }
 .sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
 .note { color: var(--muted); font-size: 13.5px; }
@@ -198,8 +214,6 @@ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
 .crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
 .crumbs a { text-decoration: none; }
 .pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
-.plist { margin-top: 10px; font-size: 14px; }
-.plist b { color: var(--muted); font-weight: 600; margin-right: 6px; }
 
 .sitesearch { margin: 0 0 0 auto; display: flex; }
 .sitesearch input {

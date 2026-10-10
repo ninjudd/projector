@@ -100,15 +100,16 @@ button.rstatus:hover { text-decoration: underline; }
 .prblock > :first-child { margin-top: 0; }
 .prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
 .prref:hover { text-decoration: underline; }
-/* The box's last row: the credit, with the versions icon at its right, whose list opens below the row. */
+/* The box's last row: the credit, with an icon at its right: a summary's versions, whose list opens below the
+   row, or a plan's history on GitHub. */
 .navfoot { position: relative; margin-top: 10px; padding: 4px 6px 0; border-top: 1px solid var(--border); }
 .credit { font-size: 12px; line-height: 28px; color: var(--muted); }
 .credit a { color: inherit; }
 .nav .versions { font-size: 12.5px; color: var(--muted); }
-.versions > summary { position: absolute; top: 4px; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; }
+.versions > summary, .navfoot > a.history { position: absolute; top: 4px; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; }
 .versions > summary::-webkit-details-marker { display: none; }
-.versions > summary:hover, .versions[open] > summary { background: var(--surface-2); color: var(--text); }
-.versions > summary svg { width: 18px; height: 18px; }
+.versions > summary:hover, .versions[open] > summary, .navfoot > a.history:hover { background: var(--surface-2); color: var(--text); }
+.versions > summary svg, .navfoot > a.history svg { width: 18px; height: 18px; }
 .versions ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .versions li > a, .versions li.current { display: flex; justify-content: space-between; gap: 10px; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; color: var(--muted); text-decoration: none; font-variant-numeric: tabular-nums; }
 .versions li > a:hover { background: var(--surface-2); color: var(--text); }
@@ -126,7 +127,7 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prblock .stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .prblock .stack .srow { margin: 0 -6px; font-size: 12.5px; }
-.prblock .stack li.current { background: var(--accent-soft); color: var(--text); }
+.prblock .stack li.current, .prblock .stackhead.current > * { background: var(--accent-soft); color: var(--text); }
 .prblock .stack li.current .snum { color: var(--accent); }
 /* A segment's header, a step up from the stack rows so it reads as the
    heading over its pull requests: a project's title, which links to the
@@ -140,6 +141,16 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 /* Up toward the box's top edge, so the title sits about as far below it as from the box's left edge. */
 .prblock .stackhead:first-child { margin-top: -6px; }
 .prblock .stack + .stackhead { margin-top: 6px; }
+/* A project's sidebar names the project once, above its stacks. Another
+   project's header that opens the first stack sits below that name as a
+   header sits below a stack's rows. The stacks have a divider between them as
+   wide as the footer row's, and a project with none says so. */
+.prblock > .stackhead + .stackgroup > .stackhead:first-child { margin-top: 6px; }
+.prblock .stackgroup + .stackgroup { margin: 10px -6px 0; padding: 16px 6px 0; border-top: 1px solid var(--border); }
+.prblock .snone { margin: 0; padding: 0 3px 4px; font-size: 12.5px; color: var(--muted); }
+/* Where the project's own segment follows another project's, a rule inset from
+   the box's dividers ends that segment above the project's rows. */
+.prblock .stack.split { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
 .prbar { display: none; }
 @media (max-width: 980px) {
   .prbar { display: flex; gap: 12px; align-items: baseline; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; }
