@@ -84,9 +84,10 @@ a.rstatus:hover { text-decoration: underline; }
 .prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
 .prref:hover { text-decoration: underline; }
 .nav .versions { margin: 10px 0 0; padding: 10px 6px 0; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
-.versions > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.versions > summary { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-left: -6px; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; }
 .versions > summary::-webkit-details-marker { display: none; }
-.versions:not([open]) > summary .chev { transform: rotate(-45deg); }
+.versions > summary:hover, .versions[open] > summary { background: var(--surface-2); color: var(--text); }
+.versions > summary svg { width: 18px; height: 18px; }
 .versions ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .versions li > a, .versions li.current { display: flex; justify-content: space-between; gap: 10px; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; color: var(--muted); text-decoration: none; font-variant-numeric: tabular-nums; }
 .versions li > a:hover { background: var(--surface-2); color: var(--text); }
@@ -102,7 +103,7 @@ a.rstatus:hover { text-decoration: underline; }
 .prblock .stack .snum { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .prblock .stack li.current .snum { color: var(--accent); }
 .prblock .stack.projects .snum { align-self: start; padding-top: 1px; }
-.prblock .stack.projects .snum svg { display: block; }
+.prblock .stack.projects .snum svg { display: block; width: 14px; height: 14px; }
 .prblock .stack .stitle { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-weight: 600; }
 .prbar { display: none; }
 @media (max-width: 980px) {

@@ -805,6 +805,16 @@ class FileHeaderTests(SiteRepoCase):
                       rendered_summary(data))
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
+    def test_the_versions_toggle_is_an_icon_named_for_how_many_there_are(self) -> None:
+        data = self.build()
+        data["heads"] = [{"head": "c" * 40, "url": f"/reviews/9/{'c' * 40}/", "current": True, "at": 1_700_000_500},
+                         {"head": "d" * 40, "url": f"/reviews/9/{'d' * 40}/", "current": False, "at": 1_700_000_000}]
+        html = rendered_summary(data)
+
+        self.assertIn('<details class="versions"><summary aria-label="Versions (2)" title="Versions (2)"><svg', html)
+        self.assertNotIn("Versions ·", html)
+
+    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
     def test_the_sidebar_lists_each_project_as_a_row_above_the_stack(self) -> None:
         html = rendered_summary(self.build())
 

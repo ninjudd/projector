@@ -44,8 +44,10 @@ function renderSummary(data: SummaryData): void {
   const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
 
   // Drawn like the site bar's icons: a 20-unit square, stroked in the text colour.
-  const FOLDER_ICON = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M3 6a1.5 1.5 0 0 1 1.5-1.5h3.25l1.75 2h6a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>';
+  const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
+  const FOLDER_ICON = `${ICON}<path d="M3 6a1.5 1.5 0 0 1 1.5-1.5h3.25l1.75 2h6a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>`;
+  const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
+    '<path d="M10 6.75V10l2.25 1.5"/></svg>';
 
   const CHIPS: Record<string, string> = { context: 'context', verify: 'verified', flag: 'concern' };
   function kindOf(c: SummaryCheck): string { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
@@ -248,7 +250,8 @@ function renderSummary(data: SummaryData): void {
       const row = `<span class="mono">${short(h.head)}</span>${when}`;
       return h.current ? `<li class="current" aria-current="page">${row}</li>` : `<li><a href="${esc(h.url)}">${row}</a></li>`;
     }).join('');
-    return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
+    const label = `Versions (${String(heads.length)})`;
+    return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
   }
 
   // The pull requests stacked with this one, one row each, this one marked; a
