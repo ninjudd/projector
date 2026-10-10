@@ -28,10 +28,22 @@ from projector.review import NotFound, ReviewError
 REPO = "acme/app"
 
 
+def review_page(review_id: int) -> str:
+    return f"https://github.com/{REPO}/pull/1#pullrequestreview-{review_id}"
+
+
+GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.com", "GIT_EDITOR": "true"}
+
+
 def git(cwd: Path, *args: str) -> str:
-    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
-    return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", *args], cwd=cwd, env=dict(os.environ, **GIT_ENV), check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+def git_status(cwd: Path, *args: str) -> int:
+    """Run git where a non-zero exit is expected, as a merge or rebase that stops on a conflict."""
+    return subprocess.run(["git", *args], cwd=cwd, env=dict(os.environ, **GIT_ENV), capture_output=True).returncode
 
 
 class FakeGitHub:
@@ -61,9 +73,9 @@ class FakeGitHub:
             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
             login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
-            sha = re.search(r"sha=([0-9a-f]+)", args[4]).group(1)
-            return "".join(f"{r['id']}\n" for r in self.reviews if r["user"]["login"] == login
-                           and re.search(f"projector-review .* sha={sha}", r["body"]))
+            return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
+                                       "body": r["body"]}) + "\n"
+                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"])
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
@@ -938,11 +950,633 @@ class PublishRefusalTests(PublishCase):
         self.assertIn("project review setup 1", err)
 
 
+def css(**padding: int) -> str:
+    """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
+    return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
+
+
+class IncrementalCase(PublishCase):
+    """A pull request whose head `self.reviewed` has a clean full review that loop l1 published.
+
+    The trunk's `self.fork` adds a.css, and the reviewed head changes its row r1's padding
+    from 8px to 9px. Each test makes a new head from there and sets it up as loop l1.
+    """
+
+    BODY = ("The push widens row r2's padding in `a.css`. Only a `padding` value changes, so every selector "
+            "matches what it did.")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.trunk = self.base
+        self.fork = self.move_trunk({"a.css": css()})
+        self.reviewed = self.push_feature(self.build(self.fork, {"a.css": css(r1=9)}))
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+
+    def write(self, files: dict[str, str | None]) -> None:
+        for name, content in files.items():
+            path = self.work / name
+            if content is None:
+                path.unlink()
+            else:
+                path.write_text(content)
+        git(self.work, "add", "-A")
+
+    def build(self, start: str, *changes: dict[str, str | None], message: str = "change") -> str:
+        """Commit each change in turn on top of `start`, writing a file or deleting it for None."""
+        git(self.work, "checkout", "--quiet", "--detach", start)
+        for files in changes:
+            self.write(files)
+            git(self.work, "commit", "--quiet", "--allow-empty", "-m", message)
+        return git(self.work, "rev-parse", "HEAD")
+
+    def push_feature(self, sha: str) -> str:
+        git(self.work, "push", "--quiet", "--force", "origin", f"{sha}:refs/heads/feature", f"{sha}:refs/pull/1/head")
+        self.github.pr["head"]["sha"] = sha
+        return sha
+
+    def move_trunk(self, *changes: dict[str, str | None]) -> str:
+        self.trunk = self.build(self.trunk, *changes, message="trunk")
+        git(self.work, "push", "--quiet", "--force", "origin", f"{self.trunk}:refs/heads/trunk")
+        self.github.pr["base"]["sha"] = self.trunk
+        return self.trunk
+
+    def merge(self, head: str, other: str, resolved: dict[str, str | None] | None = None) -> str:
+        git(self.work, "checkout", "--quiet", "--detach", head)
+        if git_status(self.work, "merge", "--quiet", "--no-edit", other):
+            self.write(resolved or {})
+            git(self.work, "commit", "--quiet", "--no-edit")
+        return git(self.work, "rev-parse", "HEAD")
+
+    def rebase(self, head: str, onto: str, upstream: str | None = None,
+               resolved: dict[str, str | None] | None = None) -> str:
+        git(self.work, "checkout", "--quiet", "--detach", head)
+        if git_status(self.work, "rebase", "--quiet", "--onto", onto, upstream or self.fork):
+            self.write(resolved or {})
+            git(self.work, "rebase", "--continue")
+        return git(self.work, "rev-parse", "HEAD")
+
+    def review_head(self, sha: str, *extra: str) -> str:
+        self.push_feature(sha)
+        code, _, err = self.setup_review("--loop", "l1", *extra)
+        self.assertEqual(0, code, err)
+        return sha
+
+    def pushed(self, *extra: str) -> str:
+        """A one-line push on the reviewed head, set up for review."""
+        return self.review_head(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}), *extra)
+
+    def interdiff(self) -> dict:
+        code, out, err = self.later("interdiff", "--json")
+        result = json.loads(out)
+        self.assertEqual(0 if result["incremental"] else 1, code, err)
+        return result
+
+    def gate(self, command: str = "true") -> int:
+        (self.checkout / ".projector.toml").write_text(f"[review]\ngate = {json.dumps(command)}\n")
+        return self.later("gate")[0]
+
+    def publish_incremental(self, *extra: str, text: str | None = None) -> tuple[int, str, str]:
+        path = self.dir / "incremental.md"
+        path.write_text(self.BODY if text is None else text)
+        return self.later("publish", "--incremental", "--body", str(path), *extra)
+
+    def edit_record(self, change) -> None:
+        path = self.state / "loops" / "l1" / "published.json"
+        record = json.loads(path.read_text())
+        change(record)
+        path.write_text(json.dumps(record))
+
+
+class InterdiffMeasureTests(IncrementalCase):
+    def test_a_pushed_commit_counts_only_its_own_lines(self) -> None:
+        self.pushed()
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(("push", None, [], 1, 1, ["a.css"]),
+                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
+                          result["deletions"], result["files"]))
+        self.assertIn("-.r2 { padding: 8px; }\n+.r2 { padding: 9px; }", result["patch"])
+        self.assertEqual((self.reviewed, review_page(901), False), (result["from"], result["review"], result["needs_gate"]))
+
+    def test_a_merge_of_the_trunk_counts_the_edit_alone(self) -> None:
+        self.move_trunk({"trunk.txt": "".join(f"line {i}\n" for i in range(50))})
+        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(("merge", None, [], 1, 1, ["a.css"]),
+                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
+                          result["deletions"], result["files"]))
+
+    def test_a_clean_rebase_and_a_new_commit_give_that_commits_change(self) -> None:
+        self.move_trunk({"trunk.txt": "moved\n"})
+        self.review_head(self.build(self.rebase(self.reviewed, self.trunk), {"a.css": css(r1=9, r3=9)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(("rebase", True, [], 1, 1, ["a.css"]),
+                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
+                          result["deletions"], result["files"]))
+        self.assertIn("+.r3 { padding: 9px; }", result["patch"])
+
+    def assert_resolved(self, result: dict) -> None:
+        """The conflict the reviewed head's 9px and the trunk's 12px made, resolved to 10px."""
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual((["a.css"], 1, 7), (result["conflicts"], result["insertions"], result["deletions"]))
+        self.assertIn(f"-<<<<<<< {self.trunk}\n-.r1 {{ padding: 12px; }}\n-||||||| {self.fork}\n"
+                      f"-.r1 {{ padding: 8px; }}\n-=======\n-.r1 {{ padding: 9px; }}\n->>>>>>> {self.reviewed}\n"
+                      "+.r1 { padding: 10px; }", result["patch"])
+
+    def test_a_rebase_that_resolved_a_conflict_shows_the_resolution(self) -> None:
+        self.move_trunk({"a.css": css(r1=12)})
+        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+
+        self.assert_resolved(result)
+        self.assertEqual(("rebase", False), (result["kind"], result["unchanged_commits"]))
+
+    def test_a_merge_that_resolved_a_conflict_shows_the_resolution(self) -> None:
+        self.move_trunk({"a.css": css(r1=12)})
+        self.review_head(self.merge(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+
+        self.assert_resolved(result)
+        self.assertEqual(("merge", None), (result["kind"], result["unchanged_commits"]))
+
+    def test_an_amend_is_a_rewrite_and_a_reworded_message_changes_nothing(self) -> None:
+        self.review_head(self.build(self.fork, {"a.css": css(r1=9, r4=9)}))
+        amended = self.interdiff()
+        self.review_head(self.build(self.fork, {"a.css": css(r1=9)}, message="reworded"))
+        reworded = self.interdiff()
+
+        self.assertTrue(amended["incremental"], amended["reason"])
+        self.assertEqual(("rewrite", False, 1, 1), (amended["kind"], amended["unchanged_commits"],
+                                                    amended["insertions"], amended["deletions"]))
+        self.assertTrue(reworded["incremental"], reworded["reason"])
+        self.assertEqual(("rewrite", True, 0, 0, [], ""),
+                         (reworded["kind"], reworded["unchanged_commits"], reworded["insertions"],
+                          reworded["deletions"], reworded["files"], reworded["patch"]))
+
+    def test_a_stack_cascade_counts_the_childs_edit_alone(self) -> None:
+        parent = self.build(self.fork, {"p.txt": "parent\n"})
+        git(self.work, "push", "--quiet", "origin", f"{parent}:refs/heads/parent")
+        self.github.pr["base"] = {"ref": "parent", "sha": parent, "repo": {"full_name": REPO}}
+        child = self.review_head(self.build(parent, {"a.css": css(r1=9)}))
+        self.assertEqual(0, self.publish("clean")[0])
+        # A fix amends the parent's commit, and the child is rebased onto it with one more edit.
+        amended = self.build(self.fork, {"p.txt": "parent, fixed\n"})
+        git(self.work, "push", "--quiet", "--force", "origin", f"{amended}:refs/heads/parent")
+        self.github.pr["base"]["sha"] = amended
+        self.review_head(self.build(self.rebase(child, amended, upstream=parent), {"a.css": css(r1=9, r5=9)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(("rebase", True, [], 1, 1, ["a.css"]),
+                         (result["kind"], result["unchanged_commits"], result["conflicts"], result["insertions"],
+                          result["deletions"], result["files"]))
+        # The merge base Git computes for the child sits below the parent, so a replay
+        # from it brings the parent's old commit along and conflicts with its amend.
+        below = git(self.checkout, "merge-base", child, amended)
+        self.assertEqual(["p.txt"], review.measure(self.checkout, child, below, self.github.pr["head"]["sha"],
+                                                   amended).conflicts)
+
+    def test_a_child_retargeted_after_its_parent_merges_is_a_retarget_not_a_merge(self) -> None:
+        parent = self.build(self.fork, {"p.txt": "parent\n"})
+        git(self.work, "push", "--quiet", "origin", f"{parent}:refs/heads/parent")
+        self.github.pr["base"] = {"ref": "parent", "sha": parent, "repo": {"full_name": REPO}}
+        child = self.review_head(self.build(parent, {"a.css": css(r1=9)}))
+        self.assertEqual(0, self.publish("clean")[0])
+        # The parent squash-merges, and GitHub retargets the child onto the trunk; the child
+        # then pushes a commit without merging or rebasing.
+        self.move_trunk({"p.txt": "parent\n"})
+        self.github.pr["base"] = {"ref": "trunk", "sha": self.trunk, "repo": {"full_name": REPO}}
+        self.review_head(self.build(child, {"a.css": css(r1=9, r2=9)}))
+        self.assertEqual(0, self.gate())
+
+        result = self.interdiff()
+        _, out, _ = self.later("interdiff")
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(("retarget", None, []), (result["kind"], result["unchanged_commits"], result["conflicts"]))
+        self.assertEqual(["a.css", "p.txt"], result["files"], "the parent's change is in the diff GitHub shows now")
+        self.assertIn("kind: retarget onto trunk\n", out)
+
+    def test_an_earlier_head_missing_from_the_checkout_cannot_be_measured(self) -> None:
+        missing = "f" * 40
+        self.edit_record(lambda record: record[-1].update(sha=missing))
+        self.github.reviews[-1]["body"] = self.github.reviews[-1]["body"].replace(self.reviewed, missing)
+        self.pushed()
+
+        result = self.interdiff()
+
+        self.assertIn("cannot be measured: the checkout lacks the earlier head fffffff", result["reason"])
+        self.assertEqual((None, None, [], ""), (result["kind"], result["conflicts"], result["files"], result["patch"]))
+
+    def test_a_record_without_the_full_reviews_merge_base_cannot_be_measured(self) -> None:
+        # An earlier release recorded no merge base, and a checkout that was never
+        # installed names every release `unknown`, so the version rule cannot catch it.
+        self.edit_record(lambda record: record[-1].pop("base"))
+        self.pushed()
+
+        result = self.interdiff()
+
+        self.assertIn("cannot be measured", result["reason"])
+        self.assertIn("holds no merge base for the full review", result["reason"])
+        self.assertEqual((self.reviewed, None, None), (result["from"], result["kind"], result["conflicts"]))
+
+    def test_without_merge_tree_a_moved_base_cannot_be_measured_but_an_unmoved_one_can(self) -> None:
+        real = subprocess.run
+
+        def older_git(args, *rest, **options):
+            if "merge-tree" in args:
+                return subprocess.CompletedProcess(args, 129, b"", b"error: unknown option `merge-base=...'")
+            return real(args, *rest, **options)
+
+        with mock.patch.object(review.subprocess, "run", older_git):
+            self.pushed()
+            unmoved = self.interdiff()
+            self.move_trunk({"trunk.txt": "moved\n"})
+            self.review_head(self.merge(self.reviewed, self.trunk))
+            moved = self.interdiff()
+
+        self.assertTrue(unmoved["incremental"], unmoved["reason"])
+        self.assertIn("cannot be measured: git -c merge.conflictStyle=diff3 merge-tree exited 129", moved["reason"])
+        self.assertIsNone(moved["conflicts"])
+
+    def test_prints_the_earlier_review_the_kind_the_counts_the_refusal_and_the_patch(self) -> None:
+        self.move_trunk({"a.css": css(r1=12)})
+        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
+
+        code, out, err = self.later("interdiff")
+
+        self.assertEqual(1, code, err)
+        self.assertEqual([
+            f"earlier full review: {self.reviewed[:7]}, {review_page(901)}",
+            "kind: rebase onto trunk; a reviewed commit changed",
+            "conflicts: a.css",
+            "change: +1 −7 lines in 1 file",
+            "refused: the merge base moved, and no `project review gate` run on this head has exited 0 (needs_gate)",
+            "",
+            "diff --git a/a.css b/a.css",
+        ], out.splitlines()[:7])
+
+
+class InterdiffRuleTests(IncrementalCase):
+    def refused(self, words: str) -> dict:
+        result = self.interdiff()
+        self.assertFalse(result["incremental"])
+        self.assertIn(words, result["reason"])
+        self.assertFalse(result["needs_gate"])
+        return result
+
+    def test_review_incremental_false_gives_a_full_review(self) -> None:
+        self.pushed()
+        (self.checkout / ".projector.toml").write_text("[review]\nincremental = false\n")
+
+        self.refused("review.incremental is false")
+
+    def test_review_incremental_that_is_not_a_boolean_refuses_and_names_the_key(self) -> None:
+        self.pushed()
+        for value in ('"yes"', "1"):
+            with self.subTest(value=value):
+                (self.checkout / ".projector.toml").write_text(f"[review]\nincremental = {value}\n")
+
+                code, _, err = self.later("interdiff", "--json")
+
+                self.assertNotEqual(0, code)
+                self.assertIn("review.incremental must be true or false", err)
+
+    def test_a_review_no_loop_runs_is_full(self) -> None:
+        self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
+        self.assertEqual(0, self.setup_review()[0])
+
+        self.refused("no review loop runs this review")
+
+    def test_an_untrusted_head_is_full(self) -> None:
+        self.github.commit_authors = ["operator", "stranger"]
+        self.pushed()
+
+        self.refused("is untrusted")
+
+    def test_a_newest_verdict_that_requests_changes_is_followed_by_a_full_review(self) -> None:
+        self.edit_record(lambda record: record[-1].update(verdict="changes-requested"))
+        self.pushed()
+
+        self.refused("the newest verdict in loop l1's record requests changes")
+
+    def test_a_head_the_loop_already_judged_gets_a_full_rereview(self) -> None:
+        self.review_head(self.reviewed, "--rereview")
+
+        self.refused(f"loop l1 already published a verdict on {self.reviewed[:7]}")
+
+    def test_a_record_with_no_full_review_is_full(self) -> None:
+        self.edit_record(lambda record: record.clear())
+        self.pushed()
+
+        self.refused("loop l1's record holds no clean full review")
+
+    def test_a_clean_full_review_from_another_loop_on_the_same_account_leads_to_a_full_review(self) -> None:
+        self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
+        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
+
+        self.refused("loop l2's record holds no clean full review")
+
+    def test_a_full_review_by_another_version_model_or_effort_is_not_built_on(self) -> None:
+        earlier = "was made by Projector 1.2.3, model claude-opus-5-5, no effort, and this run is "
+        head = self.build(self.reviewed, {"a.css": css(r1=9, r2=9)})
+        with mock.patch.object(metadata, "version", return_value="1.2.4"):
+            self.review_head(head)
+            self.refused(earlier + "Projector 1.2.4, model claude-opus-5-5, no effort")
+        self.assertEqual(0, self.later("release")[0])
+        self.review_head(head, "--model", "claude-sonnet-5")
+        self.refused(earlier + "Projector 1.2.3, model claude-sonnet-5, no effort")
+        self.assertEqual(0, self.later("release")[0])
+        self.review_head(head)
+        with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
+            self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")
+
+    def test_a_full_review_missing_from_github_is_not_built_on(self) -> None:
+        self.github.reviews.clear()
+        self.pushed()
+
+        self.refused("the full review 901 of")
+
+    def test_an_open_finding_gives_a_full_review(self) -> None:
+        self.pushed()
+        self.open_finding()
+
+        self.refused("1 finding thread is open")
+
+    def test_a_binary_file_a_symlink_or_a_submodule_cannot_be_read(self) -> None:
+        def binary() -> None:
+            (self.work / "blob.bin").write_bytes(b"\x00\x01\x02")
+            git(self.work, "add", "blob.bin")
+
+        def symlink() -> None:
+            os.symlink("a.css", self.work / "link")
+            git(self.work, "add", "link")
+
+        def submodule() -> None:
+            git(self.work, "update-index", "--add", "--cacheinfo", f"160000,{self.base},sub")
+
+        for name, make, path in (("binary", binary, "blob.bin"), ("symlink", symlink, "link"),
+                                 ("submodule", submodule, "sub")):
+            with self.subTest(name):
+                git(self.work, "checkout", "--quiet", "--detach", self.reviewed)
+                make()
+                git(self.work, "commit", "--quiet", "-m", name)
+                self.review_head(git(self.work, "rev-parse", "HEAD"))
+
+                result = self.refused(f"a binary file, a symlink, or a submodule: {path}")
+
+                self.assertEqual("push", result["kind"], "the change was measured")
+                self.assertIn(path, result["files"])
+
+    def test_an_added_deleted_renamed_or_mode_changed_file_is_read_like_any_other(self) -> None:
+        git(self.work, "checkout", "--quiet", "--detach", self.reviewed)
+        self.write({"new.txt": "new\n", "README.md": None, "a.css": None, "b.css": css(r1=9)})
+        os.chmod(self.work / "new.txt", 0o755)
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "--quiet", "-m", "move things")
+        self.review_head(git(self.work, "rev-parse", "HEAD"))
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual(["README.md", "a.css", "b.css", "new.txt"], result["files"])
+
+    def test_after_an_incremental_review_the_change_is_measured_from_the_full_review(self) -> None:
+        first = self.pushed()
+        self.assertEqual(0, self.publish_incremental()[0])
+        self.review_head(self.build(first, {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        result = self.interdiff()
+
+        self.assertTrue(result["incremental"], result["reason"])
+        self.assertEqual((self.reviewed, 2, 2), (result["from"], result["insertions"], result["deletions"]))
+
+    def test_a_moved_base_needs_a_gate_that_passed_on_this_head(self) -> None:
+        self.move_trunk({"trunk.txt": "moved\n"})
+        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
+
+        before = self.interdiff()
+        failed = self.gate("false")
+        after_failure = self.interdiff()
+        passed = self.gate("true")
+        after_pass = self.interdiff()
+
+        for result in (before, after_failure):
+            self.assertFalse(result["incremental"])
+            self.assertTrue(result["needs_gate"])
+            self.assertIn("the merge base moved", result["reason"])
+            self.assertEqual("merge", result["kind"], "every other rule passed, so the change was measured")
+        self.assertEqual((1, 0), (failed, passed))
+        self.assertTrue(after_pass["incremental"], after_pass["reason"])
+
+    def test_a_gate_that_passed_on_an_earlier_head_does_not_count(self) -> None:
+        self.move_trunk({"trunk.txt": "moved\n"})
+        merged = self.review_head(self.merge(self.reviewed, self.trunk))
+        self.assertEqual(0, self.gate())
+        self.push_feature(self.build(merged, {"a.css": css(r1=9, r2=9)}))
+        self.assertEqual(0, self.later("move")[0])
+
+        result = self.interdiff()
+
+        self.assertTrue(result["needs_gate"])
+
+    def test_an_unmoved_base_needs_no_gate(self) -> None:
+        self.pushed()
+
+        self.assertTrue(self.interdiff()["incremental"])
+        self.assertNotIn("gate", self.read_state())
+
+    def test_an_empty_change_across_a_moved_base_still_needs_the_gate(self) -> None:
+        self.move_trunk({"trunk.txt": "moved\n"})
+        self.review_head(self.rebase(self.reviewed, self.trunk))
+
+        result = self.interdiff()
+
+        self.assertEqual(([], 0, 0, True), (result["files"], result["insertions"], result["deletions"],
+                                            result["needs_gate"]))
+
+
+class IncrementalPublishTests(IncrementalCase):
+    def test_publishes_a_clean_incremental_self_review_with_exactly_its_parts(self) -> None:
+        head = self.pushed()
+
+        code, out, err = self.publish_incremental()
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()
+        self.assertEqual(
+            f"{review.MARK} **Projector review** · `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
+            f"incremental from `{self.reviewed[:7]}` · took 12m 34s\n\n"
+            f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 sha={head} findings=0 "
+            "seconds=754 covered=1/1 -->\n"
+            f"<!-- projector-incremental v=1 from={self.reviewed} kind=push insertions=1 deletions=1 files=1 "
+            "conflicts=0 -->\n\n"
+            f"Incremental review of the change since the full review of [`{self.reviewed[:7]}`]({review_page(901)}): "
+            "+1 −1 lines in 1 file.\n\n"
+            f"{self.BODY}\n",
+            posted["body"])
+        lines = posted["body"].splitlines()
+        self.assertIsNotNone(review.SIGNATURE.match(lines[0]))
+        self.assertIsNotNone(review.MARKER.match(lines[2]))
+        self.assertEqual(review.Verdict("clean", head, "1.2.3", "claude-opus-5-5", None, self.reviewed),
+                         review.verdict_marker(posted["body"]))
+        self.assertEqual(("COMMENT", head, []), (posted["event"], posted["commit_id"], posted["comments"]))
+        self.assertFalse(self.github.pr["draft"], "a clean self-review marks the pull request ready")
+        self.assertEqual({}, self.github.comments, "the start comment is gone")
+        self.assertFalse(self.lock(head).exists(), "the lock is released")
+        record = json.loads((self.state / "loops" / "l1" / "published.json").read_text())
+        self.assertEqual([(self.reviewed, "clean", self.fork, None), (head, "clean", self.fork, self.reviewed)],
+                         [(r["sha"], r["verdict"], r["base"], r["from"]) for r in record])
+        self.assertIn(f"at {head}, incremental from {self.reviewed[:7]}", out)
+
+    def test_after_a_rebase_with_a_conflict_the_lead_names_the_rebase_and_the_file(self) -> None:
+        self.move_trunk({"a.css": css(r1=12)})
+        self.review_head(self.rebase(self.reviewed, self.trunk, resolved={"a.css": css(r1=10)}))
+        self.assertEqual(0, self.gate())
+
+        code, _, err = self.publish_incremental()
+
+        self.assertEqual(0, code, err)
+        body = self.posted()["body"]
+        self.assertIn(f"Incremental review of the change since the full review of [`{self.reviewed[:7]}`]"
+                      f"({review_page(901)}) across a rebase onto `trunk`: +1 −7 lines in 1 file, with a resolved "
+                      "conflict in `a.css`.", body)
+        self.assertIn("kind=rebase insertions=1 deletions=7 files=1 conflicts=1 -->", body)
+
+    def test_on_another_authors_pull_request_it_comments_and_leaves_approval_to_a_person(self) -> None:
+        self.github.pr["user"] = {"login": "teammate"}
+        self.github.permissions = {"teammate": "write"}
+        self.github.commit_authors = ["teammate"]
+        (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
+        self.pushed()
+        before = len(self.github.calls)
+
+        code, _, err = self.publish_incremental()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("COMMENT", self.posted()["event"], "never an approval, even where approval is allowed")
+        self.assertTrue(self.posted()["body"].endswith(f"{self.BODY}\n\nA human approval is what remains.\n"))
+        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls[before:]),
+                         "draft state is the author's")
+
+    def refused(self, result: tuple[int, str, str], words: str, head: str) -> None:
+        code, _, err = result
+        self.assertEqual(1, code, "a refusal exits non-zero")
+        self.assertIn(words, err)
+        self.assertEqual(1, len(self.github.reviews), "only the full review was posted")
+        self.assertTrue(self.lock(head).exists(), "a refused publish keeps the lock for the full review")
+
+    def test_refuses_when_a_finding_opened_since_interdiff_ran(self) -> None:
+        head = self.pushed()
+        self.assertTrue(self.interdiff()["incremental"])
+        self.open_finding()
+
+        self.refused(self.publish_incremental(), "an incremental review is refused: 1 finding thread is open", head)
+
+    def test_refuses_a_moved_base_with_no_passing_gate_on_the_head(self) -> None:
+        self.move_trunk({"trunk.txt": "moved\n"})
+        head = self.review_head(self.merge(self.reviewed, self.trunk))
+
+        self.refused(self.publish_incremental(), "the merge base moved", head)
+
+    def test_refuses_a_head_that_moved(self) -> None:
+        head = self.pushed()
+        self.push_feature(self.build(head, {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        self.refused(self.publish_incremental(), "project review move 1", head)
+
+    def test_refuses_what_an_incremental_review_does_not_take(self) -> None:
+        head = self.pushed()
+        for extra, words in ((["--threads", str(self.threads(finding()))], "--threads"),
+                             (["--covered", "1/1"], "--covered"),
+                             (["--second-verdict", "901"], "--second-verdict"),
+                             (["--verdict", "changes-requested"], "always clean")):
+            with self.subTest(words):
+                self.refused(self.publish_incremental(*extra), words, head)
+
+    def test_refuses_a_body_that_is_empty_too_long_or_carries_what_publish_writes(self) -> None:
+        head = self.pushed()
+        signature = f"{review.MARK} **Projector review** · `1.2.3` · model `m` · **CLEAN** · took 1m 00s\n\nText.\n"
+        for text, words in (("  \n", "empty"),
+                            ("x" * 601, "601 characters once filled"),
+                            ("x" * 570 + " {sha}", "611 characters once filled"),
+                            (signature, "signature line"),
+                            (f"Text.\n<!-- projector-incremental v=1 from={self.reviewed} -->\n", "markers"),
+                            ("Text.\n<!-- projector-review v=1 verdict=clean -->\n", "markers"),
+                            ("Text.\n\n{census}\n", "prints no census")):
+            with self.subTest(words):
+                self.refused(self.publish_incremental(text=text), words, head)
+        self.assertEqual(0, self.publish_incremental(text="x" * 600)[0], "600 characters is the limit, not past it")
+
+    def test_an_ordinary_review_body_with_an_incremental_line_is_refused(self) -> None:
+        head = self.pushed()
+        body = self.body(f"{{census}}\n\n<!-- projector-incremental v=1 from={self.reviewed} kind=push -->\n")
+
+        self.refused(self.publish("clean", body=body), "markers", head)
+
+    def test_another_loops_incremental_review_on_the_head_is_a_collision(self) -> None:
+        head = self.pushed()
+        self.assertEqual(0, self.publish_incremental()[0])
+        self.assertEqual(0, self.setup_review("--loop", "l2", "--rereview")[0])
+
+        code, _, err = self.publish("clean", loop="l2")
+
+        self.assertEqual(1, code)
+        self.assertIn("another loop", err)
+        self.assertTrue(self.lock(head).exists())
+
+    def test_a_publish_without_incremental_still_needs_a_verdict_and_coverage(self) -> None:
+        self.pushed()
+        body = str(self.body())
+
+        no_verdict = self.later("publish", "--body", body, "--covered", "1/1")
+        no_coverage = self.later("publish", "--body", body, "--verdict", "clean")
+
+        self.assertEqual((1, 1), (no_verdict[0], no_coverage[0]))
+        self.assertIn("--verdict must be clean or changes-requested", no_verdict[2])
+        self.assertIn("--covered must be", no_coverage[2])
+
+
+class VerdictMarkerTests(unittest.TestCase):
+    SHA, FROM = "a" * 40, "b" * 40
+    MARKER = (f"<!-- projector-review v=1 verdict=clean projector=0.7.2 model=claude-opus-5-5 effort=high sha={'a' * 40} "
+              "findings=0 seconds=38 covered=1/1 -->")
+    INCREMENTAL = (f"<!-- projector-incremental v=1 from={'b' * 40} kind=push insertions=2 deletions=2 files=1 "
+                   "conflicts=0 -->")
+
+    def test_reads_the_verdict_what_produced_it_and_the_incremental_line_after_it(self) -> None:
+        self.assertEqual(review.Verdict("clean", self.SHA, "0.7.2", "claude-opus-5-5", "high", self.FROM),
+                         review.verdict_marker(f"Signature\n\n{self.MARKER}\n{self.INCREMENTAL}\n\nLead.\n"))
+        self.assertEqual(review.Verdict("clean", self.SHA, "0.7.2", "claude-opus-5-5", "high", None),
+                         review.verdict_marker(f"Signature\n\n{self.MARKER}\n\nBody.\n"))
+
+    def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
+        self.assertIsNone(review.verdict_marker(f"Body.\n{self.INCREMENTAL}\n"))
+        self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
+
+
 class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release", "publish", "gate"):
+        for command in ("setup", "move", "census", "release", "publish", "gate", "interdiff"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):

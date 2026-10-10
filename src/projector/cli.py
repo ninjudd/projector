@@ -460,10 +460,15 @@ def parser() -> argparse.ArgumentParser:
     review_gate = review_commands.add_parser(
         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
     )
+    review_interdiff = review_commands.add_parser(
+        "interdiff", help="measure the change since this loop's last full review and check whether the head may "
+                          "have an incremental review"
+    )
     add_output(review_commands.add_parser(
         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
     ))
-    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate):
+    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
+                    review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -478,17 +483,22 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True, help="the model id the start comment names")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
-    review_publish.add_argument("--verdict", required=True, choices=("clean", "changes-requested"),
-                                help="the verdict the signature line and marker carry")
+    review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
+                                help="the verdict the signature line and marker carry (required without "
+                                     "--incremental)")
     review_publish.add_argument("--body", type=Path, required=True,
                                 help="the review below its signature line, with {census} and optionally "
-                                     "{took}, {seconds}, {sha}, {short_sha}")
+                                     "{took}, {seconds}, {sha}, {short_sha}; with --incremental, at most 600 "
+                                     "characters on what changed and what you checked, with no {census}")
     review_publish.add_argument("--threads", type=Path,
                                 help="a JSON list of findings, each {path, line, priority, body}")
-    review_publish.add_argument("--covered", required=True,
-                                help="files read over files changed, such as 12/12")
+    review_publish.add_argument("--covered",
+                                help="files read over files changed, such as 12/12 (required without --incremental)")
     review_publish.add_argument("--second-verdict", type=int, metavar="REVIEW_ID",
                                 help="outside a loop, the earlier verdict a user agreed to publish beside")
+    review_publish.add_argument("--incremental", action="store_true",
+                                help="publish a clean incremental review of the change since this loop's last "
+                                     "full review, when `project review interdiff` allows one")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -829,6 +839,17 @@ def review_rules(json_output: bool) -> int:
     return 0 if allowed else 1
 
 
+def incremental_enabled(checkout: Path) -> bool:
+    """`review.incremental` from the review's checkout; unset means incremental reviews are on."""
+
+    value = load_config(checkout).get("review.incremental")
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ConfigError(f"review.incremental must be true or false, not {type(value).__name__}")
+    return value
+
+
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
@@ -853,19 +874,31 @@ def run_review(arguments: argparse.Namespace) -> int:
             else:
                 print("\n".join(review.census_lines(result)))
             return 0
+        if command == "interdiff":
+            state = review.read_state(review.Paths(root, repo, arguments.pr))
+            enabled = incremental_enabled(Path(state["checkout"]))
+            result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
+            if arguments.json_output:
+                print(json.dumps(result, indent=2))
+            else:
+                print("\n".join(review.interdiff_lines(result, state["base_ref"])))
+            return 0 if result["incremental"] else 1
         if command == "publish":
             state = review.read_state(review.Paths(root, repo, arguments.pr))
             try:
                 allow = load_config(Path(state["checkout"])).get("review.allow_approve") is True
             except ProjectorError:
                 allow = False
+            enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
             result = review.publish(root, arguments.pr, repo, loop, arguments.verdict, arguments.body,
-                                    arguments.threads, arguments.covered, arguments.second_verdict, allow)
+                                    arguments.threads, arguments.covered, arguments.second_verdict, allow,
+                                    arguments.incremental, enabled)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
                 print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
-                      f"{result['repo']}#{result['number']} at {result['sha']}")
+                      f"{result['repo']}#{result['number']} at {result['sha']}"
+                      + (f", incremental from {result['from'][:7]}" if result["from"] else ""))
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0
