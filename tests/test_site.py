@@ -796,17 +796,38 @@ class FileHeaderTests(SiteRepoCase):
         self.assertNotIn(">PR</a>", html)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
-    def test_the_file_link_follows_the_branch_until_the_pull_request_merges_or_closes(self) -> None:
-        # GitHub usually deletes a merged or closed pull request's branch, and
-        # its head commit stays reachable, so those link the head.
+    def test_the_file_link_shows_the_file_as_it_is_now(self) -> None:
+        # An open pull request's file is current on its branch, and a merged
+        # one's on the default branch, since the merge usually deletes the
+        # branch. A closed one never reached the default branch, so it links
+        # the head commit, which stays reachable.
         branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
+        trunk = "https://github.com/owner/example/blob/develop/src/app%231.py"
         at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
-        for state, expected in (("open", branch), ("merged", at_head), ("closed", at_head), (None, branch)):
-            with self.subTest(state=state):
+        for state, expected in (("open", branch), ("merged", trunk), ("closed", at_head), (None, branch)):
+            with self.subTest(state=state), mock.patch.object(cli, "trunk_branch", return_value="develop"):
                 data = self.build(state=state, headRef="feature/header-links")
                 self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
+                self.assertEqual("develop", data["defaultBranch"], "the page records the default branch the build found")
                 self.assertIn(f'href="{expected}"', rendered_summary(data))
                 shutil.rmtree(self.out)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_deleted_file_links_the_merge_base_the_last_commit_that_has_it(self) -> None:
+        at_base = f'https://github.com/owner/example/blob/{"b" * 40}/src/app%231.py'
+        for state in ("open", "merged", "closed", None):
+            with self.subTest(state=state):
+                data = self.build(state=state, headRef="feature/header-links")
+                next(f for f in data["files"] if f["path"] == "src/app#1.py")["deleted"] = True
+                self.assertIn(f'href="{at_base}"', rendered_summary(data))
+                shutil.rmtree(self.out)
+
+    @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
+    def test_a_merged_pull_request_without_a_recorded_default_branch_links_its_head(self) -> None:
+        data = self.build(state="merged", headRef="feature/header-links")
+        del data["defaultBranch"]
+
+        self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:

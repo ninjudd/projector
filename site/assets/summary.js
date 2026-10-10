@@ -26,13 +26,24 @@
         function ext(href, text, cls) {
             return `<a${cls !== undefined && cls !== '' ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${text}</a>`;
         }
-        // A file on the pull request's head branch, which always shows its current
-        // version. A merged or closed pull request's branch is usually deleted, so its
-        // files, and those of a summary that did not record its branch, link the head.
-        function blobUrl(path) {
-            const live = pr.state !== 'merged' && pr.state !== 'closed';
-            const ref = live && pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : pr.head;
-            return `${repoUrl}/blob/${[...ref.split('/'), ...path.split('/')].map(encodeURIComponent).join('/')}`;
+        // A file as it is now. While the pull request is open, that is on its head
+        // branch, and once it merges, on the default branch, since the merge usually
+        // deletes the branch. A closed pull request never reached the default branch,
+        // so its files link its head commit, as do those of a summary that did not
+        // record its branch and of a merged one whose build did not record the default
+        // branch. A file the pull request deleted is in none of those, so it links the
+        // merge base, the last commit that has it.
+        function blobUrl(f) {
+            const headRef = pr.headRef !== undefined && pr.headRef !== '' ? pr.headRef : null;
+            const trunk = data.defaultBranch !== undefined && data.defaultBranch !== '' ? data.defaultBranch : null;
+            let ref = pr.head;
+            if (f.deleted === true && pr.base !== undefined && pr.base !== '')
+                ref = pr.base;
+            else if (pr.state === 'merged')
+                ref = trunk ?? pr.head;
+            else if (pr.state !== 'closed' && headRef !== null)
+                ref = headRef;
+            return `${repoUrl}/blob/${[...ref.split('/'), ...f.path.split('/')].map(encodeURIComponent).join('/')}`;
         }
         // The build checks every file a group names against the diff.
         function fileAt(path) {
@@ -170,7 +181,7 @@
                 `<span class="stat"><span class="plus">+${String(f.adds)}</span> <span class="minus">−${String(f.dels)}</span></span>` +
                 moreMenu(`${f.id}-menu`, `Links for ${f.path}`, [
                     { href: `${prUrl}/files#${f.anchor}`, text: 'View diff on GitHub', external: true },
-                    { href: blobUrl(f.path), text: 'View file on GitHub', external: true },
+                    { href: blobUrl(f), text: 'View file on GitHub', external: true },
                     ...(f.project !== undefined ? [{ href: f.project.url, text: 'View project', external: false }] : []),
                 ]) +
                 `<label class="freviewed"><input type="checkbox" class="file-box" id="${f.id}-reviewed"> Reviewed</label>` +

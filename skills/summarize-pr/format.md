@@ -59,9 +59,12 @@ it. The summary is JSON:
   request's head, are what the site's review list uses to mark a stacked pull
   request. `init` records both; keep them when you edit a summary by hand.
   Each file's **View file on GitHub** link opens the file on `pr.headRef`, so
-  it shows the current version. It opens the file at `pr.head` instead when a
-  summary has no `headRef`, and when the site's last build found the pull
-  request merged or closed, because its branch is usually deleted then.
+  it shows the current version. Once the site's last build found the pull
+  request merged, it opens the file on the repository's default branch
+  instead, since the merge usually deletes the branch. It opens the file at
+  `pr.head` when the pull request was closed without merging, or has not
+  merged and the summary has no `headRef`. It opens a file the pull request
+  deleted at `pr.base`, the last commit that has it.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and the list of files itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a

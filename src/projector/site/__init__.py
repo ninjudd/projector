@@ -176,7 +176,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
     them each page carries `pr.state`, and `review`, the newest Projector
     review of its head: `unreviewed` when none names the head. A page has
-    neither when the lookup is missing or cannot ask.
+    neither when the lookup is missing or cannot ask. Each page also carries
+    `defaultBranch`, `trunk`, where a merged pull request's files now live.
     """
     summaries = sorted(root.glob("*/*/summary.json"))
     unread = [path for path in sorted(root.glob(f"*/*/{LEGACY_SUMMARY_FILE}"))
@@ -230,7 +231,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", link=None, trunk: st
         statuses = review_statuses(status["reviews"]) if status is not None else None
         for _, payload in versions:
             head = payload["pr"]["head"]
-            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack)
+            payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, defaultBranch=trunk)
             if status is not None:
                 payload["pr"]["state"] = status["state"]
                 payload["review"] = statuses.get(head, {"status": "unreviewed"})

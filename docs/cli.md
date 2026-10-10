@@ -728,12 +728,15 @@ its diff changes, and to any its summary names in a `projects` list, and each
 project page lists its reviews. A review page's header has a **…** menu with
 the pull request's conversation, files, and compare views on GitHub. Each file
 card's header has one too: **View diff on GitHub**, **View file on GitHub**,
-which opens the file on the pull request's head branch, and, for a file in a
-project's folder, **View project**, which opens that project on the site. That
-is the deepest project the site has a page for, so a nested project owns its
-own files, not the project around it. Once the build finds the pull request
-merged or closed, **View file on GitHub** uses its head commit, because its
-branch is usually deleted then. `search/` searches every document the site
+and, for a file in a project's folder, **View project**, which opens that
+project on the site. That is the deepest project the site has a page for, so a
+nested project owns its own files, not the project around it. **View file on
+GitHub** shows the file as it is now: on the pull request's head branch while
+it is open, and on the repository's default branch once the build finds it
+merged, since the merge usually deletes the branch. A pull request closed
+without merging, or an unmerged one whose summary records no `headRef`, links
+its head commit. A file the pull request deleted links the merge base, the
+last commit that has it. `search/` searches every document the site
 serves, from a `search.json` index the build writes, and non-Markdown files
 under `docs/`, such as images, are copied into the site so a relative link to
 one resolves there.
