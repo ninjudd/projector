@@ -1,0 +1,93 @@
+{
+ "version": 1,
+ "name": "Stack header plan",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 216,
+  "title": "Plan one header for each stack: its project or a title",
+  "head": "c18541f1d2b825a8a3f2f06c59ac991ca45a2897",
+  "headRef": "spec-stack-header",
+  "base": "7833813cdb9681f7c469dd7f6724940313c296be",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's site has a <b>Reviews</b> index that lists every pull request with a published summary, and each summary page has a sidebar that lists the pull requests in its <b>stack</b>, the chain of pull requests where each one's base branch is the head branch of the one beneath it. Neither place says what a stack as a whole is for. Today the only hint is a set of project links that the build derives from each pull request's diff: every project whose folder holds a changed file. That rule links a rename across plans to unrelated projects and links the upper layers of a stack, which implement a plan without editing it, to nothing.",
+   "This pull request adds one new plan, <code>docs/projects/stack-header/readme.md</code>, at <code>status: ready</code> and <code>priority: next</code>. It changes no code. The plan is written against <code>main</code> as #215 left it: the Reviews index has three columns (pull request, status, updated), no Projects column, and <b>Open</b> and <b>Closed</b> boxes. The plan gives every stack, a pull request alone included, exactly one <b>header</b>: the project the stack carries out, linked to the project's page, or a short plain-text title when it has none.",
+   "<ol><li><b>A summary records its project.</b> <code>summary.json</code> gains a <code>project</code> field, and <code>name</code> becomes the stack's title. <code>init</code> writes <code>null</code>, which means undecided, and <code>publish</code> refuses it, so every new summary states a choice.</li><li><b>The build picks one header per stack.</b> It walks the stack's layers from the bottom up and takes the first project the site has a page for. Without one, it takes the first non-empty <code>name</code>, and without that, the bottom pull request's title.</li><li><b>The index and the sidebar draw it.</b> A header row opens each stack on the Reviews index, and one header replaces the sidebar's project rows. The Projects column goes.</li><li><b>Older summaries get a header without republishing.</b> A summary with no <code>project</code> keeps today's answer where today's answer is a single project, and otherwise gets its title.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Stack</b>: pull requests chained by base branch, listed bottom layer first.</li><li><b>Layer</b>: one pull request in a stack.</li><li><b>Header</b>: the one line drawn above a stack, a project link or a title.</li><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, the hidden ref the site builds summaries from.</li><li><b>Migration rule</b>: how the build chooses a project for a summary published before the <code>project</code> field existed.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b>First head.</b> One finding. Step 3 of § 2.1 told each upper layer to copy the <code>project</code> of the layer beneath it whenever it was set. Because <code>\"\"</code> counts as set, a stack that opens with a refactor would have lost its project in every layer above.</li><li><b>This head.</b> The plan fixes the finding: step 3 copies only a non-empty <code>project</code> and <code>name</code>. It also says how an update sets <code>project</code> on a summary published before the field existed, and it rewrites the index sections for the code that #215 merged. Review verdict: clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The stack header plan",
+   "kicker": "One header per stack, chosen from the summaries' recorded project or title.",
+   "intro": [
+    "The whole pull request is this one plan. Read it in order: § 1 is the problem, § 2 the design, § 3 the reasons, § 4 the tests the implementation must add, and § 6 how it meets the open #215.",
+    "The design has two halves. The summarizing agent decides the project, in the <code>summarize-pr</code> skill (§ 2.1). The site build only checks that decision and picks one answer per stack, from the lowest layer up (§ 2.2). Keep those halves apart when you read: the build's rule tolerates layers that disagree, but the skill's steps decide what the layers record in the first place."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/stack-header/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the problem, the data, the build's rule, the drawing, the tests, and the rollout.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 22,
+       "text": "§ 1 describes today's rule. <code>project_linker</code> in <code>src/projector/site/__init__.py</code> returns every project whose folder holds a changed file, after any names in the summary's undocumented <code>projects</code> list. After #215 those links reach only the sidebar and the project pages, not the index."
+      },
+      {
+       "kind": "context",
+       "line": 61,
+       "text": "<code>null</code> and <code>\"\"</code> mean different things. <code>null</code> means nobody chose, and <code>publish</code> refuses it. <code>\"\"</code> means this pull request names no project, and a layer above it can still give the stack one."
+      },
+      {
+       "kind": "verify",
+       "line": 79,
+       "text": "Step 3 copies the beneath layer's <code>project</code> only when it is a non-empty string, and its <code>name</code> only when it is non-empty. A stack that opens with a refactor recording <code>\"\"</code> keeps the project a layer above it records. The review checked this against the <code>\"\"</code> row of the table, § 2.2 step 3, and § 3."
+      },
+      {
+       "kind": "context",
+       "line": 92,
+       "text": "<code>review-pr</code> updates an existing summary rather than starting over. Every summary published before this change lacks <code>project</code>, so the update path has to set it, or the first republish of each open pull request would be refused."
+      },
+      {
+       "kind": "context",
+       "line": 109,
+       "text": "The build already computes <code>stack_groups</code> for the Reviews index, but today it writes each page before it computes the groups. Step 1 means the implementation has to reorder <code>build_summaries</code> so the header is known before any page is written, as § 2.5 says."
+      },
+      {
+       "kind": "context",
+       "line": 118,
+       "text": "This is the migration rule for summaries published before the field. The review counted the summaries on the ref: none records <code>projects</code>, so in practice the diff decides, and only a diff that touches exactly one project's files keeps a project."
+      },
+      {
+       "kind": "verify",
+       "line": 200,
+       "text": "<code>site.css</code> on <code>main</code> pads each body's first row with <code>table.tbl.reviews tbody tr:first-child td { padding-top: 6px; }</code>. The review confirmed that the rule exists and that the header row, a <code>th</code>, would displace it. This paragraph moves the padding to the header."
+      },
+      {
+       "kind": "context",
+       "line": 260,
+       "text": "<code>validate</code> in <code>src/projector/summary.py</code> requires <code>pr.title</code>, and both <code>build_summaries</code> and <code>project site page</code> run it, so dropping the <code>name</code> fallback from <code>pr_title</code> changes no page."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
