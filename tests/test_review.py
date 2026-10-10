@@ -80,11 +80,12 @@ class FakeGitHub:
         if self.fail and self.fail in " ".join(args):
             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
-            login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
+            login = re.search(r'\.user\.login == "([^"]+)"', args[4])
             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
+                                       "login": r["user"]["login"], "association": r.get("association", "OWNER"),
                                        "body": r["body"]}) + "\n"
-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
-                           and r["id"] not in self.unlisted)
+                           for r in self.reviews if (login is None or r["user"]["login"] == login.group(1))
+                           and "projector-review" in r["body"] and r["id"] not in self.unlisted)
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
@@ -231,8 +232,7 @@ class SetupTests(ReviewCase):
         self.assertFalse(worktree.is_relative_to(self.checkout), "never inside the checkout")
         self.assertTrue(state["trusted"])
         self.assertEqual({"id": 101, "created_at": "2026-09-27T01:02:03Z"}, state["start_comment"])
-        self.assertEqual(("claude-opus-5-5", "claude-opus-5-5", "2026-09-27T01:02:03Z"),
-                         (state["model"], state["identity"], state["head_started_at"]))
+        self.assertEqual(("claude-opus-5-5", "claude-opus-5-5"), (state["model"], state["identity"]))
         self.assertEqual(("example-loop", False), (state["loop"], state["rereview"]))
         self.assertEqual([], json.loads((self.state / "loops" / "example-loop" / "published.json").read_text()))
         self.assertEqual(
@@ -638,10 +638,10 @@ class PublishCase(ReviewCase):
         return self.github.reviews[-1]
 
     def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
-                    verdict: str = "clean", login: str = "operator") -> int:
+                    verdict: str = "clean", login: str = "operator", association: str = "OWNER") -> int:
         review_id = 800 + len(self.github.reviews)
         self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
-                                    "commit_id": sha or self.head, "at": at,
+                                    "commit_id": sha or self.head, "at": at, "association": association,
                                     "body": verdict_body(sha or self.head, model, verdict)})
         return review_id
 
@@ -677,7 +677,7 @@ class PublishTests(PublishCase):
         ready = next(i for i, c in enumerate(steps) if c.startswith("pr ready"))
         reread = next(i for i, c in enumerate(steps) if c == f"api repos/{REPO}/pulls/1/reviews/901")
         delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
-        self.assertLess(reread, ready, "the rule counts the review as read back")
+        self.assertLess(reread, ready, "the newest verdict counts the review as read back")
         self.assertLess(ready, delete, "the start comment goes only after the re-read and draft state")
         self.assertIn("published review 901", out)
 
@@ -1154,334 +1154,204 @@ class ModelTests(PublishCase):
         self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
                          ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
 
-    def test_move_records_when_the_review_began_on_the_new_head(self) -> None:
+    def test_move_keeps_the_model_in_the_start_comment(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
 
         self.assertEqual(0, self.later("move")[0])
 
-        self.assertEqual(self.clock.isoformat(), self.read_state()["head_started_at"])
-        self.assertIn(" model=claude-opus-5-5 -->", self.github.comments[101])
+        self.assertIn(f" sha={self.github.pr['head']['sha']} model=claude-opus-5-5 -->", self.github.comments[101])
 
 
 def iso(at: datetime) -> str:
     return at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class SignoffCase(PublishCase):
-    """Publishing as claude-opus-5-5 on head H beside gpt-5.5, on a clock the peer wait's sleeps advance."""
+class LatestWinsCase(PublishCase):
+    """Publishing as claude-opus-5-5 on head H, where gpt-5.5 may have reviewed H too."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.earlier = self.base
-        self.slept: list[float] = []
-        self.hooks: dict[int, object] = {}
-
-        def sleep(seconds: float) -> None:
-            self.slept.append(seconds)
-            self.clock += timedelta(seconds=seconds)
-            hook = self.hooks.pop(len(self.slept), None)
-            if hook:
-                hook()
-
-        patcher = mock.patch.object(review, "sleep", sleep)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def begin_now(self) -> None:
-        """Start the review at the clock's time, so the peer wait's deadline is still ahead."""
-        self.github.created_at = iso(self.clock)
-
-    def start(self, model: str, sha: str | None = None, at: str | None = None) -> int:
-        return self.github.comment(review.start_comment(model, sha or self.head), created_at=at)
-
-    def configure(self, text: str) -> None:
-        (self.checkout / ".projector.toml").write_text(f"[review]\n{text}\n")
-
-    def json_publish(self, verdict: str, *extra: str) -> dict:
-        code, out, err = self.publish(verdict, "--json", *extra)
+    def json_publish(self, verdict: str, *extra: str, loop: str = "l1") -> dict:
+        code, out, err = self.publish(verdict, "--json", *extra, loop=loop)
         self.assertEqual(0, code, err)
         return json.loads(out)
 
 
-class SignoffTests(SignoffCase):
-    def test_any_models_change_request_on_the_head_returns_it_to_draft(self) -> None:
-        self.github.pr["draft"] = False
-        self.add_verdict("gpt-5.5", verdict="changes-requested")
+class LatestWinsTests(LatestWinsCase):
+    def test_a_clean_newest_verdict_marks_it_ready_over_an_older_models_change_request(self) -> None:
+        older = self.add_verdict("gpt-5.5", verdict="changes-requested")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         result = self.json_publish("clean")
 
-        self.assertEqual(("changes-requested", True), (result["signoff"], result["draft"]))
+        self.assertEqual(("claude-opus-5-5", "clean", False), (result["newest"]["model"], result["newest"]["verdict"],
+                                                                result["draft"]))
+        self.assertEqual(result["review_id"], result["newest"]["review"])
+        self.assertFalse(self.github.pr["draft"], f"gpt-5.5's review {older} is older, so it no longer counts")
+
+    def test_a_newer_change_request_drafts_it(self) -> None:
+        self.add_verdict("gpt-5.5")
+        self.github.pr["draft"] = False
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("changes-requested", "--threads", str(self.threads(finding())))
+
+        self.assertEqual(("changes-requested", True), (result["newest"]["verdict"], result["draft"]))
         self.assertTrue(self.github.pr["draft"])
 
-    def test_another_model_reviewing_the_head_leaves_the_draft_state_as_it_is(self) -> None:
-        for draft in (True, False):
-            with self.subTest(draft=draft):
+    def test_a_change_request_posted_after_this_clean_verdict_wins(self) -> None:
+        # gpt-5.5 submits while claude-opus-5-5 is between its own submit and setting draft state.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        newer = []
+        self.github.after_post = lambda: newer.append(
+            self.add_verdict("gpt-5.5", verdict="changes-requested", at=iso(self.clock + timedelta(seconds=1))))
+
+        code, out, err = self.publish("clean")
+
+        self.assertEqual(0, code, err)
+        self.assertTrue(self.github.pr["draft"], "the newest verdict requests changes")
+        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls), "it was a draft already")
+        self.assertIn(f"the newest verdict on the head is gpt-5.5's changes-requested, review {newer[0]}", out)
+
+    def test_two_models_that_publish_together_leave_the_later_ones_draft_state(self) -> None:
+        for gpt_verdict in ("clean", "changes-requested"):
+            with self.subTest(gpt=gpt_verdict):
                 self.setUp()
-                self.github.pr["draft"] = draft
-                self.start("gpt-5.5")
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+                threads = ["--threads", str(self.threads(finding()))] if gpt_verdict == "changes-requested" else []
 
-                result = self.json_publish("clean")
+                def gpt_publishes() -> None:
+                    # A second later, between claude-opus-5-5's submit and its draft state.
+                    self.clock += timedelta(seconds=1)
+                    self.assertEqual(0, self.publish(gpt_verdict, "--model", "gpt-5.5", *threads, loop="gpt")[0])
 
-                self.assertEqual(("waiting", None), (result["signoff"], result["draft"]))
-                self.assertEqual(draft, self.github.pr["draft"])
-                self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
+                self.github.after_post = gpt_publishes
+                result = self.json_publish("clean", "--model", "claude-opus-5-5", loop="claude")
 
-    def test_the_rule_counts_the_review_it_read_back_when_the_listing_lags(self) -> None:
+                self.assertEqual(("gpt-5.5", gpt_verdict), (result["newest"]["model"], result["newest"]["verdict"]))
+                self.assertEqual(gpt_verdict == "changes-requested", self.github.pr["draft"])
+
+    def test_a_clean_verdict_needs_another_models_finding_settled_first(self) -> None:
+        self.github.pages = [page([thread("T1", FINDING.replace(" -->", " model=gpt-5.5 -->") % self.head)], None)]
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code)
+        self.assertIn("a clean verdict needs no open finding, and 1 are open", err)
+        self.assertEqual([], self.github.reviews)
+
+    def test_the_review_read_back_counts_when_the_listing_lags(self) -> None:
+        self.add_verdict("gpt-5.5", verdict="changes-requested")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.github.after_post = lambda: self.github.unlisted.add(self.github.reviews[-1]["id"])
 
         result = self.json_publish("clean")
 
-        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
-        self.assertFalse(self.github.pr["draft"])
+        self.assertEqual((result["review_id"], False), (result["newest"]["review"], self.github.pr["draft"]))
 
-    def test_every_model_clean_on_the_head_marks_it_ready(self) -> None:
-        self.add_verdict("gpt-5.5")
+    def test_a_verdict_from_an_account_the_repository_does_not_let_in_does_not_count(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.after_post = lambda: self.add_verdict(
+            "gpt-5.5", verdict="changes-requested", login="passer-by", association="NONE",
+            at=iso(self.clock + timedelta(seconds=1)))
 
         result = self.json_publish("clean")
 
-        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
-        self.assertFalse(self.github.pr["draft"])
+        self.assertEqual(("claude-opus-5-5", False), (result["newest"]["model"], self.github.pr["draft"]))
 
-    def test_a_start_comment_its_model_has_answered_or_on_an_older_head_does_not_hold_the_rule(self) -> None:
-        cases = {"answered": lambda: (self.start("gpt-5.5", at="2026-09-27T01:05:00Z"),
-                                      self.add_verdict("gpt-5.5", at="2026-09-27T01:06:00Z")),
-                 "older head": lambda: self.start("gpt-5.5", sha=self.earlier)}
-        for name, arrange in cases.items():
-            with self.subTest(name):
-                self.setUp()
-                arrange()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-                result = self.json_publish("clean")
-
-                self.assertEqual("clean", result["signoff"])
-                self.assertFalse(self.github.pr["draft"])
-
-    def test_a_verdict_from_another_account_does_not_count(self) -> None:
-        self.add_verdict("gpt-5.5", verdict="changes-requested", login="someone-else")
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        self.assertEqual("clean", self.json_publish("clean")["signoff"])
-
-    def test_two_models_that_publish_together_sign_off_whichever_order_they_apply_the_rule_in(self) -> None:
-        for gpt_verdict, signed in (("clean", "clean"), ("changes-requested", "changes-requested")):
-            for first in ("claude-opus-5-5", "gpt-5.5"):
-                with self.subTest(gpt=gpt_verdict, submits_first=first):
-                    self.setUp()
-                    self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
-                    self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
-                    opus = ("clean", "--model", "claude-opus-5-5")
-                    gpt = (gpt_verdict, "--model", "gpt-5.5",
-                           *(["--threads", str(self.threads(finding()))] if gpt_verdict == "changes-requested" else []))
-                    if first == "gpt-5.5":
-                        # gpt-5.5 submits while claude-opus-5-5 is between its own submit and its rule.
-                        self.github.after_post = lambda: self.assertEqual(0, self.publish(*gpt, loop="gpt")[0])
-                        result = self.json_publish(*opus[:1], *opus[1:], "--loop", "claude")
-                    else:
-                        result = self.json_publish(*opus[:1], *opus[1:], "--loop", "claude")
-                        self.assertEqual("waiting", result["signoff"], "gpt-5.5 is still reviewing")
-                        result = self.json_publish(*gpt[:1], *gpt[1:], "--loop", "gpt")
-
-                    self.assertEqual(signed, result["signoff"])
-                    self.assertEqual(signed == "changes-requested", self.github.pr["draft"])
-
-
-class PeerWaitTests(SignoffCase):
-    """gpt-5.5 reviewed an earlier head and has posted nothing on H."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.add_verdict("gpt-5.5", sha=self.earlier)
-
-    def test_waits_until_the_deadline_for_a_peer_that_posts_nothing_then_marks_it_ready(self) -> None:
-        self.begin_now()
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        code, out, err = self.publish("clean")
-
-        self.assertEqual(0, code, err)
-        self.assertEqual(180, sum(self.slept))
-        self.assertTrue(all(seconds <= 15 for seconds in self.slept))
-        self.assertFalse(self.github.pr["draft"])
-        self.assertIn("sign-off: clean, after waiting 180s; no review yet from gpt-5.5", out)
-
-    def test_a_start_comment_posted_during_the_wait_leaves_the_draft(self) -> None:
-        self.begin_now()
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.hooks[2] = lambda: self.start("gpt-5.5")
-
-        result = self.json_publish("clean")
-
-        self.assertEqual(("waiting", None, 30), (result["signoff"], result["draft"], result["waited"]))
-        self.assertTrue(self.github.pr["draft"])
-
-    def test_a_verdict_posted_during_the_wait_joins_the_rule(self) -> None:
-        for verdict, draft in (("clean", False), ("changes-requested", True)):
-            with self.subTest(verdict):
-                self.setUp()
-                self.begin_now()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-                self.hooks[1] = lambda: self.add_verdict("gpt-5.5", at=iso(self.clock), verdict=verdict)
-
-                result = self.json_publish("clean")
-
-                self.assertEqual((verdict, 15), (result["signoff"], result["waited"]))
-                self.assertEqual(draft, self.github.pr["draft"])
-
-    def test_no_wait_past_the_deadline_with_peer_wait_zero_or_on_a_pull_request_already_ready(self) -> None:
-        cases = {"review older than the deadline": lambda: None,
-                 "peer_wait = 0": lambda: (self.begin_now(), self.configure("peer_wait = 0")),
-                 "already ready": lambda: (self.begin_now(), self.github.pr.update(draft=False))}
-        for name, arrange in cases.items():
-            with self.subTest(name):
-                self.setUp()
-                arrange()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-                result = self.json_publish("clean")
-
-                self.assertEqual(([], "clean"), (self.slept, result["signoff"]))
-                self.assertFalse(self.github.pr["draft"])
-
-    def test_a_head_that_moves_during_the_wait_ends_it_and_leaves_the_draft(self) -> None:
-        self.begin_now()
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.hooks[1] = lambda: self.github.pr["head"].update(sha="f" * 40)
-
-        result = self.json_publish("clean")
-
-        self.assertEqual((True, None, [15]), (result["moved"], result["draft"], self.slept))
-        self.assertTrue(self.github.pr["draft"])
-
-    def test_a_peer_wait_that_is_not_a_non_negative_integer_refuses_and_names_the_key(self) -> None:
-        for value in ('"180"', "-1", "true", "1.5"):
-            with self.subTest(value=value):
-                self.setUp()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-                self.configure(f"peer_wait = {value}")
-
-                code, _, err = self.publish("clean")
-
-                self.assertEqual(1, code)
-                self.assertIn("review.peer_wait must be a non-negative number of seconds", err)
-                self.assertEqual(1, len(self.github.reviews), "nothing was posted")
-                self.assertTrue(self.lock(self.head).exists())
-
-
-class CrossAuthorSignoffTests(SignoffCase):
-    def setUp(self) -> None:
-        super().setUp()
+    def test_a_cross_author_review_approves_on_its_own_clean_verdict_and_leaves_draft_state_alone(self) -> None:
         self.github.pr["user"] = {"login": "teammate"}
         self.github.permissions = {"teammate": "write"}
         self.github.commit_authors = ["teammate"]
-        self.configure("allow_approve = true")
-
-    def test_a_clean_verdict_approves_only_when_every_model_on_the_head_is_clean(self) -> None:
-        cases = {"changes requested": (lambda: self.add_verdict("gpt-5.5", verdict="changes-requested"), "COMMENT"),
-                 "reviewing": (lambda: self.start("gpt-5.5"), "COMMENT"),
-                 "clean": (lambda: self.add_verdict("gpt-5.5"), "APPROVE"),
-                 "alone": (lambda: None, "APPROVE")}
-        for name, (arrange, event) in cases.items():
-            with self.subTest(name):
-                self.setUp()
-                arrange()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-                result = self.json_publish("clean")
-
-                self.assertEqual(event, self.posted()["event"])
-                self.assertEqual(event, result["event"])
-                self.assertIsNone(result["draft"])
-                self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
-                self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
-
-    def test_an_approval_waits_for_a_peer_that_reviewed_an_earlier_head(self) -> None:
-        self.add_verdict("gpt-5.5", sha=self.earlier)
-        self.begin_now()
+        (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
+        self.add_verdict("gpt-5.5", verdict="changes-requested")
+        self.github.comment(review.start_comment("codex-mini", self.head))
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.hooks[1] = lambda: self.start("gpt-5.5")
 
-        self.assertEqual("COMMENT", self.json_publish("clean")["event"])
-        self.assertEqual([15], self.slept)
+        result = self.json_publish("clean")
 
-    def test_a_head_that_moves_during_the_approval_wait_refuses_and_points_at_move(self) -> None:
-        self.add_verdict("gpt-5.5", sha=self.earlier)
-        self.begin_now()
+        self.assertEqual(("APPROVE", None, None), (self.posted()["event"], result["draft"], result["newest"]))
+        self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
+        self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
+
+    def test_publish_waits_for_no_other_model_and_reads_no_wait_setting(self) -> None:
+        (self.checkout / ".projector.toml").write_text('[review]\npeer_wait = "anything"\n')
+        self.add_verdict("gpt-5.5", sha=self.base)
+        self.github.comment(review.start_comment("gpt-5.5", self.head))
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.hooks[1] = lambda: self.github.pr["head"].update(sha="f" * 40)
 
-        code, _, err = self.publish("clean")
+        self.json_publish("clean")
 
-        self.assertEqual(1, code)
-        self.assertIn("project review move 1", err)
-        self.assertEqual(1, len(self.github.reviews), "only gpt-5.5's earlier verdict")
-        self.assertTrue(self.lock(self.head).exists())
+        self.assertFalse(self.github.pr["draft"], "neither another model's earlier head nor its start comment holds it")
 
 
-class StatusTests(SignoffCase):
+class StatusTests(LatestWinsCase):
     def status(self, *extra: str) -> tuple[int, str, str]:
         return self.project("status", "1", "--repo", REPO, *extra)
 
-    def test_reports_each_model_and_the_open_threads_and_exits_zero_whatever_the_sign_off(self) -> None:
-        clean = self.add_verdict("claude-opus-5-5", at="2026-09-27T01:10:00Z")
-        older = self.add_verdict("codex-mini", sha=self.earlier)
-        started = self.start("gpt-5.5", at="2026-09-27T14:02:00Z")
-        self.github.pages = [page([thread("T1", FINDING % self.head + " model=gpt-5.5 -->", path="src/x.py", line=4),
+    def test_reports_the_newest_verdict_each_models_and_the_open_threads_whatever_they_are(self) -> None:
+        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
+        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
+        self.add_verdict("codex-mini", sha=self.base, at="2026-09-27T14:25:00Z", verdict="changes-requested")
+        self.github.comment(review.start_comment("codex-mini", self.head))
+        self.github.pages = [page([thread("T1", FINDING % self.head, path="src/x.py", line=4),
                                    thread("T2", FINDING % self.head, resolved=True)], None)]
         self.github.pages[0]["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"][0][
             "body"] = f"<!-- projector-finding v=1 priority=P2 sha={self.head} model=gpt-5.5 -->\n**P2 · A nil deref**"
-        self.clock = datetime(2026, 9, 27, 14, 30, tzinfo=timezone.utc)
 
         code, out, err = self.status()
         as_json = json.loads(self.status("--json")[1])
 
         self.assertEqual(0, code, err)
-        self.assertEqual([f"#1 at {self.head[:7]}: waiting",
-                          f"  claude-opus-5-5   clean               review {clean}",
-                          f"  codex-mini        pending             review {older} on {self.earlier[:7]}",
-                          f"  gpt-5.5           reviewing           start comment {started}, since 14:02 UTC",
+        self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(newest)}",
+                          f"  claude-opus-5-5   clean               review {newest}, 14:20 UTC",
+                          f"  gpt-5.5           changes-requested   review {older}, 14:02 UTC",
                           "  1 open finding thread: src/x.py:4 (gpt-5.5)"], out.splitlines())
-        self.assertEqual((REPO, 1, self.head, True, "waiting"),
-                         (as_json["repo"], as_json["number"], as_json["head"], as_json["draft"], as_json["signoff"]))
-        self.assertEqual([("claude-opus-5-5", "clean", clean), ("codex-mini", "pending", older),
-                          ("gpt-5.5", "reviewing", None)],
-                         [(m["model"], m["state"], m.get("review")) for m in as_json["models"]])
-        self.assertEqual(started, as_json["models"][2]["comment"])
+        self.assertEqual((REPO, 1, self.head, True, "clean"),
+                         (as_json["repo"], as_json["number"], as_json["head"], as_json["draft"], as_json["verdict"]))
+        self.assertEqual({"model": "claude-opus-5-5", "verdict": "clean", "review": newest, "url": review_page(newest),
+                          "at": "2026-09-27T14:20:00Z", "login": "operator"}, as_json["newest"])
+        self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
+                         [(m["model"], m["verdict"], m["review"]) for m in as_json["models"]],
+                         "a verdict on an earlier head and a start comment are not on the list")
         self.assertEqual([{"path": "src/x.py", "line": 4, "model": "gpt-5.5"}], as_json["open_threads"])
 
-    def test_a_model_with_only_earlier_activity_is_pending_and_leaves_the_sign_off_alone(self) -> None:
-        self.add_verdict("claude-opus-5-5")
-        self.add_verdict("gpt-5.5", sha=self.earlier, verdict="changes-requested")
+    def test_a_newer_change_request_is_the_newest_verdict(self) -> None:
+        self.add_verdict("claude-opus-5-5", at="2026-09-27T14:02:00Z")
+        newest = self.add_verdict("gpt-5.5", at="2026-09-27T14:20:00Z", verdict="changes-requested")
 
         result = json.loads(self.status("--json")[1])
 
-        self.assertEqual("clean", result["signoff"])
-        self.assertEqual(["clean", "pending"], [m["state"] for m in result["models"]])
+        self.assertEqual(("changes-requested", "gpt-5.5", newest),
+                         (result["verdict"], result["newest"]["model"], result["newest"]["review"]))
 
-    def test_fix_prs_status_command_reads_the_account_whose_loop_reviewed_the_pull_request(self) -> None:
+    def test_one_model_prints_one_line(self) -> None:
+        newest = self.add_verdict("claude-opus-5-5")
+
+        self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(newest)}"],
+                         self.status()[1].splitlines())
+
+    def test_every_account_the_repository_lets_in_counts_so_fix_pr_runs_it_once(self) -> None:
         skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
-        self.assertIn("`project review status <number> --reviewer <login>` reports `clean`", skill)
-        self.add_verdict("claude-opus-5-5", login="teammate")
+        self.assertIn("`project review status <number>` reports `clean`", skill)
+        self.assertNotIn("--reviewer", skill)
+        teammate = self.add_verdict("claude-opus-5-5", login="teammate", association="COLLABORATOR")
 
-        mine = json.loads(self.status("--json")[1])
-        theirs = json.loads(self.status("--json", "--reviewer", "teammate")[1])
+        result = json.loads(self.status("--json")[1])
 
-        self.assertEqual("unreviewed", mine["signoff"], "the operator's own loop has not reviewed it")
-        self.assertEqual("clean", theirs["signoff"], "the teammate's loop found the head clean")
+        self.assertEqual(("clean", teammate), (result["verdict"], result["newest"]["review"]),
+                         "the operator's status sees the teammate's loop")
 
-    def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
-        self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")
+    def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
+        self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")
 
         mine = json.loads(self.status("--json")[1])
         bot = json.loads(self.status("--json", "--reviewer", "review-bot")[1])
 
-        self.assertEqual(("unreviewed", []), (mine["signoff"], mine["models"]))
-        self.assertEqual("changes-requested", bot["signoff"])
+        self.assertEqual(("unreviewed", None, []), (mine["verdict"], mine["newest"], mine["models"]))
+        self.assertEqual(["#1 at " + self.head[:7] + ": unreviewed"], self.status()[1].splitlines())
+        self.assertEqual("changes-requested", bot["verdict"])
 
     def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
         self.github.missing = True

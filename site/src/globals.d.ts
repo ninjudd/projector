@@ -81,27 +81,15 @@ interface SummaryGroup {
 /** A pull request's state when the site was built. */
 type PullState = 'open' | 'merged' | 'closed';
 
-/** The head of the full review a clean incremental review builds on, and that review's page, or null when the build found none. */
-interface IncrementalFrom { head: string; url: string | null }
-
-/** One model's newest Projector review of a head, with its page on GitHub. */
-type ModelStatus =
-  | { model: string; status: 'clean'; url: string; incrementalFrom?: IncrementalFrom }
-  | { model: string; status: 'changes-requested'; url: string };
-
 /**
- * A head's status from the newest Projector review each model gave it, or `unreviewed` when no
- * Projector review names the head. It is `changes-requested` when any model's is, with `url` the
- * newest such review, and `clean` otherwise. `models` lists each model, changes requested first.
- * A clean status carries `incrementalFrom` when its one model's review is incremental.
+ * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
+ * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
+ * head of the full review it builds on, and that review's page, or null when the build found none.
  */
 type ReviewStatus =
-  | { status: 'clean'; url: string; models: ModelStatus[]; incrementalFrom?: IncrementalFrom }
-  | { status: 'changes-requested'; url: string; models: ModelStatus[] }
+  | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
+  | { status: 'changes-requested'; url: string }
   | { status: 'unreviewed' };
-
-/** What `statusHtml` draws a verdict from: a head's status, or one model's. */
-type Verdict = { status: 'clean' | 'changes-requested'; url: string } | { status: 'unreviewed' };
 
 /** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
 interface StackHeader {
@@ -145,7 +133,7 @@ interface SummaryData {
   segments: StackSegment[];
   /** The header of the segment this pull request is in. */
   header: StackHeader;
-  /** This head's status across the models that reviewed it, as `ReviewStatus` describes; absent when the build could not ask GitHub. */
+  /** The newest Projector review of this head; absent when the build could not ask GitHub. */
   review?: ReviewStatus;
   generatedAt?: string;
 }
@@ -189,7 +177,7 @@ interface SiteReview {
   heads: number;
   /** The number of the first review in this one's stack, shared by every review in it; null when no other review is in it. */
   stack: number | null;
-  /** The pull request's state, and its newest head's status across the models that reviewed it, as `ReviewStatus` describes; each absent when the build could not ask GitHub. */
+  /** The pull request's state, and the newest Projector review of its newest head; each absent when the build could not ask GitHub. */
   state?: PullState;
   review?: ReviewStatus;
   /** When the newest head was published, as an ISO 8601 time in UTC. */

@@ -469,13 +469,13 @@ def parser() -> argparse.ArgumentParser:
         "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
     ))
     review_status = review_commands.add_parser(
-        "status", help="report the sign-off of a pull request's current head and each model's part in it"
+        "status", help="report the newest Projector verdict on a pull request's current head"
     )
     review_status.add_argument("pr", type=int, help="the pull request number")
     review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
                                               "this checkout's origin)")
-    review_status.add_argument("--reviewer", help="the GitHub login whose reviews count (default: review.username, "
-                                                  "then you)")
+    review_status.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
+                                                  "members, and collaborators (default: review.username, then you)")
     review_status.add_argument("--state-dir", type=Path,
                                help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
     add_output(review_status)
@@ -868,8 +868,8 @@ def incremental_enabled(checkout: Path) -> bool:
 
 
 def review_status(root: Path, arguments: argparse.Namespace) -> int:
-    """`review status`: the sign-off of a pull request's head, whatever it is; exit 1 only when the pull
-    request cannot be read. The reviewer is found as `setup` finds it."""
+    """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
+    when the pull request cannot be read. The reviewer is found as `setup` finds it."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
     try:
         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
@@ -937,20 +937,19 @@ def run_review(arguments: argparse.Namespace) -> int:
             except ProjectorError:
                 allow = False
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
-            wait = review.peer_wait(load_config(Path(state["checkout"])).get("review.peer_wait"))
             result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
-                                    arguments.incremental, enabled, wait)
+                                    arguments.incremental, enabled)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
                 print(f"published review {result['review_id']} ({result['verdict']}, {result['event']}) on "
                       f"{result['repo']}#{result['number']} at {result['sha']}"
                       + (f", incremental from {result['from'][:7]}" if result["from"] else ""))
-                print(f"sign-off: {result['signoff']}"
-                      + (f", after waiting {result['waited']}s" if result["waited"] else "")
-                      + (f"; no review yet from {', '.join(result['pending'])}" if result["pending"] else "")
-                      + ("; the head moved, so its reviews decide the draft state" if result["moved"] else ""))
+                newest = result["newest"]
+                if newest and newest["review"] != result["review_id"]:
+                    print(f"the newest verdict on the head is {newest['model']}'s {newest['verdict']}, "
+                          f"review {newest['review']}")
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0
