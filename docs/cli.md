@@ -418,7 +418,7 @@ edited by hand gets no warning.
 
 ```console
 $ project check
-warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' to refresh it) [site-workflow-outdated]
+warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' or 'project site workflow --write' to refresh it) [site-workflow-outdated]
 Project plans are valid.
 ```
 
@@ -877,10 +877,11 @@ default branch, never the pull request's code. A pull request from a fork
 skips the deploy, and its run takes a concurrency group of its own, so it
 cannot replace a deploy waiting in the `pages` group. `project check` warns
 while the workflow is an earlier shape that Projector wrote, which does not
-deploy when a pull request closes; run `project init` to rewrite it. A
-workflow edited by hand gets no warning, because Projector cannot tell what
-its owner meant; compare it with `project site workflow` and add the trigger
-yourself.
+deploy when a pull request closes. Run `project init` to rewrite it, or
+`project site workflow --write` where `site.enabled = false` keeps `init`
+away from the site. A workflow edited by hand gets no warning, because
+Projector cannot tell what its owner meant; compare it with
+`project site workflow` and add the trigger yourself.
 
 ### Generated files
 
