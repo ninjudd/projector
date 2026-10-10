@@ -70,7 +70,7 @@ stack's title:
 | Field | Value | Meaning |
 | --- | --- | --- |
 | `project` | A project's canonical name, such as `"stack-header"` or `"payments/invoices"` | The one project this pull request carries out as a layer of its stack: the plan it adds, specs, implements, or completes. Other layers of the stack can carry other projects (§ 8). |
-| `project` | `""` | This pull request names no project. It sits under the header of the nearest layer beneath it that names one, or of the lowest layer that names one when none beneath does (§ 8.1). The stack has a title header when no layer names one. |
+| `project` | `""` | This pull request names no project. It sits under the header of the member before it in the stack's order (§ 2.2), or under the first header when it is the bottom member (§ 8.1). The stack has a title header when no layer names one. |
 | `project` | `null`, or no `project` key | Not decided yet. `init` writes `null`, and `publish` refuses it. The build reads a summary published before the field existed by the rule in § 2.3, step 2. |
 | `name` | A short title, at most 60 characters | The title of the work the stack does, or the work of the pull request alone. The site shows it as the stack's header when no layer of the stack names a project. |
 
@@ -678,8 +678,12 @@ member whose project the site lacks all name no project.
    header of § 2.3, step 3: the lowest non-empty `name`, else the first
    member's pull request title.
 
-A member with no project therefore joins the segment of the nearest member
-beneath it that names a project, or the first segment when none beneath does.
+A member with no project therefore joins the segment of the member before it
+in the stack's order from § 2.2, or the first segment when it is the bottom
+member. In a stack with a branch, the member before it in that order can be
+on another branch. A pull request that joins a GitHub stack by its base
+branch comes after the stack's members (§ 2.2), so it joins the segment of
+the member drawn above it, even when it is based on a lower member's branch.
 A project that comes back after a different one starts a new segment.
 Segments never merge across another project, so they keep the stack's order,
 and every member is in exactly one segment.
@@ -865,6 +869,7 @@ row says otherwise:
 | Build a stack that records `alpha`, `alpha/beta`, `alpha` | Three segments: alpha's with #9, alpha/beta's with #10, and alpha's with #11. alpha's `reviews` lists #11 and #9. |
 | Build a stack that records `""` and `""`, whose bottom layer's `name` is empty | One title segment, with the second layer's `name` |
 | Build a GitHub stack of #9, #11, #10, where #11 has no summary, #9 records `alpha`, and #10 records `alpha/beta` | #11 is in alpha's segment, and #9's sidebar lists it under alpha's header |
+| Build a GitHub stack of #9 and #10 that records `alpha`, `alpha/beta`, and #15 in no stack, based on #9's branch, that records `""` | The order is #9, #10, #15, and #15 is in alpha/beta's segment, the segment of the member before it |
 | Build, with `stacks_lookup` returning None, a stack from base branches of #9 and #10 that records `alpha`, `alpha/beta` | The same two segments that a GitHub stack gives |
 | Build a merged GitHub stack that records `alpha`, `alpha/beta` | Two segments, under **Closed**, and each merged page's sidebar draws both headers |
 | Build a pull request alone | One segment |
