@@ -51,8 +51,17 @@ interface SummaryGroup {
 /** A summary page's data: the summary checked against its diff by the build. */
 interface SummaryData {
   name?: string;
-  /** `state` is the pull request's state when the site was built; absent when the build could not ask GitHub. */
-  pr: { repo: string; number: number; title: string; head: string; headRef?: string; baseRef?: string; state?: 'open' | 'merged' | 'closed' };
+  /**
+   * `base` is the merge base the diff is taken from. `state` is the pull request's state when the site was
+   * built, and `currentBaseRef` the base branch GitHub reported then, or null once that branch was deleted;
+   * both are absent when the build could not ask GitHub.
+   */
+  pr: {
+    repo: string; number: number; title: string; head: string; base?: string; headRef?: string; baseRef?: string;
+    state?: 'open' | 'merged' | 'closed'; currentBaseRef?: string | null;
+  };
+  /** The repository's default branch when the site was built, where a merged pull request's files now are once the branch it merged into is gone. */
+  defaultBranch?: string;
   files: SummaryFile[];
   groups: SummaryGroup[];
   overview?: { summary?: string[]; cards?: { id?: string; title: string; html: string }[] };

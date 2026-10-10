@@ -58,10 +58,16 @@ it. The summary is JSON:
 - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
   request's head, are what the site's review list uses to mark a stacked pull
   request. `init` records both; keep them when you edit a summary by hand.
-  Each file's **File** link opens the file on `pr.headRef`, so it shows the
-  current version. It opens the file at `pr.head` instead when a summary has
-  no `headRef`, and when the site's last build found the pull request merged
-  or closed, because its branch is usually deleted then.
+  Each file's **View file on GitHub** link opens the file on `pr.headRef`, so
+  it shows the current version. Once the site's last build found the pull
+  request merged, it opens the file on the branch it merged into, since the
+  merge usually deletes the head branch: the base branch GitHub reports, or
+  `pr.baseRef` when the build could not ask. It opens the file on the
+  repository's default branch instead once that branch is deleted, or when
+  the summary has no `baseRef`. It opens the file at `pr.head` when the pull
+  request was closed without merging, or has not merged and the summary has
+  no `headRef`. It opens a file the pull request deleted at `pr.base`, the
+  last commit that has it.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and the list of files itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a
@@ -80,10 +86,11 @@ it. The summary is JSON:
   `"old"`, and then renders under that line; `build` refuses a line the diff
   does not show. A group's notes take no `line`. A group's older `concepts`
   list still builds, as `context` notes.
-- The reader marks each file Reviewed, which collapses it. Marking a group
-  Reviewed closes the group and its files without marking any file, and a
-  group is marked for the reader once all its files are. The reader can
-  also check off each `flag` note; `context` and `verify` notes have no box.
+- The reader marks each file reviewed with the checkbox in its header,
+  which collapses it. Marking a group reviewed closes the group and its
+  files without marking any file, and a group is marked for the reader
+  once all its files are. The reader can also check off each `flag` note;
+  `context` and `verify` notes have no box.
 - `groups[].files[].collapsed` overrides the default, which collapses
   generated, test and documentation files.
 - A file is generated when the repository's `.gitattributes` marks it

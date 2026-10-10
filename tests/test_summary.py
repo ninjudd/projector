@@ -1054,11 +1054,11 @@ class PrStatusTests(unittest.TestCase):
                  "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
         second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
                   "at": "2026-10-02T10:00:00Z", "association": "NONE"}
-        pages = [{"state": "MERGED", "reviews": [first]}, {"state": "MERGED", "reviews": [second]}]
+        pages = [{"state": "MERGED", "base": "main", "reviews": [first]}, {"state": "MERGED", "base": "main", "reviews": [second]}]
         with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
             status = summary.pr_status("owner/example", 7)
 
-        self.assertEqual({"state": "merged", "reviews": [first, second]}, status)
+        self.assertEqual({"state": "merged", "base": "main", "reviews": [first, second]}, status)
         args = gh.call_args.args
         self.assertEqual(("api", "graphql", "--paginate"), args[:3])
         self.assertIn("owner=owner", args)
@@ -1066,6 +1066,12 @@ class PrStatusTests(unittest.TestCase):
         self.assertIn("number=7", args)
         self.assertIn("select(.submittedAt != null)", args[-1], "a pending review has no verdict to show yet")
         self.assertIn("association: .authorAssociation", args[-1], "the site trusts a verdict by who wrote it")
+        self.assertIn("baseRef { name }", " ".join(args), "the same query asks whether the base branch still exists")
+
+    def test_a_deleted_base_branch_reads_as_none(self) -> None:
+        page = {"state": "MERGED", "base": None, "reviews": []}
+        with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n"):
+            self.assertEqual({"state": "merged", "base": None, "reviews": []}, summary.pr_status("owner/example", 7))
 
     def test_an_answer_without_a_state_is_an_error(self) -> None:
         with mock.patch.object(summary, "gh", return_value=""):
