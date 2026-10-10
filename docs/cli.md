@@ -410,6 +410,22 @@ A path that resolves outside the repository reports only
 `instructions-external`; `init` never writes there, so it is the one warning
 `init` cannot clear.
 
+`check` also warns while the site workflow,
+`.github/workflows/projector-site.yml`, is an earlier shape that Projector
+wrote. That workflow does not deploy when a pull request closes, as
+[Build the Projector site](#build-the-projector-site) describes. A workflow
+edited by hand gets no warning.
+
+```console
+$ project check
+warning: .github/workflows/projector-site.yml: the site workflow is an earlier shape and does not deploy when a pull request closes (run 'project init' or 'project site workflow --write' to refresh it) [site-workflow-outdated]
+Project plans are valid.
+```
+
+| Code | Condition | Fix |
+| --- | --- | --- |
+| `site-workflow-outdated` | the site workflow is an earlier shape Projector wrote | `project init`, or `project site workflow --write` |
+
 ## Read configuration
 
 Projector reads settings from `.projector.toml` files. Put a value in the file
@@ -848,8 +864,24 @@ writes it with `--write`. `--write` refuses, exiting 1, to overwrite a
 workflow edited by hand, and `--force` replaces it anyway. The workflow runs
 when a summary is published, when a push to the default branch changes
 `README.md`, `docs/`, a configured `projects.dir` outside `docs/`,
-`.projector.toml`, or the workflow itself, and on demand; `--branch` names the
+`.projector.toml`, or the workflow itself, when a pull request in the
+repository closes, merged or not, and on demand; `--branch` names the
 default branch when `origin` does not record it.
+
+A closed pull request deploys so that Reviews shows it as **Merged** or
+**Closed** right away, rather than as open until some later deploy. The
+workflow listens for `pull_request_target`, which GitHub runs from the
+default branch's workflow file, on the default branch. So the
+`github-pages` environment allows the deploy, and the action checks out the
+default branch, never the pull request's code. A pull request from a fork
+skips the deploy, and its run takes a concurrency group of its own, so it
+cannot replace a deploy waiting in the `pages` group. `project check` warns
+while the workflow is an earlier shape that Projector wrote, which does not
+deploy when a pull request closes. Run `project init` to rewrite it, or
+`project site workflow --write` where `site.enabled = false` keeps `init`
+away from the site. A workflow edited by hand gets no warning, because
+Projector cannot tell what its owner meant; compare it with
+`project site workflow` and add the trigger yourself.
 
 ### Generated files
 

@@ -35,6 +35,7 @@ from .core import (
     EnvironmentError,
     FileAction,
     InitError,
+    Issue,
     ProjectorError,
     ProjectStore,
     UsageError,
@@ -1181,6 +1182,22 @@ def write_site_workflow(root: Path, text: str, force: bool = False) -> FileActio
     )
 
 
+def site_workflow_issues(root: Path) -> list[Issue]:
+    """A warning while the site workflow is an earlier shape Projector wrote,
+    which `project init` rewrites, or `project site workflow --write` where
+    `site.enabled = false` keeps `init` away from it. A workflow edited by hand
+    gets none, since Projector cannot tell what its owner meant."""
+    path = root / WORKFLOW_PATH
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if summary.workflow_shape(text, site_projects_dir(root)) != "earlier":
+        return []
+    return [Issue("site-workflow-outdated", WORKFLOW_PATH,
+                  "the site workflow is an earlier shape and does not deploy when a pull request closes "
+                  "(run 'project init' or 'project site workflow --write' to refresh it)", "warning")]
+
+
 class NotOnGitHub(ProjectorError):
     """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
 
@@ -1454,7 +1471,7 @@ def run(arguments: argparse.Namespace) -> int:
         if command == "done":
             print("Record whether the project shipped, was abandoned, or was superseded.", file=sys.stderr)
     elif command == "check":
-        issues = store.check(instructions_enabled(root))
+        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root)
         # Warnings print but never fail the gate; `valid` and the exit code
         # follow errors alone.
         errors = [issue for issue in issues if issue.severity == "error"]

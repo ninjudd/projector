@@ -13,7 +13,8 @@ from disk. Summaries sit
 on hidden refs such as `refs/projector/summaries`, which are not branches,
 so publishing one adds no branch, no pull request banner, and nothing to
 anyone's clone. One workflow on the default branch builds and deploys the
-site when a summary is published or `README.md` or `docs/` changes. Set a
+site when a summary is published, when `README.md` or `docs/` changes, and
+when a pull request closes. Set a
 repository up once, with admin rights, from a checkout of it whose `origin`
 is the GitHub repository:
 
@@ -52,6 +53,8 @@ is the GitHub repository:
      push:
        branches: [main]
        paths: [README.md, 'docs/**', .projector.toml, .github/workflows/projector-site.yml]
+     pull_request_target:
+       types: [closed]
      workflow_dispatch:
    permissions:
      contents: read
@@ -59,10 +62,11 @@ is the GitHub repository:
      pages: write
      id-token: write
    concurrency:
-     group: pages
+     group: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && format('fork-{0}', github.run_id) || 'pages' }}
      cancel-in-progress: false
    jobs:
      publish:
+       if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
        runs-on: ubuntu-latest
        environment:
          name: github-pages
@@ -75,6 +79,17 @@ is the GitHub repository:
    The push paths include the workflow itself, so the merge that adds it
    deploys the site right away, and `.projector.toml`, so a new
    `site.prepare` takes effect.
+
+   A pull request that closes, merged or not, deploys the site too, so the
+   Reviews section shows it as merged or closed at once. GitHub runs a
+   `pull_request_target` workflow from the default branch, on the default
+   branch, so the deploy needs no change to the `github-pages` environment,
+   and the action checks out the default branch, never the pull request's
+   code. A pull request from a fork skips the deploy, and its run takes a
+   concurrency group of its own, so it never replaces a deploy waiting in
+   `pages`. `project check` warns while the workflow is an earlier shape
+   that Projector wrote, and `project init` or
+   `project site workflow --write` rewrites it.
 
    `@v0` follows Projector's compatible releases. Pin an exact tag such as
    `@v0.5.0`, or a full commit SHA, to change only when you choose, with
