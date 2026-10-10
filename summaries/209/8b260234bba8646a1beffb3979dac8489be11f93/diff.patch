@@ -1,0 +1,258 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 1fc9789..057c577 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -682,8 +682,8 @@ linked to its review when the site has one and to GitHub otherwise. A summary
+ that did not record the number has it looked up with `gh` at build time;
+ when `gh` cannot answer, the review shows no stack. A summary's sidebar lists
+ every pull request in its stack, the ones beneath it and the ones above it,
+-one row each with its title, and highlights the current one; its older
+-versions follow the sections. A summary's header shows the verdict of the
++one row each with its title, and highlights the current one; a pull request
++alone is a stack of one. Its older versions follow the sections. A summary's header shows the verdict of the
+ newest Projector review of its head, **Clean** or **Changes requested**,
+ linked to that review on GitHub, or **Unreviewed** when no Projector review
+ names the head. A review counts only when its author owns the repository,
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index a066933..451f4e1 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -83,7 +83,6 @@ a.rstatus:hover { text-decoration: underline; }
+ .prblock > :first-child { margin-top: 0; }
+ .prref { display: inline; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
+ .prref:hover { text-decoration: underline; }
+-.prtitle { margin-top: 4px; font-size: 12.5px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+ .prmeta { margin-top: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+ .prmeta a { color: inherit; text-decoration: none; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+ .prmeta a:hover { text-decoration: underline; }
+@@ -188,7 +187,7 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
+ .gbody > .prose { margin-top: 14px; }
+ .gnotes { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--surface); }
+ .gnotes h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+-/* Review notes: one list per scope, each note chipped with its kind. */
++/* A section's notes: one list, each note tagged with its kind. */
+ .notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+ .notes li { display: grid; grid-template-columns: 16px 76px 1fr; gap: 10px; align-items: start; max-width: 96ch; }
+ .nbox { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--ok); }
+@@ -248,7 +247,7 @@ input.nbox { cursor: pointer; }
+ .freviewed { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; cursor: pointer; user-select: none; }
+ .freviewed input { accent-color: var(--ok); margin: 0; }
+ .fnote { margin: 0; padding: 8px 14px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--border); max-width: none; }
+-.fnotes { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
++.fnotes { border-bottom: 1px solid var(--border); }
+ .file.collapsed .fnote, .file.collapsed .fnotes { border-bottom: 0; }
+ .file.collapsed .fnote + .fnotes { border-top: 1px solid var(--border); }
+ .file.reviewed .fnote, .file.reviewed .fnotes { display: none; }
+@@ -272,7 +271,7 @@ table.diff tr.add .sign { color: var(--add-text); font-weight: 600; } table.diff
+ table.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding-block: 3px; font-size: 11.5px; }
+ table.diff tr.meta td { color: var(--muted); font-style: italic; }
+ /* A note under a line: one band of the note's background, its tag in the line-number gutter and its text where the code starts. */
+-table.diff tr.noterow td { background: var(--surface-2); padding-block: 5px; }
++table.diff tr.noterow td { background: var(--surface-2); padding-block: 9px; }
+ table.diff tr.noterow.flag td { background: var(--accent-soft); }
+ table.diff td.ngut { padding-inline: 2px 6px; text-align: right; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; }
+ table.diff td.ngut .chip { margin-top: 0; }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 4bade19..4553a78 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -109,15 +109,18 @@
+             function numbers(l) {
+                 return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
+             }
++            const tableClass = `diff${sides === 1 ? ' oneside' : ''}`;
++            // Each note is a row: its tag in the line-number gutter, its text where the code starts.
++            function noteRow(c) {
++                return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
++                    `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
++            }
+             function notesAt(l) {
+                 const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
+-                const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
+-                // Each note is a row: its tag in the line-number gutter, its text where the code starts.
+-                return found.map(function (c) {
+-                    return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
+-                        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
+-                }).join('');
++                return keys.flatMap(function (k) { return atLine[k] ?? []; }).map(noteRow).join('');
+             }
++            // The notes on the whole file sit above its diff, in the diff's own columns.
++            const topNotes = loose.length > 0 ? `<table class="${tableClass} fnotes">${columns}${loose.map(noteRow).join('')}</table>` : '';
+             let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+             if (f.new === true)
+                 badges += '<span class="badge new">new</span>';
+@@ -138,7 +141,7 @@
+                     rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+                     rows.push(notesAt(l));
+                 });
+-                return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
++                return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
+             }).join('') || '<p class="fnote">No content changes.</p>';
+             return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+                 '<div class="fsentinel" aria-hidden="true"></div>' +
+@@ -157,7 +160,7 @@
+                 '</span>' +
+                 '</header>' +
+                 (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
+-                notesList(loose, 'fnotes', f.path) +
++                topNotes +
+                 `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+                 '</article>';
+         }
+@@ -167,7 +170,7 @@
+             const gid = esc(g.id);
+             const intro = (g.intro ?? []).map(block).join('');
+             const checks = g.checks ?? [];
+-            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
++            const notes = checks.length > 0 ? `<div class="gnotes"><h4>Notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+             const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
+             return `<section class="group" id="${gid}" data-gid="${gid}">` +
+                 '<div class="gsentinel" aria-hidden="true"></div>' +
+@@ -191,7 +194,7 @@
+             const s = data.stats;
+             const summary = (o.summary ?? []).map(block).join('');
+             let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+-                '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
++                '<p><b>How to read this.</b> Each section opens with what it does and why. Notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+             const tiles = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
+                 [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
+             out += '<div class="card stats" id="files"><div class="statgrid">' +
+@@ -250,12 +253,11 @@
+             return `<details class="versions"><summary><span class="chev" aria-hidden="true"></span>Versions · ${String(heads.length)}</summary><ul>${rows}</ul></details>`;
+         }
+         // The pull requests stacked with this one, one row each, this one marked; a
+-        // pull request alone shows its title instead. A pull request in the stack
+-        // with no summary on the site links to GitHub.
++        // pull request alone is a stack of one. A pull request in the stack with no
++        // summary on the site links to GitHub.
+         function stackList() {
+-            const stack = data.stack ?? [];
+-            if (stack.length < 2)
+-                return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
++            const listed = data.stack ?? [];
++            const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
+             return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+                 const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+                 if (s.current)
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index 8946d4c..6aa74e6 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -107,15 +107,18 @@ function renderSummary(data: SummaryData): void {
+     function numbers(l: SummaryLine): string {
+       return (oldSide ? `<td class="ln">${lineNumber(l[1])}</td>` : '') + (newSide ? `<td class="ln">${lineNumber(l[2])}</td>` : '');
+     }
++    const tableClass = `diff${sides === 1 ? ' oneside' : ''}`;
++    // Each note is a row: its tag in the line-number gutter, its text where the code starts.
++    function noteRow(c: SummaryCheck): string {
++      return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
++        `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
++    }
+     function notesAt(l: SummaryLine): string {
+       const keys = l[0] === 'a' ? [`new:${String(l[2])}`] : l[0] === 'd' ? [`old:${String(l[1])}`] : [`new:${String(l[2])}`, `old:${String(l[1])}`];
+-      const found = keys.flatMap(function (k) { return atLine[k] ?? []; });
+-      // Each note is a row: its tag in the line-number gutter, its text where the code starts.
+-      return found.map(function (c) {
+-        return `<tr class="noterow ${kindOf(c)}"><td class="ngut" colspan="${String(sides)}">${chip(c)}</td>` +
+-          `<td class="nte">${noteBox(c, f.path)}<span class="ntext">${c.text}</span></td></tr>`;
+-      }).join('');
++      return keys.flatMap(function (k) { return atLine[k] ?? []; }).map(noteRow).join('');
+     }
++    // The notes on the whole file sit above its diff, in the diff's own columns.
++    const topNotes = loose.length > 0 ? `<table class="${tableClass} fnotes">${columns}${loose.map(noteRow).join('')}</table>` : '';
+     let badges = checks.length > 0 ? `<span class="badge notes" data-total="${String(checks.length)}">${String(checks.length)} note${checks.length === 1 ? '' : 's'}</span>` : '';
+     if (f.new === true) badges += '<span class="badge new">new</span>';
+     if (f.deleted === true) badges += '<span class="badge deleted">deleted</span>';
+@@ -130,7 +133,7 @@ function renderSummary(data: SummaryData): void {
+         rows.push(`<tr class="${cls}">${numbers(l)}<td class="code"><span class="sign">${sign}</span><span class="src">${esc(l[3])}</span></td></tr>`);
+         rows.push(notesAt(l));
+       });
+-      return `<table class="diff${sides === 1 ? ' oneside' : ''}">${columns}${rows.join('')}</table>`;
++      return `<table class="${tableClass}">${columns}${rows.join('')}</table>`;
+     }).join('') || '<p class="fnote">No content changes.</p>';
+     return `<article class="file${collapsed ? ' collapsed' : ''}" id="${f.id}" data-fid="${f.id}" data-lang="${esc(f.lang)}" data-collapsed-default="${collapsed ? '1' : ''}">` +
+       '<div class="fsentinel" aria-hidden="true"></div>' +
+@@ -149,7 +152,7 @@ function renderSummary(data: SummaryData): void {
+         '</span>' +
+       '</header>' +
+       (entry.note !== undefined && entry.note !== '' ? `<p class="fnote">${entry.note}</p>` : '') +
+-      notesList(loose, 'fnotes', f.path) +
++      topNotes +
+       `<div class="fbody" id="${f.id}-body">${hunks}</div>` +
+     '</article>';
+   }
+@@ -160,7 +163,7 @@ function renderSummary(data: SummaryData): void {
+     const gid = esc(g.id);
+     const intro = (g.intro ?? []).map(block).join('');
+     const checks = g.checks ?? [];
+-    const notes = checks.length > 0 ? `<div class="gnotes"><h4>Review notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
++    const notes = checks.length > 0 ? `<div class="gnotes"><h4>Notes</h4>${notesList(checks, 'gnotelist', `group:${g.id}`)}</div>` : '';
+     const list = g.files.map(function (s) { const f = fileAt(s.path); return `<li><a href="#${f.id}">${esc(f.path.split('/').pop())}</a></li>`; }).join('');
+     return `<section class="group" id="${gid}" data-gid="${gid}">` +
+       '<div class="gsentinel" aria-hidden="true"></div>' +
+@@ -185,7 +188,7 @@ function renderSummary(data: SummaryData): void {
+     const s = data.stats;
+     const summary = (o.summary ?? []).map(block).join('');
+     let out = `<div class="card prose"><h3>What this PR does</h3>${summary}` +
+-      '<p><b>How to read this.</b> Each section opens with what it does and why. Review notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
++      '<p><b>How to read this.</b> Each section opens with what it does and why. Notes come in three kinds: <span class="chip context inline">context</span> to hold in mind while you read, <span class="chip verify inline">verified</span> for an invariant the reviewer checked, and how, and <span class="chip flag inline">concern</span> for something that may be wrong or risky and needs a decision. A note about one file sits at the top of that file, and a note about one line sits under that line in the diff. Check off concern notes as you settle them; each file header counts the ones still open. Mark each file Reviewed as you go. Marking a section Reviewed closes it and its files, and a section is marked for you once all its files are. Checkboxes are remembered in this browser only.</p></div>';
+     const tiles: [string, string][] = [[num(s.files), 'files'], [`<span class="plus">+${num(s.adds)}</span> <span class="minus">−${num(s.dels)}</span>`, 'total'],
+       [num(s.hand), 'hand-written'], [num(s.test), 'test'], [num(s.generated), 'generated'], [num(s.docs), 'documentation']];
+     out += '<div class="card stats" id="files"><div class="statgrid">' +
+@@ -245,11 +248,11 @@ function renderSummary(data: SummaryData): void {
+   }
+ 
+   // The pull requests stacked with this one, one row each, this one marked; a
+-  // pull request alone shows its title instead. A pull request in the stack
+-  // with no summary on the site links to GitHub.
++  // pull request alone is a stack of one. A pull request in the stack with no
++  // summary on the site links to GitHub.
+   function stackList(): string {
+-    const stack = data.stack ?? [];
+-    if (stack.length < 2) return `<div class="prtitle" title="${esc(pr.title)}">${esc(pr.title)}</div>`;
++    const listed = data.stack ?? [];
++    const stack = listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
+     return '<ul class="stack" aria-label="Pull requests in this stack">' + stack.map(function (s) {
+       const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
+       if (s.current) return `<li class="current" aria-current="page" title="${esc(s.title)}">${row}</li>`;
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 1a8540e..e7fa8c7 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -720,7 +720,8 @@ def build(self, state: str | None = None, **pr: str) -> dict:
+             "overview": {"summary": [], "cards": []},
+             "groups": [{"id": "all", "title": "All", "files": [
+                 {"path": p, "collapsed": False,
+-                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1}]} if p == "src/app#1.py" else
++                 **({"checks": [{"kind": "context", "text": "The new value.", "line": 1},
++                                {"kind": "verify", "text": "The whole file."}]} if p == "src/app#1.py" else
+                     {"checks": [{"kind": "flag", "text": "A new plan.", "line": 1}]} if p == "docs/projects/gamma/readme.md"
+                     else {})}
+                 for p in HEADER_FILES]}],
+@@ -794,6 +795,15 @@ def test_a_summary_without_its_branch_links_the_file_at_its_head(self) -> None:
+ 
+         self.assertIn(f'href="https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py"', rendered_summary(data))
+ 
++    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
++    def test_a_pull_request_alone_is_a_stack_of_one_in_the_sidebar(self) -> None:
++        data = self.build()
++        self.assertEqual([], data["stack"])
++
++        self.assertIn('<ul class="stack" aria-label="Pull requests in this stack"><li class="current" aria-current="page" '
++                      'title="Change 9"><span class="snum">#9</span><span class="stitle">Change 9</span></li></ul>',
++                      rendered_summary(data))
++
+     @unittest.skipUnless(shutil.which("node"), "the inline note test needs node")
+     def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_code_starts(self) -> None:
+         html = rendered_summary(self.build())
+@@ -806,6 +816,10 @@ def test_a_note_under_a_line_puts_its_tag_in_the_gutter_and_its_text_where_the_c
+                                                 '<td class="nte"><input type="checkbox" class="nbox note-box"'),
+                         "a new file has one line-number column, and a concern's checkbox sits with its text")
+         self.assertIn('<table class="diff oneside">', html, "a one-sided diff is marked, so its gutter keeps its width")
++        self.assertIn('<table class="diff fnotes"><colgroup><col class="lncol"><col class="lncol"><col></colgroup>'
++                      '<tr class="noterow verify"><td class="ngut" colspan="2"><span class="chip verify">verified</span></td>'
++                      '<td class="nte"><span class="ntext">The whole file.</span></td></tr></table>', html,
++                      "a note on the whole file sits above the diff in the diff's own columns")
+ 
+ 
+ class SummarySidebarTests(unittest.TestCase):
