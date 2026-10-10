@@ -15,11 +15,13 @@ import html
 from html.parser import HTMLParser
 import json
 import os
+import random
 import re
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -31,6 +33,14 @@ PAGES_REF = "refs/projector/summaries"
 DISPATCH_EVENT = "projector-summaries"
 PAGES_ROOT = "summaries"
 DIFF_FILE = "diff.patch"
+# Publishes running at once, as a review loop's subagents run them, race to
+# move the summaries ref, so a push that loses is rebuilt on the new tip and
+# tried again, up to this many pushes in all.
+PUSH_ATTEMPTS = 5
+# What git prints when a push lost that race: the ref moved since the fetch, or
+# the server could not lock or update it while another push held it. A hook or
+# permission refusal says "rejected" too, so that word alone is not one of them.
+PUSH_RACE_SIGNS = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
 # The name older releases stored each summary under. The site shows no summary
 # from this file. It reports each one with no summary.json beside it, so the
 # repository knows to republish it, and dates a republished summary by this file.
@@ -903,19 +913,40 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
         return commit
     local = tracking_ref(remote, ref)
-    parent = fetch_ref(remote, ref)
-    seeded = False
-    if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
-        parent = seed_from_legacy(remote)
-        seeded = bool(parent)
-    tree = summary_tree(parent, folder, summary, diff)
-    if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-        print(f"{ref} already has this summary; nothing to publish")
-        return None
-    commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
-    git("push", "--quiet", remote, f"{commit}:{ref}")
+    tip = fetch_ref(remote, ref)
+    seed = None
+    for attempt in range(PUSH_ATTEMPTS):
+        parent = tip
+        if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+            if seed is None:
+                seed = seed_from_legacy(remote)
+            parent = seed
+        tree = summary_tree(parent, folder, summary, diff)
+        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+            print(f"{ref} already has this summary; nothing to publish")
+            return None
+        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        try:
+            git("push", "--quiet", remote, f"{commit}:{ref}")
+            break
+        except SummaryError as error:
+            if attempt + 1 == PUSH_ATTEMPTS:
+                raise
+            raced = any(sign in str(error) for sign in PUSH_RACE_SIGNS)
+            if raced:
+                time.sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
+            moved = fetch_ref(remote, ref)
+            # While the ref has not moved, the push lost no race unless git says
+            # so, so a refused login or a dropped connection fails now rather
+            # than after every attempt. A failed refetch leaves nothing to
+            # build on.
+            if (tip and not moved) or (moved == tip and not raced):
+                raise
+            tip = moved
+    seeded = bool(seed) and parent == seed
     git("update-ref", local, commit)
-    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}")
+    retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
+    print(f"pushed {commit[:9]} to {remote} {ref}: {folder}/summary.json and {DIFF_FILE}{retried}")
     if seeded:
         print(f"carried the summaries on {LEGACY_PAGES_REF} over to {ref}; delete {LEGACY_PAGES_REF} from {remote} "
               "once every site reads the new ref")

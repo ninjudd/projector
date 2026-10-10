@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from projector import cli, site, summary
@@ -447,19 +447,118 @@ class PublishTests(unittest.TestCase):
         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
         self.summary_path = tmp / "summary.json"
         self.dispatches: list[str] = []
+        self.sleeps: list[float] = []
+        self.output = ""
 
-    def publish(self, head: str, **kwargs: object) -> object:
+    def publish(self, head: str, repo: Path | None = None, **kwargs: object) -> object:
+        """Publish `head` from this test's clone, or from `repo`, recording this clone's output in `self.output`."""
         data = make_summary(GOOD_GROUPS)
         data["pr"]["head"] = head
-        self.summary_path.write_text(json.dumps(data))
+        path = repo.with_name(f"{repo.name}-summary.json") if repo else self.summary_path
+        path.write_text(json.dumps(data))
         cwd = os.getcwd()
-        os.chdir(self.repo)
+        os.chdir(repo or self.repo)
+        out = io.StringIO()
         try:
             with mock.patch.object(summary, "dispatch", side_effect=self.dispatches.append), \
-                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), redirect_stdout(io.StringIO()):
-                return summary.publish(self.summary_path, "origin", **kwargs)
+                 mock.patch.object(summary, "fetch_diff", return_value=DIFF), \
+                 mock.patch.object(summary.time, "sleep", side_effect=self.sleeps.append), redirect_stdout(out):
+                return summary.publish(path, "origin", **kwargs)
         finally:
             os.chdir(cwd)
+            if not repo:
+                self.output = out.getvalue()
+
+    def other_publisher(self) -> Path:
+        """A second clone of the remote, committing as someone else, as another review loop subagent would."""
+        other = self.remote.with_name("other")
+        run(self.remote.parent, "git", "clone", "--quiet", str(self.remote), str(other))
+        for key, value in (("user.name", "Other"), ("user.email", "other@example.com"), ("commit.gpgsign", "false")):
+            run(other, "git", "config", key, value)
+        return other
+
+    def racing(self, head: str) -> tuple[AbstractContextManager[object], list[object]]:
+        """Patch git so another clone publishes `head` just before this clone's first push; the list gets its commit."""
+        other = self.other_publisher()
+        real = summary.git
+        theirs: list[object] = []
+
+        def git(*args: str, **kwargs: object) -> str:
+            if args[0] == "push" and not theirs:
+                theirs.append(None)
+                theirs[0] = self.publish(head, repo=other)
+            return real(*args, **kwargs)
+        return mock.patch.object(summary, "git", side_effect=git), theirs
+
+    def test_a_publish_that_loses_the_race_for_the_ref_rebuilds_on_the_new_tip(self) -> None:
+        first = self.publish("d" * 40)
+        race, theirs = self.racing("e" * 40)
+
+        with race:
+            mine = self.publish("c" * 40)
+
+        self.assertEqual(mine, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine),
+                         "the retry builds on the other publisher's commit")
+        self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", theirs[0]))
+        files = self.ref_files()
+        for head in ("c", "d", "e"):
+            self.assertIn(f"summaries/7/{head * 40}/summary.json", files, "no publisher's summary is dropped")
+        self.assertEqual(1, len(self.sleeps))
+        self.assertIn("after 1 retry because another publish moved the ref", self.output)
+        self.assertEqual(["owner/repo"] * 3, self.dispatches)
+
+    def test_a_publish_finds_its_summary_already_pushed_after_losing_the_race(self) -> None:
+        race, theirs = self.racing("c" * 40)
+
+        with race:
+            self.assertIsNone(self.publish("c" * 40))
+
+        self.assertEqual(theirs[0], run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertIn("already has this summary; nothing to publish", self.output)
+        self.assertEqual(["owner/repo"], self.dispatches, "only the publish that pushed dispatches")
+
+    def counting_pushes(self, failure: str = "") -> tuple[AbstractContextManager[object], list[tuple[str, ...]]]:
+        """Patch git to count pushes, failing each with `failure` when it is given."""
+        real = summary.git
+        pushes: list[tuple[str, ...]] = []
+
+        def git(*args: str, **kwargs: object) -> str:
+            if args[0] == "push":
+                pushes.append(args)
+                if failure:
+                    raise summary.SummaryError(failure)
+            return real(*args, **kwargs)
+        return mock.patch.object(summary, "git", side_effect=git), pushes
+
+    def test_a_push_the_remote_refuses_fails_without_retrying(self) -> None:
+        first = self.publish("d" * 40)
+        hook = self.remote / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho no pushes today >&2\nexit 1\n")
+        hook.chmod(0o755)
+        # A global core.hooksPath would otherwise send the remote's hooks elsewhere.
+        run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
+        counted, pushes = self.counting_pushes()
+
+        with counted, self.assertRaisesRegex(summary.SummaryError, "pre-receive hook declined"):
+            self.publish("c" * 40)
+
+        self.assertEqual(1, len(pushes), "a refusal that leaves the ref in place is not a race")
+        self.assertEqual([], self.sleeps)
+        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
+        self.assertEqual(["owner/repo"], self.dispatches)
+
+    def test_a_push_that_keeps_losing_the_race_gives_up(self) -> None:
+        counted, pushes = self.counting_pushes(
+            "git push failed: error: cannot lock ref 'refs/projector/summaries': reference already exists")
+
+        with counted, self.assertRaisesRegex(summary.SummaryError, "cannot lock ref"):
+            self.publish("c" * 40)
+
+        self.assertEqual(summary.PUSH_ATTEMPTS, len(pushes))
+        self.assertEqual(summary.PUSH_ATTEMPTS - 1, len(self.sleeps))
+        self.assertLess(sum(self.sleeps), 15, "the retries stay brief")
+        self.assertEqual([], self.dispatches)
 
     def test_publish_stores_a_given_diff_without_fetching_one(self) -> None:
         diff_file = self.summary_path.with_name("pr.diff")

@@ -604,6 +604,12 @@ unassigned group. `summary publish` fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
 workflow.
+Publishes that run at the same time, as a review loop's subagents run them,
+each land. A publish whose push loses the race for the ref fetches the ref
+again, rebuilds its commit on the new tip, keeping every other publisher's
+summaries, and pushes again, up to five pushes in all. It says how many
+times it retried. Any other push failure, such as a refused login, fails at
+once.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the summary's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
