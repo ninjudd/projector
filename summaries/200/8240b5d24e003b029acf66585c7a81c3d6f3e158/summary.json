@@ -1,0 +1,81 @@
+{
+ "version": 1,
+ "name": "Summary Page Doctype",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 200,
+  "title": "Render summary pages in standards mode at the device's width",
+  "head": "8240b5d24e003b029acf66585c7a81c3d6f3e158",
+  "headRef": "summary-page-doctype",
+  "base": "657f8f799cc4aa169240e713183f2d448ee056f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A summary page is the guided review page Projector builds for a pull request, like this one. The same function, <code>page()</code> in <code>src/projector/site/__init__.py</code>, writes the page in two places: the review pages the Projector site serves at <code>reviews/&lt;number&gt;/</code> and <code>reviews/&lt;number&gt;/&lt;head&gt;/</code>, and the standalone page that <code>project site page</code> writes to disk.",
+   "Until now that page started with its <code>&lt;title&gt;</code>. It had no <code>&lt;!doctype html&gt;</code> line and no viewport meta tag, though the site's home page has both. That caused two problems:",
+   "<ul><li><b>Quirks mode.</b> A page with no doctype is laid out in quirks mode, the browser's mode for very old pages. In quirks mode a <code>&lt;form&gt;</code> gets a bottom margin, so the site bar's search box sat high and the bar was 10 to 15 pixels taller than on the site's other pages.</li><li><b>Desktop width on phones.</b> Without a viewport meta tag, a phone lays the page out as if its screen were desktop width and then shrinks it. The narrow-screen rules in <code>summary.css</code> never applied.</li></ul>",
+   "The fix adds the doctype, charset and viewport lines to the top of <code>page()</code>, the same three lines <code>home_page()</code> starts with. Standards mode also changes two line heights slightly, which the pull request keeps on purpose: overview tables inherit the body's 1.55 line height, and a line holding only a link or inline code is as tall as the text around it."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>8240b5d</code>: clean, with no finding threads.</li><li>One suggestion: <code>page()</code> and <code>home_page()</code> now repeat the same three opening lines, which a shared constant could hold.</li><li>The repository's gate passed at this head: 455 tests, <code>project check</code>, both plugin validations and <code>git diff --check</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "page-head",
+   "title": "The summary page's opening lines",
+   "kicker": "One function now opens every summary page in standards mode",
+   "intro": [
+    "<code>page()</code> returns a summary page's HTML as one string. The change puts <code>&lt;!doctype html&gt;</code> first, keeps the charset line second, adds the viewport line, and moves the <code>&lt;title&gt;</code> below them. Everything after the title is unchanged.",
+    "Every summary page goes through <code>page()</code>: <code>write_page</code> calls it for the standalone page, and the site build calls it for each head's page and each pull request's newest-head page. So one edit covers all three."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "The four new opening lines of the string <code>page()</code> returns.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "These three lines match the start of <code>home_page()</code>, character for character, read in the file at this head.",
+       "line": 81
+      },
+      {
+       "kind": "verify",
+       "text": "Nothing in <code>src/</code> expects a summary page to start with <code>&lt;title&gt;</code>. The one title parser, <code>page_title</code>, reads repository pages under <code>content/</code> with <code>re.search</code>, so the title's position does not matter to it. Checked by searching <code>src/</code> for <code>&lt;title</code>.",
+       "line": 82
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests that pin the opening lines",
+   "kicker": "Three checks that every built page opens with the doctype and viewport",
+   "intro": [
+    "Both test files define the same <code>STANDARDS_HEAD</code> constant, the three opening lines, and check that pages start with it. The test modules in this repository share no helpers, so each keeps its own copy.",
+    "<code>tests/test_site.py</code> adds a test that builds a site with one published summary, then reads every HTML file the build writes outside <code>content/</code>. That includes the home page shell, <code>404.html</code> and both review pages. Pages under <code>content/</code> are the repository's own files, copied as they are, so the test leaves them out. <code>tests/test_summary.py</code> updates two existing tests to check the standalone page and the review pages."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With <code>src/projector/site/__init__.py</code> reverted to the base, all three tests fail and name each page's first line, such as <code>&lt;title&gt;Core Summary&lt;/title&gt;</code>. At this head they pass. Checked by running the three tests against the base copy of the module."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    }
+   ]
+  }
+ ]
+}

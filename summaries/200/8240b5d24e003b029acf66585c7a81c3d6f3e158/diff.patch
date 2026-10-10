@@ -1,0 +1,84 @@
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 75ddf44..933e95d 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -76,8 +76,10 @@ def page(title: str, payload: dict, embed: bool = True, assets: str = "", src: s
+         bar_style = f'<link rel="stylesheet" href="{escape(assets)}site.css">\n'
+         bar = f'<div id="sitebar" data-base="{escape(site_base)}"></div>\n'
+         bar_script = f'<script src="{escape(assets)}site.js"></script>\n'
+-    return f"""<title>{escape(title)}</title>
++    return f"""<!doctype html>
+ <meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>{escape(title)}</title>
+ <meta name="description" content="{escape(payload['pr']['repo'])}#{payload['pr']['number']}: {escape(payload['pr']['title'])}">
+ {icon_link()}
+ <link rel="stylesheet" href="{FONTS}">
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 6ddf8f5..1b6bb61 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -222,6 +222,11 @@ def test_a_failed_lookup_stops_the_deploy_rather_than_assuming_it_is_safe(self)
+ +new = 2
+ """
+ 
++# Without a doctype a browser lays the page out in quirks mode, and without the
++# viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
++STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
++                  '<meta name="viewport" content="width=device-width, initial-scale=1">\n')
++
+ 
+ class SiteContentTests(SiteRepoCase):
+     def publish(self, number: int, head: str, projects: list[str] | None = None, **pr: str) -> None:
+@@ -340,6 +345,18 @@ def test_a_review_links_to_the_projects_its_diff_changes_and_back(self) -> None:
+         self.assertEqual("/reviews/", data["indexUrl"])
+         self.assertTrue((self.out / "reviews" / "9" / "index.html").is_file())
+ 
++    def test_every_page_the_build_writes_opens_in_standards_mode_at_the_device_width(self) -> None:
++        self.publish(9, "c" * 40)
++
++        self.build()
++
++        # The pages under content/ are the repository's own, copied as they are.
++        pages = sorted(p for p in self.out.rglob("*.html") if not p.is_relative_to(self.out / "content"))
++        for path in ("reviews/9/index.html", f"reviews/9/{'c' * 40}/index.html", "index.html", "404.html"):
++            self.assertIn(self.out / path, pages)
++        for page in pages:
++            self.assertTrue(page.read_text().startswith(STANDARDS_HEAD), page.relative_to(self.out))
++
+     def test_a_summary_can_name_a_project_its_diff_does_not_touch(self) -> None:
+         self.publish(9, "c" * 40, projects=["alpha/beta", "no-such-project"])
+ 
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index d824eb1..cc24384 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -14,6 +14,11 @@
+ 
+ ROOT = Path(__file__).parents[1]
+ 
++# Without a doctype a browser lays the page out in quirks mode, and without the
++# viewport a phone lays it out at desktop width and ignores the narrow-screen rules.
++STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
++                  '<meta name="viewport" content="width=device-width, initial-scale=1">\n')
++
+ DIFF = """diff --git a/src/core.go b/src/core.go
+ index 1111111..2222222 100644
+ --- a/src/core.go
+@@ -138,7 +143,7 @@ def test_writes_the_page_and_the_renderer(self) -> None:
+ 
+         self.assertEqual(0, code, err)
+         html = (site / "index.html").read_text()
+-        self.assertTrue(html.startswith("<title>Core Summary</title>"))
++        self.assertTrue(html.startswith(STANDARDS_HEAD + "<title>Core Summary</title>\n"), html[:200])
+         self.assertTrue((site / "summary.js").is_file())
+         self.assertTrue((site / "summary.css").is_file())
+         self.assertNotIn("sitebar", html, "a standalone page has no site to link to")
+@@ -291,6 +296,7 @@ def test_builds_every_head_an_index_and_a_link_to_the_newest(self) -> None:
+         self.assertEqual([("c" * 40, False), ("a" * 40, True)], [(h["head"], h["current"]) for h in data["heads"]])
+         for built in (page, index, (built_site / "reviews" / "7" / "index.html").read_text()):
+             self.assertIn(site.icon_link(), built)
++            self.assertTrue(built.startswith(STANDARDS_HEAD), built[:200])
+ 
+     def test_a_summary_published_with_its_diff_builds_without_github(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
