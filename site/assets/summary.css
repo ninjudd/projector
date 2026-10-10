@@ -77,6 +77,8 @@ a.rstatus:hover { text-decoration: underline; }
 .rstatus.unreviewed { color: var(--muted); }
 .rstatus.merged { color: var(--merged); }
 .rstatus.closed { color: var(--closed); }
+.rstatus.incremental { color: var(--muted); }
+.eyebrow code { text-transform: none; letter-spacing: normal; }
 
 /* sidebar */
 /* Scoped to the summary layout: the site's own pages load this file and have a nav.side. */
