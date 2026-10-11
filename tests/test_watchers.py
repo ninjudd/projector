@@ -2,8 +2,9 @@
 
 The fake serves one fixture per pull request and applies every ``--jq``
 filter with the system ``jq``, so the scripts' own filters are what run. Each
-test makes single passes with ``--once``; the state file carries what one pass
-announced into the next, exactly as it does between cycles of a live watch.
+test makes single passes with ``--once``, except the one that checks a running
+watch exits; the state file carries what one pass announced into the next,
+exactly as it does between cycles of a live watch.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ PRS = ROOT / "skills" / "start-review-loop" / "scripts" / "watch-prs.sh"
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+DONE = "DONE every tracked pull request has merged or closed; the watch is exiting"
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Serves fixtures from $FAKE_GH_DIR:
@@ -356,6 +358,60 @@ class WatchThreadsTests(WatcherCase):
         self.assert_ok(result)
         self.assertEqual("", result.stdout)
         self.assertEqual([], self.state_rows())
+
+    def test_exit_when_closed_ends_the_watch_once_every_tracked_pull_request_closed(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.pull_request(2, state="CLOSED")
+        self.track("acme/app#1", "acme/app#2")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
+
+    def test_exit_when_closed_keeps_watching_while_one_is_open(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.pull_request(2)
+        self.track("acme/app#1", "acme/app#2")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+
+    def test_exit_when_closed_ends_a_watch_whose_file_names_none(self) -> None:
+        self.tracked.write_text("# every pull request merged\n")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
+
+    def test_exit_when_closed_never_ends_on_a_failed_query(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        # One entry costs one verification call; every call after it fails.
+        result = self.run_watcher(THREADS, "--exit-when-closed", down_after=1)
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+
+    def test_exit_when_closed_stops_a_running_watch(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        result = subprocess.run(
+            ["bash", str(THREADS), "--tracked", str(self.tracked), "--state", str(self.state), "--exit-when-closed"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=self.env,
+            timeout=30,
+        )
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
 
     def test_the_tracked_file_is_read_again_on_every_pass(self) -> None:
         self.pull_request(1, threads=[thread("T1")])

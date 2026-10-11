@@ -7,11 +7,13 @@ description: Watch chat-owned GitHub pull requests for review findings and merge
 
 Run a persistent background loop alongside foreground work. Watch only pull
 requests this conversation created or explicitly adopted, and keep watching
-until the user stops the loop. The loop decides when a pull request has work;
-the work itself is the `fix-pr` skill, in `../fix-pr/SKILL.md`, run for that
-pull request. That skill defines the operator, what counts as outstanding
-work, how to merge a conflicting base, and how to verify, fix, reply, and
-resolve, so this file covers only the loop around it.
+until the user stops the loop, or, for a loop `implement` started, until every
+pull request it watches has merged or closed. The loop decides when a pull
+request has work; the work itself is the `fix-pr` skill, in
+`../fix-pr/SKILL.md`, run for that pull request. That skill defines the
+operator, what counts as outstanding work, how to merge a conflicting base,
+and how to verify, fix, reply, and resolve, so this file covers only the loop
+around it.
 
 ## Resolve the operator and scope
 
@@ -70,7 +72,10 @@ adopted it. Never list a pull request you would not push to.
    under the host's persistent process or monitor facility. Every event it
    emits names a pull request from the tracked file, so act on each one. A
    `TRACKED` line is a problem with the file itself, announced once, and the
-   fix is to the file rather than to a pull request.
+   fix is to the file rather than to a pull request. When `implement` starts
+   the loop, add `--exit-when-closed`. When the user asks for a loop while
+   one `implement` started is running, restart its watcher without that
+   flag, so it stays idle on an empty file as a loop the user started does.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts,
 body-only reviews, and mergeability directly. Confirm its tracked file is the
@@ -95,6 +100,9 @@ The watcher is level-triggered:
   does when the newest verdict on the current head is clean, whichever model
   gave it, no finding thread is open, and no hold is open.
 - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
+- `DONE` reports, under `--exit-when-closed`, that every tracked pull request
+  has merged or closed, and the watcher exits after it. A pass in which a
+  query failed or the file had a bad line never reports it.
 
 A `DRAFT` line alone is not work. It says the head has not been signed off,
 and any work behind it arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or
@@ -189,9 +197,16 @@ stack.
 
 Delete closed or merged pull requests from the tracked file. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this
-conversation creates or adopts later. Stop the loop only when the user asks, a
-required user decision blocks one finding, validation cannot be restored, or
-every remaining finding on a pull request is deliberately declined.
+conversation creates or adopts later. A loop `implement` started is the
+exception: its watcher reports `DONE` and exits once every pull request it
+tracks has merged or closed. On `DONE`, read the tracked file again, and
+start the watcher again when it names a pull request appended after the
+watcher's last pass. Otherwise finish each subagent as a merged pull
+request's subagent finishes, report that the loop stopped because its work
+is done, and leave the next `implement` to start a new one. Beyond that,
+stop a loop only when the user asks, a required user decision blocks one
+finding, validation cannot be restored, or every remaining finding on a pull
+request is deliberately declined.
 
 ## Never
 
