@@ -33,27 +33,62 @@ function statusHtml(state, review) {
     const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
     return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
 }
-// One stack segment's header: the project its pull requests carry out, linked
-// to the project's page, or the stack's title as plain text.
-function stackHeaderHtml(header) {
-    return header.url !== undefined ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
+// The site bar's icons, a summary's versions toggle, and a plan's history link
+// share this frame: a 20-unit square, stroked in the text colour.
+const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
+const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
+    '<path d="M10 6.75V10l2.25 1.5"/></svg>';
+// A page's title row: an eyebrow of markup above `title`, and `sub` at the
+// row's right end when there is one.
+function titleRowHtml(eyebrow, title, sub) {
+    return `<header class="top"><div><div class="eyebrow">${eyebrow}</div><h1>${esc(title)}</h1></div>` +
+        `${sub !== '' ? `<div class="sub">${sub}</div>` : ''}</header>`;
 }
-// A stack as a summary's sidebar lists it: each segment's header above a row
-// for each of its pull requests, the current one marked. `rows` has a row for
-// every member of the stack. A screen reader names a lone segment's list for
-// the stack, and each of several by its header.
-function stackSegmentsHtml(segments, rows) {
-    return segments.map(function (segment) {
+// One stack segment's header: the project its pull requests carry out, linked
+// to the project's page, or the stack's title as plain text. A header that
+// names the page you are on is plain text too.
+function stackHeaderHtml(header, current) {
+    return header.url !== undefined && !current ? `<a href="${esc(header.url)}">${esc(header.title)}</a>` : `<span>${esc(header.title)}</span>`;
+}
+// A segment's header in its box: highlighted, and the page's current item,
+// when it names the page you are on.
+function segmentHeadHtml(header, current) {
+    return `<div class="stackhead${current ? ' current" aria-current="page' : ''}">${stackHeaderHtml(header, current)}</div>`;
+}
+// A stack as a sidebar lists it: each segment's header above a row for each of
+// its pull requests, the current one marked. `rows` has a row for every member
+// of the stack. A segment whose header names the project `own` shows only its
+// rows, because the sidebar names that project once, above its stacks. When
+// such a segment follows another one, its list is `split`: a rule above its
+// rows ends the segment before it, which would otherwise seem to hold them. A
+// screen reader names a lone segment's list for the stack, and each of several
+// by its header.
+function stackSegmentsHtml(segments, rows, own) {
+    return segments.map(function (segment, i) {
         const label = segments.length > 1 ? `Pull requests for ${segment.header.title}` : 'Pull requests in this stack';
         const items = segment.members.map(function (number) {
             const s = rows.find(function (r) { return r.number === number; });
             if (s === undefined)
                 return '';
             const row = `<span class="snum">#${String(s.number)}</span><span class="stitle">${esc(s.title)}</span>`;
-            return s.current ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
+            return s.current === true ? `<li class="srow current" aria-current="page">${row}</li>` : `<li><a class="srow" href="${esc(s.url)}">${row}</a></li>`;
         }).join('');
-        return `<div class="stackhead">${stackHeaderHtml(segment.header)}</div><ul class="stack" aria-label="${esc(label)}">${items}</ul>`;
+        const unheaded = own !== '' && segment.header.project === own;
+        const head = unheaded ? '' : segmentHeadHtml(segment.header, false);
+        const split = unheaded && i > 0 ? ' split' : '';
+        return `${head}<ul class="stack${split}" aria-label="${esc(label)}">${items}</ul>`;
     }).join('');
+}
+// The sidebar a summary page and a project page share, as `SideNav` describes
+// it: the page's own project's header once, when it has one, then its stacks.
+function sideNavHtml(nav) {
+    const own = nav.head?.header.project ?? '';
+    const stacks = nav.stacks.map(function (stack) {
+        return `<div class="stackgroup">${stackSegmentsHtml(stack.segments, stack.rows, own)}</div>`;
+    }).join('');
+    const head = nav.head !== undefined ? segmentHeadHtml(nav.head.header, nav.head.current) : '';
+    return `<nav class="nav" aria-label="${esc(nav.label)}"><div class="prblock">${head}${stacks !== '' ? stacks : nav.empty}</div>` +
+        `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
 }
 (function () {
     // How many hidden lines one expand up or expand down reveals.
@@ -120,10 +155,6 @@ function stackSegmentsHtml(segments, rows) {
             return f;
         }
         const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
-        // Drawn like the site bar's icons: a 20-unit square, stroked in the text colour.
-        const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
-        const HISTORY_ICON = `${ICON}<path d="M3.5 10a6.5 6.5 0 1 0 6.5-6.5 7 7 0 0 0-4.85 2L3.5 7.25"/><path d="M3.5 3.5v3.75h3.75"/>` +
-            '<path d="M10 6.75V10l2.25 1.5"/></svg>';
         // Two arrows folding in on a line: the expanded lines closing up again.
         const COLLAPSE_ICON = `${ICON}<path d="M6.5 3L10 6.5 13.5 3"/><path d="M6.5 17L10 13.5 13.5 17"/><path d="M4 10h12"/></svg>`;
         const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
@@ -426,11 +457,11 @@ function stackSegmentsHtml(segments, rows) {
             const label = `Versions (${String(heads.length)})`;
             return `<details class="versions"><summary aria-label="${label}" title="${label}">${HISTORY_ICON}</summary><ul>${rows}</ul></details>`;
         }
-        // The pull requests stacked with this one under their segments' headers; a
-        // pull request alone is a stack of one.
-        function stackList() {
+        // A row for each pull request stacked with this one; a pull request alone is
+        // a stack of one.
+        function stackRows() {
             const listed = data.stack ?? [];
-            return stackSegmentsHtml(data.segments, listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }]);
+            return listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
         }
         // The header, as the page's statement of how well the head was checked,
         // also links the full review a clean incremental review builds on.
@@ -447,24 +478,22 @@ function stackSegmentsHtml(segments, rows) {
             return ` · ${status} · ${link}`;
         }
         function renderPage() {
-            const nav = data.groups.map(function (g, i) {
+            const sections = data.groups.map(function (g, i) {
                 return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
             }).join('');
             const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
-            const title = esc(pr.title);
+            const menu = moreMenu('pr-menu', 'Pull request links', [
+                { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
+                { href: `${prUrl}/files`, text: 'Files on GitHub', short: 'Files', external: true },
+                { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
+            ]);
             return '<div class="wrap">' +
-                `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${title}</span></div>` +
-                `<header class="top"><div><div class="eyebrow">${ext(prUrl, esc(prRef))}${reviewStatus()}</div><h1>${title}</h1></div>` +
-                `<div class="sub">${moreMenu('pr-menu', 'Pull request links', [
-                    { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
-                    { href: `${prUrl}/files`, text: 'Files on GitHub', short: 'Files', external: true },
-                    { href: `${repoUrl}/compare/${encodeURIComponent(baseRef ?? 'main')}...${pr.head}`, text: 'Compare on GitHub', short: 'Compare', external: true },
-                ])}</div></header>` +
-                '<div class="layout"><aside class="side"><nav class="nav" aria-label="Sections">' +
-                `<div class="prblock">${stackList()}</div>` +
-                `<div class="extra">${extra}</div>` +
-                `<ol>${nav}</ol><div class="navfoot"><div class="credit">${creditHtml()}</div>` +
-                `${headsList()}</div></nav></aside>` +
+                `<div class="prbar">${ext(prUrl, esc(prRef), 'prref')}<span class="prname">${esc(pr.title)}</span></div>` +
+                titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
+                '<div class="layout"><aside class="side">' +
+                sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
+                    middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
+                '</aside>' +
                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
         }

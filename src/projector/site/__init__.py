@@ -289,9 +289,9 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     in it, and each page lists the pull requests in its stack. `described`
     holds the projects the site has pages for. Each summary is linked to the
     one it carries out, as `project_linker` decides, and each stack is split
-    into segments by `stack_segments`. Every page of a stack carries its
-    `segments`, and every page and entry the `header` of the segment its pull
-    request is in. A file is
+    into segments by `stack_segments`. Every page and entry of a stack
+    carries its `segments`, and every page and entry the `header` of the
+    segment its pull request is in. A file is
     generated as the `attributes.json` that `publish` stored beside a summary
     says, or, for a summary without one, as the checkout at `repo_root` reads
     its .gitattributes. A file whose head copy `publish` stored beside its
@@ -408,8 +408,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
         (out / "reviews" / number / "index.html").write_text(
             page(pr_title(latest), latest, embed=False, assets=f"{base}assets/", site_base=base,
                  src=f"{base}reviews/{number}/{newest_head}/data.json"), encoding="utf-8")
-        entries.append({"number": pull, "header": header, "pr": latest["pr"], "review": latest.get("review"),
-                        "heads": len(versions), "updated": versions[0][0]})
+        entries.append({"number": pull, "header": header, "segments": segments, "pr": latest["pr"],
+                        "review": latest.get("review"), "heads": len(versions), "updated": versions[0][0]})
     by_number = {e["number"]: e for e in entries}
     ordered = []
     for group in stack_groups(members, prs):
@@ -705,6 +705,26 @@ def stack_segments(members: list[int], newest: dict[int, dict], owned: dict[int,
             segments.append({"header": headers[project], "members": []})
         segments[-1]["members"].append(number)
     return segments
+
+
+def project_stacks(entries: list[dict]) -> dict[str, list[list[dict]]]:
+    """Each project's stacks, in the order of `entries`: the `segments` of every stack that holds a segment it heads.
+
+    `entries` come in the Reviews index's order, as `build_summaries` returns
+    them, so each project's stacks come newest first. A stack is taken once,
+    at its first entry, whose `stack` is None or its own number, and is filed
+    once under each project its segments' headers name, however many of its
+    segments name it. A stack whose every header is a title is filed under
+    none.
+    """
+    stacks: dict[str, list[list[dict]]] = {}
+    for entry in entries:
+        if entry["stack"] not in (None, entry["number"]):
+            continue
+        named = dict.fromkeys(s["header"]["project"] for s in entry["segments"] if "project" in s["header"])
+        for name in named:
+            stacks.setdefault(name, []).append(entry["segments"])
+    return stacks
 
 
 def copy_content(repo_root: Path, path: Path, out: Path) -> str:
@@ -1006,8 +1026,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     review status and for the projects open pull requests propose.
     `projects_dir` is the configured projects directory, which a pull request
     can propose the first plan of. Each project, proposed ones included,
-    lists the reviews whose stack segment it heads. Returns the reviews, the
-    summaries skipped, and the proposed projects.
+    carries the `stacks` that `project_stacks` files under it. Returns the
+    reviews, the summaries skipped, and the proposed projects.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -1027,9 +1047,9 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     entries, failures, proposed = built
     described = sorted(described + proposed, key=lambda p: p["name"])
     assign_routes(docs, described)
+    stacks = project_stacks(entries)
     for project in described:
-        project["reviews"] = sorted((e["number"] for e in entries if e["header"].get("project") == project["name"]),
-                                    reverse=True)
+        project["stacks"] = stacks.get(project["name"], [])
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")

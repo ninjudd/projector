@@ -1,10 +1,11 @@
 // Projector site: three sections, drawn from site.json. Projects lists the projects
-// and renders each one's files beside a sidebar of its folder; Reviews lists the
-// pull request summaries; Docs renders the README and everything else under
-// docs/ beside a sidebar of that tree. A page is Markdown, rendered here, or HTML,
-// shown as it is in a frame. Every view has a real path under the site's base;
-// links between views update the address without a page load. Every page loads
-// summary.js first, for the helpers a summary page draws with too.
+// and renders each one's files in a summary page's layout, beside a summary's
+// sidebar of its stacks and pages; Reviews lists the pull request summaries; Docs
+// renders the README and everything else under docs/ beside a sidebar of that
+// tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+// Every view has a real path under the site's base; links between views update
+// the address without a page load. Every page loads summary.js first, for the
+// helpers a summary page draws with too.
 (function (): void {
   type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
   type Body = string | Node;
@@ -30,7 +31,6 @@
   const MARK = '<svg class="sitemark" viewBox="0 0 32 32" aria-hidden="true">' +
     '<path d="M7 16 L29 5.5 V26.5 Z" fill="var(--brand)"/><circle cx="7" cy="16" r="4.5" fill="currentColor"/></svg>';
   // The header's icon buttons: the section menu, and entering and leaving full screen.
-  const ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">';
   const MENU_ICON = `${ICON}<path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg>`;
   const FULL_ICON = `${ICON}<path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4"/></svg>`;
   const EXIT_FULL_ICON = `${ICON}<path d="M7.5 3.5v4h-4M16.5 7.5h-4v-4M12.5 16.5v-4h4M3.5 12.5h4v4"/></svg>`;
@@ -79,9 +79,6 @@
   }
 
   function folderOf(project: SiteProject): string { return project.path.slice(0, project.path.lastIndexOf('/') + 1); }
-  function projectNamed(name: string): SiteProject | null {
-    return site.projects.find(function (p) { return p.name === name; }) ?? null;
-  }
   // The deepest project whose folder holds the file.
   function ownerOf(path: string): SiteProject | null {
     let best: SiteProject | null = null;
@@ -183,25 +180,36 @@
 
   function isHtml(path: string): boolean { return /\.html$/i.test(path); }
 
-  // Draw the page around `body`, with `side` as a sidebar when given, and return
-  // the element the body went into. A wide page, an HTML page's frame, fills the
-  // window below the header, starts with its sidebar hidden, and can go full
-  // screen, hiding the header; a button pinned to the corner leaves full screen.
-  function frame(active: Section, title: string, body: Body, side?: string | null, wide?: boolean): HTMLElement {
+  // Draw the page around `body`, and return the element the body went into.
+  // `side`, a section's tree, is a column at the window's left edge. A page
+  // with `top`, a title row, takes a summary page's layout instead: the title
+  // row across the top, `nav`, a summary's sidebar, beside the body, and a
+  // site bar that scrolls away. A wide page, an HTML page's frame, fills the
+  // window below the header, starts with its column, `side` or else `nav`,
+  // hidden, and can go full screen, hiding the header; a button pinned to the
+  // corner leaves full screen.
+  function frame(active: Section, title: string, body: Body, side?: string | null, wide?: boolean, top?: string,
+    nav?: string): HTMLElement {
     if (root === null) throw new Error('A view needs the #site element to draw into');
     document.title = title !== '' ? `${title} · ${site.repo}` : site.repo;
     fitFrame = null;
-    const hasSide = side != null && side !== '';
     const isWide = wide === true;
     if (!isWide) document.body.classList.remove('barhidden');
-    const classes = `sitemain${hasSide ? ' withside' : ''}${isWide ? ' wide' : ''}${hasSide && isWide ? ' collapsed' : ''}`;
-    root.innerHTML =
-      header(active, undefined, hasSide ? (isWide ? 'closed' : 'open') : undefined, isWide) +
-      (isWide ? `<button type="button" class="sitebtn barshow" title="Exit full screen" aria-label="Exit full screen">${EXIT_FULL_ICON}</button>` : '') +
-      `<main class="${classes}">` +
-      (hasSide ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>` : '') +
-      '<div class="sidebody" id="sidebody"></div></main>' +
-      (isWide ? '' : `<footer class="sitefoot">${creditHtml()}</footer>`);
+    if (top !== undefined) {
+      root.innerHTML = header(active, 'scrolls') +
+        `<main class="sitemain withnav"><div class="wrap">${top}<div class="layout"><aside class="side">${nav ?? ''}</aside>` +
+        '<div class="sidebody" id="sidebody"></div></div></div></main>';
+    } else {
+      const column = side != null && side !== '' ? `<nav class="side" id="siteside" aria-label="Section">${side}</nav>`
+        : nav !== undefined && nav !== '' ? `<aside class="side" id="siteside">${nav}</aside>` : '';
+      const hasSide = column !== '';
+      const classes = `sitemain${hasSide ? ' withside' : ''}${isWide ? ' wide' : ''}${hasSide && isWide ? ' collapsed' : ''}`;
+      root.innerHTML =
+        header(active, undefined, hasSide ? (isWide ? 'closed' : 'open') : undefined, isWide) +
+        (isWide ? `<button type="button" class="sitebtn barshow" title="Exit full screen" aria-label="Exit full screen">${EXIT_FULL_ICON}</button>` : '') +
+        `<main class="${classes}">${column}<div class="sidebody" id="sidebody"></div></main>` +
+        (isWide ? '' : `<footer class="sitefoot">${creditHtml()}</footer>`);
+    }
     const main = document.getElementById('sidebody');
     if (main === null) throw new Error('The page lost the #sidebody element it just drew');
     if (typeof body === 'string') main.innerHTML = body;
@@ -211,6 +219,7 @@
 
   // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
   // heading. A folder holding a readme is labelled by it; any other folder by its name.
+  // The outer list is a `sidetree`, which its styles name, so they reach no other list.
   function tree(items: Item[], prefix: string, top: Item | null, current: string | null): string {
     const rootNode: TreeNode = { dirs: {}, files: [], index: null };
     items.forEach(function (item) {
@@ -237,7 +246,7 @@
         return `<li>${dir.index !== null ? link(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
       });
       const all = files.concat(dirs);
-      return all.length > 0 ? `<ul>${all.join('')}</ul>` : '';
+      return all.length > 0 ? `<ul${node === rootNode ? ' class="sidetree"' : ''}>${all.join('')}</ul>` : '';
     }
     return (top !== null ? `<div class="sidetop">${link(top)}</div>` : '') + render(rootNode);
   }
@@ -252,8 +261,9 @@
   // An HTML page as it is, in a frame of its copy under content/, so the files it
   // loads by relative path resolve beside it. The address's hash passes into the
   // frame and follows it back out, so a deep link into a hash-routed page works.
-  function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null): void {
-    const main = frame(active, title, '', side, true);
+  function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null,
+    nav?: string): void {
+    const main = frame(active, title, '', side, true, undefined, nav);
     if (before !== null) main.appendChild(before);
     const page = document.createElement('iframe');
     page.className = 'htmlpage';
@@ -276,23 +286,29 @@
     });
   }
 
-  // `ref` is where a Markdown page's links to repository files the site lacks point on GitHub.
+  // `ref` is where a Markdown page's links to repository files the site lacks
+  // point on GitHub. `top` and `nav` give a Markdown page a summary page's
+  // layout, and `nav` is an HTML page's column, as `frame` draws them.
   function showPage(active: Section, path: string, title: string, before: Node | null, side: string | null,
-    ref: string = site.branch): void {
-    if (isHtml(path)) showHtml(active, path, title, before, side);
-    else showDocument(active, path, title, before, side, ref);
+    ref: string = site.branch, top?: string, nav?: string): void {
+    if (isHtml(path)) showHtml(active, path, title, before, side, nav);
+    else showDocument(active, path, title, before, side, ref, top, nav);
   }
 
+  // Under a title row, which shows the page's title, the body leaves out its
+  // own when that is its first element.
   function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null,
-    ref: string): void {
-    frame(active, title, '<p class="note">Loading…</p>', side);
+    ref: string, top?: string, nav?: string): void {
+    frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav);
     loadMarkdown(path).then(function (text) {
-      const main = frame(active, title, renderMarkdown(text, path, ref), side);
+      const box = renderMarkdown(text, path, ref);
+      if (top !== undefined && box.firstElementChild?.tagName === 'H1') box.firstElementChild.remove();
+      const main = frame(active, title, box, side, false, top, nav);
       if (before !== null) main.insertBefore(before, main.firstChild);
       const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
       if (target !== null) target.scrollIntoView();
     }, function (error: unknown) {
-      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side);
+      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top, nav);
     });
   }
 
@@ -365,8 +381,12 @@
     }
   }
 
-  // Any file of a project, its readme or a supplemental file, beside a sidebar of
-  // its top-level project's folder: every file, subdirectory, and nested project.
+  // Any file of a project, its readme or a supplemental file, in a summary
+  // page's layout: a title row of the breadcrumbs, the readme's badges and
+  // owner, and its link to GitHub over the page's title, and the project's
+  // sidebar beside the page. An HTML page keeps its frame, with the sidebar
+  // in its column and the breadcrumbs and link above it. A proposed
+  // project's banner opens every page.
   function showProjectFile(path: string): void {
     const project = ownerOf(path);
     if (project === null) {
@@ -374,44 +394,74 @@
       return;
     }
     const parts = project.name.split('/');
-    const top = projectNamed(parts[0] ?? project.name) ?? project;
-    const prefix = folderOf(top);
-    const items: Item[] = [];
-    site.projects.forEach(function (p) {
-      if (p === top || !p.path.startsWith(prefix)) return;
-      items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
-    });
-    site.projects.forEach(function (p) {
-      if (p.path.startsWith(prefix)) p.files.forEach(function (f) { items.push(f); });
-    });
-    // A project with nothing but its readme needs no sidebar. The top-level
-    // project's readme is Overview, the page the tree starts from: on that page
-    // its title would repeat the heading, and on every other page of the
-    // project the breadcrumbs already name the project.
-    const side = items.length > 0 ? tree(items, prefix, { path: top.path, title: 'Overview', proposed: top.proposed?.number }, path) : null;
-
     const isReadme = path === project.path;
     const file = project.files.find(function (f) { return f.path === path; });
     const leaf = path.slice(path.lastIndexOf('/') + 1);
+    const title = isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path));
+    const ref = project.proposed?.head ?? site.branch;
     const crumbs = `<a href="${esc(base)}">Projects</a>` + parts.map(function (part, i) {
       const name = parts.slice(0, i + 1).join('/');
       const here = isReadme && i === parts.length - 1;
       return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
     }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
+    const github = esc(repoUrl('blob', path, ref));
+    const banner = project.proposed !== undefined ? proposalBanner(project.proposed) : '';
+    const nav = projectNav(project, path);
+    if (isHtml(path)) {
+      const head = document.createElement('div');
+      head.className = 'phead';
+      head.innerHTML = `<div class="crumbs">${crumbs}</div>${banner}<div class="pmeta"><a class="note" href="${github}">View on GitHub</a></div>`;
+      showPage('projects', path, title, head, null, ref, undefined, nav);
+      return;
+    }
+    const owner = project.owner != null && project.owner !== '' ? `Owner ${esc(project.owner)}` : '';
+    const link = `<a href="${github}">View on GitHub</a>`;
+    const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner, link] : [crumbs, link])
+      .filter(function (group) { return group !== ''; }).join(' · ');
+    let before: HTMLElement | null = null;
+    if (banner !== '') {
+      before = document.createElement('div');
+      before.innerHTML = banner;
+    }
+    showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
+  }
+
+  // A project's sidebar, drawn as a summary's is: the project's header once,
+  // then every stack that holds a segment it heads, each whole but for this
+  // project's headers, or a line saying it has none; then the other pages
+  // under its folder; then the credit and its history on GitHub. On its
+  // readme, its header is the page you are on, and on any other page it links
+  // to the readme and the page's own entry in the pages is current.
+  function projectNav(project: SiteProject, path: string): string {
+    const isReadme = path === project.path;
     const ref = project.proposed?.head ?? site.branch;
-    const head = document.createElement('div');
-    head.className = 'phead';
-    head.innerHTML = `<div class="crumbs">${crumbs}</div>` +
-      (project.proposed !== undefined ? proposalBanner(project.proposed) : '') +
-      (isReadme ? `<div class="pmeta">${badge('status', project.status)}${badge('priority', project.priority)}` +
-        (project.owner != null && project.owner !== '' ? `<span class="note">Owner ${esc(project.owner)}</span>` : '') +
-        `<a class="note" href="${esc(repoUrl('blob', project.path, ref))}">View on GitHub</a></div>` +
-        (project.reviews.length > 0 ? '<div class="plist"><b>Reviews</b> ' + project.reviews.map(function (n) {
-          const r = reviewFor(n);
-          return `<a href="${esc(`${base}reviews/${String(n)}/`)}">#${String(n)}${r !== null ? ` ${esc(r.title)}` : ''}</a>`;
-        }).join(' · ') + '</div>' : '')
-        : `<div class="pmeta"><a class="note" href="${esc(repoUrl('blob', path, ref))}">View on GitHub</a></div>`);
-    showPage('projects', path, isReadme ? project.title : (file !== undefined ? file.title : (leaf !== '' ? leaf : path)), head, side, ref);
+    const stacks = project.stacks.map(function (segments) {
+      const rows = segments.flatMap(function (s) { return s.members; }).map(function (n): StackRow {
+        const r = reviewFor(n);
+        return r !== null ? { number: n, title: r.title, url: `${base}reviews/${String(n)}/` }
+          : { number: n, title: '', url: `https://github.com/${site.repo}/pull/${String(n)}` };
+      });
+      return { segments: segments, rows: rows };
+    });
+    const own: StackHeader = { project: project.name, title: project.title, url: `${base}projects/${project.name}/` };
+    const folder = folderOf(project);
+    const items: Item[] = [];
+    site.projects.forEach(function (p) {
+      if (p !== project && p.path.startsWith(folder)) items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
+    });
+    site.projects.forEach(function (p) {
+      if (p.path.startsWith(folder)) p.files.forEach(function (f) { items.push(f); });
+    });
+    const history = `<a class="history" href="${esc(repoUrl('commits', path, ref))}" aria-label="History on GitHub" ` +
+      `title="History on GitHub">${HISTORY_ICON}</a>`;
+    return sideNavHtml({
+      label: 'Project',
+      head: { header: own, current: isReadme },
+      stacks: stacks,
+      empty: '<p class="snone">No reviews of this project.</p>',
+      middle: items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path)}</div>` : '',
+      foot: history,
+    });
   }
 
   // The banner atop every page of a proposed project: the pull request that
@@ -483,7 +533,7 @@
       });
       return segments.map(function (segment, i) {
         return `<tbody${i < segments.length - 1 ? ' class="continued"' : ''}>` +
-          `<tr class="stackhead"><th colspan="3" scope="rowgroup">${stackHeaderHtml(segment.header)}</th></tr>` +
+          `<tr class="stackhead"><th colspan="3" scope="rowgroup">${stackHeaderHtml(segment.header, false)}</th></tr>` +
           `${segment.rows.map(reviewRow).join('')}</tbody>`;
       }).join('');
     });
