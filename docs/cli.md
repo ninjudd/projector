@@ -762,10 +762,18 @@ the one in view. A jump to a section or to the files pane lands it level
 with the top of the sidebar. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
-no Projector review names the head. The newest review decides whichever model
-wrote it, as it decides the draft state. When that review is incremental, the
-header reads **Clean · incremental from a8cf3d5**, where the second part names
+**Changes requested**, linked to that review on GitHub. A head no Projector
+review names yet shows **Pending** when an earlier head of the pull request
+has a verdict, as when the site was built before the head's review landed.
+**Pending** links the newest verdict on an earlier head, and its title names
+that verdict, as in "Last review: changes requested on e333044. This head
+hasn't been reviewed yet." Every other head counts as earlier except those
+with newer summaries, so a reviewed head the site has no summary of counts
+too. **Unreviewed** means no Projector review names the head or an earlier
+one, so on a pull request's newest head it means none names any of its
+heads. The newest review of a head decides whichever model wrote it, as it
+decides the draft state. When that review is incremental, the header reads
+**Clean · incremental from a8cf3d5**, where the second part names
 the head of the full review it builds on, by the same model, and links that
 review, while the row on Reviews shows **Clean** alone. Models are told apart
 by their model ID, lowercased and without a trailing bracketed variant such as

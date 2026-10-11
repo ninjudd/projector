@@ -82,13 +82,16 @@ interface SummaryGroup {
 type PullState = 'open' | 'merged' | 'closed';
 
 /**
- * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
- * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
- * head of the full review it builds on, and that review's page, or null when the build found none.
+ * The newest Projector review of a head, with its page on GitHub. A clean incremental review
+ * carries `incrementalFrom`: the head of the full review it builds on, and that review's page, or
+ * null when the build found none. A head no Projector review names is `pending` when an earlier
+ * head of its pull request has a verdict, with the newest such verdict as `last`, and otherwise
+ * `unreviewed`.
  */
 type ReviewStatus =
   | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
   | { status: 'changes-requested'; url: string }
+  | { status: 'pending'; last: { status: 'clean' | 'changes-requested'; head: string; url: string } }
   | { status: 'unreviewed' };
 
 /** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */

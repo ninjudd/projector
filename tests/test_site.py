@@ -423,7 +423,8 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
     def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
-        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
+        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None.
+        Head c's summary is older than head d's, so d is the newest head."""
         asked: list[tuple[str, int]] = []
 
         def pr_status(repo: str, number: int) -> dict:
@@ -432,8 +433,9 @@ class SiteContentTests(SiteRepoCase):
                 raise summary.SummaryError("gh api failed: offline")
             return {"state": "open", "reviews": reviews}
 
-        self.publish(9, "c" * 40)
-        self.publish(9, "d" * 40)
+        for when, head in ((1_700_000_000, "c" * 40), (1_700_000_100, "d" * 40)):
+            self.publish(9, head)
+            os.utime(self.summaries / "9" / head / "summary.json", (when, when))
         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             self.build()
         self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
@@ -450,7 +452,6 @@ class SiteContentTests(SiteRepoCase):
     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
         statuses = self.statuses([
-            projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
             {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z", "association": "OWNER"},
             {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
              "at": "2026-10-03T10:00:00Z", "association": "OWNER"},
@@ -469,8 +470,48 @@ class SiteContentTests(SiteRepoCase):
             projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
         ])
 
-        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
-                         statuses)
+        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
+                          "d": {"status": "pending",
+                                "last": {"status": "changes-requested", "head": "c" * 40, "url": review_url(1)}}},
+                         statuses, "d is pending on c's trusted change request, not the forged clean verdicts")
+
+    def test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them(self) -> None:
+        statuses = self.statuses([
+            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+            projector_review("changes-requested", "e" * 40, "2026-10-02T10:00:00Z", 2),
+            projector_review("clean", "c" * 40, "2026-10-03T10:00:00Z", 3, model="gpt-5.5"),
+        ])
+
+        self.assertEqual({"status": "pending", "last": {"status": "clean", "head": "c" * 40, "url": review_url(3)}},
+                         statuses["d"], "the newest verdict on an earlier head, whichever head and model gave it")
+        self.assertEqual({"status": "clean", "url": review_url(3)}, statuses["c"])
+
+    def test_a_reviewed_head_with_no_summary_counts_as_earlier(self) -> None:
+        statuses = self.statuses([projector_review("changes-requested", "e" * 40, "2026-10-01T10:00:00Z", 1)])
+
+        pending = {"status": "pending", "last": {"status": "changes-requested", "head": "e" * 40, "url": review_url(1)}}
+        self.assertEqual({"c": pending, "d": pending}, statuses,
+                         "the site cannot tell when a head it has no summary of was pushed")
+
+    def test_a_verdict_on_a_later_head_leaves_an_earlier_one_unreviewed(self) -> None:
+        statuses = self.statuses([projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)])
+
+        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "clean", "url": review_url(1)}}, statuses,
+                         "no review will come for c, and none came before it")
+
+    def test_a_verdict_on_the_head_itself_wins_over_a_newer_one_on_an_earlier_head(self) -> None:
+        for own, expected in (
+                (projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2),
+                 {"status": "changes-requested", "url": review_url(2)}),
+                (incremental_review("d" * 40, "c" * 40, "2026-10-02T10:00:00Z", 2),
+                 {"status": "clean", "url": review_url(2), "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}})):
+            with self.subTest(expected["status"]):
+                self.reset()
+                statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1), own,
+                                          projector_review("clean", "c" * 40, "2026-10-03T10:00:00Z", 3,
+                                                           model="gpt-5.5")])
+
+                self.assertEqual(expected, statuses["d"], "an incremental verdict is a verdict like any other")
 
     def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
         statuses = self.statuses([
@@ -603,15 +644,20 @@ class SiteContentTests(SiteRepoCase):
     def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
         self.publish(9, "d" * 40)
         self.publish(10, "e" * 40)
-        states = {9: "open", 10: "merged"}
+        self.publish(11, "f" * 40)
+        states = {9: "open", 10: "merged", 11: "open"}
+        reviewed = {9: [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)], 10: [],
+                    11: [projector_review("changes-requested", "a" * 40, "2026-10-01T10:00:00Z", 2)]}
 
         def pr_status(repo: str, number: int) -> dict:
-            return {"state": states[number], "reviews": [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)]}
+            return {"state": states[number], "reviews": reviewed[number]}
 
         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             reviews = self.build()["reviews"]
 
-        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
+        self.assertEqual([(11, "open", {"status": "pending",
+                                        "last": {"status": "changes-requested", "head": "a" * 40, "url": review_url(2)}}),
+                          (10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
                          [(r["number"], r["state"], r["review"]) for r in reviews],
                          "each row carries what its newest head's page does")
 
@@ -2539,6 +2585,17 @@ function frame(active, title, body) {
                 self.assertEqual([["open", boxes[0]], ["closed", boxes[1]]], drawn["boxes"])
                 self.assertEqual(listed, [n for numbers in self.bodies(drawn["steps"][0]["list"]) for n in numbers])
 
+    def test_a_pending_review_is_listed_as_open_with_its_chip(self) -> None:
+        pending = {"status": "pending", "last": {"status": "clean", "head": "e333044" + "0" * 33, "url": review_url(1)}}
+        drawn = self.draw([self.review(12, None, "open", pending), self.review(11, None, "merged", pending)])
+
+        self.assertIn('<input type="checkbox" value="open" checked> Open <span class="count">1</span>', drawn["page"])
+        self.assertEqual([[12]], self.bodies(drawn["steps"][0]["list"]))
+        self.assertEqual([f'<a class="rstatus pending" href="{review_url(1)}" target="_blank" rel="noopener" '
+                          'title="Last review: clean on e333044. This head hasn\'t been reviewed yet.">Pending</a>'],
+                         re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>',
+                                    drawn["steps"][0]["list"]))
+
     def test_a_state_no_review_is_in_says_so(self) -> None:
         drawn = self.draw([self.review(9, None, "merged")])
 
@@ -2645,6 +2702,29 @@ class SharedHelperTests(unittest.TestCase):
                           '<a class="rstatus changes-requested" href="https://x/?a&amp;b" target="_blank" '
                           'rel="noopener">Changes requested</a>', '<span class="rstatus unreviewed">Unreviewed</span>',
                           ""], json.loads(node(program)))
+
+    def test_a_pending_head_links_the_last_verdict_and_names_it_in_its_title(self) -> None:
+        def pending(verdict: str, url: str) -> dict:
+            return {"status": "pending", "last": {"status": verdict, "head": "e333044" + "0" * 33, "url": url}}
+
+        program = shared_js() + (
+            f"\nprocess.stdout.write(JSON.stringify([statusHtml('open', {json.dumps(pending('changes-requested', 'u'))}),"
+            f" statusHtml('open', {json.dumps(pending('clean', 'https://x/?a&b'))}),"
+            f" statusHtml('merged', {json.dumps(pending('clean', 'u'))})]));")
+
+        self.assertEqual(['<a class="rstatus pending" href="u" target="_blank" rel="noopener" title="Last review: '
+                          'changes requested on e333044. This head hasn\'t been reviewed yet.">Pending</a>',
+                          '<a class="rstatus pending" href="https://x/?a&amp;b" target="_blank" rel="noopener" '
+                          'title="Last review: clean on e333044. This head hasn\'t been reviewed yet.">Pending</a>',
+                          '<span class="rstatus merged">Merged</span>'], json.loads(node(program)),
+                         "a link, so a keyboard reaches its title, and Merged still takes its place")
+
+    def test_pending_has_a_colour_of_its_own_in_light_and_dark(self) -> None:
+        css = (SITE_JS.parent / "summary.css").read_text()
+
+        self.assertIn(".rstatus.pending { color: var(--pending); }", css)
+        self.assertEqual(["#4B6382", "#9FB3CF", "#9FB3CF"], re.findall(r"--pending: (#[0-9A-F]{6});", css),
+                         "the light palette, the dark one a reader's system asks for, and the dark one they pick")
 
     def test_every_site_page_carries_the_summary_pages_credit(self) -> None:
         stub = ("const root = {innerHTML: ''}, main = {innerHTML: ''};\n"
@@ -3040,6 +3120,25 @@ class FileHeaderTests(SiteRepoCase):
                       'incremental from <code>a8cf3d5</code></a></div><h1>', open_html)
         self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
                       "a merged pull request shows Merged alone")
+
+    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
+    def test_the_header_shows_pending_when_only_an_earlier_head_was_reviewed(self) -> None:
+        earlier = "e333044" + "0" * 33
+        reviews = [projector_review("clean", earlier, "2026-10-01T10:00:00Z", 1),
+                   projector_review("changes-requested", earlier, "2026-10-02T10:00:00Z", 2)]
+
+        data = self.build(state="open", reviews=reviews)
+        html = rendered_summary(data)
+        shutil.rmtree(self.out)
+        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
+
+        self.assertEqual({"status": "pending", "last": {"status": "changes-requested", "head": earlier,
+                                                        "url": review_url(2)}}, data["review"])
+        self.assertIn(f' · <a class="rstatus pending" href="{review_url(2)}" target="_blank" rel="noopener" '
+                      'title="Last review: changes requested on e333044. This head hasn\'t been reviewed yet.">'
+                      'Pending</a></div><h1>', html, "one chip, linked to the last review, which its title names")
+        self.assertEqual(1, html.count('class="rstatus '))
+        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html)
 
     @unittest.skipUnless(shutil.which("node"), "the status test needs node")
     def test_the_header_shows_the_newest_verdict_alone_when_several_models_reviewed_the_head(self) -> None:

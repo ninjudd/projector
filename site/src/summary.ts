@@ -20,17 +20,28 @@ function localTime(when: Date): string {
 }
 
 // A pull request's status: Merged or Closed once it is, and until then the
-// verdict of the newest Projector review of its head, linked to that review,
-// or Unreviewed when no Projector review names the head. Nothing when the
-// build could not ask GitHub, so a status it does not know never reads as
-// unreviewed.
+// verdict of the newest Projector review of its head, linked to that review.
+// A head no Projector review names is Pending, linked to the newest verdict
+// on an earlier head, which its title names, or Unreviewed when no earlier
+// head has one either. Nothing when the build could not ask GitHub, so a
+// status it does not know never reads as unreviewed.
 function statusHtml(state: PullState | undefined, review: ReviewStatus | undefined): string {
   if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
   if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
   if (review === undefined) return '';
   if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
-  const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
-  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
+  if (review.status === 'pending') {
+    const last = review.last;
+    const title = `Last review: ${verdictWord(last.status).toLowerCase()} on ${last.head.slice(0, 7)}. ` +
+      'This head hasn\'t been reviewed yet.';
+    return `<a class="rstatus pending" href="${esc(last.url)}" target="_blank" rel="noopener" title="${esc(title)}">Pending</a>`;
+  }
+  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${verdictWord(review.status)}</a>`;
+}
+
+// A verdict as its status chip words it.
+function verdictWord(verdict: 'clean' | 'changes-requested'): string {
+  return verdict === 'clean' ? 'Clean' : 'Changes requested';
 }
 
 // The site bar's icons, a summary's versions toggle, and a plan's history link
