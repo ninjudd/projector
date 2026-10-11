@@ -1,0 +1,116 @@
+{
+ "version": 1,
+ "name": "Projects page leads with list",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 250,
+  "title": "Lead the Projects page with the list",
+  "head": "d50ede5da395daaf30decb7bd467f475aa100067",
+  "headRef": "hide-owner-column",
+  "base": "1032d88582b6757dab8e0fdce0f448168345d195",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The site's <b>Projects</b> page is the home page of a repository's Projector site. It lists every plan under <code>docs/projects</code> in one table per status, with columns for priority, owner, and the project's name. Before this change, two things sat above the list: a line that counted the projects and explained status and priority, and a folded <b>How projects work</b> introduction rendered from <code>docs/projects/README.md</code>. The page also showed an Owner column that only one plan in this repository filled in.",
+   "This change makes the list the first thing on the page:",
+   "<ul><li><b>The count and legend line is gone.</b> <code>showProjects</code> draws the heading, then the filter box, then the status groups. The proposed-project count, which only that line used, goes with it.</li><li><b>The introduction moves to the bottom.</b> The folded <b>How projects work</b> section now follows the last status group, just above the site footer.</li><li><b>The Owner column disappears here.</b> The completed <code>review-scripts</code> plan no longer names an owner. The page already draws the Owner column only when some plan names one, so no plan in this repository brings it back. A repository whose plans name owners keeps the column.</li></ul>",
+   "The <code>proposed-projects</code> plan, which is <code>in-progress</code>, specified the count. This change edits the plan so it describes the page without the count, and its acceptance criteria match the updated test."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Proposed project</b>: a plan that an open pull request adds. The page lists it in its status group with a <b>Proposed #N</b> badge.</li><li><b><code>#sidebody</code></b>: the element that <code>frame</code> draws a page's content into. The site footer sits outside it.</li><li><b><code>site.js</code></b>: the compiled JavaScript the site serves, built from <code>site/src/site.ts</code> and committed beside it.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "layout",
+   "title": "The list leads the Projects page",
+   "kicker": "Drops the count line and moves the introduction below the list",
+   "intro": [
+    "<code>showProjects</code> builds the Projects page. It now draws the <code>&lt;h1&gt;</code>, the filter box, and the status groups, with nothing between the heading and the filter. Once <code>docs/projects/README.md</code> loads, it appends the folded introduction to the end of the page content instead of inserting it before the filter.",
+    "The compiled <code>site.js</code> carries the same edit. The page test that drew a proposed project now asserts that no <code>class=\"note\"</code> line appears, where it used to assert the count's text. A new page test checks where the introduction goes."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Rebuilding with <code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code> left <code>site/assets/site.js</code> unchanged, so the compiled file matches the TypeScript."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "<code>showProjects</code> drops the count line and appends the introduction after the status groups.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 425,
+       "text": "<code>frame</code> renders the footer after <code>&lt;/main&gt;</code>, outside <code>#sidebody</code>, so <code>appendChild</code> puts the introduction after the last status group and above the footer."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.js",
+     "note": "The compiled form of the same edit."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "The proposed-project page test now asserts that the page draws no count line. <code>test_the_introduction_comes_after_the_last_status_group</code> sets <code>projectsReadme</code> and asserts that the introduction is appended to the page, not inserted above the list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1723,
+       "text": "This test passes at this head. With <code>site.js</code> changed back to <code>insertBefore</code>, it fails."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "plan",
+   "title": "The plan describes the page without the count",
+   "kicker": "Edits the proposed-projects plan to match the new page",
+   "intro": [
+    "The <code>proposed-projects</code> plan adds the <b>Proposed #N</b> badge for plans that open pull requests add. It is <code>in-progress</code>, and it described a line under the Projects heading that counted those proposed projects. This change edits each place that described the count: the § 2.3 description and example of the page, the <code>site.ts</code> row of the § 2.6 file table, the § 3 reasons for listing proposed plans in their status groups, and the § 4 acceptance row, which now expects no note under the heading."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan still says <code>build_checkout</code> counts the proposed projects. That is the count the site build prints, not a line on the page, and this change leaves it alone."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/proposed-projects/readme.md",
+     "note": "Removes the Projects page count from §§ 2.3, 2.6, 3, and 4.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 527,
+       "text": "This acceptance row now matches <code>tests/test_site.py</code>, which asserts that the page draws no <code>class=\"note\"</code> line; the test suite passes at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "owner",
+   "title": "No plan here names an owner",
+   "kicker": "Removes the one owner field, which hides the Owner column",
+   "intro": [
+    "Plans can name an <code>owner</code> in frontmatter, and <code>docs/projects/README.md</code> asks for one only where more than one person could own a project. <code>review-scripts</code> was the only plan in this repository that named one, so the Owner column was empty on every other row. Removing that field means no plan names an owner, and the page's existing rule leaves the column out."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/review-scripts/readme.md",
+     "note": "Drops <code>owner: ninjudd</code> from a completed plan."
+    }
+   ]
+  }
+ ],
+ "project": ""
+}

@@ -1,0 +1,185 @@
+diff --git a/docs/projects/proposed-projects/readme.md b/docs/projects/proposed-projects/readme.md
+index 35555948..60eafb84 100644
+--- a/docs/projects/proposed-projects/readme.md
++++ b/docs/projects/proposed-projects/readme.md
+@@ -162,9 +162,8 @@ that links the pull request's review page.
+ 
+ - **Projects page.** `showProjects` lists a proposed project in its status
+   group, sorted with the others by priority and name, with the badge after
+-  its title. The note under the heading counts the proposed projects when
+-  there are any. The filter matches the word, so typing `proposed` lists only
+-  the proposed projects.
++  its title. The page draws no count or legend above the list. The filter
++  matches the word, so typing `proposed` lists only the proposed projects.
+ - **Project page.** `showProjectFile` draws a banner above the status badges
+   on every page of a proposed project, its plan and each of its files. The
+   banner names the pull request with its title and review status, drawn by
+@@ -184,8 +183,6 @@ The Projects page, with this plan's pull request, #218, open:
+ 
+ ```text
+ Projects
+-16 projects under docs/projects, 1 of them proposed in open pull requests.
+-Status says how finished a project is; priority says when it is scheduled.
+ 
+ READY 5
+  Project                                                          Priority  Name
+@@ -325,7 +322,7 @@ implementing pull request changes it by hand in the same way.
+ | `src/projector/site/__init__.py` | `build_summaries` asks for statuses before it links, finds the proposed projects, writes their files, links over both lists, and returns them. `build_site` adds them to its list before `assign_routes`, and names `projectsDir` whenever it lists a project. `search_index` reads from `content/`. |
+ | `src/projector/cli.py` | `site_projects` returns the configured projects directory even when the checkout lacks it. `build_checkout` counts the proposed projects. `check` adds the `site-workflow-outdated` warning. |
+ | `.github/workflows/projector-site.yml` | This repository's own workflow gains the same trigger, condition, and concurrency group by hand. |
+-| `site/src/site.ts` | `PROPOSED`, the badge, the banner, the Projects page count and filter, links at `proposed.head`, the sidebar badge, and the search badge. |
++| `site/src/site.ts` | `PROPOSED`, the badge, the banner, the Projects page filter, links at `proposed.head`, the sidebar badge, and the search badge. |
+ | `site/src/globals.d.ts` | `proposed` on `SiteProject`, and on `SearchEntry`. |
+ | `site/assets/site.css` | The badge and the banner, in the light and dark themes. |
+ | `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
+@@ -455,8 +452,8 @@ implementing pull request changes it by hand in the same way.
+   of its own would read as a fifth status, the confusion the name was chosen
+   to avoid. In its group, a proposed `ready` plan sits beside the other
+   `ready` plans, where a reader looking for ready work finds it, and a
+-  proposed nested project keeps its place under its parent. The badge, the
+-  count, and the filter keep proposed projects easy to find. A separate
++  proposed nested project keeps its place under its parent. The badge and
++  the filter keep proposed projects easy to find. A separate
+   section remains a possible later change, as § 6 says.
+ - **The same address before and after the merge.** A proposed project lives at
+   `projects/<name>/`, so a link to it, in a pull request or a stack header,
+@@ -527,7 +524,7 @@ Projects view tests do:
+ 
+ | Do | Expect |
+ | --- | --- |
+-| Draw the Projects page with one proposed `ready` project | Its row is in the **ready** group with `<a class="badge proposed" href="/reviews/9/">Proposed #9</a>`, and the note says `1 of them proposed in open pull requests` |
++| Draw the Projects page with one proposed `ready` project | Its row is in the **ready** group with `<a class="badge proposed" href="/reviews/9/">Proposed #9</a>`, and the page draws no note under the heading |
+ | Type `proposed` in the filter | Only the proposed rows stay |
+ | Draw the proposed project's page | The banner names #9 with its title and status, **View on GitHub** links `blob/<head>/docs/projects/gamma/readme.md`, and a relative link to a file the site lacks links at `<head>` |
+ | Draw a search result for a proposed page | It shows the badge |
+diff --git a/docs/projects/review-scripts/readme.md b/docs/projects/review-scripts/readme.md
+index 5a0203ab..fa840b49 100644
+--- a/docs/projects/review-scripts/readme.md
++++ b/docs/projects/review-scripts/readme.md
+@@ -1,6 +1,5 @@
+ ---
+ status: completed
+-owner: ninjudd
+ ---
+ 
+ # Ship the review's mechanical steps as commands
+diff --git a/site/assets/site.js b/site/assets/site.js
+index 713ee3fe..89bb5d59 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -373,7 +373,6 @@
+     // the same in every table, so the columns line up from one status to the next.
+     function showProjects() {
+         const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
+-        const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
+         const groups = STATUS_ORDER.map(function (status) {
+             const rows = site.projects.filter(function (p) { return p.status === status; });
+             rows.sort(function (a, b) {
+@@ -395,9 +394,7 @@
+                         `<td class="mono name">${esc(p.name)}</td></tr>`;
+                 }).join('') + '</tbody></table></div></section>';
+         }).join('');
+-        const main = frame('projects', 'Projects', `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
+-            `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
+-            'Status says how finished a project is; priority says when it is scheduled.</p>' +
++        const main = frame('projects', 'Projects', '<h1>Projects</h1>' +
+             '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
+         const filter = main.querySelector('.filter');
+         if (filter === null)
+@@ -408,6 +405,8 @@
+                 row.hidden = q !== '' && !(row.dataset.search ?? '').includes(q);
+             });
+         });
++        // The introduction comes last, just above the site's footer, so the list
++        // leads the page.
+         const intro = site.projectsReadme;
+         if (intro !== null) {
+             loadMarkdown(intro).then(function (text) {
+@@ -415,7 +414,7 @@
+                 details.className = 'pintro';
+                 details.innerHTML = '<summary>How projects work</summary>';
+                 details.appendChild(renderMarkdown(text, intro));
+-                main.insertBefore(details, filter);
++                main.appendChild(details);
+             }, function () { });
+         }
+     }
+diff --git a/site/src/site.ts b/site/src/site.ts
+index 4f9525a3..65c9c6b5 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -382,7 +382,6 @@
+   // the same in every table, so the columns line up from one status to the next.
+   function showProjects(): void {
+     const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
+-    const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
+     const groups = STATUS_ORDER.map(function (status) {
+       const rows = site.projects.filter(function (p) { return p.status === status; });
+       rows.sort(function (a, b) {
+@@ -404,9 +403,7 @@
+         }).join('') + '</tbody></table></div></section>';
+     }).join('');
+     const main = frame('projects', 'Projects',
+-      `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
+-      `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
+-      'Status says how finished a project is; priority says when it is scheduled.</p>' +
++      '<h1>Projects</h1>' +
+       '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
+     const filter = main.querySelector('.filter');
+     if (filter === null) throw new Error('The projects view lost the filter it just drew');
+@@ -416,6 +413,8 @@
+         row.hidden = q !== '' && !(row.dataset.search ?? '').includes(q);
+       });
+     });
++    // The introduction comes last, just above the site's footer, so the list
++    // leads the page.
+     const intro = site.projectsReadme;
+     if (intro !== null) {
+       loadMarkdown(intro).then(function (text) {
+@@ -423,7 +422,7 @@
+         details.className = 'pintro';
+         details.innerHTML = '<summary>How projects work</summary>';
+         details.appendChild(renderMarkdown(text, intro));
+-        main.insertBefore(details, filter);
++        main.appendChild(details);
+       }, function () { /* the list reads fine without the introduction */ });
+     }
+   }
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 1f28ebcc..c1bec56f 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -1714,13 +1714,31 @@ def test_the_projects_page_lists_a_proposed_project_in_its_status_group_with_its
+                             ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
+                             "showProjects(); process.stdout.write(JSON.stringify({html: drawn}));")["html"]
+ 
+-        self.assertIn('<p class="note">2 projects under <span class="mono">docs/projects</span>, '
+-                      '1 of them proposed in open pull requests. ', drawn)
++        self.assertNotIn('class="note"', drawn, "the page draws no count or legend above the list")
+         ready = drawn.split("<h2>ready ")[1].split("</section>")[0]
+         self.assertIn('<a href="/projects/gamma/">Ship gamma</a> <a class="badge proposed" href="/reviews/9/">'
+                       'Proposed #9</a></td>', ready)
+         self.assertNotIn("Proposed", ready.split("Ship gamma")[0], "only the proposed row carries the badge")
+ 
++    def test_the_introduction_comes_after_the_last_status_group(self) -> None:
++        site = self.site([self.alpha(), self.gamma()])
++        site["projectsReadme"] = "docs/projects/README.md"
++        placed = self.run_js(site, ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
++                             "const appended = [], inserted = [];\n"
++                             "document.createElement = function (tag) { return {tag: tag, className: '', innerHTML: '',"
++                             " appendChild: function (c) { return c; }}; };\n"
++                             "function loadMarkdown() { return {then: function (ok) { ok('Projects are plans.'); }}; }\n"
++                             "function renderMarkdown() { return {tag: 'DIV'}; }\n"
++                             "const drawFrame = frame;\n"
++                             "frame = function (active, title, body) { const main = drawFrame(active, title, body);"
++                             " main.appendChild = function (c) { appended.push(c.className); return c; };"
++                             " main.insertBefore = function (c) { inserted.push(c.className); return c; };"
++                             " return main; };\n"
++                             "showProjects(); process.stdout.write(JSON.stringify({appended: appended, inserted: inserted}));")
++
++        self.assertEqual(["pintro"], placed["appended"], "the introduction is appended after the status groups")
++        self.assertEqual([], placed["inserted"], "nothing is inserted above the list")
++
+     def test_the_filter_word_proposed_keeps_only_the_proposed_rows(self) -> None:
+         kept = self.run_js(self.site([self.alpha(), self.gamma()]),
+                            ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
