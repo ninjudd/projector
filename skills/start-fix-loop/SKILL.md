@@ -199,14 +199,24 @@ Delete closed or merged pull requests from the tracked file. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this
 conversation creates or adopts later. A loop `implement` started is the
 exception: its watcher reports `DONE` and exits once every pull request it
-tracks has merged or closed. On `DONE`, read the tracked file again, and
-start the watcher again when it names a pull request appended after the
-watcher's last pass. Otherwise finish each subagent as a merged pull
-request's subagent finishes, report that the loop stopped because its work
-is done, and leave the next `implement` to start a new one. Beyond that,
-stop a loop only when the user asks, a required user decision blocks one
-finding, validation cannot be restored, or every remaining finding on a pull
-request is deliberately declined.
+tracks has merged or closed. The watcher announces no merge, so `DONE` can
+be the first the loop hears of one, and the file can name a pull request
+appended after the watcher last read it. On `DONE`, check the state of each
+pull request the tracked file names:
+
+```sh
+gh pr view <number> --repo <owner>/<repo> --json state --jq .state
+```
+
+Delete the line of each one that merged or closed. When one is still open,
+or a check fails, start the watcher again with `--exit-when-closed`; it ends
+the watch itself once they have all closed. Otherwise finish each subagent
+as a merged pull request's subagent finishes, report that the loop stopped
+because its work is done, and leave the next `implement` to start a new one.
+
+Beyond that, stop a loop only when the user asks, a required user decision
+blocks one finding, validation cannot be restored, or every remaining
+finding on a pull request is deliberately declined.
 
 ## Never
 
