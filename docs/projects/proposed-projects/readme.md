@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -679,6 +679,59 @@ showed in the light and dark themes, at full width and at 375 pixels, with
 no horizontal scroll. The badge opened the review page, and search found the
 plans with the badge.
 
-What remains is the check after the merge in § 4: a throwaway plan's pull
+What remained was the check after the merge in § 4: a throwaway plan's pull
 request, opened and then closed, must leave the deployed Projects page, and
-the close must run the workflow on `pull_request_target`.
+the close must run the workflow on `pull_request_target`. § 9 records what
+has been observed of it.
+
+## 9. Outcome
+
+The project shipped in the two pull requests § 8 describes: #225, which
+deploys the site when a pull request closes and adds the
+`site-workflow-outdated` warning, and #229, which finds, serves, and shows
+the proposed projects. Both were first released in 0.7.4 and are in 0.7.6,
+the release now installed. On `main` at 0.7.6, every test in § 4 passes:
+
+- **Build tests.** `ProposedProjectTests` in `tests/test_site.py` has a test
+  for each row, from
+  `test_an_open_pull_request_proposes_the_plan_its_diff_adds_at_the_address_it_keeps`,
+  which also checks the review page's project link and the summary line, to
+  `test_only_markdown_outside_hidden_folders_comes_with_a_proposed_plan`.
+  Every build in the class asserts one `pr_status` call per pull request.
+- **Unit tests.**
+  `test_project_from_text_loads_a_plan_exactly_as_the_store_does` in
+  `tests/test_projector.py`, and in `tests/test_summary.py`
+  `test_a_new_files_text_is_its_added_lines`,
+  `test_a_new_file_without_a_final_newline_keeps_it_out`,
+  `test_a_modified_empty_or_binary_file_has_no_text`, and
+  `test_the_same_query_says_whether_the_head_branch_is_in_a_fork`.
+- **Workflow tests.** In `tests/test_site.py`,
+  `test_a_pull_request_in_the_repository_deploys_when_it_closes_and_a_forks_does_not`,
+  `test_every_workflow_projector_wrote_is_its_own_and_an_edited_one_is_not`,
+  `test_init_updates_a_workflow_projector_wrote_in_an_earlier_shape`,
+  `test_init_keeps_a_workflow_edited_by_hand`, and
+  `test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote`.
+- **Page tests.** `ProposedViewTests` draws the Projects page, the filter,
+  the banner and its links at the head, the sidebar badge, a search result,
+  and a pull request title that holds `<script>`, under node.
+
+The browser check and the build's time are in § 8.
+
+The deploy on close works in this repository. Since #225 merged, the
+Projector site workflow has run on `pull_request_target` for each pull
+request that closed, merged or not. The run for #241, closed without
+merging, ran its `publish` job and deployed, and so did the runs for the
+merges of #243, #244, and #245. A few runs, the one for #229's merge among
+them, were cancelled in the `pages` concurrency group by a newer run, as
+§ 2.4 intends.
+
+No pull request that adds a new plan has been opened since #229 merged, so
+the deployed Projects page has not yet listed a proposed project or dropped
+one, and the throwaway-plan check in § 4 was not run. That is follow-up
+evidence to watch for, not a gap in what shipped. While the next plan's pull
+request is open and summarized, the deployed Projects page should list the
+plan in its status group with a **Proposed #`<number>`** badge, and its page
+should open with the banner. The deploy that the pull request's close starts
+should then remove the badge, or the plan when the pull request closes
+unmerged. A plan still listed as proposed after its pull request closes is a
+defect to fix in a new change.

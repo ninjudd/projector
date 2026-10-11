@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -759,5 +759,48 @@ status, and the skill text are built as § 2 describes, including the
 `retarget` kind in § 2.3 and the rule in § 2.2.1 for a record entry with no
 `base`. The tests in `tests/test_review.py` and `tests/test_site.py` prove
 criteria 1 to 4. Criterion 5 needs a review loop running against a scratch
-repository on GitHub, and has not been run, so the project stays
-`in-progress` until it has.
+repository on GitHub, and has not been run. § 9 records how the project
+closed without it.
+
+## 9. Outcome
+
+The project shipped in #228. It was first released in 0.7.4 and is in 0.7.6,
+the release now installed. On `main` at 0.7.6, criteria 1 to 4 pass:
+
+- **Measurement, criterion 1.** `InterdiffMeasureTests` in
+  `tests/test_review.py` measures each case the criterion lists: a pushed
+  commit, a merge of the trunk, a clean rebase, a rebase and a merge with a
+  resolved conflict, an amend and a reword, a stack cascade, a retarget, an
+  earlier head missing from the checkout, a record entry with no `base`, and
+  a Git without `merge-tree --merge-base`.
+- **Rules, criterion 2.** `InterdiffRuleTests` refuses each rule in § 2.2.1
+  with its own reason. It reads an added, deleted, renamed, or mode-changed
+  file like any other, measures from the full review after an incremental
+  one, and holds a moved base until a gate run on this head passes.
+- **Publish, criterion 3.** `IncrementalPublishTests` checks the posted body
+  part by part, the lead after a conflicted rebase, the `COMMENT` on another
+  author's pull request, and every refusal. `KindPhraseTests` keeps each
+  kind's phrase in one place.
+- **Readers, criterion 4.**
+  `test_another_loops_incremental_review_on_the_head_is_a_collision` covers
+  the collision check. In `tests/test_site.py`,
+  `test_an_incremental_review_links_the_full_review_it_builds_on` and
+  `test_an_incremental_line_without_a_review_marker_sets_no_status` cover
+  `review_statuses`, and
+  `test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on`
+  renders the header under node.
+
+`multi-model-review` later made the header link the full review by the same
+model as the incremental review, as its § 2.6 says, and
+`test_an_incremental_review_builds_on_its_own_models_full_review` pins that.
+
+No review loop has posted an incremental review yet, so criterion 5 and the
+`seconds=` comparison in § 5 are still unobserved. Every head pushed to this
+repository's pull requests since 0.7.4 changed code, and no Projector review
+signature on them reads `incremental from`. That is follow-up evidence to
+watch for, not a gap in what shipped. The first small push to a cleanly
+reviewed pull request should get a review whose signature reads
+`incremental from <short-sha>`, whose lead links that full review, and whose
+summary header shows **Clean · incremental from `<short-sha>`**. A full
+review of such a push, or an incremental review of a changed condition, is a
+defect to fix in a new change.

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -350,8 +350,8 @@ lose it. Criterion 32 fails before `publish` dismissed anything, when a clean
 head left the account's change request standing.
 Criterion 22 holds because `watch-threads.sh` reports every unresolved
 thread without reading its marker, which `tests/test_watchers.py` pins.
-Criterion 15 needs two hosts and has not been run, so the project stays in
-progress until it has.
+Criterion 15 needs two hosts and has not been run. § 10 records how the
+project closed without it.
 
 ## 5. Cost
 
@@ -539,3 +539,57 @@ head clean, Claude has settled every Codex finding first, by fix, accepted
 decline, or withdrawal, and its verdict stands. If that settlement is wrong,
 the open disagreement is the operator's to reopen, as it is for any finding a
 review resolves.
+
+## 10. Outcome
+
+The project shipped. #237 gave each model its own identity, state, lock,
+worktree, and collision check. #243 made the newest verdict on a head sign it
+off, as § 9 describes, and #245 added § 9's dismissal of settled change
+requests and criterion 32. Two designs merged and were then replaced: #233's
+header, which showed each model's verdict, and #239's every-model sign-off,
+both removed by #243. #241, which built the adoption that the earlier § 2.8
+described, closed without merging when § 9 dropped adoption. Every merged
+pull request here was first released in 0.7.5 and is in 0.7.6, the release
+now installed.
+
+On `main` at 0.7.6, every criterion that § 9 kept passes. The tests are in
+`tests/test_review.py` unless the table names another file:
+
+| # | Evidence |
+| --- | --- |
+| 1 | `test_two_models_set_up_one_head_side_by_side_and_publishing_one_leaves_the_other` |
+| 2 | `test_a_second_instance_for_the_same_head_exits_without_posting` |
+| 3 | `test_another_sessions_live_start_comment_by_the_same_model_refuses_setup` and `test_a_start_comment_a_day_old_or_followed_by_its_models_verdict_is_not_live` |
+| 4 | `test_another_models_verdict_on_the_head_is_not_a_collision` and `test_a_verdict_by_the_same_model_or_naming_no_model_is_another_loop` |
+| 5 | `test_a_command_after_setup_needs_model_when_two_models_are_set_up` and `test_one_model_with_state_needs_no_model_flag` |
+| 6 | `test_a_clean_verdict_needs_another_models_finding_settled_first` |
+| 7 | `test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_request_to_draft` |
+| 22 | `test_reports_every_kind_of_outstanding_work_on_a_tracked_pull_request` in `tests/test_watchers.py` |
+| 24 | `test_a_clean_newest_verdict_marks_it_ready_over_an_older_models_change_request` |
+| 25 | `test_a_newer_change_request_drafts_it`, `test_a_change_request_posted_after_this_clean_verdict_wins`, `test_two_models_that_publish_together_leave_the_later_ones_draft_state`, and `test_the_review_read_back_counts_when_the_listing_lags` |
+| 26 | `test_a_verdict_from_an_account_the_repository_does_not_let_in_does_not_count` |
+| 27 | `StatusTests` |
+| 28 | `test_the_newest_review_of_a_head_decides_whichever_model_wrote_it`, `test_an_incremental_review_builds_on_its_own_models_full_review`, and `test_the_header_shows_the_newest_verdict_alone_when_several_models_reviewed_the_head` in `tests/test_site.py` |
+| 29 | `test_a_cross_author_review_approves_on_its_own_clean_verdict_and_leaves_draft_state_alone` |
+| 30 | `test_publish_waits_for_no_other_model_and_reads_no_wait_setting` |
+| 31 | `test_a_finding_another_model_posts_mid_publish_keeps_the_pull_request_a_draft` |
+| 32 | `DismissalTests` |
+
+Nothing the replaced designs added remains: no `review.peer_wait`, no
+`head_started_at`, and no `models` list or multi-verdict header on the site.
+
+One later change, outside this plan, qualifies § 9. #244 lets a pull
+request's author hold it in draft while `fix-pr` builds a change for it.
+While the author's hold comment is open, `publish` keeps a clean newest
+verdict a draft and dismisses no change request, as `docs/cli.md` describes.
+
+Criterion 15, the by-hand run of two model loops on one pull request, has
+not been observed. Every Projector verdict on this repository's recent pull
+requests names one model, `claude-opus-5-5`. That is follow-up evidence to
+watch for, not a gap in what shipped. Under § 9, the first pull request that
+two model loops review should show both loops reviewing each head without a
+collision, a finding from either model keeping the pull request a draft until
+it is settled, and, after one loop stops and a fix is pushed, the other
+loop's clean verdict marking the pull request ready. A collision between two
+different models, or a self-review left a draft under a clean newest verdict
+with no open finding thread or hold, is a defect to fix in a new change.
