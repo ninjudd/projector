@@ -159,9 +159,16 @@ body too, and it is the wrong body; replace it as
 
 Then start the fix loop on the pull request, so review findings are fixed as
 they arrive instead of waiting for the user to notice that nothing is fixing
-them. Skip this only when `project config get fix.auto_start --default true`
-prints `false`. Run `../start-fix-loop/SKILL.md` with the pull request, and
-every layer of a stack, as its tracked set, and start its watcher with
+them. Start none when any of these holds:
+
+- `project config get fix.auto_start --default true` prints `false`.
+- The host cannot keep a process running after this turn.
+- You run as a subagent. Your processes end when you return, so the loop
+  would stop watching with you, and the conversation that started you,
+  which cannot see your loop, would start a second one.
+
+Otherwise run `../start-fix-loop/SKILL.md` with the pull request, and every
+layer of a stack, as its tracked set, and start its watcher with
 `--exit-when-closed`, so the loop ends on its own once every pull request it
 watches has merged or closed. When this conversation already runs a fix
 loop, append the pull request to that loop's tracked file instead; never
@@ -171,12 +178,11 @@ not once per change.
 
 When you hand over the URL, say whether a fix loop is watching the pull
 request. Either this session's fix loop watches it and stops when the
-session ends, or none does, and you say why: the setting is off, the host
-cannot keep a process running after this turn, or you run as a subagent,
-whose processes end when it returns. Where none does, say that review
-findings wait until the user runs `start-fix-loop`. As a subagent, report
-the pull request to the conversation that started you, so it can start or
-join its own fix loop.
+session ends, or none does, and you say which of the three cases above
+applies. Where the setting or the host stopped it, say that review findings
+wait until the user runs `start-fix-loop`. As a subagent, report the pull
+request to the conversation that started you, so it can start or join its
+own fix loop.
 
 ## Stack dependent work
 

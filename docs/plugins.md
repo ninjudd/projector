@@ -30,8 +30,10 @@ it, one subagent per pull request, whenever its watcher reports work on one
 this conversation owns. `implement` starts that loop on every pull request it
 opens, or adds the pull request to the loop the conversation already runs,
 and a loop it starts ends once every pull request it watches has merged or
-closed. Set `fix.auto_start = false` in `.projector.toml` to start the loop
-yourself instead. `fix-pr` also implements or defers each suggestion
+closed. Where the host cannot keep the loop running, `implement` says so when
+it hands the pull request over. Set `fix.auto_start = false` in
+`.projector.toml` to start the loop yourself instead. `fix-pr` also
+implements or defers each suggestion
 a review lists. While it builds a change that no review has read, such as a
 suggestion it implements or a change you ask for, it holds the pull request
 in draft with a comment that lists the changes, so the pull request never
