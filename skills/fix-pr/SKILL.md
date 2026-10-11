@@ -170,15 +170,10 @@ A review that signs a head off marks the pull request ready, and from then
 on the owner can merge it. A change you make after that review is one it
 never read: a suggestion you implement, or a change the owner asks for. So
 the pull request must not look ready to merge while you build that change.
-Hold it before you start:
+Hold it before you start, posting the comment first and then marking the
+pull request draft:
 
-1. Mark it draft:
-
-   ```sh
-   gh pr ready <number> --undo
-   ```
-
-2. Post one comment that lists every change you are about to build. Write
+1. Post one comment that lists every change you are about to build. Write
    its body to a file in exactly this shape, with nothing else: the opening
    line, a bullet for each change, and the marker on the last line.
 
@@ -202,9 +197,22 @@ Hold it before you start:
    The last line of the body you read back must be the marker.
    `-f body=@<file>` posts the file's path instead, and a comment without
    the marker holds nothing.
+2. Only once the marker is there, mark the pull request draft, and confirm
+   that it is one:
+
+   ```sh
+   gh pr ready <number> --undo
+   gh pr view <number> --json isDraft --jq .isDraft
+   ```
+
+   The order matters. To the review loop, a pull request that turns draft
+   on an unchanged head with no hold open is an author who answered without
+   pushing, so it re-reviews that head. The comment silences that from the
+   moment it lands, and keeps `publish` from marking the pull request ready.
 3. When another change comes in while the hold is open, add its bullet to
-   the same comment rather than posting a second one, and read it back the
-   same way:
+   the same comment rather than posting a second one. Keep the marker as
+   the last line of every edit, so the hold never lapses, and read it back
+   the same way:
 
    ```sh
    gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
@@ -215,7 +223,10 @@ Hold it before you start:
 
 4. Build each change, run the full gate, commit, and push.
 5. As soon as the push that carries every listed change succeeds, delete
-   the comment, before you resolve threads or report:
+   the comment, before you resolve threads or report. Never delete it
+   before that push: a hold lifted on the unchanged head asks the review
+   loop to re-review it, and a clean verdict would then mark the pull
+   request ready while the changes are still local.
 
    ```sh
    gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>

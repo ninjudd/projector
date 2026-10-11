@@ -1545,6 +1545,16 @@ class StatusTests(SignoffCase):
         self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr's hold comment ends with HOLD_MARKER")
         self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
 
+    def test_fix_pr_posts_the_hold_before_it_drafts_the_pull_request(self) -> None:
+        # A draft with no hold on an unchanged head reads to the review watcher as an answer, so a pass
+        # between the two steps would ask for a re-review of a head nothing changed.
+        fix_pr = [line.strip() for line in
+                  (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text().splitlines()]
+        post = fix_pr.index("gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id")
+        draft = fix_pr.index("gh pr ready <number> --undo")
+
+        self.assertLess(post, draft)
+
     def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")
 
