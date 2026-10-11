@@ -104,6 +104,8 @@ every pull request.
 A release is a deliberate step, and only a release changes the version. Run
 the Release workflow from the Actions page, or with
 `gh workflow run release.yml -f bump=patch`, and merge the pull request it
-opens. Merging tags the release and moves `v0`, which is what the installer,
+opens. The workflow dispatches the Check workflow on that pull request, because
+GitHub runs no workflow for a pull request that a workflow's own token opened.
+Merging tags the release and moves `v0`, which is what the installer,
 `project upgrade`, and every repository's site workflow use. See
 [Release an update](plugins.md#release-an-update).
