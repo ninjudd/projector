@@ -241,9 +241,9 @@ draft state alone, because the reviews of the new head decide it.
 #### Cross-author reviews
 
 On another author's pull request, publish leaves the draft state alone, as
-today. A changes-requested verdict posts `REQUEST_CHANGES`. The rule decides
-only whether a clean verdict posts an `APPROVE` or a `COMMENT`, and only where
-`review.allow_approve` is `true`. Every model posts as one account, and
+today. A changes-requested verdict posts `REQUEST_CHANGES`. Where
+`review.allow_approve` is `true`, the rule decides whether a clean verdict
+posts an `APPROVE` or a `COMMENT`. Every model posts as one account, and
 GitHub's `reviewDecision` follows that account's newest approval or change
 request, so one model's approval would replace another model's standing
 `REQUEST_CHANGES`. Publish therefore applies the rule before it submits,
