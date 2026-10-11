@@ -942,7 +942,7 @@ LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
 OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
 SIGNATURE = re.compile(
-    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · `[^`\n]+` · model `[^`\n]+` · "
+    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
@@ -1287,7 +1287,8 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
     seconds = elapsed(state["start_comment"]["created_at"], at)
     took = duration(seconds, state["heads"])
     version, effort = distribution_version(), live_effort()
-    signature = (f"{MARK} **Projector review** · {producer_segments(version, state['model'], effort)}"
+    signature = (f"{MARK} **Projector review** of `{state['sha'][:7]}` · "
+                 f"{producer_segments(version, state['model'], effort)}"
                  f"**{VERDICT_WORDS[verdict]}** · "
                  + (f"incremental from `{incremental_from[:7]}` · " if incremental_from else "")
                  + f"took {took}")

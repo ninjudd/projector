@@ -515,10 +515,16 @@ this skill — nothing in GitHub enforces them.
 **Every review body opens with a signature line and a marker:**
 
 ```
-📽️ **Projector review** · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
+📽️ **Projector review** of `<short-sha>` · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
 <!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
+
+The short SHA names the head the review read, the first seven characters of
+`sha=`. GitHub places a commit on the pull request's timeline at the time it
+was committed, not pushed, so a review published while a later commit waited
+to be pushed appears below that commit. The SHA tells the reader which head
+the verdict is about. `project review publish` writes it.
 
 State the model **actually running this review** — the model identifier the
 host reports for the running session — never a default copied from this file.
