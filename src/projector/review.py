@@ -611,24 +611,33 @@ def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
 
 
 def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
-    """Remove `changes`, which the owner decided will not be built, from the newest hold, keeping the head it
-    records. With none left, the comment is deleted, and the hold ends on a head no push changed, which
-    asks the review loop to re-review it."""
+    """Remove `changes`, which the owner decided will not be built, from every hold comment of the author's
+    that lists them, keeping the head each records, and delete a comment left with none. The hold ends only
+    once no comment is left, on a head no push changed, which asks the review loop to re-review it."""
     number = pr["number"]
     if not held:
         raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
-    newest = read_hold(repo, held[-1]["id"])
-    unknown = [f'"{change}"' for change in changes if change not in newest["changes"]]
+    found = [read_hold(repo, comment["id"]) for comment in held]
+    listing = list(dict.fromkeys(change for comment in found for change in comment["changes"]))
+    unknown = [f'"{change}"' for change in changes if change not in listing]
     if unknown:
-        raise ReviewError(f"hold comment {newest['id']} lists no change {listed(unknown)}; it lists "
-                          + (listed([f'"{change}"' for change in newest["changes"]]) or "none"))
-    left = [change for change in newest["changes"] if change not in changes]
+        raise ReviewError(f"the hold on {repo}#{number} lists no change {listed(unknown)}; it lists "
+                          + (listed([f'"{change}"' for change in listing]) or "none"))
+    kept = []
+    for comment in found:
+        left = [change for change in comment["changes"] if change not in changes]
+        if left == comment["changes"]:
+            kept.append(comment)
+        elif left:
+            kept.append(write_hold(repo, number, comment["id"], comment["at"], left))
+        else:
+            delete_comment(repo, comment["id"])
     draft = bool(pr.get("draft"))
-    if left:
-        written = write_hold(repo, number, newest["id"], newest["at"], left)
-        return hold_result(repo, pr, "dropped", written, left, written["at"], draft)
-    delete_comment(repo, newest["id"])
-    return hold_result(repo, pr, "ended", newest, [], newest["at"], draft)
+    if kept:
+        newest = kept[-1]
+        return hold_result(repo, pr, "dropped", newest, [change for c in kept for change in c["changes"]],
+                           newest["at"], draft)
+    return hold_result(repo, pr, "ended", found[-1], [], found[-1]["at"], draft)
 
 
 def hold_lift(repo: str, pr: dict, held: list[dict]) -> dict:
@@ -665,10 +674,10 @@ def hold_lines(result: dict) -> list[str]:
                 f"held in draft while {count} {'is' if len(changes) == 1 else 'are'} implemented: "
                 + "; ".join(changes)]
     if action == "dropped":
-        return [f"dropped from hold comment {comment['id']} on {where}: {comment['url']}",
+        return [f"still held by comment {comment['id']} on {where}: {comment['url']}",
                 f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
     if action == "ended":
-        return [f"deleted hold comment {comment['id']} on {where}, since no change is left in it",
+        return [f"deleted hold comment {comment['id']} on {where}, since no change is left in the hold",
                 f"the hold ended on {head}, so the review loop re-reviews {head} as it stands; {state}"]
     held_at = result["held_at"]
     checked = (f"the head moved from {held_at} to {head}, so a review of {head} signs it off" if held_at

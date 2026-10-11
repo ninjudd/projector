@@ -1275,11 +1275,11 @@ Held in draft at `4f2a9c1` while the following changes are implemented:
   because, to the review loop, a pull request that turns draft on an
   unchanged head with no hold open is an author who answered without
   pushing. It refuses a pull request that is not open.
-- `--drop` removes each change you name from your newest hold comment and
-  leaves the head it records alone. It refuses a change the comment does not
-  list, and names the ones it does. When no change is left, it deletes the
-  comment, and the hold ends on a head no push changed, so the review loop
-  re-reviews that head.
+- `--drop` removes each change you name from every one of your hold comments
+  that lists it, and leaves the head each records alone. It refuses a change
+  no hold comment lists, and names the ones they do. It deletes a comment left
+  with no change. Once no hold comment is left, the hold ends on a head no
+  push changed, so the review loop re-reviews that head.
 - `--lift` deletes your hold comments once a push carries their changes. It
   refuses while the pull request's head is still the one a comment records,
   because lifting the hold before that push would let a clean review of the
@@ -1313,9 +1313,9 @@ object:
 | Field | Value |
 | --- | --- |
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
-| `action` | `posted` or `added` for `--add`; `dropped` for `--drop`, or `ended` when it removed the last change and deleted the comment; `lifted` for `--lift`, or `none` when no hold was open. |
-| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `ended` and `lifted` it is the comment that was deleted. |
-| `changes` | The changes the comment lists after the command. For `lifted`, the changes the lifted comments listed. |
+| `action` | `posted` or `added` for `--add`; `dropped` for `--drop`, or `ended` when it removed the last change and deleted the last hold comment; `lifted` for `--lift`, or `none` when no hold was open. |
+| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `dropped` it is the newest comment that still holds the pull request, and for `ended` and `lifted` the newest comment deleted. |
+| `changes` | The changes the hold lists after the command. For `lifted`, the changes the lifted comments listed. |
 | `held_at` | The short head SHA the comment's opening line records, or `null` when it records none. |
 | `draft` | Whether the pull request is a draft after the command. |
 

@@ -213,15 +213,15 @@ run it in, and refuses outside one.
    yet.
 3. When the owner drops a listed change, remove it with `--drop` and the
    text of its bullet. The command refuses a text that matches no bullet,
-   and names the bullets the comment lists.
+   and names the bullets the hold lists.
 
    ```sh
    project review hold <number> --repo <owner>/<repo> --drop "Name the held layer in the stack's readiness report"
    ```
 
-   When no bullet is left, the command deletes the comment. The hold then
-   ends on a head no push changed, which asks the review loop to re-review
-   that head, as it should.
+   It deletes a hold comment left with no bullet. Once none is left, the
+   hold ends on a head no push changed, which asks the review loop to
+   re-review that head, as it should.
 4. Build each change, run the full gate, commit, and push.
 5. As soon as the push that carries every listed change succeeds, lift the
    hold, before you resolve threads or report:

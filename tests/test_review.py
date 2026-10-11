@@ -1821,10 +1821,37 @@ class HoldTests(ReviewCase):
 
         self.assertEqual(0, code, err)
         self.assertEqual({}, self.held())
-        self.assertEqual([f"deleted hold comment {comment} on {REPO}#1, since no change is left in it",
+        self.assertEqual([f"deleted hold comment {comment} on {REPO}#1, since no change is left in the hold",
                           f"the hold ended on {self.head[:7]}, so the review loop re-reviews {self.head[:7]} as it "
                           "stands; it is a draft"], out.splitlines())
         self.assertEqual([], self.drafts())
+
+    def test_drop_works_across_every_hold_comment_and_ends_the_hold_only_when_none_is_left(self) -> None:
+        # An older hold, as one posted by hand or by a second --add racing the first, holds the pull request too.
+        older = self.github.comment(LEGACY_HOLD)
+        newest = self.github.comment(review.hold_body(self.head, [self.OTHER]))
+
+        code, out, err = self.hold("--drop", self.OTHER)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({older: LEGACY_HOLD}, self.held(), "the older hold still holds the pull request")
+        self.assertEqual([f"still held by comment {older} on {REPO}#1: {FakeGitHub.comment_url(older)}",
+                          f"1 change still listed: {self.CHANGE}; it is a draft"], out.splitlines())
+
+        self.github.comments[newest] = review.hold_body(self.head, [self.OTHER])
+        code, out, err = self.hold("--drop", self.CHANGE, "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({newest: review.hold_body(self.head, [self.OTHER])}, self.held(),
+                         "a change only the older comment lists is dropped from it")
+        self.assertEqual(("dropped", [self.OTHER]), (json.loads(out)["action"], json.loads(out)["changes"]))
+
+        self.github.comments[older] = review.hold_body(None, [self.CHANGE, self.OTHER])
+        code, out, err = self.hold("--drop", self.OTHER, "--drop", self.CHANGE, "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({}, self.held())
+        self.assertEqual(("ended", []), (json.loads(out)["action"], json.loads(out)["changes"]))
 
     def test_refuses_a_drop_that_matches_no_change_and_changes_nothing(self) -> None:
         self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
