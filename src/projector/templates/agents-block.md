@@ -1,4 +1,4 @@
-<!-- projector:begin 3 -->
+<!-- projector:begin 4 -->
 ## Projector conventions
 
 This repository keeps its project plans in Git with
@@ -19,6 +19,12 @@ body as prose that explains why the change exists, because a squash merge makes
 it the commit message. Match the line wrapping already used around a Markdown
 edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
 line breaks.
+
+Open every pull request as a draft, each layer of a stack included. A review
+loop marks a pull request ready when its head reviews clean, so a draft says
+the work has not been signed off yet. Never mark your own draft ready, even
+once the reason you drafted it is resolved, because only a clean review
+clears it.
 
 Open dependent work that is too large to review as one pull request as a
 GitHub stack with `gh stack`, as Projector's `implement` skill describes

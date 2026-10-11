@@ -39,8 +39,9 @@ what it did to each:
   comes from. `init` creates it once and never rewrites it.
 - `AGENTS.md` carries a section Projector generates between two HTML-comment
   markers: where plans live, how to use `project`, the writing style for
-  documentation and GitHub prose, and how to open dependent work as a stack
-  with `gh stack`, or as pull requests chained by base branch where
+  documentation and GitHub prose, that every pull request opens as a draft
+  until a clean review marks it ready, and how to open dependent work as a
+  stack with `gh stack`, or as pull requests chained by base branch where
   `gh stack` is unavailable, and keep every layer on the current head of the
   one below so the stack can merge as a unit. `init` appends the section to
   an existing file or creates the file with only that section, and refreshes
@@ -389,7 +390,7 @@ collaborator on an older CLI is told what to do without a failing gate.
 
 ```console
 $ project check
-warning: AGENTS.md: Projector section is version 2; this command ships version 3 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+warning: AGENTS.md: Projector section is version 3; this command ships version 4 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
 Project plans are valid.
 ```
 
