@@ -473,10 +473,14 @@ summaries, and on a scratch checkout that holds `alpha`, `alpha/beta`,
 - **Themes.** The pages draw in the dark theme and with
   `data-theme="light"`.
 
-The implementation settles two details the design left open:
+The implementation settles three details the design left open:
 
 - **The toggle lines up with the rows.** Its chevron sits in the numbers'
   column, and its label in the titles' column.
+- **A title drops its links in a copy of the heading.** `sectionsOf`
+  replaces each `<a>` in a clone of the heading with the link's contents,
+  so the title does not depend on how a browser writes a link's attributes
+  out as markup.
 - **A click on a section redraws the page.** The site's `popstate`
   listener routes every change of the address, a new hash included, so a
   click on a section's row draws the page again, and the new drawing starts

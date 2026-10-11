@@ -328,7 +328,9 @@
   function sectionsOf(box: HTMLElement): PageSection[] {
     return Array.from(box.children).flatMap(function (h): PageSection[] {
       if (h.tagName !== 'H2' || h.id === '') return [];
-      const title = h.innerHTML.replace(/<\/?a\b[^>]*>/g, '');
+      const unlinked = h.cloneNode(true) as Element;
+      unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
+      const title = unlinked.innerHTML;
       const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(h.textContent);
       return number !== null && title.startsWith(number[0])
         ? [{ id: h.id, num: number[1] ?? '', title: title.slice(number[0].length) }]
