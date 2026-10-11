@@ -1714,8 +1714,7 @@ class ProposedViewTests(unittest.TestCase):
                             ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
                             "showProjects(); process.stdout.write(JSON.stringify({html: drawn}));")["html"]
 
-        self.assertIn('<p class="note">2 projects under <span class="mono">docs/projects</span>, '
-                      '1 of them proposed in open pull requests. ', drawn)
+        self.assertNotIn('class="note"', drawn, "the page draws no count or legend above the list")
         ready = drawn.split("<h2>ready ")[1].split("</section>")[0]
         self.assertIn('<a href="/projects/gamma/">Ship gamma</a> <a class="badge proposed" href="/reviews/9/">'
                       'Proposed #9</a></td>', ready)
