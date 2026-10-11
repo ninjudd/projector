@@ -764,7 +764,7 @@ row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
 **Changes requested**, linked to that review on GitHub. A head no Projector
 review names yet shows **Pending** when an earlier head of the pull request
-has a verdict, as it does after a push until the new head is reviewed.
+has a verdict, as when the site was built before the head's review landed.
 **Pending** links the newest verdict on an earlier head, and its title names
 that verdict, as in "Last review: changes requested on e333044. This head
 hasn't been reviewed yet." Every other head counts as earlier except those
