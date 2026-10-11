@@ -1,0 +1,138 @@
+{
+ "version": 1,
+ "name": "Close out shipped projects",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 249,
+  "title": "Mark incremental review, proposed projects and multi-model review completed",
+  "head": "aa07b1c1522a7227c95d490b8212558e04ae7271",
+  "headRef": "finish-shipped-projects",
+  "base": "1032d88582b6757dab8e0fdce0f448168345d195",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps each project's plan in Git at <code>docs/projects/&lt;name&gt;/readme.md</code>. A <code>status</code> field in the plan's frontmatter says where the work is. A project is <code>completed</code> when it no longer needs work, and the plan must then say whether it shipped, was abandoned, or was superseded.",
+   "Three projects had merged and been released but still read <code>in-progress</code>. Each was held open only by an acceptance criterion that needs live use rather than a test. This pull request marks all three <code>completed</code> and appends an outcome section to each plan:",
+   "<ul class=\"tight\"><li><b>Incremental review</b> (<code>incremental-review</code>): a review loop can publish a short clean verdict for a minimal push instead of a full review. Shipped in #228, first released in 0.7.4.</li><li><b>Proposed projects</b> (<code>proposed-projects</code>): the site lists a plan that an open pull request adds, marked as proposed. Shipped in #225 and #229, first released in 0.7.4.</li><li><b>Multi-model review</b> (<code>multi-model-review</code>): several models, such as one in Claude Code and one in Codex, review one pull request under one account. Shipped in #237, #243, and #245, first released in 0.7.5.</li></ul>",
+   "Each outcome section maps every acceptance criterion that a test can prove to the test on <code>main</code> that proves it. It also names the one live check nobody has observed yet and records it as evidence to watch for, not a gap in what shipped. The sentence in each plan that kept the project in progress now points at the outcome section. New sections go at the end, so no cited section number moves."
+  ],
+  "cards": [
+   {
+    "id": "unobserved",
+    "title": "Checks left to observe",
+    "html": "<ul class=\"tight\"><li><b>Incremental review, criterion 5.</b> No loop has posted an incremental review yet. Each head pushed after a clean full review since 0.7.4 changed code.</li><li><b>Proposed projects, the throwaway-plan check.</b> No pull request has added a plan since #229 merged, so the deployed Projects page has not yet listed and then dropped one. The deploy on close itself has run, including for the unmerged #241.</li><li><b>Multi-model review, criterion 15.</b> Two model loops have not reviewed one pull request. Every recent verdict names one model.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>The full review of <code>ba877be</code> was clean, with one suggestion. It confirmed each pull request number, merge, and release. It confirmed that all 47 cited tests exist in the files the text names, and that the removed designs left nothing in <code>src/</code> or the site. It re-read the live workflow runs and verdicts, and it ran the full validation gate.</p><p class=\"note\">The suggestion was to drop &ldquo;the release now installed&rdquo;, which described one machine on one day. <code>aa07b1c</code> drops it from all three plans, and an incremental review found that head clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "incremental",
+   "title": "Incremental review",
+   "kicker": "Shipped in #228; criteria 1 to 4 pass, and the by-hand criterion 5 is unobserved.",
+   "intro": [
+    "An <b>incremental review</b> reads only what changed since the loop's last full review of a pull request, and posts a short clean verdict that links that full review. <code>project review interdiff</code> measures the change and applies the rules that need no judgment, and <code>project review publish --incremental</code> posts the verdict.",
+    "The new § 9 maps criteria 1 to 4, which cover measurement, rules, publishing, and the readers of the verdict, to test classes and tests in <code>tests/test_review.py</code> and <code>tests/test_site.py</code>. Criterion 5 is a by-hand run against a scratch repository, and nobody has run it. No loop has posted an incremental review on this repository, so the <code>seconds=</code> comparison that § 5 asks for is also unobserved."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/incremental-review/readme.md",
+     "collapsed": false,
+     "note": "Flips <code>status</code> to <code>completed</code>, points § 8's closing sentence at the new § 9, and adds § 9, the outcome.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 768,
+       "text": "#228 merged before <code>Release 0.7.4 (#234)</code>, and the merge base is <code>Release 0.7.6 (#248)</code>, tagged <code>v0.7.6</code>. Checked with <code>git log</code> and <code>git ls-remote --tags</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 770,
+       "text": "Every test class and test that § 9 names exists in the file the text gives. Checked by searching <code>tests/</code> for each definition."
+      },
+      {
+       "kind": "verify",
+       "line": 797,
+       "text": "No Projector verdict on the last 30 pull requests is incremental. On #240, #244, #245, and #246, the head pushed after a clean full review changed source or tests, so a full review was due. Checked from the review markers and <code>git diff --stat</code> between those heads."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "proposed",
+   "title": "Proposed projects",
+   "kicker": "Shipped in #225 and #229; every test in § 4 passes, and the after-merge check is partly observed.",
+   "intro": [
+    "A <b>proposed project</b> is a plan that an open pull request adds. The site build finds it in the pull request's newest summary and lists it on the Projects page with a <b>Proposed #&lt;number&gt;</b> badge. #225 makes the site deploy again when a pull request closes, so a closed pull request's plan leaves the page. #229 finds, serves, and shows the plans.",
+    "The new § 9 maps the build, unit, workflow, and page tests in § 4 to their tests, and records what has been seen live. The deploy on close works: the site workflow ran on <code>pull_request_target</code> for every pull request closed since #225 merged, including the unmerged #241. The throwaway-plan check has not been run, because no pull request has added a plan since #229 merged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/proposed-projects/readme.md",
+     "collapsed": false,
+     "note": "Flips <code>status</code> to <code>completed</code>, puts § 8's remaining check in the past tense, and adds § 9, the outcome.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 700,
+       "text": "The <code>build</code> helper of <code>ProposedProjectTests</code> asserts that the build asks GitHub once for each pull request, so every build test in the class checks the call count. Checked by reading the helper."
+      },
+      {
+       "kind": "verify",
+       "line": 720,
+       "text": "Run 38094035331, for the closed and unmerged #241, has event <code>pull_request_target</code> and a successful <code>publish</code> job. The run for #229's merge was cancelled by a newer run in the <code>pages</code> group. Checked with <code>gh run list</code> and <code>gh run view</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "multimodel",
+   "title": "Multi-model review",
+   "kicker": "Shipped in #237, #243, and #245; every automated criterion passes, and criterion 15 is unobserved.",
+   "intro": [
+    "<b>Multi-model review</b> lets several models review one pull request under one GitHub account. Each model has its own state, lock, and collision check. Under § 9, the newest verdict on a head decides its draft state, whichever model gave it.",
+    "The new § 10 names what merged and what was replaced. #233's per-model header and #239's every-model sign-off merged and were then removed by #243. #241 closed without merging when § 9 dropped adoption, in which one model took over a stopped model's findings. A table maps each criterion that § 4 still keeps to its tests. It also notes that #244's author hold keeps a clean head a draft. Criterion 15 is a by-hand run of two model loops, and nobody has run it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/multi-model-review/readme.md",
+     "collapsed": false,
+     "note": "Flips <code>status</code> to <code>completed</code>, points § 4's closing sentence at the new § 10, and adds § 10, the outcome.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 545,
+       "text": "#233, #237, #239, #243, #244, and #245 merged before <code>Release 0.7.5 (#247)</code>. #241 is closed and unmerged. Checked with <code>git log</code> and <code>gh pr view</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 557,
+       "text": "The table covers criteria 1 to 7, 22, and 24 to 32, which are every automated criterion § 4 keeps. Every test it names exists. <code>StatusTests</code> also exists in <code>tests/test_summary.py</code>, but the table's default file, <code>tests/test_review.py</code>, holds the one criterion 27 means."
+      },
+      {
+       "kind": "verify",
+       "line": 577,
+       "text": "<code>review.peer_wait</code> and <code>head_started_at</code> appear nowhere in <code>src/</code>, and nothing in the site's code mentions <code>models</code>. The <code>models</code> field left in <code>src/projector/review.py</code> belongs to <code>project review status</code>, as criterion 27 requires."
+      },
+      {
+       "kind": "verify",
+       "line": 580,
+       "text": "<code>docs/cli.md</code> describes the hold the way this paragraph does: an open <code>projector-hold</code> comment by the author keeps a clean head a draft and stops the dismissal of change requests."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "project": ""
+}
