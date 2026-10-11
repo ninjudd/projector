@@ -117,9 +117,9 @@ on the author's push, not on a re-review, and `publish` keeps the pull
 request a draft while the hold is open however clean the review. Lifting a
 hold the watcher saw on the current head is an answer, so it asks for a
 re-review once the author lifts the hold, in case a review of that head ran
-while the hold kept it a draft. A `RESPONDED` that reaches a subagent after a review has marked the
-pull request ready, with no change request standing, needs nothing: that
-review already signed the head off.
+while the hold kept it a draft. A `RESPONDED` that reaches a subagent after
+a review has marked the pull request ready, with no change request
+standing, needs nothing: that review already signed the head off.
 
 If adopting an existing watcher, fetch unresolved state first, confirm it runs
 with the adoption flags for this repository and operator and reads the tracked

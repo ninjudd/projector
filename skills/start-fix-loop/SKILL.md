@@ -157,10 +157,10 @@ the recurrence it is instead of as new work.
 - The subagent reports each run back: the head SHA, each layer's new head
   when it carried a change up a stack, the merge commit if it made one, the
   fix commits, the declined findings, the suggestions it implemented, each
-  one it deferred with its reason, any hold it posted, edited, or lifted,
-  and the validation results. A question for the user comes back to the
-  main loop to ask, and the subagent goes on with the pull request's
-  unrelated work meanwhile.
+  one it deferred with its reason, any hold it posted, added to, dropped
+  from, or lifted, and the validation results. A question for the user
+  comes back to the main loop to ask, and the subagent goes on with the
+  pull request's unrelated work meanwhile.
 - When a pull request merges or closes, delete its line from the tracked
   file at once. Tell its subagent to finish, remove its worktrees, and close
   only when no layer it owns is still open. The user merges a stack as a
