@@ -1,0 +1,1441 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index df62b00..08b317c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -60,13 +60,16 @@ what it did to each:
+   content and no import between them, each gets the section, because an import
+   would change everything Claude Code reads rather than only Projector's part.
+ - `~/.claude/settings.json`, your own Claude Code settings, gains the
+-  permission rules `Bash(project review publish *)` and
+-  `Bash(project summary publish *)` in `permissions.allow`. When
+-  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
+-  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
+-  review of your own pull request as self-approval, although the review is a
+-  `COMMENT` that moves no `reviewDecision` and a person still merges, and it
+-  can refuse the publish of a summary you asked for. An allow rule resolves
++  permission rules `Bash(project review publish *)`,
++  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
++  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
++  `settings.json` in that directory instead. Claude Code's auto mode
++  otherwise can refuse a review loop's clean review of your own pull request
++  as self-approval, although the review is a `COMMENT` that moves no
++  `reviewDecision` and a person still merges. It can refuse the deletion of
++  the comment that holds your pull request in draft, as a write to an
++  external system, which leaves a clean pull request stuck in draft. It can
++  also refuse the publish of a summary you asked for. An allow rule resolves
+   the command before the classifier runs. The rules go in your settings rather
+   than the repository's, so they hold in every repository, clone, and worktree
+   you open, whether or not the repository commits or ignores `.claude/`, and
+@@ -86,7 +89,7 @@ what it did to each:
+   cannot be written, as one linked into a read-only directory such as the Nix
+   store cannot, and says on stderr how to add the rules yourself. `init`
+   still exits 0.
+-- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
++- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same three
+   commands, for Codex's approval reviewer, which otherwise can refuse
+   `project summary publish` as sending repository content to another host.
+   When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
+@@ -96,20 +99,24 @@ what it did to each:
+   grant to `default.rules`, so `init` rewrites `projector.rules` whole and
+   leaves your other rules alone. The terminal, `--publish-rule`, and
+   `review.publish_rule` decide it exactly as they decide the Claude Code
+-  rules. The file holds one rule:
++  rules. The file holds two rules:
+ 
+   ```text
+   prefix_rule(
+       pattern = ["project", ["review", "summary"], "publish"],
+       decision = "allow",
+   )
++  prefix_rule(
++      pattern = ["project", "review", "hold"],
++      decision = "allow",
++  )
+   ```
+ 
+   Codex runs a command that an `allow` rule matches without asking, and
+   outside its sandbox, so a publish reaches GitHub and the site. To see what
+-  the rule allows, run
++  the rules allow, run
+   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+-  `init` keeps the file, and says on stderr how to add the rule yourself, when
++  `init` keeps the file, and says on stderr how to add the rules yourself, when
+   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+   a read-only directory cannot, or when `rules` is not a directory. `init`
+   still exits 0.
+@@ -518,7 +525,7 @@ These are the keys Projector reads today:
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
++| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+@@ -1099,6 +1106,8 @@ project review publish 66 --incremental --body body.md
+ project review release 66
+ project review gate 66
+ project review status 66
++project review hold 66 --add "Skip fenced code blocks when looking for headings"
++project review hold 66 --lift
+ project review rules
+ ```
+ 
+@@ -1175,8 +1184,8 @@ and keeps the pull request a draft while any is open, whatever the newest
+ verdict, so a finding another model posts after this review's census still
+ holds it. It also keeps the pull request a draft while its author has a hold
+ comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
+-`fix-pr` posts while it builds a change for the pull request. Only the
+-author's comment counts. It counts the reviewer's verdicts, the one it just
++`hold` posts for `fix-pr` while it builds a change for the pull request. Only
++the author's comment counts. It counts the reviewer's verdicts, the one it just
+ posted included, and those of any account that owns the repository, belongs
+ to its organization, or collaborates on it. On another author's pull request
+ it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
+@@ -1232,6 +1241,84 @@ it cannot read the pull request. With `--json` it prints one object:
+ | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
+ | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+ 
++`hold` holds your pull request in draft while you build changes no review has
++read, as the `fix-pr` skill does, and lifts the hold once a push carries them.
++Pass exactly one of `--add`, `--drop`, and `--lift`; `--add` and `--drop`
++repeat, one change each:
++
++```sh
++project review hold 66 --add "Skip fenced code blocks when looking for headings" --add "Rename the flag"
++project review hold 66 --drop "Rename the flag"
++project review hold 66 --lift
++```
++
++A hold is an issue comment by the pull request's author whose last line is
++`<!-- projector-hold v=1 -->`. `hold` writes it in this shape, with the head
++the hold waits on in its opening line:
++
++```markdown
++Held in draft at `4f2a9c1` while the following changes are implemented:
++
++- Skip fenced code blocks when looking for headings
++- Rename the flag
++
++<!-- projector-hold v=1 -->
++```
++
++- `--add` posts the comment when you have no hold open on the pull request.
++  Otherwise it edits your newest hold comment: it adds each change the
++  comment does not already list, comparing the text after trimming, and moves
++  the head in the opening line to the current head, because the new change is
++  not pushed yet. It reads the comment back and confirms that the marker is
++  its last line. Only then does it mark a pull request that is not a draft as
++  one, with `gh pr ready --undo`, and confirm it. The comment comes first
++  because, to the review loop, a pull request that turns draft on an
++  unchanged head with no hold open is an author who answered without
++  pushing. It refuses a pull request that is not open.
++- `--drop` removes each change you name from your newest hold comment and
++  leaves the head it records alone. It refuses a change the comment does not
++  list, and names the ones it does. When no change is left, it deletes the
++  comment, and the hold ends on a head no push changed, so the review loop
++  re-reviews that head.
++- `--lift` deletes your hold comments once a push carries their changes. It
++  refuses while the pull request's head is still the one a comment records,
++  because lifting the hold before that push would let a clean review of the
++  old head mark the pull request ready while the changes are still local.
++  Push first, or `--drop` the changes that will not be built. A comment whose
++  opening line records no head is lifted, and `hold` says it could not check
++  the head. With no hold open, `--lift` says so and exits 0. It leaves the
++  draft state as it is.
++
++Each mode first checks that `gh` is signed in as the pull request's author,
++and refuses otherwise, because only the author's comment holds a pull
++request. No mode marks the pull request ready: a clean review of the head you
++push does that. `hold` posts as the signed-in account. It acts on the
++repository `--repo` names, or else on the `origin` of the checkout you run it
++in, and refuses outside a checkout whose `origin` is on GitHub unless you pass
++`--repo`. Unlike `status` and the commands that follow a review, it never
++takes the repository from a review set up on this machine, because a command
++that posts and deletes comments must not act on a repository it guessed. It
++prints what it did, the comment's id and URL, the changes the hold lists, and
++the draft state:
++
++```
++$ project review hold 66 --add "Skip fenced code blocks when looking for headings"
++posted hold comment 4411 on example/app#66 at 4f2a9c1: https://github.com/example/app/pull/66#issuecomment-4411
++held in draft while 1 change is implemented: Skip fenced code blocks when looking for headings
++```
++
++Every refusal exits 1 and says what to do. With `--json` it prints one
++object:
++
++| Field | Value |
++| --- | --- |
++| `repo`, `number`, `head` | The pull request and its current head SHA. |
++| `action` | `posted` or `added` for `--add`; `dropped` for `--drop`, or `ended` when it removed the last change and deleted the comment; `lifted` for `--lift`, or `none` when no hold was open. |
++| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `ended` and `lifted` it is the comment that was deleted. |
++| `changes` | The changes the comment lists after the command. For `lifted`, the changes the lifted comments listed. |
++| `held_at` | The short head SHA the comment's opening line records, or `null` when it records none. |
++| `draft` | Whether the pull request is a draft after the command. |
++
+ `interdiff` decides whether the head may have an incremental review: a short
+ clean verdict on a head that changed little since this loop's last full review
+ of the pull request. It reads the loop's record, where `publish` stores each
+@@ -1302,9 +1389,10 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
+ `setup` recorded as untrusted, whether or not `review.gate` is set, and when
+ `review.gate` is unset.
+ 
+-`rules` checks whether your own settings allow `project review publish` and
+-`project summary publish`: the rules `init` adds to `~/.claude/settings.json`,
+-and to `~/.codex/rules/projector.rules` where Codex is installed. It prints
++`rules` checks whether your own settings allow `project review publish`,
++`project review hold`, and `project summary publish`: the rules `init` adds to
++`~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
++is installed. It prints
+ each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+ whole check and for each file. It writes nothing, takes no pull request, and
+ runs from any directory. It exits 0 when every file has the rules. It exits 1
+@@ -1325,10 +1413,11 @@ number, and by `--model` or the one model with a review of the pull request
+ set up on this machine, so it runs from any directory. With several models
+ set up, it refuses, naming them, until `--model` picks one. State an earlier
+ release wrote is not read, so a review set up before an upgrade runs `setup`
+-again. A command that posts runs `gh` as the
++again. A command that posts a review or a start comment runs `gh` as the
+ reviewer, `--reviewer` or `review.username` or else the authenticated user,
+ with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
+-so the account the rest of the session uses is left alone.
++so the account the rest of the session uses is left alone. `hold` posts as
++the authenticated user, who must be the pull request's author.
+ 
+ A review holds a lock for its pull request, head, and model from `setup` until
+ it is published, recording the host, the loop, and when it was taken, so a
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 651c625..219eb4e 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -41,9 +41,10 @@ suggestion a review lists. While it builds a change that no review has read,
+ such as a
+ suggestion it implements or a change you ask for, it holds the pull request
+ in draft with a comment that lists the changes, so the pull request never
+-looks ready to merge while the changes are coming. It deletes the comment
+-once they are pushed, and a clean review of that push marks the pull
+-request ready. The reviewer settles its own
++looks ready to merge while the changes are coming. It posts and removes that
++comment with `project review hold`, and lifts the hold once the changes are
++pushed, so a clean review of that push marks the pull request ready. The
++reviewer settles its own
+ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+ what it checked rather than on who clicked resolve. In a repository with a
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index c6f26ad..defffe5 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -72,7 +72,7 @@ are resolved. The work outstanding on the head is:
+   [Decide each suggestion](#decide-each-suggestion) describes.
+ - **A change the owner asks for** in the conversation.
+ - **Your open hold comment.** The changes it lists are outstanding until a
+-  push carries them, and the comment itself until you delete it, as
++  push carries them, and the comment itself until you lift the hold, as
+   [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
+   describes.
+ 
+@@ -170,15 +170,28 @@ A review that signs a head off marks the pull request ready, and from then
+ on the owner can merge it. A change you make after that review is one it
+ never read: a suggestion you implement, or a change the owner asks for. So
+ the pull request must not look ready to merge while you build that change.
+-Hold it before you start, posting the comment first and then marking the
+-pull request draft:
++Hold it with `project review hold` before you start. Run the command as the
++operator, who authored the pull request; it refuses any other account,
++because only the author's hold counts. Pass `--repo <owner>/<repo>` every
++time, so the command acts on the pull request's repository from any
++directory. Without it, the command acts on the `origin` of the checkout you
++run it in, and refuses outside one.
+ 
+-1. Post one comment that lists every change you are about to build. Write
+-   its body to a file in exactly this shape, with nothing else: the opening
+-   line, a bullet for each change, and the marker on the last line.
++1. Hold the pull request, with one `--add` for each change you are about to
++   build:
++
++   ```sh
++   project review hold <number> --repo <owner>/<repo> \
++     --add "Skip fenced code blocks when the packaging test looks for headings" \
++     --add "Name the held layer in the stack's readiness report"
++   ```
++
++   The command posts one comment in this shape, reads it back, and confirms
++   that the marker is its last line. The opening line records the head the
++   hold began at.
+ 
+    ```markdown
+-   Held in draft while the following changes are implemented:
++   Held in draft at `4f2a9c1` while the following changes are implemented:
+ 
+    - Skip fenced code blocks when the packaging test looks for headings
+    - Name the held layer in the stack's readiness report
+@@ -186,67 +199,67 @@ pull request draft:
+    <!-- projector-hold v=1 -->
+    ```
+ 
+-   Post it as the operator, who authored the pull request, with `-F`,
+-   which reads the file, and read it back:
++   Only then does it mark the pull request draft, and it confirms that it
++   is one. The order matters. To the review loop, a pull request that turns
++   draft on an unchanged head with no hold open is an author who answered
++   without pushing, so it re-reviews that head. The comment silences that
++   from the moment it lands, and keeps `publish` from marking the pull
++   request ready.
++2. When another change comes in while the hold is open, run `--add` again
++   with it. The command adds its bullet to the same comment rather than
++   posting a second one, skips a change already listed, and keeps the marker
++   as the last line, so the hold never lapses. It also moves the head in the
++   opening line to the current head, because the new change is not pushed
++   yet.
++3. When the owner drops a listed change, remove it with `--drop` and the
++   text of its bullet. The command refuses a text that matches no bullet,
++   and names the bullets the comment lists.
+ 
+    ```sh
+-   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id
+-   gh api repos/<owner>/<repo>/issues/comments/<id> --jq .body
++   project review hold <number> --repo <owner>/<repo> --drop "Name the held layer in the stack's readiness report"
+    ```
+ 
+-   The last line of the body you read back must be the marker.
+-   `-f body=@<file>` posts the file's path instead, and a comment without
+-   the marker holds nothing.
+-2. Only once the marker is there, mark the pull request draft, and confirm
+-   that it is one:
+-
+-   ```sh
+-   gh pr ready <number> --undo
+-   gh pr view <number> --json isDraft --jq .isDraft
+-   ```
+-
+-   The order matters. To the review loop, a pull request that turns draft
+-   on an unchanged head with no hold open is an author who answered without
+-   pushing, so it re-reviews that head. The comment silences that from the
+-   moment it lands, and keeps `publish` from marking the pull request ready.
+-3. When another change comes in while the hold is open, add its bullet to
+-   the same comment rather than posting a second one. Keep the marker as
+-   the last line of every edit, so the hold never lapses, and read it back
+-   the same way:
+-
+-   ```sh
+-   gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
+-   ```
+-
+-   When the owner drops a listed change, remove its bullet the same way,
+-   and when none is left, delete the comment as step 5 shows.
+-
++   When no bullet is left, the command deletes the comment. The hold then
++   ends on a head no push changed, which asks the review loop to re-review
++   that head, as it should.
+ 4. Build each change, run the full gate, commit, and push.
+-5. As soon as the push that carries every listed change succeeds, delete
+-   the comment, before you resolve threads or report. Never delete it
+-   before that push: a hold lifted on the unchanged head asks the review
+-   loop to re-review it, and a clean verdict would then mark the pull
+-   request ready while the changes are still local.
++5. As soon as the push that carries every listed change succeeds, lift the
++   hold, before you resolve threads or report:
+ 
+    ```sh
+-   gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
++   project review hold <number> --repo <owner>/<repo> --lift
+    ```
+ 
++   Never lift it before that push: a hold lifted on the unchanged head asks
++   the review loop to re-review it, and a clean verdict would then mark the
++   pull request ready while the changes are still local. `--lift` refuses
++   while the head is still the one the comment records. Push first, or drop
++   the changes that will not be built. A hold whose opening line records no
++   head is lifted without that check, and the command says so.
++
++Each run prints what it did, the comment's id and URL, the changes the hold
++lists, and the draft state; `--json` prints the same as one object.
++
++Run `project review hold` as a command of its own, because it is the one
++narrow command a session can allow for the hold. Claude Code's auto mode can
++refuse a raw `gh api` call that deletes a comment, as a write to an external
++system, which leaves a clean pull request stuck in draft. `project init`
++adds `Bash(project review hold *)` to the user's Claude Code settings, and
++the same allowance to their Codex rules, so the command runs where the raw
++call is refused. If the host refuses the command anyway, do not retry it as
++a raw `gh api` call. Leave the hold as it is, and ask the user to run
++`project init` in a terminal, which adds the rules, or to run the command
++themselves.
++
+ Projector reads the hold. While the pull request's author has a comment
+ carrying `<!-- projector-hold v=1 -->` open on it, `project review status`
+-reports the pull request `held` beside its newest verdict, and
+-`project review publish` keeps it a draft however clean the newest verdict
+-is. The review loop asks for
+-no re-review of an unchanged head while the hold is open, and asks for one
+-when the hold is lifted without a push. Only a comment by the pull request's
+-author counts, because anyone can comment. Once you delete it, the review of
+-the head you pushed signs the pull request off. To find the hold again, take
+-the operator's comment that carries the marker:
+-
+-```sh
+-gh api repos/<owner>/<repo>/issues/<number>/comments --paginate \
+-  --jq '.[] | select(.body | contains("<!-- projector-hold v=1 -->")) | {id, login: .user.login}'
+-```
++reports the pull request `held` beside its newest verdict and names the
++comment, and `project review publish` keeps it a draft however clean the
++newest verdict is. The review loop asks for no re-review of an unchanged
++head while the hold is open, and asks for one when the hold is lifted
++without a push. Only a comment by the pull request's author counts, because
++anyone can comment. Once you lift the hold, the review of the head you
++pushed signs the pull request off.
+ 
+ Hold a pull request even when it is already a draft. A draft that is waiting
+ on its review would be marked ready by a clean verdict, and the comment is
+@@ -254,15 +267,15 @@ what stops that. Hold only when a change is coming, though: when you defer
+ every suggestion and the owner asks for nothing, post no comment and leave
+ the draft state as it is. Your report lists the deferrals.
+ 
+-Never mark the pull request ready yourself, when you delete the hold or at
+-any other time. The review loop's clean verdict on the head you pushed does
+-that.
++Never mark the pull request ready yourself, when you lift the hold or at any
++other time. No mode of `project review hold` marks it ready either. The
++review loop's clean verdict on the head you pushed does that.
+ 
+ In a stack, hold the layer that gets the change. The user merges a stack
+ from the bottom up, so a held layer holds every layer above it too, and
+ those layers need no comment of their own. Carry the change up through them,
+ as [Preserve stacked ownership](#preserve-stacked-ownership) describes, and
+-delete the hold once the push that carries every listed change into the
++lift the hold once the push that carries every listed change into the
+ held layer succeeds.
+ 
+ ## Verify and fix findings
+@@ -323,9 +336,10 @@ them. A Projector finding or another tool's thread is resolved either way.
+ Reply before pushing so a reviewer triggered by the push sees the reasoning,
+ but push promptly because the named commit is briefly local-only. If a push
+ fails, post that fact, leave the thread unresolved, and report the blocker.
+-When a hold is open and the push carries the last change it lists, delete
+-the hold before you resolve anything, so the review of that push can sign
+-the head off.
++When a hold is open and the push carries the last change it lists, lift
++the hold with `project review hold <number> --repo <owner>/<repo> --lift`
++before you resolve anything, so the review of that push can sign the head
++off.
+ 
+ Fixing an external reviewer's finding is not a reason to ask that reviewer for
+ another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
+@@ -411,8 +425,8 @@ as any other cross-author verdict would.
+ Report the head SHA, each layer's new head when you carried a change up a
+ stack, the merge commit if you made one, the fix commits, the declined
+ findings, the suggestions you implemented, each suggestion you deferred with
+-its one-line reason, any hold you posted, edited, or deleted and the changes
+-it listed, and the validation results. A
++its one-line reason, any hold you posted, added to, dropped from, or lifted
++and the changes it listed, and the validation results. A
+ stale `CHANGES_REQUESTED`, or a pull request still in draft after all
+ fixes, is a wait for re-review rather than another code change. Do not
+ manufacture an empty commit to trigger it.
+@@ -424,7 +438,7 @@ not when the reason you drafted it is resolved. That is the case that feels
+ justified: the red test you drafted around is passing, so the draft reads as
+ stale state left over from a fixed problem. It is not. It is a standing
+ request for review that has not been answered yet. A pull request you held
+-is the same: deleting the hold is your part, and the review of the head you
++is the same: lifting the hold is your part, and the review of the head you
+ pushed is what marks it ready.
+ 
+ ## Never
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index edded1d..e174443 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -124,7 +124,8 @@ verdict on the head, whichever model gave it, as
+ describes. **A review with findings marks it draft; a clean review marks it
+ ready.** The one exception is a hold: while the author is building a change
+ no review has read, `fix-pr` keeps the pull request a draft with a hold
+-comment, and a clean review leaves it a draft until the hold is deleted.
++comment, and a clean review leaves it a draft until the author lifts the
++hold.
+ Nothing else enters into it — not when a review first saw the pull request,
+ not who last changed the state, not whether it was ever a draft. Never set
+ it yourself with `gh pr ready`.
+@@ -176,9 +177,10 @@ request a draft whatever the newest verdict says, because another model can
+ post a finding after this review counted none and before its verdict landed.
+ It reads the pull request author's hold comments too. While the author has
+ one open, a comment carrying `<!-- projector-hold v=1 -->` that `fix-pr`
+-posts while it builds a change for the pull request, such as a suggestion it
+-implements, `publish` keeps the pull request a draft however clean the
+-newest verdict is, and never approves another author's held pull request.
++posts with `project review hold` while it builds a change for the pull
++request, such as a suggestion it implements, `publish` keeps the pull
++request a draft however clean the newest verdict is, and never approves
++another author's held pull request.
+ Only the author's comment counts, because anyone can comment.
+ Nothing waits for another model to finish, and nothing counts a model still
+ reviewing. GitHub's branch rules, such as requiring every conversation to be
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-fix-loop/SKILL.md
+index 8ca67a2..7fce913 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-fix-loop/SKILL.md
+@@ -157,7 +157,7 @@ the recurrence it is instead of as new work.
+ - The subagent reports each run back: the head SHA, each layer's new head
+   when it carried a change up a stack, the merge commit if it made one, the
+   fix commits, the declined findings, the suggestions it implemented, each
+-  one it deferred with its reason, any hold it posted, edited, or deleted,
++  one it deferred with its reason, any hold it posted, edited, or lifted,
+   and the validation results. A question for the user comes back to the
+   main loop to ask, and the subagent goes on with the pull request's
+   unrelated work meanwhile.
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index f59d011..96188ef 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -38,7 +38,8 @@ nothing open.
+    review or GitHub workflow skills.
+ 2. Run `project review rules` once. It reads the user's own Claude Code
+    settings and Codex rules, writes nothing, and exits 1 when either lacks the
+-   rules that allow `project review publish` and `project summary publish`.
++   rules that allow `project review publish`, `project review hold`, and
++   `project summary publish`.
+    On exit 1, tell the user once, before the first review, that the host's
+    automatic approval, such as Claude Code's auto mode or Codex's approval
+    reviewer, can refuse the loop's publishes, a summary on another author's
+@@ -109,14 +110,14 @@ one. It prevents a response without a push from deadlocking both loops. A `TRACK
+ a problem with the tracked file itself, announced once; fix the file. Keep the
+ loop silent while no event needs action.
+ 
+-The author's hold comment, which `fix-pr` posts while it builds a change, as
+-`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
+-are built", silences `RESPONDED`: the head waits on the author's push, not
+-on a re-review, and `publish` keeps the pull request a draft while the hold
+-is open however clean the review. Lifting a hold the watcher saw on the
+-current head is an answer, so it asks for a re-review once the author
+-deletes the hold, in case a review of that head ran while the hold kept it a
+-draft. A `RESPONDED` that reaches a subagent after a review has marked the
++The author's hold comment, which `fix-pr` posts with `project review hold`
++while it builds a change, as `../fix-pr/SKILL.md` describes under "Hold the
++pull request while changes are built", silences `RESPONDED`: the head waits
++on the author's push, not on a re-review, and `publish` keeps the pull
++request a draft while the hold is open however clean the review. Lifting a
++hold the watcher saw on the current head is an answer, so it asks for a
++re-review once the author lifts the hold, in case a review of that head ran
++while the hold kept it a draft. A `RESPONDED` that reaches a subagent after a review has marked the
+ pull request ready, with no change request standing, needs nothing: that
+ review already signed the head off.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 4a3b9e3..9a755ad 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -335,8 +335,8 @@ def parser() -> argparse.ArgumentParser:
+         "--publish-rule",
+         action="store_true",
+         default=None,
+-        help="add the rules allowing `project review publish` and `project summary publish` to your Claude Code "
+-        "settings and Codex rules even without a terminal (default: add them when run at a terminal)",
++        help=f"add the rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules even "
++        "without a terminal (default: add them when run at a terminal)",
+     )
+     rule_choice.add_argument(
+         "--no-publish-rule", action="store_false", dest="publish_rule",
+@@ -466,11 +466,15 @@ def parser() -> argparse.ArgumentParser:
+                           "have an incremental review"
+     )
+     add_output(review_commands.add_parser(
+-        "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
++        "rules", help=f"report whether your settings allow {permissions.COMMANDS}"
+     ))
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
++    review_hold = review_commands.add_parser(
++        "hold", help="hold your pull request in draft while changes for it are built, and lift the hold once they "
++                     "are pushed"
++    )
+     review_status.add_argument("pr", type=int, help="the pull request number")
+     review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                               "this checkout's origin)")
+@@ -479,6 +483,19 @@ def parser() -> argparse.ArgumentParser:
+     review_status.add_argument("--state-dir", type=Path,
+                                help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+     add_output(review_status)
++    review_hold.add_argument("pr", type=int, help="the pull request number")
++    review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
++    add_output(review_hold)
++    hold_mode = review_hold.add_mutually_exclusive_group(required=True)
++    hold_mode.add_argument("--add", action="append", metavar="TEXT",
++                           help="a change about to be built: post the hold listing it, or add it to the open hold, "
++                                "then mark the pull request draft (repeatable)")
++    hold_mode.add_argument("--drop", action="append", metavar="TEXT",
++                           help="a listed change that will not be built: remove it, and end the hold when none is "
++                                "left (repeatable)")
++    hold_mode.add_argument("--lift", action="store_true",
++                           help="delete the hold once a push carries its changes; refused while the head is the one "
++                                "the hold records")
+     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
+                     review_interdiff):
+         command.add_argument("pr", type=int, help="the pull request number")
+@@ -882,9 +899,20 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def review_hold(arguments: argparse.Namespace) -> int:
++    """`review hold`: post, extend, shrink, or lift your hold on a pull request in `--repo`, or else in the
++    repository of the checkout it runs in."""
++    repo = review.hold_repo(arguments.repo, Path.cwd())
++    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [], arguments.lift)
++    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
++    return 0
++
++
+ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "rules":
+         return review_rules(arguments.json_output)
++    if arguments.review_command == "hold":
++        return review_hold(arguments)
+     root = review.state_dir(arguments.state_dir)
+     if arguments.review_command == "status":
+         return review_status(root, arguments)
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index ce419eb..7535aec 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -1,16 +1,18 @@
+ """The permission rules `init` adds to the user's Claude Code settings and Codex rules.
+ 
+-Each host's automatic approval can refuse a Projector publish that the user
++Each host's automatic approval can refuse a Projector command that the user
+ asked for. Claude Code's auto mode refuses a session's clean review of a pull
+ request its own GitHub account opened, as self-approval, although the review
+-is a COMMENT that moves no reviewDecision and a person still merges. Codex's
+-approval reviewer refuses `project summary publish`, which sends a pull
+-request's diff to the repository's own site, as sending repository content to
+-another host. A rule that allows `project review publish` and `project summary
+-publish` resolves each command before that review runs. The rules go in the
+-person's own settings, so they hold in every repository, clone, and worktree
+-they open, and no repository has to carry a permission for everyone who opens
+-it.
++is a COMMENT that moves no reviewDecision and a person still merges. It also
++refuses the deletion of the comment that holds a pull request in draft, as a
++write to an external system, which leaves a clean pull request stuck in draft.
++Codex's approval reviewer refuses `project summary publish`, which sends a
++pull request's diff to the repository's own site, as sending repository
++content to another host. A rule that allows `project review publish`,
++`project review hold`, and `project summary publish` resolves each command
++before that review runs. The rules go in the person's own settings, so they
++hold in every repository, clone, and worktree they open, and no repository has
++to carry a permission for everyone who opens it.
+ """
+ 
+ from __future__ import annotations
+@@ -23,12 +25,13 @@
+ 
+ from .core import FileAction, write_through
+ 
+-RULES = ("Bash(project review publish *)", "Bash(project summary publish *)")
++RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)")
+ 
+ # Codex loads every `.rules` file in its rules directory, and writes the
+-# approvals a person saves to `default.rules`, so Projector keeps its rule in a
+-# file of its own and rewrites that file whole.
+-CODEX_RULE = 'prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")'
++# approvals a person saves to `default.rules`, so Projector keeps its rules in
++# a file of its own and rewrites that file whole.
++CODEX_PREFIX_RULES = ('prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")',
++                      'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")')
+ CODEX_RULES = """\
+ # Written by `project init`, which replaces this file. Put your own rules in another file.
+ prefix_rule(
+@@ -36,9 +39,14 @@
+     decision = "allow",
+     justification = "Publishes a Projector review or pull request summary that the user asked for.",
+ )
++prefix_rule(
++    pattern = ["project", "review", "hold"],
++    decision = "allow",
++    justification = "Holds the user's own pull request in draft while changes are built, or lifts the hold.",
++)
+ """
+ 
+-COMMANDS = "`project review publish` and `project summary publish`"
++COMMANDS = "`project review publish`, `project review hold`, and `project summary publish`"
+ 
+ 
+ def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
+@@ -132,8 +140,9 @@ def kept(reason: str) -> FileAction:
+         return FileAction(name, "unchanged")
+     if not apply:
+         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
+-                                        "mode can refuse a review loop's clean review of your own pull request or "
+-                                        "the publish of a summary, unless the repository's own settings allow it"
++                                        "mode can refuse a review loop's clean review of your own pull request, "
++                                        "the lifting of a hold on it, or the publish of a summary, unless the "
++                                        "repository's own settings allow it"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+     allow.extend(missing)
+@@ -161,8 +170,9 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
+     name = shown(path, environ)
+ 
+     def kept(reason: str) -> FileAction:
+-        return FileAction(name, "kept", f"{name} {reason}, so the Codex rule allowing {COMMANDS} was not added; add "
+-                                        f"{CODEX_RULE} to a .rules file in {shown(path.parent, environ)} yourself")
++        return FileAction(name, "kept", f"{name} {reason}, so the Codex rules allowing {COMMANDS} were not added; "
++                                        f"add {' and '.join(CODEX_PREFIX_RULES)} to a .rules file in "
++                                        f"{shown(path.parent, environ)} yourself")
+ 
+     existed = path.exists()
+     text, unreadable = read_user_file(path, environ)
+@@ -171,7 +181,7 @@ def kept(reason: str) -> FileAction:
+     if text == CODEX_RULES:
+         return FileAction(name, "unchanged")
+     if not apply:
+-        return FileAction(name, "kept", f"{name} lacks Projector's rule, without which Codex's approval reviewer "
++        return FileAction(name, "kept", f"{name} lacks Projector's rules, without which Codex's approval reviewer "
+                                         f"can refuse {COMMANDS}"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add it" if hint else ""))
+diff --git a/src/projector/review.py b/src/projector/review.py
+index c48d313..a097b7a 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -36,8 +36,12 @@
+ 
+ FINDING_MARKER = "projector-finding"
+ # The last line of the comment that holds a pull request in draft while changes for it are built, as
+-# fix-pr/SKILL.md § Hold the pull request while changes are built writes it.
++# `hold_body` writes it for fix-pr/SKILL.md § Hold the pull request while changes are built.
+ HOLD_MARKER = "<!-- projector-hold v=1 -->"
++# The head a hold comment's opening line records. A hold written before the line named one records none.
++HOLD_AT = re.compile(r"^Held in draft at `([0-9a-f]{7,40})` ")
++# A change a hold comment lists.
++HOLD_BULLET = re.compile(r"^[-*]\s+(.+)$")
+ # The mark that opens both the start comment and the review's signature line, as
+ # review-pr/SKILL.md § Label every review and finding writes it.
+ MARK = "📽️"
+@@ -488,6 +492,192 @@ def holds(repo: str, number: int, author: str) -> list[dict]:
+             if (comment.get("login") or "").lower() == author.lower()]
+ 
+ 
++def hold_body(head: Optional[str], changes: list[str]) -> str:
++    """A hold comment listing `changes`, its opening line naming `head` by its short SHA when one is given."""
++    at = f" at `{head[:7]}`" if head else ""
++    bullets = "\n".join(f"- {change}" for change in changes)
++    return f"Held in draft{at} while the following changes are implemented:\n\n{bullets}\n\n{HOLD_MARKER}\n"
++
++
++def read_hold(repo: str, comment: int) -> dict:
++    """A hold comment as GitHub has it now: its `id` and `url`, the short head its opening line records as
++    `at`, or None, the `changes` it lists, and whether the marker is its last line, as `marked`."""
++    found = gh_json(["api", f"repos/{repo}/issues/comments/{comment}"]) or {}
++    lines = [line.strip() for line in (found.get("body") or "").splitlines() if line.strip()]
++    at = HOLD_AT.match(lines[0]) if lines else None
++    return {"id": comment, "url": found.get("html_url"), "at": at.group(1) if at else None,
++            "changes": [m.group(1).strip() for m in map(HOLD_BULLET.match, lines) if m],
++            "marked": bool(lines) and lines[-1] == HOLD_MARKER}
++
++
++def hold_repo(repo: Optional[str], cwd: Path) -> str:
++    """The repository `review hold` acts on: `repo`, else the origin of the checkout `cwd` is in. Unlike the
++    commands that follow a review, it never takes one from review state: it posts and deletes comments, so
++    it acts only on a repository it was given or is run in."""
++    if repo:
++        return repo
++    try:
++        return origin_repo(checkout_root(cwd))
++    except ReviewError as exc:
++        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository to "
++                          "hold a pull request in; pass --repo owner/name") from exc
++
++
++def hold_changes(texts: list[str], flag: str) -> list[str]:
++    """The changes given to --add or --drop, trimmed and without repeats, each refused unless it is one line."""
++    changes: list[str] = []
++    for text in texts:
++        change = text.strip()
++        if not change or "\n" in change or "\r" in change:
++            raise ReviewError(f"{flag} {text!r} is not a change: give each change as one line of text")
++        if change not in changes:
++            changes.append(change)
++    return changes
++
++
++def hold(repo: str, number: int, add: list[str], drop: list[str], lift: bool) -> dict:
++    """`review hold`: post or extend the author's hold on the pull request with `add`, remove changes from
++    it with `drop`, or `lift` it once a push carries its changes, as fix-pr/SKILL.md § Hold the pull
++    request while changes are built describes. Only the author's comment holds a pull request, so every
++    mode refuses anyone else, and no mode marks the pull request ready."""
++    if [bool(add), bool(drop), lift].count(True) != 1:
++        raise ReviewError("pass exactly one of --add, --drop, and --lift")
++    changes = hold_changes(add, "--add") if add else hold_changes(drop, "--drop") if drop else []
++    try:
++        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
++    except NotFound as exc:
++        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++    author = (pr.get("user") or {}).get("login") or ""
++    login = authenticated_login()
++    if login.lower() != author.lower():
++        raise ReviewError(f"gh is signed in as {login}, and {repo}#{number} is {author or 'nobody'}'s; only the "
++                          "pull request's author can hold it, because nothing reads another account's hold comment")
++    held = holds(repo, number, author)
++    if add:
++        return hold_add(repo, pr, held, changes)
++    if drop:
++        return hold_drop(repo, pr, held, changes)
++    return hold_lift(repo, pr, held)
++
++
++def hold_result(repo: str, pr: dict, action: str, comment: Optional[dict], changes: list[str],
++                held_at: Optional[str], draft: bool) -> dict:
++    return {"repo": repo, "number": pr["number"], "head": pr["head"]["sha"], "action": action,
++            "comment": {"id": comment["id"], "url": comment["url"]} if comment else None, "changes": changes,
++            "held_at": held_at, "draft": draft}
++
++
++def write_hold(repo: str, number: int, comment: Optional[int], head: Optional[str], changes: list[str]) -> dict:
++    """Post the hold comment, or edit `comment`, then read it back, refusing unless it lists `changes` and
++    ends with the marker."""
++    body = hold_body(head, changes)
++    if comment is None:
++        comment = gh_json(["api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}"])["id"]
++    else:
++        run_gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment}", "-f", f"body={body}"])
++    written = read_hold(repo, comment)
++    if not written["marked"] or written["changes"] != changes:
++        raise ReviewError(f"hold comment {comment} does not read back as written, listing the changes with "
++                          f"{HOLD_MARKER} on its last line; check it at {written['url'] or 'the pull request'} "
++                          "and run the command again")
++    return written
++
++
++def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
++    """Post the hold, or add `changes` to the newest one and move the head it records to the current head,
++    since the new changes are not pushed yet. Only once the comment reads back is the pull request drafted:
++    to the review loop, a draft on an unchanged head with no hold open is an author who answered without
++    pushing."""
++    number, head = pr["number"], pr["head"]["sha"]
++    if pr.get("state") != "open":
++        raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is held")
++    listing, newest = changes, None
++    if held:
++        newest = read_hold(repo, held[-1]["id"])
++        listing = newest["changes"] + [change for change in changes if change not in newest["changes"]]
++    written = write_hold(repo, number, newest["id"] if newest else None, head, listing)
++    if written["at"] != head[:7]:
++        raise ReviewError(f"hold comment {written['id']} does not record the head {head[:7]} when read back; "
++                          f"check it at {written['url']} and run the command again")
++    # Read again now that the hold is open, so a review that marked it ready meanwhile is drafted too.
++    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
++    if not draft:
++        run_gh(["pr", "ready", str(number), "--repo", repo, "--undo"])
++        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
++        if not draft:
++            raise ReviewError(f"{repo}#{number} is still ready after `gh pr ready --undo`, with hold comment "
++                              f"{written['id']} open; run `gh pr ready {number} --repo {repo} --undo` and check it")
++    return hold_result(repo, pr, "added" if newest else "posted", written, listing, written["at"], draft)
++
++
++def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
++    """Remove `changes`, which the owner decided will not be built, from the newest hold, keeping the head it
++    records. With none left, the comment is deleted, and the hold ends on a head no push changed, which
++    asks the review loop to re-review it."""
++    number = pr["number"]
++    if not held:
++        raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
++    newest = read_hold(repo, held[-1]["id"])
++    unknown = [f'"{change}"' for change in changes if change not in newest["changes"]]
++    if unknown:
++        raise ReviewError(f"hold comment {newest['id']} lists no change {listed(unknown)}; it lists "
++                          + (listed([f'"{change}"' for change in newest["changes"]]) or "none"))
++    left = [change for change in newest["changes"] if change not in changes]
++    draft = bool(pr.get("draft"))
++    if left:
++        written = write_hold(repo, number, newest["id"], newest["at"], left)
++        return hold_result(repo, pr, "dropped", written, left, written["at"], draft)
++    delete_comment(repo, newest["id"])
++    return hold_result(repo, pr, "ended", newest, [], newest["at"], draft)
++
++
++def hold_lift(repo: str, pr: dict, held: list[dict]) -> dict:
++    """Delete the author's hold comments once a push carries their changes, refusing while the head is still
++    the one a comment records, and leave the draft state to the review of the head that was pushed."""
++    number, head, draft = pr["number"], pr["head"]["sha"], bool(pr.get("draft"))
++    if not held:
++        return hold_result(repo, pr, "none", None, [], None, draft)
++    found = [read_hold(repo, comment["id"]) for comment in held]
++    for comment in found:
++        if comment["at"] and head.startswith(comment["at"]):
++            raise ReviewError(
++                f"hold comment {comment['id']} was written at {comment['at']}, which is still the head of "
++                f"{repo}#{number}, so the push that carries its changes has not happened; lifting the hold now "
++                f"would let a clean review of {comment['at']} mark the pull request ready while the changes are "
++                "still local. Push them first, or remove a change that will not be built with --drop")
++    for comment in found:
++        delete_comment(repo, comment["id"])
++    newest = found[-1]
++    return hold_result(repo, pr, "lifted", newest, [change for c in found for change in c["changes"]],
++                       newest["at"], draft)
++
++
++def hold_lines(result: dict) -> list[str]:
++    """`review hold` without --json: what it did, the comment, the changes the hold lists, and the draft state."""
++    where, head = f"{result['repo']}#{result['number']}", result["head"][:7]
++    comment, changes, action = result["comment"], result["changes"], result["action"]
++    state = "it is a draft" if result["draft"] else "it is not a draft"
++    count = f"{len(changes)} change{'' if len(changes) == 1 else 's'}"
++    if action == "none":
++        return [f"no hold is open on {where}; {state}"]
++    if action in ("posted", "added"):
++        return [f"{action} hold comment {comment['id']} on {where} at {head}: {comment['url']}",
++                f"held in draft while {count} {'is' if len(changes) == 1 else 'are'} implemented: "
++                + "; ".join(changes)]
++    if action == "dropped":
++        return [f"dropped from hold comment {comment['id']} on {where}: {comment['url']}",
++                f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
++    if action == "ended":
++        return [f"deleted hold comment {comment['id']} on {where}, since no change is left in it",
++                f"the hold ended on {head}, so the review loop re-reviews {head} as it stands; {state}"]
++    held_at = result["held_at"]
++    checked = (f"the head moved from {held_at} to {head}, so a review of {head} signs it off" if held_at
++               else f"comment {comment['id']} records no head, so whether a push carried its changes could not "
++                    "be checked")
++    return [f"lifted hold comment {comment['id']} on {where}, which listed: " + "; ".join(changes),
++            f"{checked}; {state}"]
++
++
+ # Resolving which review a command means
+ 
+ def valid_loop(loop: Optional[str]) -> Optional[str]:
+@@ -609,7 +799,7 @@ def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorde
+                 f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
+ 
+ 
+-def delete_comment(repo: str, comment: int, token: str) -> None:
++def delete_comment(repo: str, comment: int, token: Optional[str] = None) -> None:
+     try:
+         run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
+     except NotFound:
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 6a58695..8e2625d 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1129,7 +1129,7 @@ def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+         self.assertIn("review.publish_rule must be true or false", stderr)
+         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
+ 
+-    def test_init_adds_the_summary_rule_beside_an_existing_review_rule(self) -> None:
++    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
+         self.at_a_terminal()
+         self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+ 
+@@ -1138,9 +1138,22 @@ def test_init_adds_the_summary_rule_beside_an_existing_review_rule(self) -> None
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
++                                                    "Bash(project review hold *)",
+                                                     "Bash(project summary publish *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
++    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
++        self.at_a_terminal()
++        published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
++        self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
++
++        code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
++                         json.loads(self.settings().read_text()))
++
+     def codex_rules(self) -> Path:
+         """Projector's rules file in the user's Codex configuration."""
+         return self.home / ".codex" / "rules" / "projector.rules"
+@@ -1193,7 +1206,7 @@ def test_init_only_reports_missing_codex_rules_without_a_terminal(self) -> None:
+         self.assertFalse(self.codex_rules().exists())
+ 
+     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
+-    def test_codex_allows_exactly_the_two_publish_commands_under_the_rule(self) -> None:
++    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
+         rules = self.home / "projector.rules"
+         rules.write_text(permissions.CODEX_RULES)
+ 
+@@ -1204,6 +1217,9 @@ def decision(*command: str) -> str:
+ 
+         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
+         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
++        self.assertEqual("allow", decision("project", "review", "hold", "12", "--lift"))
++        self.assertEqual("none", decision("project", "summary", "hold", "12", "--lift"))
++        self.assertEqual("none", decision("project", "review", "release", "12"))
+         self.assertEqual("none", decision("project", "site", "serve"))
+         self.assertEqual("none", decision("project", "summary", "init"))
+ 
+@@ -1257,7 +1273,7 @@ def case(reason: str) -> None:
+             self.assertEqual(0, code, stderr)
+             self.assertIn("kept ~/.codex/rules/projector.rules\n", stdout)
+             self.assertIn(reason, stderr)
+-            self.assertIn(permissions.CODEX_RULE, stderr)
++            self.assertTrue(all(rule in stderr for rule in permissions.CODEX_PREFIX_RULES), stderr)
+ 
+         with self.subTest("rules is a file"):
+             rules.parent.write_text("not a directory\n")
+@@ -1348,12 +1364,17 @@ def test_rules_present_exits_0_and_writes_nothing(self) -> None:
+                          json.loads(stdout))
+ 
+     def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+-        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
++        def allow(*rules: str) -> None:
++            self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
++
+         cases = {
+-            "summary rule missing": lambda: None,
+-            "settings absent": self.settings().unlink,
++            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
++                                  "Bash(project review hold *)"),
++            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
++                                     "Bash(project summary publish *)"),
++            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
+         }
+-        for name, arrange in cases.items():
++        for name, (arrange, missing) in cases.items():
+             with self.subTest(name):
+                 arrange()
+                 before = self.home_tree()
+@@ -1362,7 +1383,7 @@ def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+ 
+                 self.assertEqual(1, code, stderr)
+                 self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
+-                self.assertIn("Bash(project summary publish *)", stderr)
++                self.assertIn(missing, stderr)
+                 self.assertIn("ask the user to run `project init` in a terminal", stderr)
+                 self.assertIn("do not run `project init --publish-rule` to add them yourself", stderr)
+                 self.assertIn("unless the repository's own or managed settings allow them", stderr)
+diff --git a/tests/test_review.py b/tests/test_review.py
+index b18b046..f27c7ff 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -78,6 +78,8 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.unlisted: set[int] = set()
+         # Answer a dismissal without dismissing anything.
+         self.ignore_dismissals = False
++        # The account gh is signed in as, which a call without a token acts as.
++        self.login = "operator"
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
+@@ -124,13 +126,12 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return ""
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+             marker = re.search(r'contains\("([^"]+)"\)', args[4]).group(1)
+-            return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
+-                                       "body": body, **self.comment_info[i]}) + "\n"
+-                           for i, body in self.comments.items() if marker in body)
++            return "".join(json.dumps({"id": i, "url": self.comment_url(i), "body": body, **self.comment_info[i]})
++                           + "\n" for i, body in self.comments.items() if marker in body)
+         if args[:2] == ["auth", "token"]:
+             return f"token-{args[-1]}\n"
+         if args == ["api", "user", "--jq", ".login"]:
+-            return "operator\n"
++            return f"{self.login}\n"
+         if args[:2] == ["api", "graphql"]:
+             after = next((a.split("=", 1)[1] for a in args if a.startswith("after=")), None)
+             return json.dumps(self.pages[0 if after is None else int(after)])
+@@ -146,14 +147,20 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+                 raise NotFound("gh: Not Found (HTTP 404)")
+             return self.permissions[login] + "\n"
+         if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]:
+-            comment_id = self.comment(args[3].removeprefix("body="), token.removeprefix("token-"))
+-            return json.dumps({"id": comment_id, "created_at": self.created_at})
++            login = token.removeprefix("token-") if token else self.login
++            comment_id = self.comment(args[3].removeprefix("body="), login)
++            return json.dumps({"id": comment_id, "html_url": self.comment_url(comment_id),
++                               "created_at": self.created_at})
+         if args[:3] == ["api", "-X", "PATCH"]:
+             comment_id = int(args[3].rsplit("/", 1)[1])
+             self.comments[comment_id] = args[5].removeprefix("body=")
+             return "{}"
+         if len(args) == 2 and args[1].startswith(f"repos/{REPO}/issues/comments/"):
+-            return json.dumps({"body": self.comments[int(args[1].rsplit("/", 1)[1])]})
++            comment_id = int(args[1].rsplit("/", 1)[1])
++            if comment_id not in self.comments:
++                raise NotFound("gh: Not Found (HTTP 404)")
++            return json.dumps({"id": comment_id, "html_url": self.comment_url(comment_id),
++                               "body": self.comments[comment_id]})
+         raise AssertionError(f"unexpected gh call: {args}")
+ 
+     def comment(self, body: str, login: str = "operator", created_at: str | None = None,
+@@ -165,6 +172,10 @@ def comment(self, body: str, login: str = "operator", created_at: str | None = N
+         self.comment_info[comment_id] = {"login": login, "created_at": created, "updated_at": updated_at or created}
+         return comment_id
+ 
++    @staticmethod
++    def comment_url(comment_id: int) -> str:
++        return f"https://github.com/{REPO}/pull/1#issuecomment-{comment_id}"
++
+     @staticmethod
+     def state(review: dict) -> str:
+         """The review's state as GitHub lists it: the event it was submitted with, until it is dismissed."""
+@@ -1021,10 +1032,14 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
+             "seconds=60 covered=1/1 -->\n")
+ 
+ 
+-# The comment fix-pr posts while it builds a change for the pull request.
+-HOLD = ("Held in draft while the following changes are implemented:\n\n"
++# The comment `project review hold --add` posts for fix-pr while it builds a change for the pull request.
++HOLD = ("Held in draft at `4f2a9c1` while the following changes are implemented:\n\n"
+         "- Skip fenced code blocks when looking for headings\n\n"
+         "<!-- projector-hold v=1 -->\n")
++# A hold fix-pr posted by hand before the opening line named the head.
++LEGACY_HOLD = ("Held in draft while the following changes are implemented:\n\n"
++               "- Skip fenced code blocks when looking for headings\n\n"
++               "<!-- projector-hold v=1 -->\n")
+ 
+ 
+ class ModelTests(PublishCase):
+@@ -1623,25 +1638,30 @@ def test_an_open_hold_is_held_beside_the_newest_verdict_until_the_author_deletes
+                          (held["verdict"], held["held"], held["holds"]))
+         self.assertEqual(("clean", False, []), (lifted["verdict"], lifted["held"], lifted["holds"]))
+ 
+-    def test_the_hold_fix_pr_posts_is_the_one_publish_status_and_the_review_watcher_read(self) -> None:
++    def test_the_hold_the_command_writes_is_the_one_publish_status_and_the_review_watcher_read(self) -> None:
+         skills = Path(cli.__file__).resolve().parents[2] / "skills"
+         fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
+         watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
+ 
++        self.assertEqual(HOLD, review.hold_body("4f2a9c1" + "0" * 33,
++                                                ["Skip fenced code blocks when looking for headings"]))
+         self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
+-        self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr's hold comment opens with the line HOLD does")
+-        self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr's hold comment ends with HOLD_MARKER")
++        opening = next((line for line in fix_pr if line.startswith("Held in draft")), "")
++        self.assertIsNotNone(review.HOLD_AT.match(opening), "fix-pr shows the opening line the command writes")
++        self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr shows the marker the command writes")
+         self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
+ 
+-    def test_fix_pr_posts_the_hold_before_it_drafts_the_pull_request(self) -> None:
+-        # A draft with no hold on an unchanged head reads to the review watcher as an answer, so a pass
+-        # between the two steps would ask for a re-review of a head nothing changed.
+-        fix_pr = [line.strip() for line in
+-                  (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text().splitlines()]
+-        post = fix_pr.index("gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id")
+-        draft = fix_pr.index("gh pr ready <number> --undo")
++    def test_fix_pr_holds_and_lifts_through_the_command_alone(self) -> None:
++        # The command posts the hold before it drafts the pull request, and refuses a lift on the head the
++        # hold records, so fix-pr must not take either step by hand. A raw comment deletion is also what
++        # Claude Code's auto mode refuses, where one narrow rule allows the command.
++        fix_pr = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
+ 
+-        self.assertLess(post, draft)
++        for mode in ("--add", "--drop", "--lift"):
++            self.assertTrue(re.search(rf"project review hold <number> --repo <owner>/<repo> \\?\s*{mode}", fix_pr),
++                            f"fix-pr shows hold {mode}, naming the repository")
++        self.assertFalse("issues/comments" in fix_pr, "fix-pr posts, edits, finds, and deletes no hold by hand")
++        self.assertFalse("gh pr ready" in fix_pr, "fix-pr drafts no pull request apart from the hold")
+ 
+     def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
+         self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")
+@@ -1662,6 +1682,306 @@ def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+         self.assertIn("does not exist", err)
+ 
+ 
++class HoldTests(ReviewCase):
++    """`project review hold` on pull request 1, which the operator, signed in to gh, opened."""
++
++    CHANGE = "Skip fenced code blocks when looking for headings"
++    OTHER = "Name the held layer in the stack's readiness report"
++
++    def hold(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        return self.project("hold", "1", *args, cwd=cwd)
++
++    def checkout_of(self, repo: str | None) -> Path:
++        """A Git checkout whose origin is `repo` on GitHub, or that has no origin."""
++        checkout = Path(tempfile.mkdtemp())
++        git(checkout, "init", "--quiet")
++        if repo:
++            git(checkout, "remote", "add", "origin", f"https://github.com/{repo}.git")
++        return checkout
++
++    def repos_called(self) -> set[str]:
++        """Every repository a call to GitHub named."""
++        return {match.group(1) for args, _ in self.github.calls for arg in args
++                if (match := re.match(r"repos/([^/]+/[^/]+)/", arg))} | \
++            {args[args.index("--repo") + 1] for args, _ in self.github.calls if "--repo" in args}
++
++    def held(self) -> dict[int, str]:
++        """Each comment that carries the hold marker, by id."""
++        return {i: body for i, body in self.github.comments.items() if review.HOLD_MARKER in body}
++
++    def move_head(self) -> str:
++        """Point the pull request at a new head, as the push that carries a change does."""
++        self.github.pr["head"]["sha"] = "c0ffee5" + "0" * 33
++        return self.github.pr["head"]["sha"]
++
++    def call_index(self, match) -> int:
++        return next(i for i, (args, _) in enumerate(self.github.calls) if match(args))
++
++    def drafts(self) -> list[list[str]]:
++        return [args for args, _ in self.github.calls if args[:2] == ["pr", "ready"]]
++
++    def test_posts_the_hold_then_drafts_the_pull_request(self) -> None:
++        self.github.pr["draft"] = False
++
++        code, out, err = self.hold("--add", self.CHANGE, "--add", f"  {self.OTHER}  ", "--add", self.CHANGE)
++
++        self.assertEqual(0, code, err)
++        [(comment, body)] = self.held().items()
++        self.assertEqual(f"Held in draft at `{self.head[:7]}` while the following changes are implemented:\n\n"
++                         f"- {self.CHANGE}\n- {self.OTHER}\n\n<!-- projector-hold v=1 -->\n", body)
++        self.assertEqual("operator", self.github.comment_info[comment]["login"], "posted as the signed-in author")
++        self.assertTrue(self.github.pr["draft"])
++        self.assertEqual([["pr", "ready", "1", "--repo", REPO, "--undo"]], self.drafts())
++        posted = self.call_index(lambda args: args[:2] == ["api", f"repos/{REPO}/issues/1/comments"])
++        read_back = self.call_index(lambda args: args == ["api", f"repos/{REPO}/issues/comments/{comment}"])
++        drafted = self.call_index(lambda args: args[:2] == ["pr", "ready"])
++        self.assertLess(posted, read_back)
++        self.assertLess(read_back, drafted, "the pull request turns draft only once the hold reads back")
++        self.assertEqual([f"posted hold comment {comment} on {REPO}#1 at {self.head[:7]}: "
++                          f"{FakeGitHub.comment_url(comment)}",
++                          f"held in draft while 2 changes are implemented: {self.CHANGE}; {self.OTHER}"],
++                         out.splitlines())
++
++    def test_holds_a_draft_without_touching_its_draft_state(self) -> None:
++        code, _, err = self.hold("--add", self.CHANGE)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(1, len(self.held()), "a draft waiting on its review is held too")
++        self.assertEqual([], self.drafts())
++        self.assertTrue(self.github.pr["draft"])
++
++    def test_a_hold_that_does_not_read_back_drafts_nothing(self) -> None:
++        # As a body posted with `-f body=@<file>` would: the marker is there, but not on the last line.
++        self.github.pr["draft"] = False
++        mangled = f"{review.HOLD_MARKER}\n\n- {self.CHANGE}\n"
++
++        with mock.patch.object(review, "hold_body", lambda head, changes: mangled):
++            code, _, err = self.hold("--add", self.CHANGE)
++
++        self.assertEqual(1, code)
++        self.assertIn("does not read back as written", err)
++        self.assertEqual([], self.drafts())
++        self.assertFalse(self.github.pr["draft"])
++
++    def test_extends_the_open_hold_skipping_listed_changes_and_moving_its_head(self) -> None:
++        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
++        [comment] = self.held()
++        head = self.move_head()
++
++        code, out, err = self.hold("--add", f" {self.CHANGE} ", "--add", self.OTHER)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({comment: f"Held in draft at `{head[:7]}` while the following changes are implemented:\n\n"
++                                   f"- {self.CHANGE}\n- {self.OTHER}\n\n<!-- projector-hold v=1 -->\n"},
++                         self.held(), "one comment, each change once, the marker last, at the head it waits on")
++        self.assertEqual(1, sum(args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]
++                                for args, _ in self.github.calls), "the hold is edited, never posted twice")
++        self.assertEqual(f"added hold comment {comment} on {REPO}#1 at {head[:7]}: {FakeGitHub.comment_url(comment)}",
++                         out.splitlines()[0])
++
++    def test_extending_a_legacy_hold_records_the_head(self) -> None:
++        comment = self.github.comment(LEGACY_HOLD)
++
++        self.assertEqual(0, self.hold("--add", self.OTHER)[0])
++
++        self.assertEqual(review.hold_body(self.head, [self.CHANGE, self.OTHER]), self.github.comments[comment])
++
++    def test_refuses_anyone_but_the_author(self) -> None:
++        self.github.pr["user"] = {"login": "teammate"}
++        theirs = self.github.comment(HOLD, login="teammate")
++        for args in (["--add", self.CHANGE], ["--drop", self.CHANGE], ["--lift"]):
++            with self.subTest(args[0]):
++                code, _, err = self.hold(*args)
++
++                self.assertEqual(1, code)
++                self.assertIn("gh is signed in as operator, and acme/app#1 is teammate's", err)
++                self.assertIn("only the pull request's author can hold it", err)
++        self.assertEqual({theirs: HOLD}, self.held(), "the author's hold is left as it is")
++        self.assertEqual([], [args for args, _ in self.github.calls if args[:2] == ["api", "-X"]])
++        self.assertEqual([], self.drafts())
++
++    def test_drops_one_change_and_keeps_the_recorded_head(self) -> None:
++        self.assertEqual(0, self.hold("--add", self.CHANGE, "--add", self.OTHER)[0])
++        [comment] = self.held()
++        self.move_head()
++
++        code, out, err = self.hold("--drop", self.OTHER, "--json")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({comment: review.hold_body(self.head, [self.CHANGE])}, self.held(),
++                         "the head stays the one the hold began at, since no push carried the change it keeps")
++        self.assertEqual(("dropped", [self.CHANGE], self.head[:7]),
++                         (json.loads(out)["action"], json.loads(out)["changes"], json.loads(out)["held_at"]))
++
++    def test_dropping_the_last_change_ends_the_hold(self) -> None:
++        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
++        [comment] = self.held()
++
++        code, out, err = self.hold("--drop", self.CHANGE)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({}, self.held())
++        self.assertEqual([f"deleted hold comment {comment} on {REPO}#1, since no change is left in it",
++                          f"the hold ended on {self.head[:7]}, so the review loop re-reviews {self.head[:7]} as it "
++                          "stands; it is a draft"], out.splitlines())
++        self.assertEqual([], self.drafts())
++
++    def test_refuses_a_drop_that_matches_no_change_and_changes_nothing(self) -> None:
++        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
++        before = self.held()
++
++        code, _, err = self.hold("--drop", self.CHANGE, "--drop", "Rename the flag")
++
++        self.assertEqual(1, code)
++        self.assertIn(f'lists no change "Rename the flag"; it lists "{self.CHANGE}"', err)
++        self.assertEqual(before, self.held())
++
++        self.github.comments.clear()
++        code, _, err = self.hold("--drop", self.CHANGE)
++        self.assertEqual(1, code)
++        self.assertIn("has no hold open, so there is no change to drop", err)
++
++    def test_lift_is_refused_on_the_head_the_hold_records(self) -> None:
++        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
++        before = self.held()
++
++        code, _, err = self.hold("--lift")
++
++        self.assertEqual(1, code)
++        self.assertIn(f"which is still the head of {REPO}#1", err)
++        self.assertIn("mark the pull request ready while the changes are still local", err)
++        self.assertIn("Push them first, or remove a change that will not be built with --drop", err)
++        self.assertEqual(before, self.held())
++
++    def test_lift_after_the_head_moved_deletes_the_hold_and_leaves_draft_state_alone(self) -> None:
++        for draft in (True, False):
++            with self.subTest(draft=draft):
++                self.github.comments.clear()
++                self.github.pr["head"]["sha"] = self.head
++                self.assertEqual(0, self.hold("--add", self.CHANGE, "--add", self.OTHER)[0])
++                [comment] = self.held()
++                head = self.move_head()
++                self.github.pr["draft"] = draft
++                drafts = len(self.drafts())
++
++                code, out, err = self.hold("--lift")
++
++                self.assertEqual(0, code, err)
++                self.assertEqual({}, self.held())
++                self.assertEqual((draft, drafts), (self.github.pr["draft"], len(self.drafts())))
++                self.assertEqual([f"lifted hold comment {comment} on {REPO}#1, which listed: "
++                                  f"{self.CHANGE}; {self.OTHER}",
++                                  f"the head moved from {self.head[:7]} to {head[:7]}, so a review of {head[:7]} "
++                                  f"signs it off; it is {'a draft' if draft else 'not a draft'}"], out.splitlines())
++
++    def test_lifts_a_hold_that_records_no_head_and_says_so(self) -> None:
++        comment = self.github.comment(LEGACY_HOLD)
++
++        code, out, err = self.hold("--lift")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({}, self.held())
++        self.assertEqual(f"comment {comment} records no head, so whether a push carried its changes could not be "
++                         "checked; it is a draft", out.splitlines()[1])
++
++    def test_lift_with_no_hold_open_exits_0(self) -> None:
++        planted = self.github.comment(HOLD, login="passerby")
++
++        code, out, err = self.hold("--lift")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"no hold is open on {REPO}#1; it is a draft"], out.splitlines())
++        self.assertIn(planted, self.github.comments, "a comment by anyone but the author is not the author's hold")
++
++    def test_json_reports_each_action(self) -> None:
++        def run(*args: str) -> dict:
++            code, out, err = self.hold(*args, "--json")
++            self.assertEqual(0, code, err)
++            return json.loads(out)
++
++        posted = run("--add", self.CHANGE)
++        [comment] = self.held()
++        head = self.move_head()
++        lifted = run("--lift")
++
++        self.assertEqual({"repo": REPO, "number": 1, "head": self.head, "action": "posted",
++                          "comment": {"id": comment, "url": FakeGitHub.comment_url(comment)},
++                          "changes": [self.CHANGE], "held_at": self.head[:7], "draft": True}, posted)
++        self.assertEqual({"repo": REPO, "number": 1, "head": head, "action": "lifted",
++                          "comment": {"id": comment, "url": FakeGitHub.comment_url(comment)},
++                          "changes": [self.CHANGE], "held_at": self.head[:7], "draft": True}, lifted)
++        self.assertEqual({"repo": REPO, "number": 1, "head": head, "action": "none", "comment": None, "changes": [],
++                          "held_at": None, "draft": True}, run("--lift"))
++
++    def test_repo_wins_over_the_checkout_it_runs_in(self) -> None:
++        elsewhere = self.checkout_of("other/app")
++        self.assertEqual("other/app", review.hold_repo(None, elsewhere), "the checkout alone names another repository")
++
++        code, _, err = self.hold("--repo", REPO, "--add", self.CHANGE, cwd=elsewhere)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(1, len(self.held()))
++        self.assertEqual({REPO}, self.repos_called())
++
++    def test_without_repo_it_holds_in_the_checkouts_origin(self) -> None:
++        code, out, err = self.hold("--add", self.CHANGE, cwd=self.checkout)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(1, len(self.held()))
++        self.assertEqual({REPO}, self.repos_called())
++        self.assertTrue(out.startswith("posted hold comment 101 on acme/app#1 "), out)
++
++    def test_a_review_set_up_for_the_same_number_in_another_repository_is_ignored(self) -> None:
++        xdg = Path(tempfile.mkdtemp())
++        state = xdg / "projector" / "reviews" / "prs" / "other" / "app" / "1" / review.model_key(self.model)
++        state.mkdir(parents=True)
++        (state / "state.json").write_text(json.dumps({"model": self.model}))
++        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(xdg)}):
++            self.assertEqual("other/app", review.find_repo(review.state_dir(), 1, None, self.checkout),
++                             "the commands that follow a review would take other/app from its state")
++
++            code, _, err = self.hold("--add", self.CHANGE, cwd=self.checkout)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({REPO}, self.repos_called())
++
++    def test_refuses_without_repo_outside_a_checkout_with_a_github_origin(self) -> None:
++        cases = {"outside a checkout": Path(tempfile.mkdtemp()), "a checkout with no origin": self.checkout_of(None)}
++        for name, cwd in cases.items():
++            with self.subTest(name):
++                code, _, err = self.hold("--lift", cwd=cwd)
++
++                self.assertEqual(1, code)
++                self.assertIn("is not in a checkout whose origin is on GitHub", err)
++                self.assertIn("pass --repo owner/name", err)
++        self.assertEqual([], self.github.calls)
++
++    def test_refuses_a_change_that_is_not_one_line_before_asking_github(self) -> None:
++        for text in ("", "   ", "Rename\nthe flag"):
++            with self.subTest(text=text):
++                code, _, err = self.hold("--add", self.CHANGE, "--add", text)
++
++                self.assertEqual(1, code)
++                self.assertIn("give each change as one line of text", err)
++        self.assertEqual([], self.github.calls)
++
++    def test_refuses_to_hold_a_pull_request_that_is_not_open(self) -> None:
++        self.github.pr["state"] = "closed"
++
++        code, _, err = self.hold("--add", self.CHANGE)
++
++        self.assertEqual(1, code)
++        self.assertIn(f"{REPO}#1 is closed; only an open pull request is held", err)
++        self.assertEqual({}, self.held())
++
++    def test_takes_exactly_one_of_add_drop_and_lift(self) -> None:
++        for args in ([], ["--add", self.CHANGE, "--lift"], ["--add", self.CHANGE, "--drop", self.OTHER]):
++            with self.subTest(args=args), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
++                cli.main(["review", "hold", "1", *args])
++            self.assertEqual(2, raised.exception.code)
++        self.assertEqual([], self.github.calls)
++
++
+ def css(**padding: int) -> str:
+     """A stylesheet of six rows, each 8px unless `padding` names it, as r1=9 does."""
+     return "".join(f".r{i} {{ padding: {padding.get(f'r{i}', 8)}px; }}\n" for i in range(6))
