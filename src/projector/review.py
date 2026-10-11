@@ -35,6 +35,9 @@ from .core import ProjectorError, distribution_version
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
+# The last line of the comment that holds a pull request in draft while changes for it are built, as
+# fix-pr/SKILL.md § Hold the pull request while changes are built writes it.
+HOLD_MARKER = "<!-- projector-hold v=1 -->"
 # The mark that opens both the start comment and the review's signature line, as
 # review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
@@ -468,6 +471,21 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
                 and review.get("at") and parse_time(review["at"]) >= created):
             return False
     return True
+
+
+# Holds
+
+def holds(repo: str, number: int, author: str) -> list[dict]:
+    """The hold comments on the pull request, from every page, each with its `id` and `url`. Only the
+    pull request's `author` holds it: anyone can comment, so another account's comment carrying the
+    marker holds nothing."""
+    if not author:
+        return []
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
+                   "--jq", f'.[] | select(.body // "" | contains("{HOLD_MARKER}")) '
+                           '| {id, url: .html_url, login: .user.login} | @json']).splitlines()
+    return [{"id": comment["id"], "url": comment.get("url")} for comment in map(json.loads, filter(str.strip, rows))
+            if (comment.get("login") or "").lower() == author.lower()]
 
 
 # Resolving which review a command means
@@ -1194,7 +1212,8 @@ def thread_model(thread: dict) -> Optional[str]:
 
 def status(repo: str, number: int, reviewer: str) -> dict:
     """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
-    state by, with each model's newest verdict on it and every open Projector finding thread."""
+    state by, with each model's newest verdict on it, every open Projector finding thread, and every
+    open hold comment."""
     try:
         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
@@ -1202,17 +1221,20 @@ def status(repo: str, number: int, reviewer: str) -> dict:
     head = pr["head"]["sha"]
     models = newest_verdicts(head, verdicts(repo, number, reviewer))
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+    held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
     newest = models[0] if models else None
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
             "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": models,
-            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
+            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
+            "held": bool(held), "holds": held}
 
 
 def status_lines(result: dict) -> list[str]:
-    """`review status` without --json: the newest verdict on the head, each model's when several gave
-    one, and the open threads."""
+    """`review status` without --json: whether the head is held, the newest verdict on it, each model's
+    when several gave one, the open threads, and the hold comments."""
     newest = result["newest"]
-    lines = [f"#{result['number']} at {result['head'][:7]}: {result['verdict']}"
+    held = "held; " if result["held"] else ""
+    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}"
              + (f" from {newest['model']}, {newest['url'] or 'review ' + str(newest['review'])}" if newest else "")]
     if len(result["models"]) > 1:
         width = max(len(row["model"]) for row in result["models"]) + 3
@@ -1223,6 +1245,8 @@ def status_lines(result: dict) -> list[str]:
     if threads:
         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
+    for hold in result["holds"]:
+        lines.append(f"  held in draft by comment {hold['id']} until the changes it lists are pushed")
     return lines
 
 
@@ -1337,7 +1361,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
 
     Acting on the newest verdict sets a self-review's draft state. On another author's pull request a
     clean newest verdict with no finding open dismisses the reviewer's standing Projector change
-    requests, because a `COMMENT` review leaves `reviewDecision` where the last of them put it.
+    requests, because a `COMMENT` review leaves `reviewDecision` where the last of them put it. While
+    the author holds the pull request, it stays a draft and its change requests stand.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
@@ -1404,8 +1429,12 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             text = compose(state, verdict, body, covered, len(threads), census_line, now())
             if mine or verdict == "clean" and not allow_approve:
                 event = "COMMENT"
+            elif verdict == "changes-requested":
+                event = "REQUEST_CHANGES"
             else:
-                event = "APPROVE" if verdict == "clean" else "REQUEST_CHANGES"
+                # An approval would clear the pull request to merge while its author is still building
+                # changes for it.
+                event = "COMMENT" if holds(repo, number, (pr.get("user") or {}).get("login") or "") else "APPROVE"
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
                                  "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
@@ -1427,31 +1456,34 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
     if f"sha={sha}" not in (read.get("body") or ""):
         raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
-    newest, draft_wanted, open_threads, dismissed = None, None, None, []
+    newest, draft_wanted, open_threads, dismissed, held = None, None, None, [], None
     standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
     if published.get("self") or standing:
         # The head's newest Projector verdict decides, whichever model gave it: this review, counted as read
         # back whether or not the listing shows it yet, or one another model posted since. A finding thread
         # open now holds the pull request whatever that verdict says, because another model can post one
-        # after this review counted none and before its own verdict landed.
+        # after this review counted none and before its own verdict landed. So does the author's hold: the
+        # author is building changes no review has read.
         posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
                   "login": reviewer, "body": read["body"]}
         others = [r for r in verdicts(repo, number, reviewer) if r.get("id") != review_id]
         newest = newest_verdicts(sha, others + [posted])[0]
         open_threads = census(repo, number)["open"]
-    if standing and newest["verdict"] == "clean" and not open_threads:
+        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+        held = bool(holds(repo, number, (current.get("user") or {}).get("login") or ""))
+    if standing and newest["verdict"] == "clean" and not open_threads and not held:
         dismissed = dismiss(repo, number, reviewer, standing,
                             f"{MARK} The newest verdict on {sha[:7]} is clean: {newest['url']}", token)
     if published.get("self"):
-        draft_wanted = newest["verdict"] == "changes-requested" or open_threads > 0
-        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+        draft_wanted = newest["verdict"] == "changes-requested" or open_threads > 0 or held
+        draft = bool(current.get("draft"))
         if draft != draft_wanted:
             run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
             draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
             if draft != draft_wanted:
                 raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the newest verdict, "
-                                  f"{newest['verdict']}, with {open_threads} open finding threads; set it with "
-                                  "`gh pr ready` and retry")
+                                  f"{newest['verdict']}, with {open_threads} open finding threads"
+                                  f"{' and a hold open' if held else ''}; set it with `gh pr ready` and retry")
     if loop is not None:
         record = read_record(root, loop)
         if not any(r.get("review_id") == review_id for r in record):
@@ -1470,4 +1502,4 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
             "event": published["event"], "draft": draft_wanted, "dismissed": dismissed, "from": published.get("from"),
-            "newest": newest, "open_threads": open_threads}
+            "newest": newest, "open_threads": open_threads, "held": held}

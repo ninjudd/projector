@@ -98,7 +98,7 @@ clean, post a `COMMENT` review saying so — **never `APPROVE`**. An approval is
 person vouching for code, and an agent must not vouch on the reviewer's behalf;
 recommend it in the body and let a human click it. A `COMMENT` leaves an earlier
 `REQUEST_CHANGES` standing, so once the newest verdict on the head is clean and
-no finding thread is open, `publish` dismisses the change requests your
+no finding thread or hold is open, `publish` dismisses the change requests your
 account's Projector reviews left.
 
 That last rule is the one configurable piece of this skill:
@@ -122,9 +122,12 @@ is not signed off, ready means the newest review of it found it clean.
 verdict on the head, whichever model gave it, as
 [Review as one model among several](#review-as-one-model-among-several)
 describes. **A review with findings marks it draft; a clean review marks it
-ready.** Nothing else enters into it — not when a review first saw the pull
-request, not who last changed the state, not whether it was ever a draft.
-Never set it yourself with `gh pr ready`.
+ready.** The one exception is a hold: while the author is building a change
+no review has read, `fix-pr` keeps the pull request a draft with a hold
+comment, and a clean review leaves it a draft until the hold is deleted.
+Nothing else enters into it — not when a review first saw the pull request,
+not who last changed the state, not whether it was ever a draft. Never set
+it yourself with `gh pr ready`.
 
 Draft carries the outcome there because GitHub refuses `APPROVE` and
 `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
@@ -171,14 +174,21 @@ request without the pull request waiting on it. In the same step `publish`
 reads the finding threads again, and while any is open it keeps the pull
 request a draft whatever the newest verdict says, because another model can
 post a finding after this review counted none and before its verdict landed.
+It reads the pull request author's hold comments too. While the author has
+one open, a comment carrying `<!-- projector-hold v=1 -->` that `fix-pr`
+posts while it builds a change for the pull request, such as a suggestion it
+implements, `publish` keeps the pull request a draft however clean the
+newest verdict is, and never approves another author's held pull request.
+Only the author's comment counts, because anyone can comment.
 Nothing waits for another model to finish, and nothing counts a model still
 reviewing. GitHub's branch rules, such as requiring every conversation to be
 resolved before a merge, hold the merge where they apply.
 
 `project review status <number>` prints the newest verdict on the current
 head, the model and review it came from, each model's newest verdict there
-when several gave one, and the open finding threads, as `docs/cli.md`
-describes; `fix-pr` reads it to tell whether a head is signed off.
+when several gave one, the open finding threads, and any open hold, as
+`docs/cli.md` describes; `fix-pr` reads it to tell whether a head is signed
+off.
 
 ## Review an exact head
 
@@ -754,27 +764,31 @@ the newest comment on an open finding thread is the author's.
 `changes-requested`. Draft state is left alone.
 
 **Clean head, self-review:** a `COMMENT` review, verdict `clean`, then the
-pull request is marked ready with `gh pr ready <number>`. That transition is
-the sign-off a reader sees in the pull-request list.
+pull request is marked ready with `gh pr ready <number>`, or kept a draft
+while its author's hold is open. That transition is the sign-off a reader
+sees in the pull-request list.
 
 **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
 plainly in the body that the head looks clean and that a human approval is
 what remains. It posts a real `APPROVE` only where `review.allow_approve` is
-`true`. Otherwise it posts a `COMMENT`, which leaves the account's last
-`REQUEST_CHANGES` holding `reviewDecision`. So when the newest Projector
-verdict on the head, whichever model gave it, is clean and no finding thread is
-open, `publish` dismisses each Projector `REQUEST_CHANGES` review by the
-account that nobody dismissed and no later approval replaced, and the pull
-request is no longer blocked on a change request that its reviews have
-settled. A change request the account posted by hand, without a Projector
-verdict marker, is a person's and stays, even when it mentions the loop.
+`true`, and never while the author holds the pull request. Otherwise it
+posts a `COMMENT`, which leaves the account's last `REQUEST_CHANGES` holding
+`reviewDecision`. So when the newest Projector verdict on the head,
+whichever model gave it, is clean and no finding thread is open, `publish`
+dismisses each Projector `REQUEST_CHANGES` review by the account that nobody
+dismissed and no later approval replaced, and the pull request is no longer
+blocked on a change request that its reviews have settled. While the author
+holds the pull request, those change requests stand until a clean review
+after the hold. A change request the account posted by hand, without a
+Projector verdict marker, is a person's and stays, even when it mentions the
+loop.
 
 On a self-review, the draft transition follows the newest verdict on the
 head rather than this review's alone. When another model posts a verdict on
 the head between this review's submit and its draft transition, the newer
 verdict decides, and `publish` says so. A finding thread open at that moment
-keeps the pull request a draft even under a clean newest verdict, and
-`publish` says that too.
+keeps the pull request a draft even under a clean newest verdict, and so
+does the author's open hold; `publish` says which.
 
 Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review

@@ -950,10 +950,12 @@ def run_review(arguments: argparse.Namespace) -> int:
                 if newest and newest["review"] != result["review_id"]:
                     print(f"the newest verdict on the head is {newest['model']}'s {newest['verdict']}, "
                           f"review {newest['review']}")
+                kept = "it stays a draft" if result["draft"] is not None else "the change requests stand"
                 if newest and newest["verdict"] == "clean" and result["open_threads"]:
                     count = result["open_threads"]
-                    held = "it stays a draft" if result["draft"] is not None else "the change requests stand"
-                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so {held}")
+                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so {kept}")
+                if newest and newest["verdict"] == "clean" and result["held"]:
+                    print(f"the author's hold comment is open, so {kept} until the author deletes it")
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
                 if result["dismissed"]:

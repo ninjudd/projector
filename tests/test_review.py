@@ -123,9 +123,10 @@ class FakeGitHub:
             del self.comments[int(args[3].rsplit("/", 1)[1])]
             return ""
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+            marker = re.search(r'contains\("([^"]+)"\)', args[4]).group(1)
             return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
                                        "body": body, **self.comment_info[i]}) + "\n"
-                           for i, body in self.comments.items() if "projector-start" in body)
+                           for i, body in self.comments.items() if marker in body)
         if args[:2] == ["auth", "token"]:
             return f"token-{args[-1]}\n"
         if args == ["api", "user", "--jq", ".login"]:
@@ -1020,6 +1021,12 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
             "seconds=60 covered=1/1 -->\n")
 
 
+# The comment fix-pr posts while it builds a change for the pull request.
+HOLD = ("Held in draft while the following changes are implemented:\n\n"
+        "- Skip fenced code blocks when looking for headings\n\n"
+        "<!-- projector-hold v=1 -->\n")
+
+
 class ModelTests(PublishCase):
     """Each model is a reviewer of its own: its own state, lock, worktree, and collision check."""
 
@@ -1312,6 +1319,58 @@ class LatestWinsTests(LatestWinsCase):
 
         self.assertEqual(("claude-opus-5-5", False), (result["newest"]["model"], self.github.pr["draft"]))
 
+    def test_the_authors_hold_keeps_a_clean_newest_verdict_a_draft(self) -> None:
+        # fix-pr holds a pull request while it builds a change no review has read.
+        for draft in (True, False):
+            with self.subTest(draft=draft):
+                self.setUp()
+                self.github.pr["draft"] = draft
+                self.github.comment(HOLD)
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                result = self.json_publish("clean")
+
+                self.assertEqual(("clean", True, True), (result["newest"]["verdict"], result["held"], result["draft"]))
+                self.assertTrue(self.github.pr["draft"])
+                self.assertEqual(not draft, any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
+
+    def test_publish_says_the_hold_is_what_keeps_a_clean_head_a_draft(self) -> None:
+        self.github.pr["draft"] = False
+        self.github.comment(HOLD)
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, out, err = self.publish("clean")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["the author's hold comment is open, so it stays a draft until the author deletes it",
+                          "marked draft"], out.splitlines()[1:])
+
+    def test_a_hold_from_anyone_but_the_author_holds_nothing(self) -> None:
+        self.github.comment(HOLD, login="passerby")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual((False, False), (result["held"], result["draft"]))
+        self.assertFalse(self.github.pr["draft"])
+
+    def test_a_cross_author_review_does_not_approve_while_the_author_holds_the_pull_request(self) -> None:
+        cases = {"held by its author": ("teammate", "COMMENT"), "held by the reviewer": ("operator", "APPROVE")}
+        for name, (login, event) in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.github.pr["user"] = {"login": "teammate"}
+                self.github.permissions = {"teammate": "write"}
+                self.github.commit_authors = ["teammate"]
+                (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
+                self.github.comment(HOLD, login=login)
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                result = self.json_publish("clean")
+
+                self.assertEqual((event, None), (self.posted()["event"], result["draft"]))
+                self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
+
     def test_a_cross_author_review_approves_on_its_own_clean_verdict_and_leaves_draft_state_alone(self) -> None:
         self.github.pr["user"] = {"login": "teammate"}
         self.github.permissions = {"teammate": "write"}
@@ -1442,6 +1501,19 @@ class DismissalTests(LatestWinsCase):
         self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
         self.assertEqual([], self.dismissals())
 
+    def test_the_authors_hold_keeps_the_change_request_standing(self) -> None:
+        # The author is building changes no review has read, so nothing clears the pull request to merge yet.
+        self.github.comment(HOLD, login="teammate")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, out, err = self.publish("clean")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["the author's hold comment is open, so the change requests stand until the author deletes it"],
+                         out.splitlines()[1:])
+        self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
+        self.assertEqual([], self.dismissals())
+
     def test_an_approval_replaces_the_change_request_so_nothing_is_dismissed(self) -> None:
         (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1533,6 +1605,43 @@ class StatusTests(LatestWinsCase):
 
         self.assertEqual(("clean", teammate), (result["verdict"], result["newest"]["review"]),
                          "the operator's status sees the teammate's loop")
+
+    def test_an_open_hold_is_held_beside_the_newest_verdict_until_the_author_deletes_it(self) -> None:
+        newest = self.add_verdict("claude-opus-5-5")
+        hold = self.github.comment(HOLD)
+        self.github.comment(HOLD, login="passerby")
+
+        code, out, err = self.status()
+        held = json.loads(self.status("--json")[1])
+        del self.github.comments[hold]
+        lifted = json.loads(self.status("--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"#1 at {self.head[:7]}: held; clean from claude-opus-5-5, {review_page(newest)}",
+                          f"  held in draft by comment {hold} until the changes it lists are pushed"], out.splitlines())
+        self.assertEqual(("clean", True, [{"id": hold, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{hold}"}]),
+                         (held["verdict"], held["held"], held["holds"]))
+        self.assertEqual(("clean", False, []), (lifted["verdict"], lifted["held"], lifted["holds"]))
+
+    def test_the_hold_fix_pr_posts_is_the_one_publish_status_and_the_review_watcher_read(self) -> None:
+        skills = Path(cli.__file__).resolve().parents[2] / "skills"
+        fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
+        watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
+
+        self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
+        self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr's hold comment opens with the line HOLD does")
+        self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr's hold comment ends with HOLD_MARKER")
+        self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
+
+    def test_fix_pr_posts_the_hold_before_it_drafts_the_pull_request(self) -> None:
+        # A draft with no hold on an unchanged head reads to the review watcher as an answer, so a pass
+        # between the two steps would ask for a re-review of a head nothing changed.
+        fix_pr = [line.strip() for line in
+                  (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text().splitlines()]
+        post = fix_pr.index("gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id")
+        draft = fix_pr.index("gh pr ready <number> --undo")
+
+        self.assertLess(post, draft)
 
     def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")

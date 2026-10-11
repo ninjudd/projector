@@ -1148,30 +1148,35 @@ posted, and is another model's only when that model posted on the head in
 between. In the same step it counts the open Projector finding threads again,
 and keeps the pull request a draft while any is open, whatever the newest
 verdict, so a finding another model posts after this review's census still
-holds it. It counts the reviewer's verdicts, the one it just posted included,
-and those of any account that owns the repository, belongs to its
-organization, or collaborates on it. On another author's pull request it
-posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean verdict
-where `review.allow_approve` is `true`, and leaves draft state alone. A
-`COMMENT` leaves the account's last change request holding `reviewDecision`,
-so when the newest verdict on the head is clean and no finding thread is
-open, read the same way, `publish` dismisses each of the reviewer's Projector
-`REQUEST_CHANGES` reviews that nobody dismissed and no later approval by the
-account replaced. A change request whose body carries no Projector verdict
-marker is left alone. It then adds the review id to the loop's record,
-deletes the start comment, and releases the lock. It prints the draft state
-it set, the newer verdict that decided it when that is another model's, the
-open finding threads that kept a clean head a draft or its change requests
+holds it. It also keeps the pull request a draft while its author has a hold
+comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
+`fix-pr` posts while it builds a change for the pull request. Only the
+author's comment counts. It counts the reviewer's verdicts, the one it just
+posted included, and those of any account that owns the repository, belongs
+to its organization, or collaborates on it. On another author's pull request
+it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
+verdict where `review.allow_approve` is `true` and the author has no hold
+comment open, and leaves draft state alone. A `COMMENT` leaves the account's
+last change request holding `reviewDecision`, so when the newest verdict on
+the head is clean and no finding thread or hold is open, read the same way,
+`publish` dismisses each of the reviewer's Projector `REQUEST_CHANGES`
+reviews that nobody dismissed and no later approval by the account replaced.
+A change request whose body carries no Projector verdict marker is left
+alone. It then adds the review id to the loop's record, deletes the start
+comment, and releases the lock. It prints the draft state it set, the newer
+verdict that decided it when that is another model's, the open finding
+threads or hold that kept a clean head a draft or its change requests
 standing, and the change requests it dismissed; `--json` gives them as
-`draft`, `newest`, `open_threads`, a count, and `dismissed`, the dismissed
-review ids. A run that fails after submitting, including a dismissal GitHub
-refuses, exits non-zero, and running it again finishes that review rather
-than posting another.
+`draft`, `newest`, `open_threads`, a count, `held`, and `dismissed`, the
+dismissed review ids. A run that fails after submitting, including a
+dismissal GitHub refuses, exits non-zero, and running it again finishes that
+review rather than posting another.
 
 `status` prints the newest Projector verdict on the pull request's current
 head, the one `publish` sets draft state by, with the model and the review it
 came from. When several models gave a verdict on the head, it adds each
-model's newest one, newest first. Then it lists the open finding threads:
+model's newest one, newest first. Then it lists the open finding threads,
+and any hold comment the author has open:
 
 ```
 $ project review status 66
@@ -1180,12 +1185,15 @@ $ project review status 66
   gpt-5.5           changes-requested   review 3290, 14:02 UTC
 ```
 
-A head with no Projector verdict is `unreviewed`. `status` counts the
+A head with no Projector verdict is `unreviewed`. While the author has a hold
+comment open, the first line opens with `held;`, as in `#66 at 4f2a9c1:
+held; clean from …`, and a line such as `held in draft by comment 4411 until
+the changes it lists are pushed` names the comment. `status` counts the
 verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
 from `--reviewer`, then `review.username`, then the authenticated user, and
 those of any account that owns the repository, belongs to its organization, or
-collaborates on it. It reads the pull request, its reviews, and its threads,
-and runs from any directory. It exits 0 whatever the verdict, and 1 only when
+collaborates on it. It reads the pull request, its reviews, its issue
+comments, and its threads, and runs from any directory. It exits 0 whatever the verdict, and 1 only when
 it cannot read the pull request. With `--json` it prints one object:
 
 | Field | Value |
@@ -1196,6 +1204,8 @@ it cannot read the pull request. With `--json` it prints one object:
 | `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, or `null` when the head is `unreviewed`. |
 | `models` | Each model's newest verdict on the head in the same shape, newest first. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
+| `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
+| `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review

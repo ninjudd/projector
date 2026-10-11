@@ -142,6 +142,7 @@ class WatcherCase(unittest.TestCase):
         verdict=None,
         threads=(),
         reviews=(),
+        comments=(),
     ) -> None:
         directory = self.fixtures / repo
         directory.mkdir(parents=True, exist_ok=True)
@@ -156,6 +157,7 @@ class WatcherCase(unittest.TestCase):
             "author": {"login": author},
             "reviews": {"nodes": [verdict] if verdict else []},
             "reviewThreads": {"nodes": list(threads)},
+            "comments": {"nodes": list(comments)},
         }
         (directory / f"{number}.json").write_text(json.dumps(node))
         (directory / f"{number}.reviews.json").write_text(json.dumps(list(reviews)))
@@ -582,6 +584,95 @@ class WatchPrsTests(WatcherCase):
 
         self.assert_ok(result)
         self.assertEqual("", result.stdout)
+
+    def test_a_hold_is_never_a_response_and_lifting_it_is_one(self) -> None:
+        # fix-pr returns a signed-off pull request to draft while it builds a
+        # change. A re-review then would only find the unchanged head clean.
+        # It posts the hold while the pull request is still ready, then drafts
+        # it, so no pass sees a draft without the hold.
+        hold = {"author": {"login": "operator"},
+                "body": "Held in draft while the following changes are implemented:\n\n- Rename `x`\n\n"
+                        "<!-- projector-hold v=1 -->\n"}
+        self.pull_request(1, head=SHA_A)
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
+
+        self.pull_request(1, head=SHA_A, comments=[hold])
+        posted = self.run_watcher(PRS)
+        held_flag = self.state_rows()
+        self.pull_request(1, head=SHA_A, draft=True, comments=[hold])
+        held = self.run_watcher(PRS)
+        still_held = self.run_watcher(PRS)
+        self.pull_request(1, head=SHA_A, draft=True)
+        lifted = self.run_watcher(PRS)
+        quiet = self.run_watcher(PRS)
+
+        self.assert_ok(posted)
+        self.assertEqual("", posted.stdout)
+        self.assertEqual([["acme/app", "1", SHA_A, "feature", "held"]], held_flag)
+        self.assert_ok(held)
+        self.assertEqual("", held.stdout)
+        self.assert_ok(still_held)
+        self.assertEqual("", still_held.stdout)
+        self.assert_ok(lifted)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft now that its hold is lifted; "
+             "re-review this head and sign off if clean"],
+            lifted.stdout.splitlines(),
+        )
+        self.assert_ok(quiet)
+        self.assertEqual("", quiet.stdout)
+
+    def test_drafting_before_the_hold_lands_asks_to_re_review_the_unchanged_head(self) -> None:
+        # Why fix-pr posts the hold before it drafts: a pass between the two
+        # steps would read an author who answered without pushing.
+        self.pull_request(1, head=SHA_A)
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
+
+        self.pull_request(1, head=SHA_A, draft=True)
+        drafted_first = self.run_watcher(PRS)
+
+        self.assert_ok(drafted_first)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
+             "re-review this head and sign off if clean"],
+            drafted_first.stdout.splitlines(),
+        )
+
+    def test_a_hold_seen_on_a_new_head_asks_for_it_again_once_lifted(self) -> None:
+        # The push that carries the changes can land a cycle before the hold
+        # is deleted, and that head's review then leaves it a draft.
+        hold = {"author": {"login": "operator"}, "body": "Held\n\n- Rename `x`\n\n<!-- projector-hold v=1 -->"}
+        self.pull_request(1, head=SHA_A, draft=True, comments=[hold])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_B} feature -\n")
+
+        moved = self.run_watcher(PRS)
+        self.pull_request(1, head=SHA_A, draft=True)
+        lifted = self.run_watcher(PRS)
+
+        self.assert_ok(moved)
+        self.assertEqual(["NEW HEAD acme/app#1 (feature): bbbbbbb -> aaaaaaa — needs an exact-head review"],
+                         moved.stdout.splitlines())
+        self.assert_ok(lifted)
+        self.assertEqual(1, len(lifted.stdout.splitlines()), lifted.stdout)
+        self.assertIn("still a draft now that its hold is lifted", lifted.stdout)
+
+    def test_a_hold_marker_from_anyone_but_the_author_holds_nothing(self) -> None:
+        planted = {"author": {"login": "passerby"}, "body": "<!-- projector-hold v=1 -->"}
+        self.pull_request(1, head=SHA_A, draft=True, comments=[planted])
+        self.track("acme/app#1")
+        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
+
+        result = self.run_watcher(PRS)
+
+        self.assert_ok(result)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
+             "re-review this head and sign off if clean"],
+            result.stdout.splitlines(),
+        )
 
     def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
         self.pull_request(1)
