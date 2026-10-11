@@ -1,0 +1,215 @@
+diff --git a/docs/projects/incremental-review/readme.md b/docs/projects/incremental-review/readme.md
+index c9dfea07..82555769 100644
+--- a/docs/projects/incremental-review/readme.md
++++ b/docs/projects/incremental-review/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -759,5 +759,48 @@ status, and the skill text are built as § 2 describes, including the
+ `retarget` kind in § 2.3 and the rule in § 2.2.1 for a record entry with no
+ `base`. The tests in `tests/test_review.py` and `tests/test_site.py` prove
+ criteria 1 to 4. Criterion 5 needs a review loop running against a scratch
+-repository on GitHub, and has not been run, so the project stays
+-`in-progress` until it has.
++repository on GitHub, and has not been run. § 9 records how the project
++closed without it.
++
++## 9. Outcome
++
++The project shipped in #228. It was first released in 0.7.4 and is in 0.7.6,
++the release now installed. On `main` at 0.7.6, criteria 1 to 4 pass:
++
++- **Measurement, criterion 1.** `InterdiffMeasureTests` in
++  `tests/test_review.py` measures each case the criterion lists: a pushed
++  commit, a merge of the trunk, a clean rebase, a rebase and a merge with a
++  resolved conflict, an amend and a reword, a stack cascade, a retarget, an
++  earlier head missing from the checkout, a record entry with no `base`, and
++  a Git without `merge-tree --merge-base`.
++- **Rules, criterion 2.** `InterdiffRuleTests` refuses each rule in § 2.2.1
++  with its own reason. It reads an added, deleted, renamed, or mode-changed
++  file like any other, measures from the full review after an incremental
++  one, and holds a moved base until a gate run on this head passes.
++- **Publish, criterion 3.** `IncrementalPublishTests` checks the posted body
++  part by part, the lead after a conflicted rebase, the `COMMENT` on another
++  author's pull request, and every refusal. `KindPhraseTests` keeps each
++  kind's phrase in one place.
++- **Readers, criterion 4.**
++  `test_another_loops_incremental_review_on_the_head_is_a_collision` covers
++  the collision check. In `tests/test_site.py`,
++  `test_an_incremental_review_links_the_full_review_it_builds_on` and
++  `test_an_incremental_line_without_a_review_marker_sets_no_status` cover
++  `review_statuses`, and
++  `test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on`
++  renders the header under node.
++
++`multi-model-review` later made the header link the full review by the same
++model as the incremental review, as its § 2.6 says, and
++`test_an_incremental_review_builds_on_its_own_models_full_review` pins that.
++
++No review loop has posted an incremental review yet, so criterion 5 and the
++`seconds=` comparison in § 5 are still unobserved. Every head pushed to this
++repository's pull requests since 0.7.4 changed code, and no Projector review
++signature on them reads `incremental from`. That is follow-up evidence to
++watch for, not a gap in what shipped. The first small push to a cleanly
++reviewed pull request should get a review whose signature reads
++`incremental from <short-sha>`, whose lead links that full review, and whose
++summary header shows **Clean · incremental from `<short-sha>`**. A full
++review of such a push, or an incremental review of a changed condition, is a
++defect to fix in a new change.
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index ae8121fe..8f8e503e 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -350,8 +350,8 @@ lose it. Criterion 32 fails before `publish` dismissed anything, when a clean
+ head left the account's change request standing.
+ Criterion 22 holds because `watch-threads.sh` reports every unresolved
+ thread without reading its marker, which `tests/test_watchers.py` pins.
+-Criterion 15 needs two hosts and has not been run, so the project stays in
+-progress until it has.
++Criterion 15 needs two hosts and has not been run. § 10 records how the
++project closed without it.
+ 
+ ## 5. Cost
+ 
+@@ -539,3 +539,57 @@ head clean, Claude has settled every Codex finding first, by fix, accepted
+ decline, or withdrawal, and its verdict stands. If that settlement is wrong,
+ the open disagreement is the operator's to reopen, as it is for any finding a
+ review resolves.
++
++## 10. Outcome
++
++The project shipped. #237 gave each model its own identity, state, lock,
++worktree, and collision check. #243 made the newest verdict on a head sign it
++off, as § 9 describes, and #245 added § 9's dismissal of settled change
++requests and criterion 32. Two designs merged and were then replaced: #233's
++header, which showed each model's verdict, and #239's every-model sign-off,
++both removed by #243. #241, which built the adoption that the earlier § 2.8
++described, closed without merging when § 9 dropped adoption. Every merged
++pull request here was first released in 0.7.5 and is in 0.7.6, the release
++now installed.
++
++On `main` at 0.7.6, every criterion that § 9 kept passes. The tests are in
++`tests/test_review.py` unless the table names another file:
++
++| # | Evidence |
++| --- | --- |
++| 1 | `test_two_models_set_up_one_head_side_by_side_and_publishing_one_leaves_the_other` |
++| 2 | `test_a_second_instance_for_the_same_head_exits_without_posting` |
++| 3 | `test_another_sessions_live_start_comment_by_the_same_model_refuses_setup` and `test_a_start_comment_a_day_old_or_followed_by_its_models_verdict_is_not_live` |
++| 4 | `test_another_models_verdict_on_the_head_is_not_a_collision` and `test_a_verdict_by_the_same_model_or_naming_no_model_is_another_loop` |
++| 5 | `test_a_command_after_setup_needs_model_when_two_models_are_set_up` and `test_one_model_with_state_needs_no_model_flag` |
++| 6 | `test_a_clean_verdict_needs_another_models_finding_settled_first` |
++| 7 | `test_changes_requested_posts_findings_with_the_marker_and_returns_the_pull_request_to_draft` |
++| 22 | `test_reports_every_kind_of_outstanding_work_on_a_tracked_pull_request` in `tests/test_watchers.py` |
++| 24 | `test_a_clean_newest_verdict_marks_it_ready_over_an_older_models_change_request` |
++| 25 | `test_a_newer_change_request_drafts_it`, `test_a_change_request_posted_after_this_clean_verdict_wins`, `test_two_models_that_publish_together_leave_the_later_ones_draft_state`, and `test_the_review_read_back_counts_when_the_listing_lags` |
++| 26 | `test_a_verdict_from_an_account_the_repository_does_not_let_in_does_not_count` |
++| 27 | `StatusTests` |
++| 28 | `test_the_newest_review_of_a_head_decides_whichever_model_wrote_it`, `test_an_incremental_review_builds_on_its_own_models_full_review`, and `test_the_header_shows_the_newest_verdict_alone_when_several_models_reviewed_the_head` in `tests/test_site.py` |
++| 29 | `test_a_cross_author_review_approves_on_its_own_clean_verdict_and_leaves_draft_state_alone` |
++| 30 | `test_publish_waits_for_no_other_model_and_reads_no_wait_setting` |
++| 31 | `test_a_finding_another_model_posts_mid_publish_keeps_the_pull_request_a_draft` |
++| 32 | `DismissalTests` |
++
++Nothing the replaced designs added remains: no `review.peer_wait`, no
++`head_started_at`, and no `models` list or multi-verdict header on the site.
++
++One later change, outside this plan, qualifies § 9. #244 lets a pull
++request's author hold it in draft while `fix-pr` builds a change for it.
++While the author's hold comment is open, `publish` keeps a clean newest
++verdict a draft and dismisses no change request, as `docs/cli.md` describes.
++
++Criterion 15, the by-hand run of two model loops on one pull request, has
++not been observed. Every Projector verdict on this repository's recent pull
++requests names one model, `claude-opus-5-5`. That is follow-up evidence to
++watch for, not a gap in what shipped. Under § 9, the first pull request that
++two model loops review should show both loops reviewing each head without a
++collision, a finding from either model keeping the pull request a draft until
++it is settled, and, after one loop stops and a fix is pushed, the other
++loop's clean verdict marking the pull request ready. A collision between two
++different models, or a self-review left a draft under a clean newest verdict
++with no open finding thread or hold, is a defect to fix in a new change.
+diff --git a/docs/projects/proposed-projects/readme.md b/docs/projects/proposed-projects/readme.md
+index 35555948..e9ec78c9 100644
+--- a/docs/projects/proposed-projects/readme.md
++++ b/docs/projects/proposed-projects/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -679,6 +679,59 @@ showed in the light and dark themes, at full width and at 375 pixels, with
+ no horizontal scroll. The badge opened the review page, and search found the
+ plans with the badge.
+ 
+-What remains is the check after the merge in § 4: a throwaway plan's pull
++What remained was the check after the merge in § 4: a throwaway plan's pull
+ request, opened and then closed, must leave the deployed Projects page, and
+-the close must run the workflow on `pull_request_target`.
++the close must run the workflow on `pull_request_target`. § 9 records what
++has been observed of it.
++
++## 9. Outcome
++
++The project shipped in the two pull requests § 8 describes: #225, which
++deploys the site when a pull request closes and adds the
++`site-workflow-outdated` warning, and #229, which finds, serves, and shows
++the proposed projects. Both were first released in 0.7.4 and are in 0.7.6,
++the release now installed. On `main` at 0.7.6, every test in § 4 passes:
++
++- **Build tests.** `ProposedProjectTests` in `tests/test_site.py` has a test
++  for each row, from
++  `test_an_open_pull_request_proposes_the_plan_its_diff_adds_at_the_address_it_keeps`,
++  which also checks the review page's project link and the summary line, to
++  `test_only_markdown_outside_hidden_folders_comes_with_a_proposed_plan`.
++  Every build in the class asserts one `pr_status` call per pull request.
++- **Unit tests.**
++  `test_project_from_text_loads_a_plan_exactly_as_the_store_does` in
++  `tests/test_projector.py`, and in `tests/test_summary.py`
++  `test_a_new_files_text_is_its_added_lines`,
++  `test_a_new_file_without_a_final_newline_keeps_it_out`,
++  `test_a_modified_empty_or_binary_file_has_no_text`, and
++  `test_the_same_query_says_whether_the_head_branch_is_in_a_fork`.
++- **Workflow tests.** In `tests/test_site.py`,
++  `test_a_pull_request_in_the_repository_deploys_when_it_closes_and_a_forks_does_not`,
++  `test_every_workflow_projector_wrote_is_its_own_and_an_edited_one_is_not`,
++  `test_init_updates_a_workflow_projector_wrote_in_an_earlier_shape`,
++  `test_init_keeps_a_workflow_edited_by_hand`, and
++  `test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote`.
++- **Page tests.** `ProposedViewTests` draws the Projects page, the filter,
++  the banner and its links at the head, the sidebar badge, a search result,
++  and a pull request title that holds `<script>`, under node.
++
++The browser check and the build's time are in § 8.
++
++The deploy on close works in this repository. Since #225 merged, the
++Projector site workflow has run on `pull_request_target` for each pull
++request that closed, merged or not. The run for #241, closed without
++merging, ran its `publish` job and deployed, and so did the runs for the
++merges of #243, #244, and #245. A few runs, the one for #229's merge among
++them, were cancelled in the `pages` concurrency group by a newer run, as
++§ 2.4 intends.
++
++No pull request that adds a new plan has been opened since #229 merged, so
++the deployed Projects page has not yet listed a proposed project or dropped
++one, and the throwaway-plan check in § 4 was not run. That is follow-up
++evidence to watch for, not a gap in what shipped. While the next plan's pull
++request is open and summarized, the deployed Projects page should list the
++plan in its status group with a **Proposed #`<number>`** badge, and its page
++should open with the banner. The deploy that the pull request's close starts
++should then remove the badge, or the plan when the pull request closes
++unmerged. A plan still listed as proposed after its pull request closes is a
++defect to fix in a new change.
