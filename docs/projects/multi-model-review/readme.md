@@ -251,6 +251,14 @@ counting its own verdict as posted, and approves only on `clean`, after the
 peer wait. Two models that finish at the same moment each see the other still
 reviewing, so both post a `COMMENT`, and a person approves.
 
+A `COMMENT` replaces nothing, so it also leaves the account's own earlier
+`REQUEST_CHANGES` holding `reviewDecision` after every model has found the
+head clean, and the pull request stays blocked on a change request its reviews
+have settled. When the rule signs the head off `clean`, after the same peer
+wait, publish therefore dismisses each Projector `REQUEST_CHANGES` review by
+the account that nobody dismissed and no later approval replaced. A change
+request without a Projector marker is a person's, and stays.
+
 ### 2.4 Data shapes
 
 The markers name the model:
@@ -735,11 +743,13 @@ The tests run in temporary Git repositories against the fake GitHub in
 | 21 | Let the adopter stop in turn. | A third model's `adopt` posts a reply with `adopted-from=` naming the adopter, and becomes the verifier. |
 | 22 | Run `watch-threads.sh` on a pull request with unresolved findings from two models still reviewing and from one that has stopped. | It reports a `FINDING` for each thread, whichever model opened it. |
 | 23 | Leave a Projector finding from another account open on a self-review, then publish `clean`. | The sign-off is `waiting`, and the pull request stays a draft. Another account's verdicts on H do not change the rule. While that account's model is still reviewing, census marks the finding `adopt: no`. Once it has stopped, census marks it `adopt: now`, and `adopt` takes it over. |
+| 24 | On another author's pull request, request changes on an earlier head, then publish `clean` on H without `review.allow_approve`. | Publish dismisses the change request once the rule signs H off, after waiting for a peer that reviewed an earlier head. It dismisses nothing while another model requests changes or is reviewing H, after an `APPROVE`, or for a change request without a Projector marker, from another account, or older than an approval. A dismissal GitHub refuses exits non-zero, and the retry finishes it. |
 
-Criteria 1, 4, 6, 8, 10, 16 to 21, and 23 fail before the change: the second
-setup refuses on the lock, the collision check refuses the other model, the
-census counts every thread as the operator's to settle, the last publish sets
-the draft state, and nothing adopts a finding. Criterion 22 passes before and
+Criteria 1, 4, 6, 8, 10, 16 to 21, 23, and 24 fail before the change: the
+second setup refuses on the lock, the collision check refuses the other model,
+the census counts every thread as the operator's to settle, the last publish
+sets the draft state, nothing adopts a finding, and a clean head leaves the
+account's change request standing. Criterion 22 passes before and
 after the change. It pins that the fix loop still reports every finding.
 
 ## 5. Cost

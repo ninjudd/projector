@@ -96,7 +96,9 @@ skill carry the outcome instead: the **verdict line** in every review body, and
 normally here. Post `REQUEST_CHANGES` when findings are open. When the head is
 clean, post a `COMMENT` review saying so — **never `APPROVE`**. An approval is a
 person vouching for code, and an agent must not vouch on the reviewer's behalf;
-recommend it in the body and let a human click it.
+recommend it in the body and let a human click it. A `COMMENT` leaves an earlier
+`REQUEST_CHANGES` standing, so once the head is signed off `publish` dismisses
+the change requests your account's Projector reviews left.
 
 That last rule is the one configurable piece of this skill:
 
@@ -777,7 +779,13 @@ what remains. It posts a real `APPROVE` only where `review.allow_approve` is
 `true`, and only when the rule, counting this verdict as posted, signs the
 head off after the peer wait: one account's newest approval or change
 request sets `reviewDecision`, so an approval would erase another model's
-standing change request. Otherwise it posts a `COMMENT`.
+standing change request. Otherwise it posts a `COMMENT`, which leaves the
+account's last `REQUEST_CHANGES` holding `reviewDecision`. So when the rule
+signs the head off, after the same peer wait, `publish` dismisses each
+Projector `REQUEST_CHANGES` review by the account that nobody dismissed and no
+later approval replaced, and the pull request is no longer blocked on a
+change request that its reviews have settled. A change request the account
+posted by hand, without a Projector marker, is a person's and stays.
 
 Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
@@ -794,13 +802,17 @@ terminal, which adds the rules to their own settings, or to run the publish
 command themselves. `init` adds the rules only for a person at a terminal, so
 do not run it to add them yourself.
 
-After submitting, `publish` applies the sign-off rule and sets draft state
-for a self-review, re-reads the review it posted and the pull request's
+After submitting, `publish` applies the sign-off rule, then sets draft state
+for a self-review or dismisses the standing change requests on a clean
+cross-author head, re-reads the review it posted and the pull request's
 `isDraft`, adds the review id to the loop's record, deletes the start
 comment, and releases the lock, in that order, so the pull request is never
 left with neither a start comment nor its sign-off's draft state. It prints
-the sign-off, how long it waited and for which models, and whether it marked
-the pull request draft or ready. It records the review as submitted before any of those
+the sign-off, how long it waited and for which models, whether it marked
+the pull request draft or ready, and which change requests it dismissed. When
+a dismissal fails, `publish` exits non-zero and names the review; dismiss it
+on GitHub, or fix the permission that refused it, and run `publish` again. It
+records the review as submitted before any of those
 steps, so a run that fails partway exits non-zero and running it again
 finishes that review instead of posting a second one.
 

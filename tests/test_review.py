@@ -74,6 +74,8 @@ class FakeGitHub:
         self.after_post = None
         # Reviews the listing leaves out, as one GitHub has not indexed yet.
         self.unlisted: set[int] = set()
+        # Answer a dismissal without dismissing anything.
+        self.ignore_dismissals = False
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append((list(args), token))
@@ -81,10 +83,16 @@ class FakeGitHub:
             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
             login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
+            projector_only = "projector-review" in args[4]
             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
-                                       "body": r["body"]}) + "\n"
-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
-                           and r["id"] not in self.unlisted)
+                                       "state": self.state(r), "body": r["body"]}) + "\n"
+                           for r in self.reviews if r["user"]["login"] == login
+                           and (not projector_only or "projector-review" in r["body"]) and r["id"] not in self.unlisted)
+        if args[:3] == ["api", "-X", "PUT"] and args[3].endswith("/dismissals"):
+            found = next(r for r in self.reviews if r["id"] == int(args[3].split("/")[-2]))
+            if not self.ignore_dismissals:
+                found.update(state="DISMISSED", dismissal=args[5].removeprefix("message="))
+            return json.dumps({"id": found["id"], "state": self.state(found)})
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
@@ -149,6 +157,12 @@ class FakeGitHub:
         created = created_at or self.created_at
         self.comment_info[comment_id] = {"login": login, "created_at": created, "updated_at": updated_at or created}
         return comment_id
+
+    @staticmethod
+    def state(review: dict) -> str:
+        """The review's state as GitHub lists it: the event it was submitted with, until it is dismissed."""
+        return review.get("state") or {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED",
+                                       "COMMENT": "COMMENTED"}[review["event"]]
 
     def posts(self) -> list[tuple[list[str], str | None]]:
         return [(args, token) for args, token in self.calls if any(a.startswith("body=") for a in args)]
@@ -638,9 +652,9 @@ class PublishCase(ReviewCase):
         return self.github.reviews[-1]
 
     def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
-                    verdict: str = "clean", login: str = "operator") -> int:
+                    verdict: str = "clean", login: str = "operator", event: str = "COMMENT") -> int:
         review_id = 800 + len(self.github.reviews)
-        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
+        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": event, "comments": [],
                                     "commit_id": sha or self.head, "at": at,
                                     "body": verdict_body(sha or self.head, model, verdict)})
         return review_id
@@ -1421,6 +1435,136 @@ class CrossAuthorSignoffTests(SignoffCase):
         self.assertIn("project review move 1", err)
         self.assertEqual(1, len(self.github.reviews), "only gpt-5.5's earlier verdict")
         self.assertTrue(self.lock(self.head).exists())
+
+
+class DismissalTests(SignoffCase):
+    """claude-opus-5-5 requested changes on an earlier head of another author's pull request."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.github.pr["user"] = {"login": "teammate"}
+        self.github.permissions = {"teammate": "write"}
+        self.github.commit_authors = ["teammate"]
+        self.request = self.change_request(self.model)
+
+    def change_request(self, model: str, login: str = "operator") -> int:
+        return self.add_verdict(model, sha=self.earlier, verdict="changes-requested", login=login,
+                                event="REQUEST_CHANGES")
+
+    def review_state(self, review_id: int) -> str:
+        return FakeGitHub.state(next(r for r in self.github.reviews if r["id"] == review_id))
+
+    def dismissals(self) -> list[tuple[list[str], str | None]]:
+        return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "PUT"]]
+
+    def test_a_clean_sign_off_dismisses_the_standing_change_request(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, out, err = self.publish("clean")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("COMMENT", self.posted()["event"])
+        self.assertEqual("DISMISSED", self.review_state(self.request))
+        dismissed = next(r for r in self.github.reviews if r["id"] == self.request)
+        self.assertEqual(f"{review.MARK} Every model reviewing {self.head[:7]} found it clean: "
+                         f"{review_page(self.posted()['id'])}", dismissed["dismissal"])
+        self.assertEqual(["token-operator"], [token for _, token in self.dismissals()])
+        self.assertIn(f"dismissed change request {self.request}", out)
+        self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
+        steps = [" ".join(args) for args, _ in self.github.calls]
+        dismiss = next(i for i, c in enumerate(steps) if c.endswith("event=DISMISS"))
+        delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
+        self.assertLess(dismiss, delete, "the start comment goes only after the dismissal")
+
+    def test_dismisses_only_the_reviewers_projector_change_requests_since_its_last_approval(self) -> None:
+        self.github.reviews.append({"id": 850, "user": {"login": "operator"}, "event": "APPROVE", "body": "",
+                                    "comments": [], "commit_id": self.earlier, "at": "2026-09-27T01:11:00Z"})
+        standing = self.change_request(self.model)
+        by_hand = 851
+        self.github.reviews.append({"id": by_hand, "user": {"login": "operator"}, "event": "REQUEST_CHANGES",
+                                    "body": "Rename this first.", "comments": [], "commit_id": self.earlier,
+                                    "at": "2026-09-27T01:12:00Z"})
+        colleague = self.change_request("gpt-5.5", login="colleague")
+        already = self.change_request(self.model)
+        next(r for r in self.github.reviews if r["id"] == already)["state"] = "DISMISSED"
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual([standing], result["dismissed"])
+        self.assertEqual({self.request: "CHANGES_REQUESTED", standing: "DISMISSED", by_hand: "CHANGES_REQUESTED",
+                          colleague: "CHANGES_REQUESTED"},
+                         {i: self.review_state(i) for i in (self.request, standing, by_hand, colleague)})
+
+    def test_no_dismissal_while_another_model_requests_changes_or_is_reviewing_the_head(self) -> None:
+        cases = {"changes requested": lambda: self.add_verdict("gpt-5.5", verdict="changes-requested",
+                                                               event="REQUEST_CHANGES"),
+                 "reviewing": lambda: self.start("gpt-5.5")}
+        for name, arrange in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                arrange()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+                result = self.json_publish("clean")
+
+                self.assertNotEqual("clean", result["signoff"])
+                self.assertEqual([], result["dismissed"])
+                self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
+                self.assertEqual([], self.dismissals())
+
+    def test_waits_for_a_peer_that_reviewed_an_earlier_head_before_it_dismisses(self) -> None:
+        for posts_nothing in (True, False):
+            with self.subTest(posts_nothing=posts_nothing):
+                self.setUp()
+                peer = self.change_request("gpt-5.5")
+                self.begin_now()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                if not posts_nothing:
+                    self.hooks[1] = lambda: self.start("gpt-5.5")
+
+                result = self.json_publish("clean")
+
+                if posts_nothing:
+                    self.assertEqual(("clean", 180), (result["signoff"], sum(self.slept)))
+                    self.assertEqual([self.request, peer], result["dismissed"])
+                else:
+                    self.assertEqual(("waiting", [15], []), (result["signoff"], self.slept, result["dismissed"]))
+                    self.assertEqual("CHANGES_REQUESTED", self.review_state(peer))
+
+    def test_an_approval_replaces_the_change_request_so_nothing_is_dismissed(self) -> None:
+        self.configure("allow_approve = true")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual(("APPROVE", []), (result["event"], result["dismissed"]))
+        self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
+        self.assertEqual([], self.dismissals())
+
+    def test_a_failed_dismissal_keeps_the_lock_and_a_retry_finishes_it(self) -> None:
+        cases = {"refused": lambda: setattr(self.github, "fail", "dismissals"),
+                 "still standing": lambda: setattr(self.github, "ignore_dismissals", True)}
+        for name, arrange in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                arrange()
+
+                code, _, err = self.publish("clean")
+
+                self.assertEqual(1, code)
+                self.assertIn(f"dismiss it at {review_page(self.request)} and run publish again", err)
+                self.assertTrue(self.lock(self.head).exists())
+                self.assertEqual(1, len(self.github.comments), "the start comment stays until the retry")
+
+                self.github.fail, self.github.ignore_dismissals = None, False
+                code, out, err = self.publish("clean")
+
+                self.assertEqual(0, code, err)
+                self.assertEqual(2, len(self.github.reviews), "the retry posts no second review")
+                self.assertEqual("DISMISSED", self.review_state(self.request))
+                self.assertFalse(self.lock(self.head).exists())
 
 
 class StatusTests(SignoffCase):

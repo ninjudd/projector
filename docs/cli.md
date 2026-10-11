@@ -1175,13 +1175,19 @@ request `publish` posts `REQUEST_CHANGES` or a `COMMENT`, and leaves draft
 state alone. Where `review.allow_approve` is `true` it posts an `APPROVE` for
 a clean verdict only when the rule, counting that verdict as posted, signs
 the head off after the same wait, because one account's newest approval
-would replace another model's change request. `publish` then re-reads the
-review and the draft state, adds the review id to the loop's record, deletes
-the start comment, and releases the lock. It prints the sign-off, how long it
-waited and for which models, and the draft state it set; `--json` gives them
-as `signoff`, `waited`, `pending`, `moved`, and `draft`. A run that fails
-after submitting exits non-zero, and running it again finishes that review
-rather than posting another.
+would replace another model's change request. A `COMMENT` leaves the
+account's last change request holding `reviewDecision`, so when the rule signs
+the head off `clean`, after the same wait, `publish` dismisses each of the
+reviewer's Projector `REQUEST_CHANGES` reviews that nobody dismissed and no
+later approval by the account replaced. A change request without a Projector
+marker is left alone. `publish` then re-reads the review and the draft state,
+adds the review id to the loop's record, deletes the start comment, and
+releases the lock. It prints the sign-off, how long it waited and for which
+models, the draft state it set, and the change requests it dismissed;
+`--json` gives them as `signoff`, `waited`, `pending`, `moved`, `draft`, and
+`dismissed`, the dismissed review ids. A run that fails after submitting,
+including a dismissal GitHub refuses, exits non-zero, and running it again
+finishes that review rather than posting another.
 
 `status` prints the sign-off of the pull request's current head, by the same
 rule, with each model's part in it and the open finding threads:

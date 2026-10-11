@@ -1066,6 +1066,39 @@ def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
     return [json.loads(row) for row in rows if row.strip()]
 
 
+def standing_change_requests(repo: str, number: int, reviewer: str) -> list[dict]:
+    """The reviewer's Projector `REQUEST_CHANGES` reviews that still hold `reviewDecision`, each with its
+    `id` and `url`: those nobody dismissed and no later approval by the account replaced."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
+                           '| select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
+                           '| {id, url: .html_url, state, body} | @json']).splitlines()
+    standing = []
+    for review in (json.loads(row) for row in rows if row.strip()):
+        if review["state"] == "APPROVED":
+            standing = []
+        elif review["state"] == "CHANGES_REQUESTED" and "projector-review" in (review.get("body") or ""):
+            standing.append({"id": review["id"], "url": review["url"]})
+    return standing
+
+
+def dismiss(repo: str, number: int, reviewer: str, requests: list[dict], message: str, token: str) -> list[int]:
+    """Dismiss each change request as the reviewer, then read them back, and return their ids."""
+    for request in requests:
+        try:
+            run_gh(["api", "-X", "PUT", f"repos/{repo}/pulls/{number}/reviews/{request['id']}/dismissals",
+                    "-f", f"message={message}", "-f", "event=DISMISS"], token)
+        except ReviewError as exc:
+            raise ReviewError(f"could not dismiss change request {request['id']} ({exc}); dismiss it at "
+                              f"{request['url']} and run publish again") from exc
+    ids = [request["id"] for request in requests]
+    left = [request for request in standing_change_requests(repo, number, reviewer) if request["id"] in ids]
+    if left:
+        raise ReviewError(f"change request {left[0]['id']} still stands after its dismissal; dismiss it at "
+                          f"{left[0]['url']} and run publish again")
+    return ids
+
+
 def read_record(root: Path, loop: str) -> list[dict]:
     record = loop_record(root, loop)
     return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
@@ -1365,9 +1398,13 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
             incremental: bool = False, enabled: bool = True, wait: int = PEER_WAIT) -> dict:
-    """Submit the review, then apply the sign-off rule and set draft state, re-read, record, delete the
-    start comment, and release the lock, in that order. Every refusal leaves the lock held for this
-    review to retry.
+    """Submit the review, then apply the sign-off rule and act on it, re-read, record, delete the start
+    comment, and release the lock, in that order. Every refusal leaves the lock held for this review to
+    retry.
+
+    Acting on the rule sets a self-review's draft state. On another author's pull request a `clean`
+    sign-off dismisses the reviewer's standing Projector change requests, because a `COMMENT` review
+    leaves `reviewDecision` where the last of them put it.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
@@ -1474,9 +1511,14 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
               "login": reviewer, "body": read["body"]}
     draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
-    # Only a draft is about to be signed off, so only a draft waits for its peers.
+    standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
+    # Only a draft or a standing change request is about to be signed off, so only they wait for peers.
     signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
-                  deadline if published.get("self") and draft else now(), posted)
+                  deadline if (draft if published.get("self") else standing) else now(), posted)
+    dismissed = []
+    if standing and signed["signoff"] == "clean" and not signed["moved"]:
+        dismissed = dismiss(repo, number, reviewer, standing,
+                            f"{MARK} Every model reviewing {sha[:7]} found it clean: {posted['url']}", token)
     draft_wanted = None
     if published.get("self") and not signed["moved"]:
         draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
@@ -1504,6 +1546,6 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     write_state(paths, state)
     paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
-            "event": published["event"], "draft": draft_wanted, "from": published.get("from"),
-            "signoff": signed["signoff"], "waited": signed["waited"], "pending": signed["pending"],
-            "moved": signed["moved"]}
+            "event": published["event"], "draft": draft_wanted, "dismissed": dismissed,
+            "from": published.get("from"), "signoff": signed["signoff"], "waited": signed["waited"],
+            "pending": signed["pending"], "moved": signed["moved"]}

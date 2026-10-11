@@ -953,6 +953,8 @@ def run_review(arguments: argparse.Namespace) -> int:
                       + ("; the head moved, so its reviews decide the draft state" if result["moved"] else ""))
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
+                if result["dismissed"]:
+                    print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
             return 0
         if command == "gate":
             state = review.read_state(paths)
