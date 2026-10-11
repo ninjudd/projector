@@ -1,0 +1,112 @@
+{
+ "version": 1,
+ "name": "Draft rule in generated instructions",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 254,
+  "title": "Tell every Projector repository to open pull requests as drafts",
+  "head": "60716d3c04de8b1f0ce40044b1fca1f7f9815027",
+  "headRef": "agents-block-draft",
+  "base": "4f4b17cbe7162e00413c32af38abaaa8af5bf1fe",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every repository that adopts Projector carries a section of agent instructions in its <code>AGENTS.md</code>, between <code>&lt;!-- projector:begin N --&gt;</code> and <code>&lt;!-- projector:end --&gt;</code> markers. <code>project init</code> writes that section from the template <code>src/projector/templates/agents-block.md</code>, and <code>project check</code> warns when a repository's copy is older than the template the CLI ships. Every agent session in the repository reads it, whichever skill the session runs.",
+   "Projector's review loop uses a pull request's draft state as its sign-off: a draft means no clean review has read the head yet, and <code>project review publish</code> marks the pull request ready when one does. That works only if pull requests start as drafts. Before this change, the rule to open them that way lived only in the <code>implement</code> skill and in this repository's own hand-written instructions, so an agent in another repository that opened a pull request without <code>implement</code> opened it ready, and it looked signed off before any review.",
+   "This change adds the rule to the template as version 4: open every pull request as a draft, each layer of a stack included, and never mark your own draft ready, because a clean review clears it. Adopting repositories get it after a release, when <code>project check</code> reports their section as outdated and <code>project init</code> refreshes it."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of this head, clean, with no finding threads.</li><li>One suggestion: this repository's hand-written \"Hand work over for review\" section in <code>AGENTS.md</code> now repeats the generated rule and could be trimmed.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Section</b> or <b>block</b>: the generated part of <code>AGENTS.md</code> between the Projector markers.</li><li><b>Template version</b>: the integer in the template's begin marker, which <code>check</code> compares with a repository's copy.</li><li><b>Pinned hash</b>: the SHA-256 of each template version, recorded in a test so the text cannot change without a version bump.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The generated instructions gain a draft rule",
+   "kicker": "Template version 4 and this repository's re-rendered copy",
+   "intro": [
+    "The template is the text <code>project init</code> writes into every adopting repository's <code>AGENTS.md</code>. Its version lives in its own begin marker, so bumping the marker from 3 to 4 is the whole version change: <code>src/projector/instructions.py</code> reads the version from the template rather than from a constant.",
+    "The new paragraph sits after the GitHub writing rules and before the stack rules. Its wording follows the <code>implement</code> skill, which already tells agents to open single pull requests and every stack layer as drafts, and the <code>fix-pr</code> skill, which tells them never to undraft by hand. This repository's own <code>AGENTS.md</code> (which <code>CLAUDE.md</code> links to) is re-rendered from the template so its copy stays current."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The block in <code>AGENTS.md</code> matches the template with <code>{projects_dir}</code> rendered as <code>docs/projects</code>: <code>project check</code> at the head reports neither <code>instructions-edited</code> nor <code>instructions-outdated</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "collapsed": false,
+     "note": "The template every adopting repository's section is rendered from. It bumps to version 4 and adds the draft paragraph.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 23,
+       "text": "The exception in the last sentence, that a clean review clears a draft, is what <code>project review publish</code> does when it marks a clean self-reviewed pull request ready. A <code>fix-pr</code> hold only ever turns a pull request draft, so it does not conflict with this rule."
+      },
+      {
+       "kind": "verify",
+       "line": 1,
+       "text": "Upgrading from version 3 works: in a throwaway Git repository with a version 3 block below hand-written lines, <code>check</code> warned about version 3, <code>init --no-site --no-publish-rule</code> printed <code>updated AGENTS.md</code>, a second <code>check</code> was clean, and the hand-written lines stayed at the top."
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "collapsed": false,
+     "note": "This repository's own instructions, with the generated section re-rendered at version 4.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 143,
+       "text": "The hand-written \"Hand work over for review\" section above the markers already states this rule, with an extra warning about undrafting once a red test passes. The two copies now say the same thing."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "The pinned hash and the CLI reference follow",
+   "kicker": "A new pinned hash and two documentation updates",
+   "intro": [
+    "A test pins the SHA-256 of each template version, so changing the template's text without bumping its version fails the suite. This change adds the hash for version 4. The CLI reference, <code>docs/cli.md</code>, lists what the generated section covers and shows a sample <code>check</code> warning; both now describe version 4."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full gate passes at the head: 801 tests <code>OK (skipped=1)</code>, <code>project check</code> clean, both <code>claude plugin validate</code> runs passed, and <code>git diff --check</code> printed nothing."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version 4 template hash."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Lists the draft rule among the section's contents and updates the sample outdated-section warning to version 3 → 4.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 393,
+       "text": "The sample warning matches what <code>project check</code> printed for a version 3 section in the throwaway repository."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

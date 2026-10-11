@@ -1,0 +1,86 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index ef28a03b..786b470f 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -118,7 +118,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 3 -->
++<!-- projector:begin 4 -->
+ ## Projector conventions
+ 
+ This repository keeps its project plans in Git with
+@@ -140,6 +140,12 @@ it the commit message. Match the line wrapping already used around a Markdown
+ edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
+ line breaks.
+ 
++Open every pull request as a draft, each layer of a stack included. A review
++loop marks a pull request ready when its head reviews clean, so a draft says
++the work has not been signed off yet. Never mark your own draft ready, even
++once the reason you drafted it is resolved, because only a clean review
++clears it.
++
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+diff --git a/docs/cli.md b/docs/cli.md
+index 95713fff..89486fb1 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -39,8 +39,9 @@ what it did to each:
+   comes from. `init` creates it once and never rewrites it.
+ - `AGENTS.md` carries a section Projector generates between two HTML-comment
+   markers: where plans live, how to use `project`, the writing style for
+-  documentation and GitHub prose, and how to open dependent work as a stack
+-  with `gh stack`, or as pull requests chained by base branch where
++  documentation and GitHub prose, that every pull request opens as a draft
++  until a clean review marks it ready, and how to open dependent work as a
++  stack with `gh stack`, or as pull requests chained by base branch where
+   `gh stack` is unavailable, and keep every layer on the current head of the
+   one below so the stack can merge as a unit. `init` appends the section to
+   an existing file or creates the file with only that section, and refreshes
+@@ -389,7 +390,7 @@ collaborator on an older CLI is told what to do without a failing gate.
+ 
+ ```console
+ $ project check
+-warning: AGENTS.md: Projector section is version 2; this command ships version 3 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
++warning: AGENTS.md: Projector section is version 3; this command ships version 4 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+ Project plans are valid.
+ ```
+ 
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 794131c6..dc134ded 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 3 -->
++<!-- projector:begin 4 -->
+ ## Projector conventions
+ 
+ This repository keeps its project plans in Git with
+@@ -20,6 +20,12 @@ it the commit message. Match the line wrapping already used around a Markdown
+ edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
+ line breaks.
+ 
++Open every pull request as a draft, each layer of a stack included. A review
++loop marks a pull request ready when its head reviews clean, so a draft says
++the work has not been signed off yet. Never mark your own draft ready, even
++once the reason you drafted it is resolved, because only a clean review
++clears it.
++
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 715044d8..4d3290de 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -15,6 +15,7 @@
+     1: "af0cc51a4646f05d1570453cfb941d9e4fcecb272349387e784d87d5567598c4",
+     2: "3037e13c821131396c4fa069607e37535d64a48ab8dba063ee337260deac4ae0",
+     3: "29fe4f2f6610598f250a55c91dee55226555b92c6c71b0fc9c16d245073182fa",
++    4: "8a5be21b0a353027b2193aa0eafc1f89ff4c619f9340ed7edf24795217771445",
+ }
+ 
+ 
