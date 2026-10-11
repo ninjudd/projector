@@ -163,10 +163,11 @@ them. Only the top-level conversation, the one the user talks to, starts or
 joins a fix loop. A subagent's processes end when it returns, and the
 conversation that started it cannot see a loop it left behind, so it would
 start a second one. When you run as a subagent, start no fix loop and join
-none: return the pull request with your result, so it reaches the top-level
-conversation. That conversation treats a pull request its subagent opened
-as one it opened itself, and starts its fix loop on it or appends it to the
-loop it already runs.
+none: hand the pull request up with your result. The conversation that
+started you may be a subagent too, so each one hands it up in turn until it
+reaches the top-level conversation. That conversation treats a pull request
+opened below it as one it opened itself, and starts its fix loop on it or
+appends it to the loop it already runs.
 
 The top-level conversation starts no fix loop when either of these holds:
 
@@ -186,8 +187,8 @@ When you hand over the URL, say whether a fix loop is watching the pull
 request. Either this session's fix loop watches it and stops when the
 session ends, or none does, and you say whether the setting or the host
 stopped it, and that review findings wait until the user runs
-`start-fix-loop`. As a subagent, say that you started no fix loop because
-the top-level conversation runs it.
+`start-fix-loop`. As a subagent, say that you started no fix loop and are
+handing the pull request up to the top-level conversation, which runs it.
 
 ## Stack dependent work
 

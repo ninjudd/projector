@@ -22,9 +22,12 @@ Resolve the operator as `../fix-pr/SKILL.md` describes, once for the loop.
 Run the loop only in the top-level conversation, the one the user talks to.
 A subagent's processes end when it returns, and the conversation that
 started it cannot see a loop it left behind, so a subagent never starts or
-joins a fix loop. A subagent that opens a pull request, such as one running
-`implement`, hands the pull request back instead, and it counts as one this
-conversation created.
+joins a fix loop. A subagent asked to start one hands the request up
+instead, and a subagent that opens a pull request, such as one running
+`implement`, hands the pull request up. The conversation that started it may
+be a subagent too, so each one hands it up in turn until it reaches the
+top-level conversation. There a pull request counts as one this conversation
+created.
 
 Watch only the repository containing the current working directory. Covering a
 second repository requires starting this skill from that repository with its
