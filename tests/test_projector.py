@@ -1129,7 +1129,7 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("review.publish_rule must be true or false", stderr)
         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
 
-    def test_init_adds_the_summary_rule_beside_an_existing_review_rule(self) -> None:
+    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
         self.at_a_terminal()
         self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
 
@@ -1138,7 +1138,20 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
+                                                    "Bash(project review hold *)",
                                                     "Bash(project summary publish *)"]}},
+                         json.loads(self.settings().read_text()))
+
+    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
+        self.at_a_terminal()
+        published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
+        self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
                          json.loads(self.settings().read_text()))
 
     def codex_rules(self) -> Path:
@@ -1193,7 +1206,7 @@ class MutationTests(RepositoryTestCase):
         self.assertFalse(self.codex_rules().exists())
 
     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
-    def test_codex_allows_exactly_the_two_publish_commands_under_the_rule(self) -> None:
+    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
         rules = self.home / "projector.rules"
         rules.write_text(permissions.CODEX_RULES)
 
@@ -1204,6 +1217,9 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
+        self.assertEqual("allow", decision("project", "review", "hold", "12", "--lift"))
+        self.assertEqual("none", decision("project", "summary", "hold", "12", "--lift"))
+        self.assertEqual("none", decision("project", "review", "release", "12"))
         self.assertEqual("none", decision("project", "site", "serve"))
         self.assertEqual("none", decision("project", "summary", "init"))
 
@@ -1257,7 +1273,7 @@ class MutationTests(RepositoryTestCase):
             self.assertEqual(0, code, stderr)
             self.assertIn("kept ~/.codex/rules/projector.rules\n", stdout)
             self.assertIn(reason, stderr)
-            self.assertIn(permissions.CODEX_RULE, stderr)
+            self.assertTrue(all(rule in stderr for rule in permissions.CODEX_PREFIX_RULES), stderr)
 
         with self.subTest("rules is a file"):
             rules.parent.write_text("not a directory\n")
@@ -1348,12 +1364,17 @@ class ReviewRulesTests(RepositoryTestCase):
                          json.loads(stdout))
 
     def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
-        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+        def allow(*rules: str) -> None:
+            self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
+
         cases = {
-            "summary rule missing": lambda: None,
-            "settings absent": self.settings().unlink,
+            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
+                                  "Bash(project review hold *)"),
+            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
+                                     "Bash(project summary publish *)"),
+            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
         }
-        for name, arrange in cases.items():
+        for name, (arrange, missing) in cases.items():
             with self.subTest(name):
                 arrange()
                 before = self.home_tree()
@@ -1362,7 +1383,7 @@ class ReviewRulesTests(RepositoryTestCase):
 
                 self.assertEqual(1, code, stderr)
                 self.assertEqual("lacks ~/.claude/settings.json\n", stdout)
-                self.assertIn("Bash(project summary publish *)", stderr)
+                self.assertIn(missing, stderr)
                 self.assertIn("ask the user to run `project init` in a terminal", stderr)
                 self.assertIn("do not run `project init --publish-rule` to add them yourself", stderr)
                 self.assertIn("unless the repository's own or managed settings allow them", stderr)

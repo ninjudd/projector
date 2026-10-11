@@ -36,8 +36,12 @@ from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
 # The last line of the comment that holds a pull request in draft while changes for it are built, as
-# fix-pr/SKILL.md § Hold the pull request while changes are built writes it.
+# `hold_body` writes it for fix-pr/SKILL.md § Hold the pull request while changes are built.
 HOLD_MARKER = "<!-- projector-hold v=1 -->"
+# The head a hold comment's opening line records. A hold written before the line named one records none.
+HOLD_AT = re.compile(r"^Held in draft at `([0-9a-f]{7,40})` ")
+# A change a hold comment lists.
+HOLD_BULLET = re.compile(r"^[-*]\s+(.+)$")
 # The mark that opens both the start comment and the review's signature line, as
 # review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
@@ -488,6 +492,179 @@ def holds(repo: str, number: int, author: str) -> list[dict]:
             if (comment.get("login") or "").lower() == author.lower()]
 
 
+def hold_body(head: Optional[str], changes: list[str]) -> str:
+    """A hold comment listing `changes`, its opening line naming `head` by its short SHA when one is given."""
+    at = f" at `{head[:7]}`" if head else ""
+    bullets = "\n".join(f"- {change}" for change in changes)
+    return f"Held in draft{at} while the following changes are implemented:\n\n{bullets}\n\n{HOLD_MARKER}\n"
+
+
+def read_hold(repo: str, comment: int) -> dict:
+    """A hold comment as GitHub has it now: its `id` and `url`, the short head its opening line records as
+    `at`, or None, the `changes` it lists, and whether the marker is its last line, as `marked`."""
+    found = gh_json(["api", f"repos/{repo}/issues/comments/{comment}"]) or {}
+    lines = [line.strip() for line in (found.get("body") or "").splitlines() if line.strip()]
+    at = HOLD_AT.match(lines[0]) if lines else None
+    return {"id": comment, "url": found.get("html_url"), "at": at.group(1) if at else None,
+            "changes": [m.group(1).strip() for m in map(HOLD_BULLET.match, lines) if m],
+            "marked": bool(lines) and lines[-1] == HOLD_MARKER}
+
+
+def hold_changes(texts: list[str], flag: str) -> list[str]:
+    """The changes given to --add or --drop, trimmed and without repeats, each refused unless it is one line."""
+    changes: list[str] = []
+    for text in texts:
+        change = text.strip()
+        if not change or "\n" in change or "\r" in change:
+            raise ReviewError(f"{flag} {text!r} is not a change: give each change as one line of text")
+        if change not in changes:
+            changes.append(change)
+    return changes
+
+
+def hold(repo: str, number: int, add: list[str], drop: list[str], lift: bool) -> dict:
+    """`review hold`: post or extend the author's hold on the pull request with `add`, remove changes from
+    it with `drop`, or `lift` it once a push carries its changes, as fix-pr/SKILL.md § Hold the pull
+    request while changes are built describes. Only the author's comment holds a pull request, so every
+    mode refuses anyone else, and no mode marks the pull request ready."""
+    if [bool(add), bool(drop), lift].count(True) != 1:
+        raise ReviewError("pass exactly one of --add, --drop, and --lift")
+    changes = hold_changes(add, "--add") if add else hold_changes(drop, "--drop") if drop else []
+    try:
+        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+    except NotFound as exc:
+        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+    author = (pr.get("user") or {}).get("login") or ""
+    login = authenticated_login()
+    if login.lower() != author.lower():
+        raise ReviewError(f"gh is signed in as {login}, and {repo}#{number} is {author or 'nobody'}'s; only the "
+                          "pull request's author can hold it, because nothing reads another account's hold comment")
+    held = holds(repo, number, author)
+    if add:
+        return hold_add(repo, pr, held, changes)
+    if drop:
+        return hold_drop(repo, pr, held, changes)
+    return hold_lift(repo, pr, held)
+
+
+def hold_result(repo: str, pr: dict, action: str, comment: Optional[dict], changes: list[str],
+                held_at: Optional[str], draft: bool) -> dict:
+    return {"repo": repo, "number": pr["number"], "head": pr["head"]["sha"], "action": action,
+            "comment": {"id": comment["id"], "url": comment["url"]} if comment else None, "changes": changes,
+            "held_at": held_at, "draft": draft}
+
+
+def write_hold(repo: str, number: int, comment: Optional[int], head: Optional[str], changes: list[str]) -> dict:
+    """Post the hold comment, or edit `comment`, then read it back, refusing unless it lists `changes` and
+    ends with the marker."""
+    body = hold_body(head, changes)
+    if comment is None:
+        comment = gh_json(["api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}"])["id"]
+    else:
+        run_gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment}", "-f", f"body={body}"])
+    written = read_hold(repo, comment)
+    if not written["marked"] or written["changes"] != changes:
+        raise ReviewError(f"hold comment {comment} does not read back as written, listing the changes with "
+                          f"{HOLD_MARKER} on its last line; check it at {written['url'] or 'the pull request'} "
+                          "and run the command again")
+    return written
+
+
+def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
+    """Post the hold, or add `changes` to the newest one and move the head it records to the current head,
+    since the new changes are not pushed yet. Only once the comment reads back is the pull request drafted:
+    to the review loop, a draft on an unchanged head with no hold open is an author who answered without
+    pushing."""
+    number, head = pr["number"], pr["head"]["sha"]
+    if pr.get("state") != "open":
+        raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is held")
+    listing, newest = changes, None
+    if held:
+        newest = read_hold(repo, held[-1]["id"])
+        listing = newest["changes"] + [change for change in changes if change not in newest["changes"]]
+    written = write_hold(repo, number, newest["id"] if newest else None, head, listing)
+    if written["at"] != head[:7]:
+        raise ReviewError(f"hold comment {written['id']} does not record the head {head[:7]} when read back; "
+                          f"check it at {written['url']} and run the command again")
+    # Read again now that the hold is open, so a review that marked it ready meanwhile is drafted too.
+    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+    if not draft:
+        run_gh(["pr", "ready", str(number), "--repo", repo, "--undo"])
+        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+        if not draft:
+            raise ReviewError(f"{repo}#{number} is still ready after `gh pr ready --undo`, with hold comment "
+                              f"{written['id']} open; run `gh pr ready {number} --repo {repo} --undo` and check it")
+    return hold_result(repo, pr, "added" if newest else "posted", written, listing, written["at"], draft)
+
+
+def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
+    """Remove `changes`, which the owner decided will not be built, from the newest hold, keeping the head it
+    records. With none left, the comment is deleted, and the hold ends on a head no push changed, which
+    asks the review loop to re-review it."""
+    number = pr["number"]
+    if not held:
+        raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
+    newest = read_hold(repo, held[-1]["id"])
+    unknown = [f'"{change}"' for change in changes if change not in newest["changes"]]
+    if unknown:
+        raise ReviewError(f"hold comment {newest['id']} lists no change {listed(unknown)}; it lists "
+                          + (listed([f'"{change}"' for change in newest["changes"]]) or "none"))
+    left = [change for change in newest["changes"] if change not in changes]
+    draft = bool(pr.get("draft"))
+    if left:
+        written = write_hold(repo, number, newest["id"], newest["at"], left)
+        return hold_result(repo, pr, "dropped", written, left, written["at"], draft)
+    delete_comment(repo, newest["id"])
+    return hold_result(repo, pr, "ended", newest, [], newest["at"], draft)
+
+
+def hold_lift(repo: str, pr: dict, held: list[dict]) -> dict:
+    """Delete the author's hold comments once a push carries their changes, refusing while the head is still
+    the one a comment records, and leave the draft state to the review of the head that was pushed."""
+    number, head, draft = pr["number"], pr["head"]["sha"], bool(pr.get("draft"))
+    if not held:
+        return hold_result(repo, pr, "none", None, [], None, draft)
+    found = [read_hold(repo, comment["id"]) for comment in held]
+    for comment in found:
+        if comment["at"] and head.startswith(comment["at"]):
+            raise ReviewError(
+                f"hold comment {comment['id']} was written at {comment['at']}, which is still the head of "
+                f"{repo}#{number}, so the push that carries its changes has not happened; lifting the hold now "
+                f"would let a clean review of {comment['at']} mark the pull request ready while the changes are "
+                "still local. Push them first, or remove a change that will not be built with --drop")
+    for comment in found:
+        delete_comment(repo, comment["id"])
+    newest = found[-1]
+    return hold_result(repo, pr, "lifted", newest, [change for c in found for change in c["changes"]],
+                       newest["at"], draft)
+
+
+def hold_lines(result: dict) -> list[str]:
+    """`review hold` without --json: what it did, the comment, the changes the hold lists, and the draft state."""
+    where, head = f"{result['repo']}#{result['number']}", result["head"][:7]
+    comment, changes, action = result["comment"], result["changes"], result["action"]
+    state = "it is a draft" if result["draft"] else "it is not a draft"
+    count = f"{len(changes)} change{'' if len(changes) == 1 else 's'}"
+    if action == "none":
+        return [f"no hold is open on {where}; {state}"]
+    if action in ("posted", "added"):
+        return [f"{action} hold comment {comment['id']} on {where} at {head}: {comment['url']}",
+                f"held in draft while {count} {'is' if len(changes) == 1 else 'are'} implemented: "
+                + "; ".join(changes)]
+    if action == "dropped":
+        return [f"dropped from hold comment {comment['id']} on {where}: {comment['url']}",
+                f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
+    if action == "ended":
+        return [f"deleted hold comment {comment['id']} on {where}, since no change is left in it",
+                f"the hold ended on {head}, so the review loop re-reviews {head} as it stands; {state}"]
+    held_at = result["held_at"]
+    checked = (f"the head moved from {held_at} to {head}, so a review of {head} signs it off" if held_at
+               else f"comment {comment['id']} records no head, so whether a push carried its changes could not "
+                    "be checked")
+    return [f"lifted hold comment {comment['id']} on {where}, which listed: " + "; ".join(changes),
+            f"{checked}; {state}"]
+
+
 # Resolving which review a command means
 
 def valid_loop(loop: Optional[str]) -> Optional[str]:
@@ -609,7 +786,7 @@ def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorde
                 f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
 
 
-def delete_comment(repo: str, comment: int, token: str) -> None:
+def delete_comment(repo: str, comment: int, token: Optional[str] = None) -> None:
     try:
         run_gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment}"], token)
     except NotFound:

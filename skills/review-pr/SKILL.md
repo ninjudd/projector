@@ -124,7 +124,8 @@ verdict on the head, whichever model gave it, as
 describes. **A review with findings marks it draft; a clean review marks it
 ready.** The one exception is a hold: while the author is building a change
 no review has read, `fix-pr` keeps the pull request a draft with a hold
-comment, and a clean review leaves it a draft until the hold is deleted.
+comment, and a clean review leaves it a draft until the author lifts the
+hold.
 Nothing else enters into it — not when a review first saw the pull request,
 not who last changed the state, not whether it was ever a draft. Never set
 it yourself with `gh pr ready`.
@@ -176,9 +177,10 @@ request a draft whatever the newest verdict says, because another model can
 post a finding after this review counted none and before its verdict landed.
 It reads the pull request author's hold comments too. While the author has
 one open, a comment carrying `<!-- projector-hold v=1 -->` that `fix-pr`
-posts while it builds a change for the pull request, such as a suggestion it
-implements, `publish` keeps the pull request a draft however clean the
-newest verdict is, and never approves another author's held pull request.
+posts with `project review hold` while it builds a change for the pull
+request, such as a suggestion it implements, `publish` keeps the pull
+request a draft however clean the newest verdict is, and never approves
+another author's held pull request.
 Only the author's comment counts, because anyone can comment.
 Nothing waits for another model to finish, and nothing counts a model still
 reviewing. GitHub's branch rules, such as requiring every conversation to be

@@ -335,8 +335,8 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help="add the rules allowing `project review publish` and `project summary publish` to your Claude Code "
-        "settings and Codex rules even without a terminal (default: add them when run at a terminal)",
+        help=f"add the rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules even "
+        "without a terminal (default: add them when run at a terminal)",
     )
     rule_choice.add_argument(
         "--no-publish-rule", action="store_false", dest="publish_rule",
@@ -466,19 +466,35 @@ def parser() -> argparse.ArgumentParser:
                           "have an incremental review"
     )
     add_output(review_commands.add_parser(
-        "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+        "rules", help=f"report whether your settings allow {permissions.COMMANDS}"
     ))
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
-    review_status.add_argument("pr", type=int, help="the pull request number")
-    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
-                                              "this checkout's origin)")
+    review_hold = review_commands.add_parser(
+        "hold", help="hold your pull request in draft while changes for it are built, and lift the hold once they "
+                     "are pushed"
+    )
+    for command in (review_status, review_hold):
+        command.add_argument("pr", type=int, help="the pull request number")
+        command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                            "this checkout's origin)")
     review_status.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
                                                   "members, and collaborators (default: review.username, then you)")
-    review_status.add_argument("--state-dir", type=Path,
-                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
-    add_output(review_status)
+    for command in (review_status, review_hold):
+        command.add_argument("--state-dir", type=Path,
+                             help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+        add_output(command)
+    hold_mode = review_hold.add_mutually_exclusive_group(required=True)
+    hold_mode.add_argument("--add", action="append", metavar="TEXT",
+                           help="a change about to be built: post the hold listing it, or add it to the open hold, "
+                                "then mark the pull request draft (repeatable)")
+    hold_mode.add_argument("--drop", action="append", metavar="TEXT",
+                           help="a listed change that will not be built: remove it, and end the hold when none is "
+                                "left (repeatable)")
+    hold_mode.add_argument("--lift", action="store_true",
+                           help="delete the hold once a push carries its changes; refused while the head is the one "
+                                "the hold records")
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
                     review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -882,12 +898,23 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
+def review_hold(root: Path, arguments: argparse.Namespace) -> int:
+    """`review hold`: post, extend, shrink, or lift your hold on a pull request, finding the repository as
+    `status` does."""
+    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [], arguments.lift)
+    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
+    return 0
+
+
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
+    if arguments.review_command == "hold":
+        return review_hold(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "setup":

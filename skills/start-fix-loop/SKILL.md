@@ -157,7 +157,7 @@ the recurrence it is instead of as new work.
 - The subagent reports each run back: the head SHA, each layer's new head
   when it carried a change up a stack, the merge commit if it made one, the
   fix commits, the declined findings, the suggestions it implemented, each
-  one it deferred with its reason, any hold it posted, edited, or deleted,
+  one it deferred with its reason, any hold it posted, edited, or lifted,
   and the validation results. A question for the user comes back to the
   main loop to ask, and the subagent goes on with the pull request's
   unrelated work meanwhile.
