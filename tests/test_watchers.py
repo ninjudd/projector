@@ -2,8 +2,9 @@
 
 The fake serves one fixture per pull request and applies every ``--jq``
 filter with the system ``jq``, so the scripts' own filters are what run. Each
-test makes single passes with ``--once``; the state file carries what one pass
-announced into the next, exactly as it does between cycles of a live watch.
+test makes single passes with ``--once``, except the one that checks a running
+watch exits; the state file carries what one pass announced into the next,
+exactly as it does between cycles of a live watch.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ PRS = ROOT / "skills" / "start-review-loop" / "scripts" / "watch-prs.sh"
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+DONE = "DONE every tracked pull request has merged or closed; the watch is exiting"
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Serves fixtures from $FAKE_GH_DIR:
@@ -31,11 +33,16 @@ FAKE_GH = r"""#!/usr/bin/env bash
 # node names that author.
 # Logs one line per call to $FAKE_GH_DIR/calls.log. With FAKE_GH_DOWN_AFTER set,
 # every call past that many already-logged calls fails like a network error.
+# With FAKE_GH_LATE_LINE set, the first call appends it to $FAKE_GH_TRACKED, so
+# the line reaches the watch's first pass but not the check that runs before it.
 set -u
 log="$FAKE_GH_DIR/calls.log"
 count=0
 [ -f "$log" ] && count=$(wc -l < "$log" | tr -d ' ')
 printf '%s\n' "$*" >> "$log"
+if [ -n "${FAKE_GH_LATE_LINE:-}" ] && [ "$count" -eq 0 ]; then
+  printf '%s\n' "$FAKE_GH_LATE_LINE" >> "$FAKE_GH_TRACKED"
+fi
 if [ -n "${FAKE_GH_DOWN_AFTER:-}" ] && [ "$count" -ge "$FAKE_GH_DOWN_AFTER" ]; then
   echo 'Post "https://api.github.com/graphql": dial tcp 127.0.0.1:9: connect: connection refused' >&2
   exit 1
@@ -120,6 +127,7 @@ class WatcherCase(unittest.TestCase):
         self.fixtures.mkdir()
         self.env = dict(os.environ)
         self.env.pop("FAKE_GH_DOWN_AFTER", None)
+        self.env.pop("FAKE_GH_LATE_LINE", None)
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
         self.env["FAKE_GH_DIR"] = str(self.fixtures)
         self.tracked = self.dir / "tracked"
@@ -165,14 +173,17 @@ class WatcherCase(unittest.TestCase):
     def track(self, *entries) -> None:
         self.tracked.write_text("".join(f"{entry}\n" for entry in entries))
 
-    def run_watcher(self, script, *args, down_after=None):
-        """Make one pass. The call log and the failure switch cover this pass only."""
+    def run_watcher(self, script, *args, down_after=None, late_line=None):
+        """Make one pass. The call log, the failure switch and the late line cover this pass only."""
         log = self.fixtures / "calls.log"
         if log.exists():
             log.unlink()
         env = dict(self.env)
         if down_after is not None:
             env["FAKE_GH_DOWN_AFTER"] = str(down_after)
+        if late_line is not None:
+            env["FAKE_GH_LATE_LINE"] = late_line
+            env["FAKE_GH_TRACKED"] = str(self.tracked)
         return subprocess.run(
             ["bash", str(script), "--tracked", str(self.tracked), "--state", str(self.state), "--once", *args],
             capture_output=True,
@@ -356,6 +367,71 @@ class WatchThreadsTests(WatcherCase):
         self.assert_ok(result)
         self.assertEqual("", result.stdout)
         self.assertEqual([], self.state_rows())
+
+    def test_exit_when_closed_ends_the_watch_once_every_tracked_pull_request_closed(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.pull_request(2, state="CLOSED")
+        self.track("acme/app#1", "acme/app#2")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
+
+    def test_exit_when_closed_keeps_watching_while_one_is_open(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.pull_request(2)
+        self.track("acme/app#1", "acme/app#2")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+
+    def test_exit_when_closed_ends_a_watch_whose_file_names_none(self) -> None:
+        self.tracked.write_text("# every pull request merged\n")
+
+        result = self.run_watcher(THREADS, "--exit-when-closed")
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
+
+    def test_exit_when_closed_never_ends_on_a_failed_query(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        # One entry costs one verification call; every call after it fails.
+        result = self.run_watcher(THREADS, "--exit-when-closed", down_after=1)
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+
+    def test_exit_when_closed_never_ends_on_a_bad_tracked_line(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        # The line arrives after the check before the watch, as one the loop
+        # appends to a running watch's file would.
+        result = self.run_watcher(THREADS, "--exit-when-closed", late_line="2013")
+
+        self.assert_ok(result)
+        self.assertEqual([f"TRACKED {self.tracked}:2 is not owner/repo#number: 2013"], result.stdout.splitlines())
+
+    def test_exit_when_closed_stops_a_running_watch(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        result = subprocess.run(
+            ["bash", str(THREADS), "--tracked", str(self.tracked), "--state", str(self.state), "--exit-when-closed"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=self.env,
+            timeout=30,
+        )
+
+        self.assert_ok(result)
+        self.assertEqual([DONE], result.stdout.splitlines())
 
     def test_the_tracked_file_is_read_again_on_every_pass(self) -> None:
         self.pull_request(1, threads=[thread("T1")])

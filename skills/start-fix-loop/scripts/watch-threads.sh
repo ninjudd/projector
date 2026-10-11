@@ -20,6 +20,8 @@
 #             owner/repo#number, or a number that names no pull request.
 #             Announced once each, so a mistake in the file is heard rather
 #             than mistaken for a quiet repository
+#   DONE      with --exit-when-closed, every tracked pull request has merged
+#             or closed, and the watch exits
 #
 # This watch is deliberately **level-triggered**: it reports what is currently
 # unresolved rather than what just changed. An edge-triggered watch loses a
@@ -30,6 +32,7 @@
 # Usage:
 #   watch-threads.sh --tracked <file> --state <path>
 #                    [--interval 60] [--renotify 900] [--once]
+#                    [--exit-when-closed]
 #
 # --tracked names the file holding the tracked set: one `owner/repo#number`
 # per line, with blank lines and lines starting with `#` ignored. The file is
@@ -50,10 +53,16 @@
 #
 # --once makes a single pass and exits, which is how the loop checks, before
 # arming the watch, that the file names the pull requests it meant to track.
+#
+# --exit-when-closed ends the watch with a DONE line after a pass in which
+# every tracked pull request answered as merged or closed, or the file names
+# none. A pass with a failed query or a bad line proves nothing about the
+# set, so it never ends the watch. A loop `implement` starts runs this way;
+# a loop the user starts stays idle on an empty file instead.
 
 set -uo pipefail
 
-TRACKED=""; STATE=""; INTERVAL=60; RENOTIFY=900; ONCE=0
+TRACKED=""; STATE=""; INTERVAL=60; RENOTIFY=900; ONCE=0; EXIT_WHEN_CLOSED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,6 +71,7 @@ while [ $# -gt 0 ]; do
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --renotify) RENOTIFY="${2:-900}"; shift 2 ;;
     --once)     ONCE=1; shift ;;
+    --exit-when-closed) EXIT_WHEN_CLOSED=1; shift ;;
     *) echo "watch-threads.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -213,6 +223,9 @@ EOF
 while true; do
   now=$(date +%s)
   new_state=""
+  # For --exit-when-closed: whether a tracked pull request is still open, and
+  # whether this pass failed to learn the state of one.
+  open=0; unsure=0
 
   # Re-read the tracked set. A malformed line is announced once and the
   # well-formed ones are watched; a file that cannot be read, or that has
@@ -221,6 +234,7 @@ while true; do
   # exists to prevent.
   problems=$(parse_tracked 2>&1 >"$STATE.entries")
   if [ -n "$problems" ]; then
+    unsure=1
     while IFS= read -r problem; do
       [ -n "$problem" ] && announce_once "TRACKED $problem"
     done <<EOF
@@ -242,6 +256,7 @@ EOF
     # than at --renotify. Carrying the whole pull request is one rule for
     # every kind of row, which is what keeps it right as kinds are added.
     if ! pr=$(fetch_pr "$slug" "$n") || [ -z "$pr" ]; then
+      unsure=1
       err=$(cat "$STATE.err" 2>/dev/null)
       if not_found "$err"; then
         announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; fix the tracked file"
@@ -253,6 +268,7 @@ EOF
       continue
     fi
     if ! reviews=$(fetch_reviews "$slug" "$n"); then
+      unsure=1
       carried=$(awk -v s="$slug" -v p="$n" '$2==s && $3==p' "$STATE" 2>/dev/null || true)
       [ -n "$carried" ] && new_state="$new_state$carried
 "
@@ -264,6 +280,7 @@ $(printf '%s\n' "$pr" | head -n 1)
 EOF
     # Merged or closed: nothing here is outstanding, and its rows fall out.
     [ "$pstate" = "OPEN" ] || continue
+    open=1
 
     # DRAFT — a pull request the review loop has not signed off. On a
     # self-review GitHub refuses APPROVE and REQUEST_CHANGES on your own pull
@@ -380,6 +397,10 @@ EOF
   printf '%s' "$new_state" | grep -v '^[[:space:]]*$' > "$STATE.tmp" 2>/dev/null
   mv "$STATE.tmp" "$STATE" 2>/dev/null
 
+  if [ "$EXIT_WHEN_CLOSED" = 1 ] && [ "$open" = 0 ] && [ "$unsure" = 0 ]; then
+    echo "DONE every tracked pull request has merged or closed; the watch is exiting"
+    exit 0
+  fi
   [ "$ONCE" = 1 ] && exit 0
   sleep "$INTERVAL"
 done

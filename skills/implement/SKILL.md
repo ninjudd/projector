@@ -157,6 +157,39 @@ and point at the test that covers it. `gh stack submit` writes each layer's
 body too, and it is the wrong body; replace it as
 [Stack dependent work](#stack-dependent-work) describes.
 
+Then start the fix loop on the pull request, so review findings are fixed as
+they arrive instead of waiting for the user to notice that nothing is fixing
+them. Only the top-level conversation, the one the user talks to, starts or
+joins a fix loop. A subagent's processes end when it returns, and the
+conversation that started it cannot see a loop it left behind, so it would
+start a second one. When you run as a subagent, start no fix loop and join
+none: hand the pull request up with your result. The conversation that
+started you may be a subagent too, so each one hands it up in turn until it
+reaches the top-level conversation. That conversation treats a pull request
+opened below it as one it opened itself, and starts its fix loop on it or
+appends it to the loop it already runs.
+
+The top-level conversation starts no fix loop when either of these holds:
+
+- `project config get fix.auto_start --default true` prints `false`.
+- The host cannot keep a process running after this turn.
+
+Otherwise run `../start-fix-loop/SKILL.md` with the pull request, and every
+layer of a stack, as its tracked set, and start its watcher with
+`--exit-when-closed`, so the loop ends on its own once every pull request it
+watches has merged or closed. When this conversation already runs a fix
+loop, append the pull request to that loop's tracked file instead; never
+start a second one. Leave the review loop alone: it watches every pull
+request the operator has in the repository, so it runs once per repository,
+not once per change.
+
+When you hand over the URL, say whether a fix loop is watching the pull
+request. Either this session's fix loop watches it and stops when the
+session ends, or none does, and you say whether the setting or the host
+stopped it, and that review findings wait until the user runs
+`start-fix-loop`. As a subagent, say that you started no fix loop and are
+handing the pull request up to the top-level conversation, which runs it.
+
 ## Stack dependent work
 
 A stack is a chain of pull requests, each based on the branch of the one
