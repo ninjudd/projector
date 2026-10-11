@@ -840,7 +840,8 @@ NOT_HOSTED = 3
 
 
 def review_rules(json_output: bool) -> int:
-    """`review rules`: whether the user's settings allow both publish commands, exiting 1 when one may not.
+    """`review rules`: whether the user's settings allow every command Projector's permission rules name,
+    exiting 1 when one may not.
 
     It asks `allow_publish` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
@@ -1431,9 +1432,10 @@ def publish_rule_enabled(root: Path) -> bool:
 
 
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
-    """Whether `init` adds the publish rules ("add"), only reports them ("report"), or leaves them (None).
+    """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
+    (None).
 
-    The rules exempt two commands from each host's automatic approval in the
+    The rules exempt three commands from each host's automatic approval in the
     person's own settings, so `init` adds them only when a person runs it at a
     terminal or names --publish-rule; an agent refreshing the instructions gets
     a note instead. Configuration can only turn them off.
@@ -1447,7 +1449,7 @@ def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[st
 
 
 def init_permissions_only(arguments: argparse.Namespace) -> int:
-    """`init` outside a Git repository: set up the user's publish rules, which belong to no repository."""
+    """`init` outside a Git repository: set up the user's permission rules, which belong to no repository."""
 
     if arguments.site or arguments.url:
         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")

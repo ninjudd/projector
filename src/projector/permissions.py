@@ -91,7 +91,7 @@ def read_user_file(path: Path, environ: Mapping[str, str] = os.environ) -> tuple
 
 def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ,
                   hint: bool = True) -> list[FileAction]:
-    """Add the publish rules for Claude Code, and for Codex where Codex is installed.
+    """Add Projector's permission rules for Claude Code, and for Codex where Codex is installed.
 
     Without `apply`, a file that lacks the rules is only reported, with how to
     add them unless `hint` is false.

@@ -78,7 +78,7 @@ class RepositoryTestCase(unittest.TestCase):
         self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
 
     def settings(self) -> Path:
-        """The user's Claude Code settings, which `init` gives the publish rule."""
+        """The user's Claude Code settings, which `init` gives Projector's permission rules."""
         return self.home / ".claude" / "settings.json"
 
     def tearDown(self) -> None:
@@ -1339,7 +1339,8 @@ class MutationTests(RepositoryTestCase):
 
 
 class ReviewRulesTests(RepositoryTestCase):
-    """`project review rules` reports the publish rules and writes nothing, inside a repository or outside one."""
+    """`project review rules` reports Projector's permission rules and writes nothing, inside a repository or
+    outside one."""
 
     def home_tree(self) -> dict[str, bytes | None]:
         """Every path under the temporary home, with each file's bytes, so a test sees any write at all."""
