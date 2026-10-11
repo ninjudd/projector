@@ -341,11 +341,13 @@ numbers, so the ones cited elsewhere stay put.
 | 29 | Publish `clean` on another author's pull request with `review.allow_approve = true` while another model's change request is on H and a third model is reviewing it. | It posts an `APPROVE`, and the draft state does not change. |
 | 30 | Publish with `review.peer_wait` set, another model's verdict on an earlier head, and its live start comment on H. | Publish reads no `review.peer_wait`, waits for nothing, and marks the pull request ready on its clean verdict. |
 | 31 | Publish `clean` as `claude-opus-5-5` while `gpt-5.5` publishes `changes-requested` with a finding after `claude-opus-5-5`'s census and a second before its submit, from a draft and from a ready pull request. | The clean verdict is the newest, and the pull request ends a draft both times, with `publish` reporting one open finding thread. |
+| 32 | On another author's pull request, request changes on an earlier head, then publish `clean` on H without `review.allow_approve`. | Publish dismisses the change request, and another model's older change request on H with it, without waiting for a model still reviewing H. It dismisses nothing when a newer verdict on H requests changes or a finding thread is open once this review is submitted, after an `APPROVE`, or for a change request without a Projector verdict marker, even one that mentions the loop, from another account, or older than an approval. A dismissal GitHub refuses exits non-zero, and the retry finishes it. |
 
-Criteria 1 to 7 and 24 to 31 pass in `tests/test_review.py` and
+Criteria 1 to 7 and 24 to 32 pass in `tests/test_review.py` and
 `tests/test_site.py`, and criteria 24 and 27 to 30 fail before § 9's change.
 Criterion 31 held before it too, and pins that the newest verdict does not
-lose it.
+lose it. Criterion 32 fails before `publish` dismissed anything, when a clean
+head left the account's change request standing.
 Criterion 22 holds because `watch-threads.sh` reports every unresolved
 thread without reading its marker, which `tests/test_watchers.py` pins.
 Criterion 15 needs two hosts and has not been run, so the project stays in
@@ -359,6 +361,11 @@ progress until it has.
 - **Each publish on a self-review** adds one paginated listing of the pull
   request's Projector reviews after it submits, to find the newest verdict,
   and reads the finding threads again. Nothing waits.
+- **Each publish on another author's pull request** adds one paginated
+  listing of the account's reviews, to find its standing change requests.
+  When one stands, it also reads the newest verdict and the finding threads
+  as a self-review does. When it dismisses, it makes one request for each
+  change request and lists the account's reviews once more to confirm them.
 - **`project review status`** makes three requests: the pull request, its
   reviews, and its threads. `fix-pr` runs it once for each report.
 - **The watchers** make no new requests, and neither script changes.
@@ -463,6 +470,16 @@ The rule:
   request, `publish` posts `REQUEST_CHANGES` for changes requested, and for a
   clean verdict a `COMMENT`, or an `APPROVE` where `review.allow_approve` is
   `true`, whatever other models said. It leaves the draft state alone.
+- **A clean newest verdict dismisses the account's change requests.** A
+  `COMMENT` replaces nothing, so on another author's pull request it leaves
+  the account's own earlier `REQUEST_CHANGES` holding `reviewDecision` after
+  the head is found clean, and the pull request stays blocked on a change
+  request its reviews have settled. So when the newest verdict on the head is
+  clean and no finding thread is open, read in the same step a self-review
+  reads them for its draft state, `publish` dismisses each Projector
+  `REQUEST_CHANGES` review by the account that nobody dismissed and no later
+  approval replaced. A change request whose body carries no Projector verdict
+  marker is a person's, and stays, even when it mentions the loop by name.
 
 `project review status <number>` prints the newest verdict on the current
 head, the model and review it came from, each model's newest verdict there

@@ -952,10 +952,12 @@ def run_review(arguments: argparse.Namespace) -> int:
                           f"review {newest['review']}")
                 if newest and newest["verdict"] == "clean" and result["open_threads"]:
                     count = result["open_threads"]
-                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so it stays a "
-                          "draft")
+                    held = "it stays a draft" if result["draft"] is not None else "the change requests stand"
+                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so {held}")
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
+                if result["dismissed"]:
+                    print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
             return 0
         if command == "gate":
             state = review.read_state(paths)

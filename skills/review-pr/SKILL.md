@@ -96,7 +96,10 @@ skill carry the outcome instead: the **verdict line** in every review body, and
 normally here. Post `REQUEST_CHANGES` when findings are open. When the head is
 clean, post a `COMMENT` review saying so — **never `APPROVE`**. An approval is a
 person vouching for code, and an agent must not vouch on the reviewer's behalf;
-recommend it in the body and let a human click it.
+recommend it in the body and let a human click it. A `COMMENT` leaves an earlier
+`REQUEST_CHANGES` standing, so once the newest verdict on the head is clean and
+no finding thread is open, `publish` dismisses the change requests your
+account's Projector reviews left.
 
 That last rule is the one configurable piece of this skill:
 
@@ -757,7 +760,14 @@ the sign-off a reader sees in the pull-request list.
 **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
 plainly in the body that the head looks clean and that a human approval is
 what remains. It posts a real `APPROVE` only where `review.allow_approve` is
-`true`.
+`true`. Otherwise it posts a `COMMENT`, which leaves the account's last
+`REQUEST_CHANGES` holding `reviewDecision`. So when the newest Projector
+verdict on the head, whichever model gave it, is clean and no finding thread is
+open, `publish` dismisses each Projector `REQUEST_CHANGES` review by the
+account that nobody dismissed and no later approval replaced, and the pull
+request is no longer blocked on a change request that its reviews have
+settled. A change request the account posted by hand, without a Projector
+verdict marker, is a person's and stays, even when it mentions the loop.
 
 On a self-review, the draft transition follows the newest verdict on the
 head rather than this review's alone. When another model posts a verdict on
@@ -783,9 +793,13 @@ do not run it to add them yourself.
 
 After submitting, `publish` re-reads the review it posted, sets draft state
 for a self-review by the newest verdict on the head and re-reads the pull
-request's `isDraft`, adds the review id to the loop's record, deletes the
-start comment, and releases the lock, in that order, so the pull request is
-never left with neither a start comment nor its verdict's draft state. It
+request's `isDraft`, or dismisses the standing change requests under a clean
+newest verdict on another author's pull request, then adds the review id to
+the loop's record, deletes the start comment, and releases the lock, in that
+order, so the pull request is never left with neither a start comment nor its
+verdict's draft state. It prints which change requests it dismissed. When a
+dismissal fails, `publish` exits non-zero and names the review; dismiss it on
+GitHub, or fix the permission that refused it, and run `publish` again. It
 records the review as submitted before any of those steps, so a run that
 fails partway exits non-zero and running it again finishes that review
 instead of posting a second one.
