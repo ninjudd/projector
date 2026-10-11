@@ -150,6 +150,9 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 .nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
 .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
+/* The section in view, which the list marks as the page scrolls: a row's hover band, with an accent bar at its start. */
+.nav ol a[aria-current="location"] { position: relative; background: var(--surface-2); }
+.nav ol a[aria-current="location"]::before { content: ""; position: absolute; top: 7px; bottom: 7px; left: 0; width: 2px; border-radius: 1px; background: var(--accent); }
 .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .nav .ntitle { overflow-wrap: anywhere; }
 .nav .ncheck, .ftree .fcheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
@@ -160,8 +163,10 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
 
 /* overview */
 .overview { display: flex; flex-direction: column; gap: 20px; }
-/* Level with the sidebar, which sticks 16px down. */
-.stats { scroll-margin-top: calc(var(--stick-top) + 16px); }
+/* Where a jump lands each target, level with the sidebar, which sticks 16px
+   down: a summary's line counts and its sections, and any heading or other
+   target in a project page's plan. */
+.stats, .group, .sitemain.withnav .sidebody [id] { scroll-margin-top: calc(var(--stick-top) + 16px); }
 .filespane > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
 .filespane > summary::-webkit-details-marker, .fcollapsed > summary::-webkit-details-marker { display: none; }
 .filespane > summary h3 { margin: 0; }
@@ -201,9 +206,10 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
 
 /* groups */
 .groups { display: flex; flex-direction: column; gap: 28px; margin-top: 36px; }
-.group { position: relative; scroll-margin-top: var(--stick-top); }
-/* Tall enough that jumping to the last section still brings it to the top. */
-.group:last-child { min-height: calc(100vh - var(--stick-top)); }
+.group { position: relative; }
+/* A page's last section, a summary's or a plan's, is tall enough that it
+   scrolls level with the sidebar, as a jump lands every other one. */
+.group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }
 .gsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
 .ghead { position: sticky; top: var(--stick-top); z-index: 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 2px solid var(--border); }
 .group.gstuck .ghead { box-shadow: 0 8px 8px -8px rgba(0, 0, 0, .2); }

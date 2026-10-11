@@ -95,6 +95,130 @@ function sideNavHtml(nav: SideNav): string {
     `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
 }
 
+// A page's sections as a sidebar lists them: a link to each, holding its
+// number in a column of its own beside its title. A summary's list ends each
+// row with the dot that marks the section reviewed.
+function sectionListHtml(sections: PageSection[], checks: boolean, id = ''): string {
+  return `<ol class="sections"${id !== '' ? ` id="${esc(id)}"` : ''}>` + sections.map(function (s) {
+    const target = esc(s.id);
+    return `<li><a href="#${target}"><span class="nnum">${esc(s.num)}</span><span class="ntitle">${s.title}</span>` +
+      `${checks ? `<span class="ncheck" data-gid="${target}"></span>` : ''}</a></li>`;
+  }).join('') + '</ol>';
+}
+
+// The observer that marks the section in view. A page watches one list of
+// sections at a time.
+let sectionWatch: IntersectionObserver | null = null;
+
+// Marks the link in `list` to the section in view, and keeps the mark current
+// as the page scrolls. The section in view is the last one whose top has
+// passed a line 30% of the way down the window. The room after a page's last
+// section, which summary.css gives it, lets the reader scroll that section to
+// the line too. A list of null stops the watch.
+function watchSections(list: Element | null): void {
+  sectionWatch?.disconnect();
+  sectionWatch = null;
+  if (list === null || !('IntersectionObserver' in window)) return;
+  const sections = Array.from(list.querySelectorAll('a[href^="#"]')).flatMap(function (link) {
+    const target = document.getElementById(decodeURIComponent((link.getAttribute('href') ?? '').slice(1)));
+    return target !== null ? [{ link: link, target: target }] : [];
+  });
+  function mark(): void {
+    const line = window.innerHeight * 0.3;
+    const passed = sections.filter(function (s) { return s.target.getBoundingClientRect().top <= line; });
+    const current = passed[passed.length - 1];
+    sections.forEach(function (s) {
+      if (s === current) s.link.setAttribute('aria-current', 'location');
+      else s.link.removeAttribute('aria-current');
+    });
+  }
+  // The band runs from far above any page down to the line, so a target is in
+  // it exactly while its top is above the line, and a jump that carries a top
+  // across the line reports it, however far past the window the jump goes.
+  const passing = new IntersectionObserver(mark, { rootMargin: '10000000px 0px -70% 0px' });
+  sections.forEach(function (s) { passing.observe(s.target); });
+  sectionWatch = passing;
+}
+
+// A "…" button and the menu of links it opens, which wireMenus makes work. A
+// link to GitHub opens in a new tab; a link within the site does not. A
+// browser without popovers, such as Safari before 17, would draw every menu
+// open, so there the links sit in place as a row, under their short names.
+const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
+const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
+  '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+function moreMenu(id: string, label: string, items: MenuItem[]): string {
+  function link(i: MenuItem, attrs: string, text: string): string {
+    return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
+  }
+  if (!popovers) return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
+  return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
+    `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
+    items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
+    '</div>';
+}
+
+// Whether the window closes an open menu when it scrolls or resizes, which it
+// starts doing once a page wires its first menu.
+let menusCloseWithWindow = false;
+
+// Makes each "…" menu in `root` work. Its button opens its links as a
+// popover, which sits in the top layer, clear of a card's clipping and the
+// sticky headers. An auto popover closes on Escape or a click outside it, and
+// opening one closes any other. The menu opens under its button, right-aligned
+// to it, or above it where the window has no room below, and closes when the
+// page scrolls rather than drift from its button.
+function wireMenus(root: ParentNode): void {
+  if (!popovers) return;
+  root.querySelectorAll<HTMLElement>('.moremenu').forEach(function (menu) {
+    const button = menu.previousElementSibling;
+    if (!(button instanceof HTMLButtonElement)) return;
+    const items = Array.from(menu.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
+    function close(): void { if (menu.matches(':popover-open')) menu.hidePopover(); }
+    menu.addEventListener('beforetoggle', function (ev) {
+      if (ev.newState === 'open') {
+        const b = button.getBoundingClientRect();
+        menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
+        menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
+      } else if (menu.contains(document.activeElement)) {
+        button.focus({ preventScroll: true });
+      }
+    });
+    menu.addEventListener('toggle', function (ev) {
+      const open = ev.newState === 'open';
+      button.setAttribute('aria-expanded', String(open));
+      if (!open) return;
+      const b = button.getBoundingClientRect(), h = menu.offsetHeight;
+      if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0) menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
+      items[0]?.focus({ preventScroll: true });
+    });
+    menu.addEventListener('keydown', function (ev) {
+      const at = items.findIndex(function (item) { return item === document.activeElement; });
+      let next: number;
+      if (ev.key === 'ArrowDown') next = (at + 1) % items.length;
+      else if (ev.key === 'ArrowUp') next = at <= 0 ? items.length - 1 : at - 1;
+      else if (ev.key === 'Home') next = 0;
+      else if (ev.key === 'End') next = items.length - 1;
+      else {
+        // Tab leaves the menu from its button, so focus moves on to the
+        // control after it, or back to the one before it.
+        if (ev.key === 'Tab') { button.focus({ preventScroll: true }); close(); }
+        return;
+      }
+      ev.preventDefault();
+      items[next]?.focus();
+    });
+    items.forEach(function (item) { item.addEventListener('click', close); });
+  });
+  if (menusCloseWithWindow) return;
+  menusCloseWithWindow = true;
+  const closeOpenMenu = function (): void {
+    document.querySelectorAll<HTMLElement>('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
+  };
+  window.addEventListener('scroll', closeOpenMenu, { passive: true });
+  window.addEventListener('resize', closeOpenMenu);
+}
+
 (function (): void {
 // How many hidden lines one expand up or expand down reveals.
 const STEP = 20;
@@ -186,8 +310,6 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
 
   // Two arrows folding in on a line: the expanded lines closing up again.
   const COLLAPSE_ICON = `${ICON}<path d="M6.5 3L10 6.5 13.5 3"/><path d="M6.5 17L10 13.5 13.5 17"/><path d="M4 10h12"/></svg>`;
-  const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
-    '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
   // An expander's controls: down from the hunk above, up from the hunk below, and the whole gap.
   const EXPAND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">';
   const EXPANDS: [string, string, string][] = [
@@ -195,22 +317,6 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
     ['up', 'Expand up', `${EXPAND_ICON}<path d="M4 10l4-4 4 4"/></svg>`],
     ['all', 'Expand all', `${EXPAND_ICON}<path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10"/></svg>`],
   ];
-  // A "…" button and the menu of links it opens, which wireSummary makes work.
-  // A link to GitHub opens in a new tab; a link within the site does not. A
-  // browser without popovers, such as Safari before 17, would draw every menu
-  // open, so there the links sit in place as a row, under their short names.
-  const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
-  interface MenuItem { href: string; text: string; short: string; external: boolean }
-  function moreMenu(id: string, label: string, items: MenuItem[]): string {
-    function link(i: MenuItem, attrs: string, text: string): string {
-      return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
-    }
-    if (!popovers) return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
-    return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
-      `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
-      items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
-      '</div>';
-  }
 
   const CHIPS: Record<string, string> = { context: 'context', verify: 'verified', flag: 'concern' };
   function kindOf(c: SummaryCheck): string { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
@@ -500,9 +606,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
   }
 
   function renderPage(): string {
-    const sections = data.groups.map(function (g, i) {
-      return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
-    }).join('');
+    const sections = data.groups.map(function (g, i) { return { id: g.id, num: String(i + 1), title: g.title }; });
     const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
     const menu = moreMenu('pr-menu', 'Pull request links', [
       { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
@@ -514,7 +618,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
       titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
       '<div class="layout"><aside class="side">' +
         sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
-          middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
+          middle: `<div class="extra">${extra}</div>${sectionListHtml(sections, true)}`, foot: headsList() }) +
         '</aside>' +
       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
         `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
@@ -720,59 +824,7 @@ function wireSummary(views: Record<string, ContextView>): void {
     });
   });
 
-  // A "…" button, on the page header or a file's, opens its links as a popover,
-  // which sits in the top layer, clear of the card's clipping and the sticky
-  // headers. An auto popover closes on Escape or a click outside it, and
-  // opening one closes any other. The menu opens under its button, right-aligned
-  // to it, or above it where the window has no room below, and closes when the
-  // page scrolls rather than drift from its button.
-  if ('popover' in HTMLElement.prototype) {
-    document.querySelectorAll<HTMLElement>('.moremenu').forEach(function (menu) {
-      const button = menu.previousElementSibling;
-      if (!(button instanceof HTMLButtonElement)) return;
-      const items = Array.from(menu.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
-      function close(): void { if (menu.matches(':popover-open')) menu.hidePopover(); }
-      menu.addEventListener('beforetoggle', function (ev) {
-        if (ev.newState === 'open') {
-          const b = button.getBoundingClientRect();
-          menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
-          menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
-        } else if (menu.contains(document.activeElement)) {
-          button.focus({ preventScroll: true });
-        }
-      });
-      menu.addEventListener('toggle', function (ev) {
-        const open = ev.newState === 'open';
-        button.setAttribute('aria-expanded', String(open));
-        if (!open) return;
-        const b = button.getBoundingClientRect(), h = menu.offsetHeight;
-        if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0) menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
-        items[0]?.focus({ preventScroll: true });
-      });
-      menu.addEventListener('keydown', function (ev) {
-        const at = items.findIndex(function (item) { return item === document.activeElement; });
-        let next: number;
-        if (ev.key === 'ArrowDown') next = (at + 1) % items.length;
-        else if (ev.key === 'ArrowUp') next = at <= 0 ? items.length - 1 : at - 1;
-        else if (ev.key === 'Home') next = 0;
-        else if (ev.key === 'End') next = items.length - 1;
-        else {
-          // Tab leaves the menu from its button, so focus moves on to the
-          // control after it, or back to the one before it.
-          if (ev.key === 'Tab') { button.focus({ preventScroll: true }); close(); }
-          return;
-        }
-        ev.preventDefault();
-        items[next]?.focus();
-      });
-      items.forEach(function (item) { item.addEventListener('click', close); });
-    });
-    const closeOpenMenu = function (): void {
-      document.querySelectorAll<HTMLElement>('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
-    };
-    window.addEventListener('scroll', closeOpenMenu, { passive: true });
-    window.addEventListener('resize', closeOpenMenu);
-  }
+  wireMenus(document);
 
   // Pinned-header detection: a 1px sentinel sits at the top of each section and
   // each file card. Once it scrolls above its header's sticky offset the header
@@ -812,6 +864,7 @@ function wireSummary(views: Record<string, ContextView>): void {
   }
   setupStuck();
   void document.fonts.ready.then(setupStuck);
+  watchSections(document.querySelector('.layout > .side ol.sections'));
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);

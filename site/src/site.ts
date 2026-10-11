@@ -1,14 +1,16 @@
 // Projector site: three sections, drawn from site.json. Projects lists the projects
 // and renders each one's files in a summary page's layout, beside a summary's
-// sidebar of its stacks and pages; Reviews lists the pull request summaries; Docs
-// renders the README and everything else under docs/ beside a sidebar of that
-// tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+// sidebar of its stacks, sections, and pages; Reviews lists the pull request
+// summaries; Docs renders the README and everything else under docs/ beside a
+// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
 // Every view has a real path under the site's base; links between views update
 // the address without a page load. Every page loads summary.js first, for the
 // helpers a summary page draws with too.
 (function (): void {
   type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
   type Body = string | Node;
+  /** A page's sidebar, drawn once the page's sections are known. */
+  type SideNavOf = (sections: PageSection[]) => string;
 
   /** A page in a sidebar's tree, and for a proposed project's plan the pull request that proposes it. */
   interface Item {
@@ -180,7 +182,8 @@
 
   function isHtml(path: string): boolean { return /\.html$/i.test(path); }
 
-  // Draw the page around `body`, and return the element the body went into.
+  // Draw the page around `body`, make its menus work, and return the element
+  // the body went into.
   // `side`, a section's tree, is a column at the window's left edge. A page
   // with `top`, a title row, takes a summary page's layout instead: the title
   // row across the top, `nav`, a summary's sidebar, beside the body, and a
@@ -193,6 +196,7 @@
     if (root === null) throw new Error('A view needs the #site element to draw into');
     document.title = title !== '' ? `${title} · ${site.repo}` : site.repo;
     fitFrame = null;
+    watchSections(null);
     const isWide = wide === true;
     if (!isWide) document.body.classList.remove('barhidden');
     if (top !== undefined) {
@@ -214,13 +218,15 @@
     if (main === null) throw new Error('The page lost the #sidebody element it just drew');
     if (typeof body === 'string') main.innerHTML = body;
     else main.appendChild(body);
+    wireMenus(root);
     return main;
   }
 
   // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
   // heading. A folder holding a readme is labelled by it; any other folder by its name.
   // The outer list is a `sidetree`, which its styles name, so they reach no other list.
-  function tree(items: Item[], prefix: string, top: Item | null, current: string | null): string {
+  // `under` follows the current entry, inside its item.
+  function tree(items: Item[], prefix: string, top: Item | null, current: string | null, under = ''): string {
     const rootNode: TreeNode = { dirs: {}, files: [], index: null };
     items.forEach(function (item) {
       const parts = item.path.slice(prefix.length).split('/');
@@ -232,23 +238,23 @@
       if (node !== rootNode && /^readme\.md$/i.test(name)) node.index = item;
       else node.files.push(item);
     });
-    function link(item: Item): string {
-      return `<a href="${esc(routeFor(item.path))}"` +
-        `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
-        (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
+    function entry(item: Item): string {
+      const here = item.path === current;
+      return `<a href="${esc(routeFor(item.path))}"${here ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
+        (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '') + (here ? under : '');
     }
     function render(node: TreeNode): string {
       const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
-        .map(function (f) { return `<li>${link(f)}</li>`; });
+        .map(function (f) { return `<li>${entry(f)}</li>`; });
       const dirs = Object.keys(node.dirs).sort().map(function (name) {
         const dir = node.dirs[name];
         if (dir === undefined) return '';
-        return `<li>${dir.index !== null ? link(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
+        return `<li>${dir.index !== null ? entry(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
       });
       const all = files.concat(dirs);
       return all.length > 0 ? `<ul${node === rootNode ? ' class="sidetree"' : ''}>${all.join('')}</ul>` : '';
     }
-    return (top !== null ? `<div class="sidetop">${link(top)}</div>` : '') + render(rootNode);
+    return (top !== null ? `<div class="sidetop">${entry(top)}</div>` : '') + render(rootNode);
   }
 
   function loadMarkdown(path: string): Promise<string> {
@@ -264,7 +270,10 @@
   function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null,
     nav?: string): void {
     const main = frame(active, title, '', side, true, undefined, nav);
-    if (before !== null) main.appendChild(before);
+    if (before !== null) {
+      main.appendChild(before);
+      wireMenus(main);
+    }
     const page = document.createElement('iframe');
     page.className = 'htmlpage';
     page.title = title;
@@ -288,28 +297,66 @@
 
   // `ref` is where a Markdown page's links to repository files the site lacks
   // point on GitHub. `top` and `nav` give a Markdown page a summary page's
-  // layout, and `nav` is an HTML page's column, as `frame` draws them.
+  // layout, and `nav` is an HTML page's column, as `frame` draws them. The
+  // site sees no sections in an HTML page.
   function showPage(active: Section, path: string, title: string, before: Node | null, side: string | null,
-    ref: string = site.branch, top?: string, nav?: string): void {
-    if (isHtml(path)) showHtml(active, path, title, before, side, nav);
+    ref: string = site.branch, top?: string, nav?: SideNavOf): void {
+    if (isHtml(path)) showHtml(active, path, title, before, side, nav?.([]));
     else showDocument(active, path, title, before, side, ref, top, nav);
   }
 
   // Under a title row, which shows the page's title, the body leaves out its
-  // own when that is its first element.
+  // own when that is its first element, and its last section gets the room
+  // after it that a summary's last section has. The sidebar lists the
+  // sections of the page as it renders, and marks the one in view.
   function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null,
-    ref: string, top?: string, nav?: string): void {
-    frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav);
+    ref: string, top?: string, nav?: SideNavOf): void {
+    frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav?.([]));
     loadMarkdown(path).then(function (text) {
       const box = renderMarkdown(text, path, ref);
       if (top !== undefined && box.firstElementChild?.tagName === 'H1') box.firstElementChild.remove();
-      const main = frame(active, title, box, side, false, top, nav);
+      const headings = sectionHeadings(box);
+      const last = headings[headings.length - 1];
+      if (top !== undefined && last !== undefined) holdLastSection(box, last);
+      const main = frame(active, title, box, side, false, top, nav?.(headings.map(sectionOf)));
       if (before !== null) main.insertBefore(before, main.firstChild);
       const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
       if (target !== null) target.scrollIntoView();
+      watchSections(document.querySelector('.layout > .side ol.sections'));
     }, function (error: unknown) {
-      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top, nav);
+      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top,
+        nav?.([]));
     });
+  }
+
+  // A rendered page's sections: its `##` headings at the top level of the page.
+  function sectionHeadings(box: HTMLElement): Element[] {
+    return Array.from(box.children).filter(function (h) { return h.tagName === 'H2' && h.id !== ''; });
+  }
+
+  // A section as the sidebar lists it. A heading that opens with its number,
+  // as `2. Solution` and `2.1 Detail` do, gives the number a column of its
+  // own, without its last dot. The title keeps its inline markup but not its
+  // links, because the sidebar's row is itself a link.
+  function sectionOf(heading: Element): PageSection {
+    const unlinked = heading.cloneNode(true) as Element;
+    unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
+    const title = unlinked.innerHTML;
+    const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(heading.textContent);
+    return number !== null && title.startsWith(number[0])
+      ? { id: heading.id, num: number[1] ?? '', title: title.slice(number[0].length) }
+      : { id: heading.id, num: '', title: title };
+  }
+
+  // Moves the page's last section, from its heading to the page's end, into a
+  // `lastsection`, which summary.css makes tall enough that the section's
+  // heading scrolls level with the sidebar, as a summary's last section does.
+  function holdLastSection(box: HTMLElement, heading: Element): void {
+    const section = document.createElement('div');
+    section.className = 'lastsection';
+    const nodes = Array.from(box.childNodes);
+    nodes.slice(nodes.indexOf(heading)).forEach(function (node) { section.appendChild(node); });
+    box.appendChild(section);
   }
 
   // The README, or any document under docs/, beside the docs tree when there is
@@ -382,11 +429,11 @@
   }
 
   // Any file of a project, its readme or a supplemental file, in a summary
-  // page's layout: a title row of the breadcrumbs, the readme's badges and
-  // owner, and its link to GitHub over the page's title, and the project's
-  // sidebar beside the page. An HTML page keeps its frame, with the sidebar
-  // in its column and the breadcrumbs and link above it. A proposed
-  // project's banner opens every page.
+  // page's layout: a title row of the breadcrumbs and the readme's badges and
+  // owner over the page's title, with a "…" menu of the file's links to
+  // GitHub at its end, and the project's sidebar beside the page. An HTML
+  // page keeps its frame, with the sidebar in its column and the breadcrumbs
+  // and menu above it. A proposed project's banner opens every page.
   function showProjectFile(path: string): void {
     const project = ownerOf(path);
     if (project === null) {
@@ -404,35 +451,39 @@
       const here = isReadme && i === parts.length - 1;
       return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
     }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
-    const github = esc(repoUrl('blob', path, ref));
+    const menu = moreMenu('page-menu', 'Page links', [
+      { href: repoUrl('blob', path, ref), text: 'View file on GitHub', short: 'File', external: true },
+      { href: repoUrl('commits', path, ref), text: 'View history on GitHub', short: 'History', external: true },
+    ]);
     const banner = project.proposed !== undefined ? proposalBanner(project.proposed) : '';
-    const nav = projectNav(project, path);
+    const nav = function (sections: PageSection[]): string { return projectNav(project, path, sections); };
     if (isHtml(path)) {
       const head = document.createElement('div');
       head.className = 'phead';
-      head.innerHTML = `<div class="crumbs">${crumbs}</div>${banner}<div class="pmeta"><a class="note" href="${github}">View on GitHub</a></div>`;
+      head.innerHTML = `<div class="crumbs"><span>${crumbs}</span>${menu}</div>${banner}`;
       showPage('projects', path, title, head, null, ref, undefined, nav);
       return;
     }
     const owner = project.owner != null && project.owner !== '' ? `Owner ${esc(project.owner)}` : '';
-    const link = `<a href="${github}">View on GitHub</a>`;
-    const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner, link] : [crumbs, link])
+    const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner] : [crumbs])
       .filter(function (group) { return group !== ''; }).join(' · ');
     let before: HTMLElement | null = null;
     if (banner !== '') {
       before = document.createElement('div');
       before.innerHTML = banner;
     }
-    showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
+    showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, menu), nav);
   }
 
   // A project's sidebar, drawn as a summary's is: the project's header once,
   // then every stack that holds a segment it heads, each whole but for this
-  // project's headers, or a line saying it has none; then the other pages
-  // under its folder; then the credit and its history on GitHub. On its
-  // readme, its header is the page you are on, and on any other page it links
-  // to the readme and the page's own entry in the pages is current.
-  function projectNav(project: SiteProject, path: string): string {
+  // project's headers, or a line saying it has none; then the readme's
+  // `sections`; then the other pages under its folder, with another page's
+  // sections under its entry; then a nested project's neighbors; then the
+  // credit and its history on GitHub. On its readme, its header is the page
+  // you are on, and on any other page it links to the readme and the page's
+  // own entry in the pages is current.
+  function projectNav(project: SiteProject, path: string, sections: PageSection[]): string {
     const isReadme = path === project.path;
     const ref = project.proposed?.head ?? site.branch;
     const stacks = project.stacks.map(function (segments) {
@@ -447,11 +498,13 @@
     const folder = folderOf(project);
     const items: Item[] = [];
     site.projects.forEach(function (p) {
-      if (p !== project && p.path.startsWith(folder)) items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
+      if (p !== project && p.path.startsWith(folder)) items.push(itemOf(p));
     });
     site.projects.forEach(function (p) {
       if (p.path.startsWith(folder)) p.files.forEach(function (f) { items.push(f); });
     });
+    const listed = sections.length > 0 ? foldedSections(sections) : '';
+    const pages = items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path, isReadme ? '' : listed)}</div>` : '';
     const history = `<a class="history" href="${esc(repoUrl('commits', path, ref))}" aria-label="History on GitHub" ` +
       `title="History on GitHub">${HISTORY_ICON}</a>`;
     return sideNavHtml({
@@ -459,9 +512,36 @@
       head: { header: own, current: isReadme },
       stacks: stacks,
       empty: '<p class="snone">No reviews of this project.</p>',
-      middle: items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path)}</div>` : '',
+      middle: (isReadme ? listed : '') + pages + neighborsHtml(project),
       foot: history,
     });
+  }
+
+  function itemOf(project: SiteProject): Item {
+    return { path: project.path, title: project.title, proposed: project.proposed?.number };
+  }
+
+  // A page's sections in its project's sidebar. At 980 pixels and narrower
+  // they start folded behind a Sections toggle, which a wider screen hides.
+  function foldedSections(sections: PageSection[]): string {
+    return '<div class="navsections"><button type="button" class="navfold" aria-expanded="false" aria-controls="pagesections">' +
+      `<span class="chev" aria-hidden="true"></span>Sections</button>${sectionListHtml(sections, false, 'pagesections')}</div>`;
+  }
+
+  // The project a nested project sits in, which is the deepest project whose
+  // folder holds its folder, or null for a top-level project.
+  function parentOf(project: SiteProject): SiteProject | null {
+    return ownerOf(folderOf(project).slice(0, -1));
+  }
+
+  // A nested project's neighbors: its parent, linked, over the parent's other
+  // nested projects. A top-level project draws none, because the Projects
+  // page lists its neighbors.
+  function neighborsHtml(project: SiteProject): string {
+    const parent = parentOf(project);
+    if (parent === null) return '';
+    const siblings = site.projects.filter(function (p) { return p !== project && parentOf(p) === parent; });
+    return `<div class="navnear">${tree(siblings.map(itemOf), folderOf(parent), itemOf(parent), null)}</div>`;
   }
 
   // The banner atop every page of a proposed project: the pull request that
@@ -697,6 +777,11 @@
       const collapsed = main.classList.toggle('collapsed');
       toggle.setAttribute('aria-expanded', String(!collapsed));
       if (fitFrame !== null) fitFrame();
+      return;
+    }
+    const fold = target?.closest('.navfold');
+    if (fold != null) {
+      fold.setAttribute('aria-expanded', String(fold.getAttribute('aria-expanded') !== 'true'));
       return;
     }
     const bar = target?.closest('.barhide, .barshow');

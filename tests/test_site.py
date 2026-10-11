@@ -1575,20 +1575,42 @@ class ProjectsViewTests(unittest.TestCase):
         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
 
 
-PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "badge",
+PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "slug", "badge",
                           "proposedBadge", "nav", "header", "isHtml", "frame", "tree", "showHtml", "showPage",
-                          "showDocument", "showProjectFile", "projectNav", "proposalBanner", "reviewFor")
+                          "showDocument", "sectionHeadings", "sectionOf", "holdLastSection", "showProjectFile", "projectNav", "itemOf", "foldedSections",
+                          "parentOf", "neighborsHtml", "proposalBanner", "reviewFor")
 
 
-def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> dict:
-    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, and return it.
+MORE_BUTTON = ('<button class="more" type="button" popovertarget="page-menu" aria-haspopup="menu" aria-expanded="false" '
+               'aria-label="Page links"><svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor">'
+               '<circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/>'
+               '</svg></button>')
 
-    The page's Markdown renders as `body`, its elements as [tag, text], by
-    default a heading and a paragraph. `page` is the markup `frame` draws,
-    with the body's place empty, and `body` what went into that place: the
-    rendered elements, after any element showProjectFile puts before them,
-    each as [tag, markup]. `ref` is the ref the Markdown rendered its links
-    at, and `title` the document's title.
+
+def page_menu(path: str, ref: str = "main") -> str:
+    """A project page's "…" menu, as a browser with popovers draws it: `path` and its history on GitHub at `ref`."""
+    return ('<div class="moremenu" id="page-menu" popover role="menu" aria-label="Page links">'
+            f'<a role="menuitem" href="https://github.com/owner/example/blob/{ref}/{path}" target="_blank" rel="noopener">'
+            'View file on GitHub</a>'
+            f'<a role="menuitem" href="https://github.com/owner/example/commits/{ref}/{path}" target="_blank" '
+            'rel="noopener">View history on GitHub</a></div>')
+
+
+def project_page(site: dict, path: str, body: list[list[str]] | None = None, popovers: bool = True) -> dict:
+    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, in a browser with
+    or without popovers, and return it.
+
+    The page's Markdown renders as `body`, its elements as [tag, markup], by
+    default a heading and a paragraph, and each heading takes the id the
+    compiled `slug` gives its text, as renderMarkdown gives it. `page` is the
+    markup `frame` draws, with the body's place empty, and `body` what went
+    into that place: the rendered elements, after any element showProjectFile
+    puts before them, each as [tag, markup], with the elements of a
+    `lastsection` in their places. `held` lists each `lastsection`: where it
+    sits in the body, whether it ends the body, and its elements' markup.
+    `ref` is the ref the Markdown rendered its links at, `title` the
+    document's title, and `wired` whether the last drawing of the page looked
+    for menus to make work.
     """
     rendered = [["H1", "Build alpha"], ["P", "Text."]] if body is None else body
     stub = (
@@ -1597,31 +1619,48 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> 
         "const pageFiles = new Set(), siteFiles = new Set();\n"
         "let fitFrame = null, main = null, ref = null;\n"
         "const location = {hash: '', pathname: '/', search: ''};\n"
-        "const window = {innerHeight: 800};\n"
+        "const window = {innerHeight: 800, addEventListener: function () {}};\n"
+        f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n"
         "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>', FULL_ICON = '<svg full></svg>',"
         " EXIT_FULL_ICON = '<svg exit></svg>';\n"
-        "const root = {innerHTML: ''};\n"
-        "function element(tag, html) { return {tagName: tag, innerHTML: html, className: '', children: [], parent: null,"
-        " style: {}, get firstElementChild() { return this.children[0] ?? null; },"
-        " get firstChild() { return this.children[0] ?? null; },"
-        " appendChild: function (child) { child.parent = this; this.children.push(child); return child; },"
+        "const root = {innerHTML: '', queried: [], querySelectorAll: function (selector) {"
+        " this.queried.push([selector, this.innerHTML]); return []; }};\n"
+        "function element(tag, html) { return {tagName: tag, innerHTML: html, id: '', className: '', children: [],"
+        " parent: null, style: {}, get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },"
+        " get firstElementChild() { return this.children[0] ?? null; },"
+        " get firstChild() { return this.children[0] ?? null; }, get childNodes() { return this.children.slice(); },"
+        " appendChild: function (child) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1);"
+        " child.parent = this; this.children.push(child); return child; },"
         " insertBefore: function (child, next) { child.parent = this;"
         " this.children.splice(next === null ? this.children.length : this.children.indexOf(next), 0, child); return child; },"
         " remove: function () { this.parent.children.splice(this.parent.children.indexOf(this), 1); },"
-        " getBoundingClientRect: function () { return {top: 0}; }, addEventListener: function () {}}; }\n"
+        " getBoundingClientRect: function () { return {top: 0}; }, addEventListener: function () {},"
+        " cloneNode: function () { return element(this.tagName, this.innerHTML); },"
+        " querySelectorAll: function (selector) { const self = this; return selector !== 'a' ? [] :"
+        " Array.from(this.innerHTML.matchAll(/<a\\b[^>]*>(.*?)<\\/a>/g), function (m) { return {childNodes: [m[1]],"
+        " replaceWith: function (...nodes) { self.innerHTML = self.innerHTML.replace(m[0], nodes.join('')); }}; }); }}; }\n"
         "const document = {title: '', body: {classList: {remove: function () {}}},"
         " createElement: function (tag) { return element(tag.toUpperCase(), ''); },"
-        " getElementById: function () { main = element('DIV', ''); return main; }};\n"
+        " getElementById: function () { main = element('DIV', ''); return main; },"
+        " querySelector: function () { return null; }};\n"
         "function loadMarkdown() { return {then: function (loaded) { loaded(''); }}; }\n"
         "function renderMarkdown(text, path, at) { ref = at; const box = element('DIV', ''); box.className = 'markdown';"
-        f" {json.dumps(rendered)}.forEach(function (e) {{ box.appendChild(element(e[0], e[1])); }}); return box; }}\n"
+        f" {json.dumps(rendered)}.forEach(function (e) {{ const el = box.appendChild(element(e[0], e[1]));"
+        " if (/^H[1-6]$/.test(e[0])) el.id = slug(el.textContent); }); return box; }\n"
     )
     program = stub + shared_js() + "\n" + page_constants() + "\n" + \
         "\n".join(js_function(n) for n in PROJECT_PAGE_FUNCTIONS) + (
             f"\nshowProjectFile({json.dumps(path)});"
-            "\nconst drawn = main.children.flatMap(function (c) { return c.className === 'markdown'"
-            " ? c.children.map(function (e) { return [e.tagName, e.innerHTML]; }) : [[c.tagName, c.innerHTML]]; });"
-            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title}));")
+            "\nfunction flat(c) { return c.className === 'markdown' || c.className === 'lastsection'"
+            " ? c.children.flatMap(flat) : [[c.tagName, c.innerHTML]]; }"
+            "\nconst drawn = main.children.flatMap(flat);"
+            "\nconst held = main.children.filter(function (c) { return c.className === 'markdown'; })"
+            ".flatMap(function (box) { return box.children.map(function (c, i) { return c.className === 'lastsection'"
+            " ? {at: i, last: i === box.children.length - 1, held: c.children.map(function (e) { return e.innerHTML; })}"
+            " : null; }).filter(function (c) { return c !== null; }); });"
+            "\nconst query = root.queried[root.queried.length - 1];"
+            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title,"
+            " held: held, wired: query !== undefined && query[0] === '.moremenu' && query[1] === root.innerHTML}));")
     return json.loads(node(program))
 
 
@@ -1706,8 +1745,8 @@ class ProposedViewTests(unittest.TestCase):
         assert top is not None
         self.assertIn('<span class="badge status-ready">ready</span>', top.group(0), "the badges sit in the title row")
         self.assertNotIn("proposal", shown["page"], "the banner opens the content column, below the title row")
-        self.assertIn(f' · <a href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
-                      'readme.md">View on GitHub</a></div>', top.group(0))
+        self.assertIn(page_menu("docs/projects/gamma/readme.md", self.HEAD), top.group(0),
+                      "the menu links the file and its history at the proposal's head")
         self.assertIn(f'<a class="history" href="https://github.com/owner/example/commits/{self.HEAD}/docs/projects/gamma/'
                       'readme.md"', shown["page"], "the site's branch lacks the file, so its history is at the head")
         self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock">'
@@ -1813,9 +1852,11 @@ class ProjectPageTests(unittest.TestCase):
         return [head or ("|" if group else "-" if split else row) for head, group, split, row in found]
 
     def drawn(self, site: dict, path: str = README, body: list[list[str]] | None = None) -> tuple[dict, str]:
-        """The page drawn for `path`, and its sidebar, which holds exactly one current item."""
+        """The page drawn for `path`, and its sidebar, which holds exactly one current page and no current location,
+        which only the watch on its sections marks."""
         shown = project_page(site, path, body)
         side = self.sidebar(shown["page"])
+        self.assertEqual(1, side.count('aria-current="page"'), side)
         self.assertEqual(1, side.count("aria-current"), side)
         return shown, side
 
@@ -1828,19 +1869,29 @@ class ProjectPageTests(unittest.TestCase):
         self.assertTrue(page.startswith('<header class="sitebar scrolls"><span class="sitebtn menuspace"'), page)
         self.assertIn('<main class="sitemain withnav"><div class="wrap"><header class="top"><div><div class="eyebrow">'
                       '<a href="/">Projects</a> / <span class="mono">alpha</span> · '
-                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span> · '
-                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md">View on GitHub</a>'
-                      '</div><h1>Build alpha</h1></div></header>'
+                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span>'
+                      '</div><h1>Build alpha</h1></div><div class="sub">' + MORE_BUTTON, page)
+        self.assertIn(f'{page_menu("docs/projects/alpha/readme.md")}</div></header>'
                       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Project">', page)
         self.assertTrue(page.endswith('</nav></aside><div class="sidebody" id="sidebody"></div></div></div></main>'), page)
         self.assertNotIn("sitefoot", page, "the sidebar's footer row carries the credit")
         self.assertNotIn("phead", page)
+        self.assertNotIn("View on GitHub", page, "the menu holds the page's links to GitHub")
         self.assertEqual("Build alpha · owner/example", shown["title"])
+        self.assertTrue(shown["wired"], "the page's last drawing makes its menu work")
 
     def test_a_readme_names_its_owner_in_the_title_row(self) -> None:
         shown, _ = self.drawn(self.site(owner="octocat"))
 
-        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat · <a href=', shown["page"])
+        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat</div><h1>', shown["page"])
+
+    def test_without_popovers_the_title_rows_links_sit_in_place(self) -> None:
+        shown = project_page(self.site(), self.README, popovers=False)
+
+        self.assertIn('<h1>Build alpha</h1></div><div class="sub"><span class="morelinks">'
+                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md" target="_blank" '
+                      'rel="noopener">File</a><a href="https://github.com/owner/example/commits/main/docs/projects/alpha/'
+                      'readme.md" target="_blank" rel="noopener">History</a></span></div></header>', shown["page"])
 
     def test_a_summary_page_and_a_project_page_draw_one_title_row(self) -> None:
         summary_top = re.search(r'<header class="top">.*?</header>', rendered_summary(MINIMAL_SUMMARY))
@@ -1851,7 +1902,10 @@ class ProjectPageTests(unittest.TestCase):
             top = re.sub(r'<div class="sub">.*</div></header>$', '</header>', top)
             return re.sub(r'<div class="eyebrow">.*?</div><h1>.*?</h1>', '<div class="eyebrow"></div><h1></h1>', top)
 
-        self.assertIn('<div class="sub">', summary_top.group(0))
+        self.assertIn('<div class="sub">' + MORE_BUTTON.replace("page-menu", "pr-menu").replace("Page links",
+                                                                                                "Pull request links"),
+                      summary_top.group(0), "both rows end in the same menu")
+        self.assertIn('<div class="sub">' + MORE_BUTTON, project_top.group(0))
         self.assertEqual('<header class="top"><div><div class="eyebrow"></div><h1></h1></div></header>',
                          skeleton(summary_top.group(0)))
         self.assertEqual(skeleton(summary_top.group(0)), skeleton(project_top.group(0)))
@@ -1871,8 +1925,8 @@ class ProjectPageTests(unittest.TestCase):
                               [["H1", "Alpha notes"], ["P", "Text."]])
 
         self.assertIn('<div class="eyebrow"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
-                      '<span class="mono">notes.md</span> · <a href="https://github.com/owner/example/blob/main/docs/projects/alpha/'
-                      'notes.md">View on GitHub</a></div><h1>Alpha notes</h1>', shown["page"])
+                      '<span class="mono">notes.md</span></div><h1>Alpha notes</h1></div><div class="sub">' + MORE_BUTTON +
+                      page_menu("docs/projects/alpha/notes.md"), shown["page"])
         self.assertEqual([["P", "Text."]], shown["body"])
 
     def test_an_html_page_keeps_its_frame_with_the_sidebar_in_its_column(self) -> None:
@@ -1884,9 +1938,9 @@ class ProjectPageTests(unittest.TestCase):
                       '<nav class="nav" aria-label="Project">', page)
         self.assertNotIn('<header class="top">', page)
         self.assertEqual(["DIV", "IFRAME"], [tag for tag, _ in shown["body"]])
-        self.assertEqual('<div class="crumbs"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
-                         '<span class="mono">demo.html</span></div><div class="pmeta"><a class="note" href="https://github.com/owner/example/blob/'
-                         'main/docs/projects/alpha/demo.html">View on GitHub</a></div>', shown["body"][0][1])
+        self.assertEqual('<div class="crumbs"><span><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+                         f'<span class="mono">demo.html</span></span>{MORE_BUTTON}{page_menu("docs/projects/alpha/demo.html")}'
+                         '</div>', shown["body"][0][1], "the menu ends the breadcrumbs' row")
 
     # The sidebar
 
@@ -2003,6 +2057,283 @@ class ProjectPageTests(unittest.TestCase):
                     self.assertIn('<a href="/projects/alpha/beta/">&lt;script&gt;alert(1)&lt;/script&gt;</a>', side)
                 self.assertIn("<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>", shown["page"])
                 self.assertNotIn("<script>", shown["page"])
+
+    # The sections and the neighbors
+
+    FOLD = ('<div class="navsections"><button type="button" class="navfold" aria-expanded="false" '
+            'aria-controls="pagesections"><span class="chev" aria-hidden="true"></span>Sections</button>'
+            '<ol class="sections" id="pagesections">')
+
+    @staticmethod
+    def section_rows(side: str) -> list[tuple[str, str, str]]:
+        """Each listed section's link target, number, and title markup."""
+        return re.findall(r'<li><a href="#([^"]*)"><span class="nnum">([^<]*)</span><span class="ntitle">(.*?)</span></a></li>',
+                          side)
+
+    def test_a_readme_lists_its_sections_between_its_stacks_and_its_pages(self) -> None:
+        body = [["H1", "Build alpha"], ["P", "Intro."], ["H2", "1. Problem"], ["H3", "1.1 Detail"], ["H2", "2. Solution"],
+                ["H2", "Background"]]
+
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), body=body)
+
+        self.assertIn(f'</div></div>{self.FOLD}<li><a href="#1-problem">', side, "the block follows the stacks")
+        self.assertEqual([("1-problem", "1", "Problem"), ("2-solution", "2", "Solution"), ("background", "", "Background")],
+                         self.section_rows(side), "## only, each number in its own column, and none for Background")
+        self.assertLess(side.index("navsections"), side.index('<div class="navpages">'))
+
+    def test_a_section_number_is_digits_and_a_dot_or_a_dotted_number(self) -> None:
+        for heading, expected in (("10. Outcome", ("10", "Outcome")), ("2.1 Detail", ("2.1", "Detail")),
+                                  ("2.1. Detail", ("2.1", "Detail")), ("2026 roadmap", ("", "2026 roadmap")),
+                                  ("1.5x faster", ("", "1.5x faster"))):
+            with self.subTest(heading):
+                _, side = self.drawn(self.site(), body=[["H2", heading]])
+
+                self.assertEqual([expected], [row[1:] for row in self.section_rows(side)])
+
+    def test_a_section_title_keeps_its_code_and_drops_its_links(self) -> None:
+        body = [["H2", "3. <code>project init</code> writes"], ["H2", '4. See <a href="https://example.com">the guide</a>']]
+
+        _, side = self.drawn(self.site(), body=body)
+
+        self.assertEqual([("3-project-init-writes", "3", "<code>project init</code> writes"),
+                          ("4-see-the-guide", "4", "See the guide")], self.section_rows(side))
+
+    def test_a_page_without_a_top_level_section_lists_none(self) -> None:
+        _, side = self.drawn(self.site(), body=[["P", "Intro."], ["BLOCKQUOTE", "<h2>1. Quoted</h2>"], ["H3", "1.1 Sub"]])
+
+        self.assertNotIn("navsections", side)
+        self.assertNotIn("<ol", side)
+
+    def test_a_supplemental_page_lists_its_sections_under_its_entry(self) -> None:
+        body = [["H1", "Alpha notes"], ["H2", "1. First"], ["H2", "2. Second"]]
+
+        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/notes.md", body)
+
+        self.assertIn(f'<li><a href="/projects/alpha/notes/" class="active" aria-current="page">Alpha notes</a>{self.FOLD}'
+                      '<li><a href="#1-first">', side)
+        self.assertEqual(["1-first", "2-second"], [row[0] for row in self.section_rows(side)])
+        self.assertEqual(1, side.count("navsections"), "the readme's block is not drawn as well")
+        self.assertLess(side.index('<div class="navpages">'), side.index("navsections"))
+
+    def test_an_html_page_lists_no_sections(self) -> None:
+        shown, side = self.drawn(self.site(), "docs/projects/alpha/demo.html")
+
+        self.assertNotIn("navsections", shown["page"])
+        self.assertIn('<a href="/projects/alpha/demo/" class="active" aria-current="page">Alpha demo</a></li>', side)
+
+    def test_a_nested_project_lists_its_parent_and_siblings_after_its_pages(self) -> None:
+        site = self.site(more=(self.project("alpha/gamma", "Build gamma"), self.project("alpha/beta/zeta", "Build zeta")))
+
+        _, side = self.drawn(site, "docs/projects/alpha/beta/readme.md")
+
+        self.assertIn('<div class="navnear"><div class="sidetop"><a href="/projects/alpha/">Build alpha</a></div>'
+                      '<ul class="sidetree"><li><a href="/projects/alpha/gamma/">Build gamma</a></li></ul></div>'
+                      '<div class="navfoot">', side, "beta's own nested project is not its sibling")
+        pages = side[side.index('<div class="navpages">'):side.index('<div class="navnear">')]
+        self.assertIn('<a href="/projects/alpha/beta/zeta/">Build zeta</a>', pages)
+        self.assertNotIn("Build gamma", pages)
+        self.assertEqual(1, side.count(">Build beta<"), "the current project is in neither block")
+
+    def test_a_nested_projects_neighbors_follow_its_sections_when_it_has_no_pages(self) -> None:
+        site = self.site(more=(self.project("alpha/gamma", "Build gamma"),))
+
+        _, side = self.drawn(site, "docs/projects/alpha/gamma/readme.md", [["H2", "1. Problem"]])
+
+        self.assertNotIn("navpages", side)
+        self.assertIn('</ol></div><div class="navnear"><div class="sidetop"><a href="/projects/alpha/">Build alpha</a></div>'
+                      '<ul class="sidetree"><li><a href="/projects/alpha/beta/">Build beta</a></li></ul></div>', side)
+
+    def test_a_top_level_project_lists_no_neighbors(self) -> None:
+        _, side = self.drawn(self.site(more=(self.project("gamma", "Ship gamma"),)))
+
+        self.assertNotIn("navnear", side)
+
+    def test_the_sidebar_holds_its_stacks_sections_pages_neighbors_and_footer_in_that_order(self) -> None:
+        site = self.site([self.stack((self.ALPHA, [9]))], [self.stack((self.BETA, [10]))],
+                         more=(self.project("alpha/gamma", "Build gamma"),))
+
+        _, side = self.drawn(site, "docs/projects/alpha/beta/readme.md", [["H2", "1. Problem"]])
+
+        blocks = ('<div class="prblock">', '<div class="navsections">', '<div class="navpages">', '<div class="navnear">',
+                  '<div class="navfoot">')
+        self.assertEqual(sorted(side.index(b) for b in blocks), [side.index(b) for b in blocks])
+
+    def test_a_pages_last_section_is_held_to_the_end_of_the_page_so_it_can_scroll_level_with_the_sidebar(self) -> None:
+        body = [["H1", "Build alpha"], ["P", "Intro."], ["H2", "1. Problem"], ["P", "A."], ["H2", "2. Solution"],
+                ["P", "B."], ["H3", "2.1 Detail"], ["P", "C."]]
+        for path in (self.README, "docs/projects/alpha/notes.md"):
+            with self.subTest(path):
+                shown, _ = self.drawn(self.site(), path, body)
+
+                self.assertEqual([{"at": 3, "last": True, "held": ["2. Solution", "B.", "2.1 Detail", "C."]}],
+                                 shown["held"], "from the last ## heading to the end of the page")
+                self.assertEqual([tag for tag, _ in body[1:]], [tag for tag, _ in shown["body"]], "in the same order")
+
+    def test_a_page_without_a_section_holds_nothing(self) -> None:
+        shown, _ = self.drawn(self.site(), body=[["P", "Intro."], ["H3", "1.1 Detail"], ["P", "Text."]])
+
+        self.assertEqual([], shown["held"])
+
+
+@unittest.skipUnless(shutil.which("node"), "the section watch tests need node")
+class SectionWatchTests(unittest.TestCase):
+    """The watch that marks the section in view, run under node with a stub IntersectionObserver and a window 1,000
+    pixels tall."""
+
+    # The stub observer reports as a browser's does: once with every target when it starts, and then with each
+    # target whose intersection with its band changed, edges included, when `settle` runs after a scroll. Its band
+    # is the window grown or shrunk by its root margin. Each heading is 40 pixels tall, at a place on the page.
+    STUB = (
+        "const observers = [], targets = {};\n"
+        "function viewTop(element) { return element.pageTop - window.scrollY; }\n"
+        "class IntersectionObserver { constructor(callback, options) { this.callback = callback; this.options = options ?? {};"
+        " this.targets = []; this.disconnected = false; this.seen = new Map(); observers.push(this); }"
+        " observe(target) { this.targets.push(target); } disconnect() { this.disconnected = true; }"
+        " report() { const m = (this.options.rootMargin ?? '0px 0px 0px 0px').split(' ').map(function (v) {"
+        " return v.endsWith('%') ? parseFloat(v) / 100 * window.innerHeight : parseFloat(v); });"
+        " const top = -m[0], bottom = window.innerHeight + m[2], seen = this.seen;"
+        " const entries = this.targets.flatMap(function (t) {"
+        " const now = viewTop(t) <= bottom && viewTop(t) + t.height >= top;"
+        " if (seen.get(t) === now) return []; seen.set(t, now); return [{target: t, isIntersecting: now}]; });"
+        " if (!this.disconnected && entries.length > 0) this.callback(entries); } }\n"
+        "function settle() { observers.forEach(function (o) { o.report(); }); }\n"
+        "function scrollTo(y) { window.scrollY = y; settle(); }\n"
+        "const window = {innerHeight: 1000, scrollY: 0, IntersectionObserver: IntersectionObserver};\n"
+        "const document = {getElementById: function (id) { return targets[id] ?? null; }};\n"
+        "function heading(id, top) { targets[id] = {id: id, pageTop: top + window.scrollY, height: 40,"
+        " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }\n"
+        "function list(ids) { const links = ids.map(function (id) { return {attrs: {href: '#' + id},"
+        " getAttribute: function (n) { return this.attrs[n] ?? null; }, setAttribute: function (n, v) { this.attrs[n] = v; },"
+        " removeAttribute: function (n) { delete this.attrs[n]; }}; });"
+        " return {links: links, querySelectorAll: function () { return links; }}; }\n"
+        "function marks(l) { return l.links.map(function (a) { return a.attrs['aria-current'] ?? null; }); }\n"
+    )
+
+    def run_watch(self, program: str) -> object:
+        return json.loads(node(self.STUB + shared_js() + "\n" + program))
+
+    def marks(self, tops: list[int]) -> list[str | None]:
+        """The marks once the watch on sections whose tops are `tops` in the window hears from its targets."""
+        ids = [f"s{i}" for i in range(len(tops))]
+        return self.run_watch(
+            "".join(f"heading({json.dumps(i)}, {top});\n" for i, top in zip(ids, tops)) +
+            f"const l = list({json.dumps(ids)});\nwatchSections(l);\nsettle();\n"
+            "process.stdout.write(JSON.stringify(marks(l)));")
+
+    def test_the_last_section_above_the_line_30_percent_down_the_window_is_marked(self) -> None:
+        self.assertEqual([None, "location", None], self.marks([-500, 200, 600]))
+        self.assertEqual([None, None, "location"], self.marks([-900, -500, 300]))
+
+    def test_no_section_is_marked_above_the_first(self) -> None:
+        self.assertEqual([None, None], self.marks([400, 900]))
+
+    def test_a_jump_that_carries_a_heading_past_the_line_and_out_of_the_window_moves_the_mark(self) -> None:
+        # As a link to a ### heading, the Home key, or a dragged scrollbar
+        # does: from the top, where no heading has reached the line, into the
+        # middle of the third section, back into the second, to where a jump
+        # lands the last section, 16 pixels down, and back to the top.
+        seen = self.run_watch(
+            "heading('a', 400); heading('b', 3400); heading('c', 6400);\n"
+            "const l = list(['a', 'b', 'c']);\nwatchSections(l);\nsettle();\nconst seen = [marks(l)];\n"
+            "scrollTo(7400); seen.push(marks(l));\nscrollTo(4000); seen.push(marks(l));\n"
+            "scrollTo(6384); seen.push(marks(l));\nscrollTo(0); seen.push(marks(l));\n"
+            "process.stdout.write(JSON.stringify(seen));")
+
+        self.assertEqual([[None, None, None], [None, None, "location"], [None, "location", None],
+                          [None, None, "location"], [None, None, None]], seen)
+
+    def test_the_watch_reports_targets_whose_tops_cross_the_line(self) -> None:
+        seen = self.run_watch(
+            "heading('a', 0); heading('b', 0);\nconst l = list(['a', 'missing', 'b']);\nwatchSections(l);\n"
+            "process.stdout.write(JSON.stringify({options: observers.map(function (o) { return o.options; }),"
+            " targets: observers.map(function (o) { return o.targets.map(function (t) { return t.id; }); })}));")
+
+        self.assertEqual([{"rootMargin": "10000000px 0px -70% 0px"}], seen["options"],
+                         "one observer, whose band runs from far above the page down to the line")
+        self.assertEqual([["a", "b"]], seen["targets"], "a link to no section is left out")
+
+    def test_a_new_watch_or_none_stops_the_one_before(self) -> None:
+        seen = self.run_watch(
+            "heading('a', 0);\nwatchSections(list(['a']));\nwatchSections(list(['a']));\n"
+            "const second = observers.map(function (o) { return o.disconnected; });\nwatchSections(null);\n"
+            "process.stdout.write(JSON.stringify({second: second, none: observers.map(function (o) { return o.disconnected; }),"
+            " count: observers.length}));")
+
+        self.assertEqual([True, False], seen["second"])
+        self.assertEqual([True, True], seen["none"])
+        self.assertEqual(2, seen["count"], "watching nothing makes no observer")
+
+    def test_a_summary_lists_its_sections_with_the_shared_list_and_its_check_dots(self) -> None:
+        data = dict(MINIMAL_SUMMARY, groups=[{"id": "g-one", "title": "First <code>x</code>", "files": []},
+                                             {"id": "g-two", "title": "Second", "files": []}])
+
+        html = rendered_summary(data)
+
+        self.assertIn('<a href="#files">Files</a></div><ol class="sections">'
+                      '<li><a href="#g-one"><span class="nnum">1</span><span class="ntitle">First <code>x</code></span>'
+                      '<span class="ncheck" data-gid="g-one"></span></a></li>'
+                      '<li><a href="#g-two"><span class="nnum">2</span><span class="ntitle">Second</span>'
+                      '<span class="ncheck" data-gid="g-two"></span></a></li></ol>', html)
+
+
+class SectionStyleTests(unittest.TestCase):
+    """The rules that fold a project page's sections on a narrow screen and mark the section in view."""
+
+    @staticmethod
+    def blocks(sheet: str) -> tuple[str, dict[str, str]]:
+        """`sheet`'s rules outside every media query, and the body of each media query by its condition."""
+        css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / sheet).read_text(), flags=re.S)
+        outside, queries, at = [], {}, 0
+        for found in re.finditer(r"@media ([^{]+)\{", css):
+            if found.start() < at:
+                continue
+            depth, end = 1, found.end()
+            while depth:
+                depth += {"{": 1, "}": -1}.get(css[end], 0)
+                end += 1
+            outside.append(css[at:found.start()])
+            queries[found.group(1).strip()] = queries.get(found.group(1).strip(), "") + css[found.end():end - 1]
+            at = end
+        outside.append(css[at:])
+        return "".join(outside), queries
+
+    def test_a_wide_screen_hides_the_toggle_and_a_narrow_one_folds_the_list_behind_it(self) -> None:
+        outside, queries = self.blocks("site.css")
+
+        self.assertRegex(outside, r"(^|\n)\.nav \.navfold \{ display: none; \}")
+        self.assertNotRegex(outside, r"aria-expanded=\"false\"\] \+ ol")
+        narrow = queries["(max-width: 980px)"]
+        self.assertRegex(narrow, r"\.nav \.navfold \{\s*display: grid;")
+        self.assertIn('.nav .navfold[aria-expanded="false"] + ol { display: none; }', narrow)
+
+    def test_a_jump_lands_every_target_level_with_the_sticky_sidebar(self) -> None:
+        outside, _ = self.blocks("summary.css")
+
+        self.assertRegex(outside, r"(^|\n)\.layout > \.side \{[^}]*top: calc\(env\(safe-area-inset-top, 0px\) \+ 16px\);",
+                         "the sidebar sticks 16px down")
+        margins = re.findall(r"(?:^|\n)([^{}\n]+)\{([^}]*scroll-margin-top[^}]*)\}", outside)
+        shared = [selectors for selectors, body in margins if "calc(var(--stick-top) + 16px)" in body]
+        self.assertEqual([[".stats", ".group", ".sitemain.withnav .sidebody [id]"]],
+                         [[s.strip() for s in selectors.split(",")] for selectors in shared],
+                         "a summary's line counts and sections and a plan's targets share one landing rule")
+        self.assertEqual([], [selectors for selectors, _ in margins if re.search(r"\.(group|stats)\b", selectors)
+                              and selectors not in shared], "no other rule moves where they land")
+        _, queries = self.blocks("site.css")
+        self.assertIn(".sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); }", queries["(max-width: 980px)"],
+                      "a project page has no compact bar to land below on a narrow screen")
+
+    def test_a_pages_last_section_is_tall_enough_to_scroll_level_with_the_sidebar(self) -> None:
+        outside, _ = self.blocks("summary.css")
+
+        self.assertIn(".group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }",
+                      outside, "a summary's last section and a plan's share one rule, sized to where a jump lands them")
+        self.assertEqual(1, len(re.findall(r"min-height: calc\(100vh", outside)))
+
+    def test_the_section_in_view_is_marked_in_every_list_of_sections(self) -> None:
+        outside, _ = self.blocks("summary.css")
+
+        self.assertIn('.nav ol a[aria-current="location"] { position: relative; background: var(--surface-2); }', outside)
+        self.assertRegex(outside, r'\.nav ol a\[aria-current="location"\]::before \{[^}]*background: var\(--accent\);')
 
 
 @unittest.skipUnless(shutil.which("node"), "the header test needs node")
