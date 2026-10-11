@@ -231,9 +231,8 @@ user's checkpoint.
 A pull request is clean only when:
 
 - it merges into its base without a conflict,
-- `project review status <number> --reviewer <login>` reports `clean` for
-  its current head, for each login that posted a Projector review on the
-  pull request,
+- `project review status <number>` reports `clean` for its current head,
+  which says the newest Projector verdict on it is clean,
 - no unresolved threads remain,
 - in a stack, it and every layer below it are in sync on GitHub, so the
   stack shows none of them needing a rebase: GitHub's comparison, which
@@ -244,19 +243,18 @@ A pull request is clean only when:
   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
   request is no longer a draft, which is how that loop signs off.
 
-`project review status <number> --reviewer <login>` applies a review loop's
-sign-off rule to the current head, over the verdicts and start comments that
-`<login>` posted: `clean` when every model reviewing it gave a clean verdict
-and no Projector finding thread is open. A loop counts only its own account's
-verdicts, so run it once for each account whose reviews in the listing you
-fetched carry a `projector-review` marker: your own when a self-review loop
-reviews the pull request, and a teammate's when their loop reviews it. With
-no such review yet, run it once without `--reviewer`; it reports
-`unreviewed`, which is a head waiting on its first review. When nothing is
-outstanding and it reports anything else, report what it names, such as
-`gpt-5.5` still reviewing, or a model whose verdict on the head requests
-changes, and treat the head as waiting on that review, not on a code change.
-A Projector review loop that runs on Codex is one of those models.
+`project review status <number>` reports the newest Projector verdict on the
+current head, whichever model gave it, and the model and review it came from.
+It reads the verdicts of every account the repository lets in, as the site
+does, so one run covers your own review loop and a teammate's. The newest
+verdict wins: a clean verdict after another model's change request signs the
+head off, because that model's findings were settled before the clean
+verdict could be given, and a change request after a clean verdict takes the
+sign-off back. With no verdict on the head it reports `unreviewed`, a head
+waiting on its first review. When nothing is outstanding and it reports
+anything but `clean`, report the verdict and the model it names, and treat
+the head as waiting on a re-review, not on a code change. A Projector review
+loop that runs on Codex is one of those models.
 
 An external reviewer is not one of those conditions. A pending or absent
 re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:

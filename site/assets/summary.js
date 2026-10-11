@@ -16,17 +16,12 @@ function creditHtml() {
 function localTime(when) {
     return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
-const VERDICT_WORDS = { 'clean': 'Clean', 'changes-requested': 'Changes requested' };
-// A pull request's status: Merged or Closed once it is, and until then its
-// head's verdict, Changes requested when any model's newest Projector review
-// of it requests changes and Clean otherwise, linked to the review that
-// decides it, or Unreviewed when no Projector review names the head. Nothing
-// when the build could not ask GitHub, so a status it does not know never
-// reads as unreviewed. A verdict that several models gave is instead a button
-// that shows their list, the element whose id `several` names: it ends in an
-// asterisk and says to a screen reader how many models gave it, and a tap on
-// it shows the list rather than opening one model's review.
-function statusHtml(state, review, several) {
+// A pull request's status: Merged or Closed once it is, and until then the
+// verdict of the newest Projector review of its head, linked to that review,
+// or Unreviewed when no Projector review names the head. Nothing when the
+// build could not ask GitHub, so a status it does not know never reads as
+// unreviewed.
+function statusHtml(state, review) {
     if (state === 'merged')
         return '<span class="rstatus merged">Merged</span>';
     if (state === 'closed')
@@ -35,12 +30,7 @@ function statusHtml(state, review, several) {
         return '';
     if (review.status === 'unreviewed')
         return '<span class="rstatus unreviewed">Unreviewed</span>';
-    const word = VERDICT_WORDS[review.status];
-    if (several !== undefined) {
-        const list = esc(several.list);
-        return `<button class="rstatus ${review.status}" type="button" aria-expanded="false" aria-controls="${list}" aria-describedby="${list}">` +
-            `${word}<span aria-hidden="true">*</span><span class="visually-hidden">, reviewed by ${String(several.count)} models</span></button>`;
-    }
+    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
     return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
 }
 // The site bar's icons, a summary's versions toggle, and a plan's history link
@@ -531,34 +521,19 @@ function watchSections(list) {
             const listed = data.stack ?? [];
             return listed.length > 1 ? listed : [{ number: pr.number, title: pr.title, url: '', current: true }];
         }
-        function incrementalLink(from) {
-            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
-            return from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
-        }
         // The header, as the page's statement of how well the head was checked,
-        // shows the one status the Reviews index shows, and also links the full
-        // review a clean incremental review builds on. When several models reviewed
-        // the head, the status is a button ending in an asterisk, and hovering over
-        // it, focusing it, or tapping it shows each model's verdict, drawn as the
-        // status is and linked to that model's review. The list stays in the page,
-        // so a keyboard tabs from the status into its links; wireSummary keeps the
-        // button's aria-expanded current and lets Escape hide the list.
+        // also links the full review a clean incremental review builds on.
         function reviewStatus() {
-            const review = data.review;
-            const several = pr.state !== 'merged' && pr.state !== 'closed' && review !== undefined && review.status !== 'unreviewed' &&
-                review.models.length > 1 ? review.models : null;
-            const status = statusHtml(pr.state, review, several !== null ? { list: 'review-models', count: several.length } : undefined);
+            const status = statusHtml(pr.state, data.review);
             if (status === '')
                 return '';
-            if (several !== null) {
-                const rows = several.map(function (m) {
-                    const from = m.status === 'clean' && m.incrementalFrom !== undefined ? ` · ${incrementalLink(m.incrementalFrom)}` : '';
-                    return `<span class="rmodel">${esc(m.model)} · <span class="eyebrow">${statusHtml(undefined, m)}</span>${from}</span>`;
-                }).join('');
-                return ` · <span class="rmodels">${status}<span class="rmodellist" id="review-models">${rows}</span></span>`;
-            }
-            const from = review?.status === 'clean' && pr.state !== 'merged' && pr.state !== 'closed' ? review.incrementalFrom : undefined;
-            return from === undefined ? ` · ${status}` : ` · ${status} · ${incrementalLink(from)}`;
+            const review = data.review;
+            const from = pr.state !== 'merged' && pr.state !== 'closed' && review?.status === 'clean' ? review.incrementalFrom : undefined;
+            if (from === undefined)
+                return ` · ${status}`;
+            const text = `incremental from <code>${esc(from.head.slice(0, 7))}</code>`;
+            const link = from.url !== null ? ext(from.url, text, 'rstatus incremental') : `<span class="rstatus incremental">${text}</span>`;
+            return ` · ${status} · ${link}`;
         }
         function renderPage() {
             const sections = data.groups.map(function (g, i) { return { id: g.id, num: String(i + 1), title: g.title }; });
@@ -796,46 +771,6 @@ function watchSections(list) {
                 }
                 catch {
                     fallback();
-                }
-            });
-        });
-        // The header's status of a head several models reviewed is a button. A
-        // hover or focus shows the list of models, and a click or a tap, which
-        // need not focus a button, keeps it open until focus or a click goes
-        // elsewhere. Escape hides it until the pointer leaves or focus moves out.
-        // A hidden list is visibility: hidden, so Tab skips its links, and Escape
-        // on one of them first moves focus back to the button, which stays in sight.
-        document.querySelectorAll('.rmodels').forEach(function (box) {
-            const list = box.querySelector('.rmodellist'), button = box.querySelector(':scope > button.rstatus');
-            if (list === null || button === null)
-                return;
-            function sync() { button?.setAttribute('aria-expanded', String(list !== null && getComputedStyle(list).visibility === 'visible')); }
-            button.addEventListener('click', function () {
-                box.classList.toggle('open');
-                box.classList.remove('dismissed');
-                sync();
-            });
-            box.addEventListener('keydown', function (ev) {
-                if (ev.key !== 'Escape')
-                    return;
-                if (list.contains(document.activeElement))
-                    button.focus();
-                box.classList.remove('open');
-                box.classList.add('dismissed');
-                sync();
-            });
-            box.addEventListener('mouseenter', sync);
-            box.addEventListener('mouseleave', function () { box.classList.remove('dismissed'); sync(); });
-            box.addEventListener('focusin', sync);
-            box.addEventListener('focusout', function (ev) {
-                if (!(ev.relatedTarget instanceof Node && box.contains(ev.relatedTarget)))
-                    box.classList.remove('dismissed', 'open');
-                setTimeout(sync, 0);
-            });
-            document.addEventListener('click', function (ev) {
-                if (ev.target instanceof Node && !box.contains(ev.target)) {
-                    box.classList.remove('open');
-                    sync();
                 }
             });
         });

@@ -90,7 +90,8 @@ The watcher is level-triggered:
   `COMMENT` review posts.
 - `DRAFT` reports a pull request a review loop has not signed off. It clears
   when the pull request is marked ready, which a review loop's `publish`
-  does once every model reviewing the current head has signed it off.
+  does when the newest verdict on the current head is clean, whichever model
+  gave it.
 - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
 
 A `DRAFT` line alone is not work. It says the head has not been signed off,
