@@ -2117,18 +2117,34 @@ class SectionWatchTests(unittest.TestCase):
     """The watch that marks the section in view, run under node with a stub IntersectionObserver and a window 1,000
     pixels tall."""
 
+    # The stub observer reports as a browser's does: once with every target when it starts, and then with each
+    # target whose intersection with its band changed, edges included, when `settle` runs after a scroll. Its band
+    # is the window grown or shrunk by its root margin. Each heading is 40 pixels tall, at a place on the page, and
+    # the end marker is a line at `container.endTop`.
     STUB = (
         "const observers = [], ends = [], targets = {};\n"
+        "function viewTop(element) { return element.pageTop - window.scrollY; }\n"
         "class IntersectionObserver { constructor(callback, options) { this.callback = callback; this.options = options ?? {};"
-        " this.targets = []; this.disconnected = false; observers.push(this); }"
-        " observe(target) { this.targets.push(target); } disconnect() { this.disconnected = true; } }\n"
+        " this.targets = []; this.disconnected = false; this.seen = new Map(); observers.push(this); }"
+        " observe(target) { this.targets.push(target); } disconnect() { this.disconnected = true; }"
+        " report() { const m = (this.options.rootMargin ?? '0px 0px 0px 0px').split(' ').map(function (v) {"
+        " return v.endsWith('%') ? parseFloat(v) / 100 * window.innerHeight : parseFloat(v); });"
+        " const top = -m[0], bottom = window.innerHeight + m[2], seen = this.seen;"
+        " const entries = this.targets.flatMap(function (t) {"
+        " const now = viewTop(t) <= bottom && viewTop(t) + t.height >= top;"
+        " if (seen.get(t) === now) return []; seen.set(t, now); return [{target: t, isIntersecting: now}]; });"
+        " if (!this.disconnected && entries.length > 0) this.callback(entries); } }\n"
+        "function settle() { observers.forEach(function (o) { o.report(); }); }\n"
+        "function scrollTo(y) { window.scrollY = y; settle(); }\n"
         "const window = {innerHeight: 1000, scrollY: 0, IntersectionObserver: IntersectionObserver};\n"
-        "const container = {after: function (element) { element.after = this; ends.push(element); }};\n"
+        "const container = {endTop: 100000, after: function (element) { element.after = this; element.pageTop = this.endTop;"
+        " ends.push(element); }};\n"
         "const document = {getElementById: function (id) { return targets[id] ?? null; },"
-        " createElement: function () { return {attrs: {}, removed: false,"
-        " setAttribute: function (n, v) { this.attrs[n] = v; }, remove: function () { this.removed = true; }}; }};\n"
-        "function heading(id, top) { targets[id] = {id: id, top: top, parentElement: container,"
-        " getBoundingClientRect: function () { return {top: this.top}; }}; }\n"
+        " createElement: function () { return {attrs: {}, removed: false, pageTop: 0, height: 0,"
+        " setAttribute: function (n, v) { this.attrs[n] = v; }, remove: function () { this.removed = true; },"
+        " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }};\n"
+        "function heading(id, top) { targets[id] = {id: id, pageTop: top + window.scrollY, height: 40, parentElement: container,"
+        " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }\n"
         "function list(ids) { const links = ids.map(function (id) { return {attrs: {href: '#' + id},"
         " getAttribute: function (n) { return this.attrs[n] ?? null; }, setAttribute: function (n, v) { this.attrs[n] = v; },"
         " removeAttribute: function (n) { delete this.attrs[n]; }}; });"
@@ -2140,12 +2156,13 @@ class SectionWatchTests(unittest.TestCase):
         return json.loads(node(self.STUB + shared_js() + "\n" + program))
 
     def marks(self, tops: list[int], end: bool | None = None, scrolled: int = 0) -> list[str | None]:
-        """The marks after the watch on sections whose tops are `tops` hears from its targets, and then, when `end` is
-        given, hears whether the marker after the sections is in view, on a page scrolled by `scrolled`."""
+        """The marks after the watch on sections whose tops are `tops` in the window hears from its targets, and then,
+        when `end` is given, hears whether the marker after the sections is in view, on a page scrolled by `scrolled`."""
         ids = [f"s{i}" for i in range(len(tops))]
         return self.run_watch(
+            f"window.scrollY = {scrolled};\n" +
             "".join(f"heading({json.dumps(i)}, {top});\n" for i, top in zip(ids, tops)) +
-            f"window.scrollY = {scrolled};\nconst l = list({json.dumps(ids)});\nwatchSections(l);\n"
+            f"const l = list({json.dumps(ids)});\nwatchSections(l);\n"
             "observers[0].callback([]);\n" +
             (f"observers[1].callback([{{isIntersecting: {json.dumps(end)}}}]);\n" if end is not None else "") +
             "process.stdout.write(JSON.stringify(marks(l)));")
@@ -2164,6 +2181,20 @@ class SectionWatchTests(unittest.TestCase):
         self.assertEqual([None, "location", None], self.marks([-500, 200, 600], end=True, scrolled=0))
         self.assertEqual([None, "location", None], self.marks([-500, 200, 600], end=False, scrolled=100))
 
+    def test_a_jump_that_carries_a_heading_past_the_line_and_out_of_the_window_moves_the_mark(self) -> None:
+        # As a link to a ### heading, the Home key, or a dragged scrollbar
+        # does: from the top, where no heading has reached the line, into the
+        # middle of the third section, then to the end, then back to the top.
+        seen = self.run_watch(
+            "container.endTop = 9500;\nheading('a', 400); heading('b', 3400); heading('c', 6400);\n"
+            "const l = list(['a', 'b', 'c']);\nwatchSections(l);\nsettle();\nconst seen = [marks(l)];\n"
+            "scrollTo(7400); seen.push(marks(l));\nscrollTo(4000); seen.push(marks(l));\n"
+            "scrollTo(8600); seen.push(marks(l));\nscrollTo(0); seen.push(marks(l));\n"
+            "process.stdout.write(JSON.stringify(seen));")
+
+        self.assertEqual([[None, None, None], [None, None, "location"], [None, "location", None],
+                          [None, None, "location"], [None, None, None]], seen)
+
     def test_the_watch_reports_targets_crossing_the_line_and_the_end_marker_against_the_window(self) -> None:
         seen = self.run_watch(
             "heading('a', 0); heading('b', 0);\nconst l = list(['a', 'missing', 'b']);\nwatchSections(l);\n"
@@ -2171,7 +2202,8 @@ class SectionWatchTests(unittest.TestCase):
             " targets: observers.map(function (o) { return o.targets.map(function (t) { return t.id ?? t.attrs; }); }),"
             " after: ends[0].after === container}));")
 
-        self.assertEqual([{"rootMargin": "0px 0px -70% 0px"}, {}], seen["options"])
+        self.assertEqual([{"rootMargin": "10000000px 0px -70% 0px"}, {}], seen["options"],
+                         "the targets' band runs from far above the page down to the line")
         self.assertEqual([["a", "b"], [{"aria-hidden": "true"}]], seen["targets"], "a link to no section is left out")
         self.assertTrue(seen["after"], "the end marker follows the sections' container")
 

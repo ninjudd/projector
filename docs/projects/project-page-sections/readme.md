@@ -312,10 +312,14 @@ page, and `frame` stops the watch before it draws any view.
   content is in view. Then, on a page scrolled from its top, the line drops
   to the window's bottom, and the last section whose top shows is marked.
 - **The observers.** One `IntersectionObserver` watches the targets with a
-  root margin of `0px 0px -70% 0px`, so it reports each target that crosses
-  the line or the window's top. A second watches the end marker against the
-  whole window. Each report reads the targets' positions again and moves
-  the mark. No scroll listener runs.
+  root margin of `10000000px 0px -70% 0px`: a band from far above any page
+  down to the line. A target is in the band exactly while its top is above
+  the line, so the observer reports every target whose top crosses the
+  line. That holds for a jump as well, such as a link to a `###` heading,
+  the Home key, or a dragged scrollbar, which can carry a heading from below
+  the line to above the window in one frame. A second observer watches the
+  end marker against the whole window. Each report reads the targets'
+  positions again and moves the mark. No scroll listener runs.
 - **The mark.** The marked link carries `aria-current="location"`, and
   `summary.css` draws it as a row's hover band with an accent bar at its
   start. A browser without `IntersectionObserver` marks nothing.
@@ -394,7 +398,8 @@ Watch tests run `watchSections` under node with a stub
 | Report the end marker in view on a page scrolled from its top | The last section whose top shows is marked |
 | Report the end marker in view on a page at its top | The 30% line still decides |
 | Watch a list, then another, then `null` | Each new watch disconnects the earlier observers and removes their end marker |
-| Read the observers' options | The targets' root margin is `0px 0px -70% 0px` |
+| Jump from the top, where no heading has reached the line, into the middle of the third section, back into the second, to the end, and to the top | The marks read none, the third, the second, the third, and none |
+| Read the observers' options | The targets' root margin is `10000000px 0px -70% 0px` |
 
 Style tests read the stylesheets:
 
@@ -414,6 +419,9 @@ dark themes:
 - **Scrolling a plan.** On a long plan, the mark moves from section to
   section as each heading passes the top third of the window, and a click
   on the last section marks it.
+- **Jumping.** A jump with `scrollTo` into the middle of a long section,
+  with no heading in the window, marks that section, and a jump back to the
+  top marks the first.
 - **Scrolling a summary.** On a summary page, the mark follows the groups,
   and the check dots still mark the reviewed ones.
 - **At 375 pixels.** The list starts folded, the toggle opens and closes it,
@@ -428,8 +436,8 @@ The page reads the rendered body's top-level elements once each time it
 draws a page, tens of elements on a long plan. The watch adds two
 observers and no scroll listener. Each report reads the position of every
 target, 4 to 14 on a plan and one per group on a summary, only when a
-target crosses the line or the window's top, or when the end of the content
-comes into view or leaves it. The build does not change, and `site.json`
+target's top crosses the line, or when the end of the content comes into
+view or leaves it. The build does not change, and `site.json`
 does not grow.
 
 ## 7. Outcome
@@ -450,6 +458,9 @@ summaries, and on a scratch checkout that holds `alpha`, `alpha/beta`,
   **1 Problem** at the top and moves on as each heading passes the line. At
   the page's end it reaches **8 Implementation status**, whose heading sits
   65% of the way down the window, and a click on that row marks it too.
+- **Jumping.** A `scrollTo` from the top to 1,500 pixels below
+  **2 Solution**'s heading, with no heading in the window, marks
+  **2 Solution**, and a `scrollTo` back to the top marks **1 Problem**.
 - **Scrolling a summary.** On #242's summary page, the mark follows the
   groups, and the check dots still show.
 - **At 375 pixels.** In a frame 375 pixels wide, the list starts folded

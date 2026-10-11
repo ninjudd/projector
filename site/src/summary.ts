@@ -142,7 +142,10 @@ function watchSections(list: Element | null): void {
       else s.link.removeAttribute('aria-current');
     });
   }
-  const passing = new IntersectionObserver(mark, { rootMargin: '0px 0px -70% 0px' });
+  // The band runs from far above any page down to the line, so a target is in
+  // it exactly while its top is above the line, and a jump that carries a top
+  // across the line reports it, however far past the window the jump goes.
+  const passing = new IntersectionObserver(mark, { rootMargin: '10000000px 0px -70% 0px' });
   sections.forEach(function (s) { passing.observe(s.target); });
   const ending = new IntersectionObserver(function (entries) {
     atEnd = entries[entries.length - 1]?.isIntersecting ?? atEnd;
