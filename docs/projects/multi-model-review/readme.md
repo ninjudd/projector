@@ -131,7 +131,8 @@ One model's review of one head runs like this:
    the collision check for this model only, and submits the review. Each
    finding marker carries `model=`.
 5. Publish re-reads the review. On a self-review it sets the draft state by
-   the newest Projector verdict on the head, as § 9 describes. It records the
+   the newest Projector verdict on the head and its open finding threads, as
+   § 9 describes. It records the
    review and its model in the loop's record, deletes the start comment, and
    releases this model's lock, as today.
 
@@ -190,7 +191,7 @@ before this plan, as § 9 describes.
 
 | Reader | After this change |
 | --- | --- |
-| Draft state | `publish` sets it by the newest verdict on the head, as § 9 describes. |
+| Draft state | `publish` sets it by the newest verdict on the head and its open finding threads, as § 9 describes. |
 | `fix-pr`'s outstanding work | No change. `fix-pr` fixes or declines every unresolved finding, from every model. |
 | `fix-pr`'s clean test | "A clean verdict names its current head" becomes "`project review status <number>` reports `clean`", which reads the newest verdict on the head from every account the repository lets in. A Projector loop that runs on Codex is one of those models. The external reviewers `fix-pr` names, such as Codex's own GitHub reviewer, post from their own accounts and stay outside it. |
 | `start-fix-loop`'s watcher | No change. It reports every unresolved thread as `FINDING`, whichever model opened it, and announces each review by its id, so each model's review is one `REVIEW` line. `DRAFT` follows the draft state, and `VERDICT` follows GitHub's `reviewDecision`. |
@@ -339,9 +340,12 @@ numbers, so the ones cited elsewhere stay put.
 | 28 | Build a site whose head has verdicts from two models. | `review_statuses` gives the newest review's status and URL, with no `models`. The header shows that one status as a link, with no asterisk, button, or card, and the Reviews row shows the same. An incremental review links its own model's full review. |
 | 29 | Publish `clean` on another author's pull request with `review.allow_approve = true` while another model's change request is on H and a third model is reviewing it. | It posts an `APPROVE`, and the draft state does not change. |
 | 30 | Publish with `review.peer_wait` set, another model's verdict on an earlier head, and its live start comment on H. | Publish reads no `review.peer_wait`, waits for nothing, and marks the pull request ready on its clean verdict. |
+| 31 | Publish `clean` as `claude-opus-5-5` while `gpt-5.5` publishes `changes-requested` with a finding after `claude-opus-5-5`'s census and a second before its submit, from a draft and from a ready pull request. | The clean verdict is the newest, and the pull request ends a draft both times, with `publish` reporting one open finding thread. |
 
-Criteria 1 to 7 and 24 to 30 pass in `tests/test_review.py` and
+Criteria 1 to 7 and 24 to 31 pass in `tests/test_review.py` and
 `tests/test_site.py`, and criteria 24 and 27 to 30 fail before § 9's change.
+Criterion 31 held before it too, and pins that the newest verdict does not
+lose it.
 Criterion 22 holds because `watch-threads.sh` reports every unresolved
 thread without reading its marker, which `tests/test_watchers.py` pins.
 Criterion 15 needs two hosts and has not been run, so the project stays in
@@ -353,8 +357,8 @@ progress until it has.
   comments, to find live start comments, and the account's reviews, to tell
   a live start comment from one its model's verdict has ended.
 - **Each publish on a self-review** adds one paginated listing of the pull
-  request's Projector reviews after it submits, to find the newest verdict.
-  Nothing waits.
+  request's Projector reviews after it submits, to find the newest verdict,
+  and reads the finding threads again. Nothing waits.
 - **`project review status`** makes three requests: the pull request, its
   reviews, and its threads. `fix-pr` runs it once for each report.
 - **The watchers** make no new requests, and neither script changes.
@@ -447,9 +451,14 @@ The rule:
   start comment is live, and no `review.peer_wait` key. `publish` checks the
   head before it submits, as it did before this plan, and refuses when the
   head has moved since setup.
-- **The sign-off reads no threads.** A clean verdict already needs every
-  Projector finding thread settled, and a branch rule that requires
-  conversation resolution checks every thread when the pull request merges.
+- **An open finding keeps a draft.** A clean verdict needs every Projector
+  finding thread settled when its review counts them, but another model can
+  post a finding after that count and before the clean verdict lands, which
+  leaves the newer verdict clean over an open finding. So in the same step
+  that reads the newest verdict, `publish` counts the open finding threads
+  again, from every account, and keeps the pull request a draft while any is
+  open, whatever the newest verdict. A branch rule that requires conversation
+  resolution checks every thread again when the pull request merges.
 - **A cross-author review follows its own verdict.** On another author's pull
   request, `publish` posts `REQUEST_CHANGES` for changes requested, and for a
   clean verdict a `COMMENT`, or an `APPROVE` where `review.allow_approve` is
@@ -506,10 +515,6 @@ These alternatives were rejected:
   stopped models on GitHub. The newest verdict needs none of that.
 - **A configured list of required models**, the question § 7 deferred. A
   listed model that stops holds every pull request, as above.
-- **Checking threads in the sign-off.** A clean verdict cannot be given with
-  a finding open, and a branch rule that requires conversation resolution
-  enforces it at merge, so a third check would only disagree with them when
-  someone reopens a thread by hand, a case that branch rule already catches.
 
 The trade-off is that a second opinion counts only while it is the newest
 verdict. When Codex requests changes and a later Claude review finds the

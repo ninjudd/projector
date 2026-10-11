@@ -164,10 +164,13 @@ another model's change request marks the pull request ready, and a change
 request after a clean verdict drafts it again. That is safe because a clean
 verdict needs every Projector finding thread settled first, whichever model
 opened it, and it lets you stop one model's loop partway through a pull
-request without the pull request waiting on it. Nothing waits for another
-model to finish, and nothing counts a model still reviewing. GitHub's branch
-rules, such as requiring every conversation to be resolved before a merge,
-hold the merge where they apply.
+request without the pull request waiting on it. In the same step `publish`
+reads the finding threads again, and while any is open it keeps the pull
+request a draft whatever the newest verdict says, because another model can
+post a finding after this review counted none and before its verdict landed.
+Nothing waits for another model to finish, and nothing counts a model still
+reviewing. GitHub's branch rules, such as requiring every conversation to be
+resolved before a merge, hold the merge where they apply.
 
 `project review status <number>` prints the newest verdict on the current
 head, the model and review it came from, each model's newest verdict there
@@ -759,7 +762,9 @@ what remains. It posts a real `APPROVE` only where `review.allow_approve` is
 On a self-review, the draft transition follows the newest verdict on the
 head rather than this review's alone. When another model posts a verdict on
 the head between this review's submit and its draft transition, the newer
-verdict decides, and `publish` says so.
+verdict decides, and `publish` says so. A finding thread open at that moment
+keeps the pull request a draft even under a clean newest verdict, and
+`publish` says that too.
 
 Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review

@@ -1145,15 +1145,19 @@ state by the newest Projector verdict on the head, whichever model gave it:
 it returns the pull request to draft when that verdict requests changes and
 marks it ready when it is clean. The newest verdict is usually the one it just
 posted, and is another model's only when that model posted on the head in
-between. It counts the reviewer's verdicts, the one it just posted included,
+between. In the same step it counts the open Projector finding threads again,
+and keeps the pull request a draft while any is open, whatever the newest
+verdict, so a finding another model posts after this review's census still
+holds it. It counts the reviewer's verdicts, the one it just posted included,
 and those of any account that owns the repository, belongs to its
 organization, or collaborates on it. On another author's pull request it
 posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean verdict
 where `review.allow_approve` is `true`, and leaves draft state alone. It then
 adds the review id to the loop's record, deletes the start comment, and
-releases the lock. It prints the draft state it set, and the newer verdict
-that decided it when that is another model's; `--json` gives them as `draft`
-and `newest`. A run that fails after submitting exits non-zero, and running it
+releases the lock. It prints the draft state it set, the newer verdict that
+decided it when that is another model's, and the open finding threads that
+kept a clean head a draft; `--json` gives them as `draft`, `newest`, and
+`open_threads`, a count. A run that fails after submitting exits non-zero, and running it
 again finishes that review rather than posting another.
 
 `status` prints the newest Projector verdict on the pull request's current

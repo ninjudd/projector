@@ -950,6 +950,10 @@ def run_review(arguments: argparse.Namespace) -> int:
                 if newest and newest["review"] != result["review_id"]:
                     print(f"the newest verdict on the head is {newest['model']}'s {newest['verdict']}, "
                           f"review {newest['review']}")
+                if newest and newest["verdict"] == "clean" and result["open_threads"]:
+                    count = result["open_threads"]
+                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so it stays a "
+                          "draft")
                 if result["draft"] is not None:
                     print("marked draft" if result["draft"] else "marked ready")
             return 0

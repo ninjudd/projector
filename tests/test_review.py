@@ -72,6 +72,8 @@ class FakeGitHub:
         self.fail: str | None = None
         # Runs once, right after the next review is submitted, as another session acting at that moment.
         self.after_post = None
+        # Runs once, as the next review is submitted and before GitHub records it.
+        self.before_post = None
         # Reviews the listing leaves out, as one GitHub has not indexed yet.
         self.unlisted: set[int] = set()
 
@@ -90,6 +92,9 @@ class FakeGitHub:
             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
             payload = json.loads(Path(args[5]).read_text())
+            if self.before_post:
+                hook, self.before_post = self.before_post, None
+                hook()
             review_id = 900 + len(self.reviews) + 1
             self.reviews.append({"id": review_id, "user": {"login": token.removeprefix("token-")},
                                  "body": payload["body"], "event": payload["event"],
@@ -1240,6 +1245,38 @@ class LatestWinsTests(LatestWinsCase):
         self.assertEqual(1, code)
         self.assertIn("a clean verdict needs no open finding, and 1 are open", err)
         self.assertEqual([], self.github.reviews)
+
+    def test_a_finding_another_model_posts_mid_publish_keeps_the_pull_request_a_draft(self) -> None:
+        for draft in (True, False):
+            with self.subTest(draft=draft):
+                self.setUp()
+                self.github.pr["draft"] = draft
+                self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+
+                def gpt_publishes() -> None:
+                    # After claude-opus-5-5 counted no open finding, and a second before its clean verdict lands.
+                    code, _, err = self.publish("changes-requested", "--model", "gpt-5.5", "--threads",
+                                                str(self.threads(finding())), loop="gpt")
+                    self.assertEqual(0, code, err)
+                    marker = self.github.reviews[-1]["comments"][0]["body"].splitlines()[0]
+                    self.github.pages = [page([thread("T1", marker)], None)]
+                    self.clock += timedelta(seconds=1)
+
+                self.github.before_post = gpt_publishes
+                as_json = ("--json",) if draft else ()
+                code, out, err = self.publish("clean", "--model", "claude-opus-5-5", *as_json, loop="claude")
+
+                self.assertEqual(0, code, err)
+                self.assertTrue(self.github.pr["draft"], "gpt-5.5's open finding keeps the pull request a draft")
+                if draft:
+                    result = json.loads(out)
+                    self.assertEqual(("claude-opus-5-5", "clean"),
+                                     (result["newest"]["model"], result["newest"]["verdict"]), "the clean verdict is newest")
+                    self.assertEqual((True, 1), (result["draft"], result["open_threads"]))
+                else:
+                    self.assertEqual(["1 finding thread is open on the head, so it stays a draft", "marked draft"],
+                                     out.splitlines()[1:], "the clean verdict is newest, so no other verdict is named")
 
     def test_the_review_read_back_counts_when_the_listing_lags(self) -> None:
         self.add_verdict("gpt-5.5", verdict="changes-requested")

@@ -1297,9 +1297,9 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
             incremental: bool = False, enabled: bool = True) -> dict:
-    """Submit the review, then re-read it, set draft state by the head's newest verdict, record, delete
-    the start comment, and release the lock, in that order. Every refusal leaves the lock held for this
-    review to retry.
+    """Submit the review, then re-read it, set draft state by the head's newest verdict and its open
+    finding threads, record, delete the start comment, and release the lock, in that order. Every
+    refusal leaves the lock held for this review to retry.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
@@ -1389,22 +1389,26 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
     if f"sha={sha}" not in (read.get("body") or ""):
         raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
-    newest, draft_wanted = None, None
+    newest, draft_wanted, open_threads = None, None, None
     if published.get("self"):
         # The head's newest Projector verdict sets draft state, whichever model gave it: this review, counted
-        # as read back whether or not the listing shows it yet, or one another model posted since.
+        # as read back whether or not the listing shows it yet, or one another model posted since. A finding
+        # thread open now keeps it a draft whatever that verdict says, because another model can post one
+        # after this review counted none and before its own verdict landed.
         posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
                   "login": reviewer, "body": read["body"]}
         others = [r for r in verdicts(repo, number, reviewer) if r.get("id") != review_id]
         newest = newest_verdicts(sha, others + [posted])[0]
-        draft_wanted = newest["verdict"] == "changes-requested"
+        open_threads = census(repo, number)["open"]
+        draft_wanted = newest["verdict"] == "changes-requested" or open_threads > 0
         draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
         if draft != draft_wanted:
             run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
             draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
             if draft != draft_wanted:
                 raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the newest verdict, "
-                                  f"{newest['verdict']}; set it with `gh pr ready` and retry")
+                                  f"{newest['verdict']}, with {open_threads} open finding threads; set it with "
+                                  "`gh pr ready` and retry")
     if loop is not None:
         record = read_record(root, loop)
         if not any(r.get("review_id") == review_id for r in record):
@@ -1422,4 +1426,5 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     write_state(paths, state)
     paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
-            "event": published["event"], "draft": draft_wanted, "from": published.get("from"), "newest": newest}
+            "event": published["event"], "draft": draft_wanted, "from": published.get("from"), "newest": newest,
+            "open_threads": open_threads}
