@@ -1,0 +1,252 @@
+/* The Projector site's projects, reviews, and docs pages. Colours, fonts, tables and
+   code highlighting come from summary.css, which every page also loads. */
+
+.sitebar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px;
+  min-height: 60px; padding: 10px 16px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+/* On a summary page the bar scrolls away; the summary's own headers stick. Its
+   ends line up with the summary's 1440px .wrap: the site name over the sidebar,
+   and the search box over Compare. */
+.sitebar.scrolls { position: static; padding-inline: max(16px, calc((100% - 1440px) / 2 + 16px)); }
+.sitebar.scrolls .menuspace { display: none; }
+.sitename {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text); text-decoration: none;
+}
+.sitemark { width: 20px; height: 20px; flex: none; }
+.sitenav { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 14px; }
+.sitenav a { color: var(--muted); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }
+.sitenav a:hover { color: var(--text); }
+.sitenav a.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* The header's icon buttons: the section menu, and entering and leaving full screen. */
+.sitebtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 32px; height: 32px; padding: 0; margin: 0 -8px 0 -6px;
+  color: var(--muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.sitebtn:hover { color: var(--text); background: var(--surface-2); }
+.sitebtn svg { width: 18px; height: 18px; }
+/* Where a page has no sidebar, an empty slot holds the menu button's place, so the
+   site name sits in the same spot on every page. */
+.menuspace { visibility: hidden; cursor: default; }
+.barhide { margin: 0 -6px 0 -12px; }
+.barshow {
+  display: none; position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); right: 8px; z-index: 20; margin: 0;
+  background: var(--surface); border-color: var(--border); box-shadow: var(--shadow);
+}
+body.barhidden .sitebar { display: none; }
+body.barhidden .barshow { display: inline-flex; }
+
+.sitemain { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.sidebody { min-width: 0; }
+
+/* A project's page takes a summary page's layout: summary.css's .wrap brings
+   the 1440px width and its side gutters, and its title row the room above, so
+   the main element adds neither. The plan keeps its reading width beside the
+   sidebar. */
+.sitemain.withnav { max-width: none; padding: 0; }
+.sitemain.withnav .sidebody { max-width: 880px; }
+/* The badges fit the eyebrow's line, so the title row is as tall as a summary's,
+   and sit as far from the separators beside them as the eyebrow's words do. */
+.top .eyebrow .badge { line-height: 1; margin-right: 0; }
+.top .eyebrow .badge + .badge { margin-left: 6px; }
+
+/* A section's tree beside its page: the docs. The tree runs down the window's
+   left edge under the header's menu button, and the page keeps its reading
+   width, centred in the window whether or not the tree is shown. Only a window
+   too narrow to centre the page clear of the tree moves it right, as little as
+   it must. The column's rules name it as the main element's child, so they
+   never reach a summary's sidebar inside a project's page. */
+.sitemain.withside { max-width: none; padding: 0; }
+.sitemain.withside .sidebody { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.sitemain.withside:not(.collapsed):not(.wide) .sidebody,
+.sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: max(240px, calc((100% - 880px) / 2)); }
+.sitemain > .side {
+  position: fixed; top: 61px; bottom: 0; left: 0; width: 240px; align-self: stretch; overflow-y: auto;
+  padding: 28px 16px; font-size: 14px; line-height: 1.4;
+}
+.sitemain.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.collapsed > .side { display: none; }
+
+/* The tree itself, in the docs' column or a project's sidebar. Its heading, the
+   docs' Overview, is a link drawn as the tree's are. */
+.sidetree, .sidetree ul { list-style: none; margin: 0; padding: 0; }
+.sidetree ul { padding-left: 12px; }
+.sidetree li { margin: 5px 0; }
+.sidetree a, .sidetop a { color: var(--muted); text-decoration: none; }
+.sidetree a:hover, .sidetop a:hover { color: var(--text); }
+.sidetree a.active, .sidetop a.active { color: var(--text); font-weight: 600; }
+.sidetop { font-weight: 600; margin-bottom: 10px; }
+.sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+/* The blocks below a project's stacks in its sidebar, each under a divider:
+   the readme's sections, the project's other pages, and a nested project's
+   parent over its siblings. The pages and the neighbors line up with the
+   stacks' rows. */
+.nav > .navsections, .nav .navpages, .nav .navnear { padding-top: 6px; border-top: 1px solid var(--border); }
+.nav > .navsections + .navpages, .nav .navpages + .navnear, .nav > .navsections + .navnear { margin-top: 10px; }
+.nav .navpages, .nav .navnear { padding-inline: 9px; font-size: 13.5px; line-height: 1.4; }
+.nav .navnear .sidetop { margin-bottom: 5px; }
+/* A page's sections have no reviewed dots, so the title takes the dot's
+   column. Under a page's entry in the pages, they keep their own spacing. */
+.nav .navsections ol a { grid-template-columns: 22px 1fr; }
+.sidetree .navsections { margin-top: 4px; }
+.sidetree .navsections li { margin: 0; }
+/* At 980 pixels and narrower the sections start folded behind a toggle, so the
+   plan stays near the top of the page. A wider screen shows them whole. The
+   toggle's chevron sits in the numbers' column, and its label in the titles'. */
+.nav .navfold { display: none; }
+@media (max-width: 980px) {
+  .nav .navfold {
+    display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: center; width: 100%; padding: 6px; border: 0;
+    border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.3;
+    text-align: left; cursor: pointer;
+  }
+  .nav .navfold:hover { background: var(--surface-2); }
+  .nav .navfold[aria-expanded="false"] .chev { transform: rotate(-45deg); }
+  .nav .navfold[aria-expanded="false"] + ol { display: none; }
+}
+
+/* An HTML page fills the window below the header, edge to edge, with its section
+   sidebar, when shown, as a column beside it. */
+.sitemain.wide { max-width: none; padding: 0; }
+.sitemain.wide.withside { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0; }
+.sitemain.wide.withside.collapsed { grid-template-columns: minmax(0, 1fr); }
+.sitemain.wide .sidebody { max-width: none; margin: 0; padding: 0; }
+.sitemain.wide > .side {
+  position: static; width: auto; align-self: stretch; max-height: none; padding: 20px 16px;
+  border-right: 1px solid var(--border);
+}
+.sitemain.wide .sidebody > :not(iframe) { margin: 16px; }
+iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
+@media (max-width: 760px) {
+  .sitemain.withside { display: block; }
+  .sitemain > .side { position: static; width: auto; max-height: none; padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
+  .sitemain.withside:not(.collapsed):not(.wide) .sidebody,
+  .sitemain.withside:not(.collapsed):not(.wide) + .sitefoot { margin-left: auto; }
+  .sitemain.wide > .side { margin: 0; border-right: 0; }
+}
+.sitefoot { max-width: 880px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; }
+.note { color: var(--muted); font-size: 13.5px; }
+
+.markdown { overflow-wrap: anywhere; }
+.markdown h1 { font-size: 30px; line-height: 1.2; letter-spacing: -.02em; margin: 0 0 16px; }
+.markdown h2 { font-size: 22px; letter-spacing: -.01em; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.markdown h3 { font-size: 17px; margin: 24px 0 8px; }
+.markdown h4, .markdown h5, .markdown h6 { font-size: 15px; margin: 20px 0 6px; }
+.markdown pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+.markdown pre code { background: none; padding: 0; font-size: inherit; }
+.markdown blockquote { margin: 16px 0; padding: 4px 16px; border-left: 3px solid var(--border); color: var(--muted); }
+.markdown table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 14px; margin: 16px 0; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.markdown th { background: var(--surface-2); }
+.markdown img { max-width: 100%; }
+.markdown hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+
+.filter {
+  width: 100%; box-sizing: border-box; margin: 8px 0 20px; padding: 8px 12px; font: inherit;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.pintro { margin: 4px 0 8px; }
+.pintro summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.pintro summary:hover { color: var(--accent); }
+.pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.pgroup h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 6px; }
+/* Every status's table sets the same width for each column but the project's,
+   which takes the rest and wraps its title, so the columns line up from one
+   status to the next. The priority fits LATER and its heading, the owner a
+   login of thirteen characters, and the name a slug of twenty; a longer owner
+   or name wraps, at a hyphen where it has one. A nested project's indent sits
+   inside the project's column. In a window 760px wide or narrower, where a
+   section's sidebar moves above its page, the name is left out and the owner
+   narrows, so the title keeps room. */
+table.tbl.projects { table-layout: fixed; }
+table.tbl.projects col.priority { width: 6.5em; }
+table.tbl.projects col.owner { width: 8em; }
+table.tbl.projects col.name { width: 14em; }
+table.tbl.projects td { overflow-wrap: anywhere; }
+table.tbl.projects td:first-child a { text-decoration: none; font-weight: 500; }
+table.tbl.projects td.owner { color: var(--muted); }
+@media (max-width: 760px) {
+  table.tbl.projects .name { display: none; }
+  table.tbl.projects col.owner { width: 6em; }
+}
+/* The reviews table sets every column's width but the pull request's, which
+   takes the rest and wraps its title, so checking Open or Closed never moves a
+   column. The status fits CHANGES REQUESTED, and the time one such as "Oct 10,
+   2026, 12:30 AM". Each pull request is a row as a summary's sidebar draws its
+   stack, an .srow, and a stack's rows sit as close together as the sidebar's,
+   with a divider only below the stack. Every cell sits on its row's first
+   baseline, so the status and the time line up with the title. No link in the
+   table is underlined. On a phone the time is left out and the status may
+   wrap, so the title keeps room. Each segment of a stack opens with its
+   header across all three columns, in the text's own case, with no divider
+   beneath it, so it reads as the title of the rows below; its text starts
+   where a row's number does. A segment the stack continues below draws no
+   divider either. */
+table.tbl.reviews { table-layout: fixed; }
+table.tbl.reviews col.status { width: 11.5em; }
+table.tbl.reviews col.date { width: 13em; }
+table.tbl.reviews td { vertical-align: baseline; padding-block: 0; border-bottom: 0; }
+table.tbl.reviews td.pr { padding: 1px 1px 0; }
+table.tbl.reviews tr.stackhead th { padding: 6px 1px 0; border-bottom: 0; font-size: 15px; font-weight: 600; line-height: 1.35; text-transform: none; letter-spacing: normal; color: var(--text); }
+table.tbl.reviews tr.stackhead th > * { display: block; padding: 8px 9px 4px; border-radius: 6px; overflow-wrap: anywhere; color: inherit; }
+table.tbl.reviews tr.stackhead th > a:hover { background: var(--surface-2); }
+table.tbl.reviews tbody tr:last-child td { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+table.tbl.reviews tbody.continued tr:last-child td { padding-bottom: 0; border-bottom: 0; }
+table.tbl.reviews td.status, table.tbl.reviews td.date { white-space: nowrap; }
+table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
+/* On a phone the time's column stays at no width rather than leaving the
+   table, since each segment's header spans it and would otherwise give it
+   the room the titles need. */
+@media (max-width: 640px) {
+  table.tbl.reviews th.date, table.tbl.reviews td.date { display: none; }
+  table.tbl.reviews col.date { width: 0; }
+  table.tbl.reviews col.status { width: 7.5em; }
+  table.tbl.reviews td.status { white-space: normal; }
+}
+.reviewstates { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 12px; }
+.reviewstates label { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+
+.sitemain .badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  background: var(--surface-2); color: var(--muted); margin-right: 6px; white-space: nowrap;
+}
+.sitemain .badge.status-in-progress { background: var(--accent-soft); color: var(--accent); }
+.sitemain .badge.priority-now { color: var(--text); font-weight: 600; }
+.sitemain .badge.status-ready { background: var(--ok-bg); color: var(--ok); }
+.sitemain .badge.status-draft, .sitemain .badge.priority-next { background: var(--warn-bg); color: var(--warn); }
+/* A project an open pull request proposes: its badge links that pull request's
+   review, and a banner tops each of its pages. Both take the info colours,
+   which summary.css sets for the light and dark themes, apart from the
+   status and priority badges beside them. */
+.sitemain a.badge.proposed { background: var(--info-bg); color: var(--info); text-decoration: none; }
+.sitemain a.badge.proposed:hover { text-decoration: underline; }
+.proposal {
+  margin: 0 0 12px; padding: 10px 14px; font-size: 14px;
+  background: var(--info-bg); border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 8px;
+}
+.proposal p { margin: 0; }
+.proposal p + p { margin-top: 4px; }
+.proposal b { color: var(--info); }
+
+.phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+.crumbs a { text-decoration: none; }
+.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+
+.sitesearch { margin: 0 0 0 auto; display: flex; }
+.sitesearch input {
+  width: 12rem; max-width: 40vw; padding: 5px 10px; font: inherit; font-size: 14px;
+  color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+}
+ol.results { list-style: none; padding: 0; margin: 0; }
+ol.results li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+ol.results li a { font-weight: 500; text-decoration: none; }
+.snippet { margin-top: 4px; font-size: 14px; color: var(--muted); }
+.snippet mark { background: var(--warn-bg); color: var(--text); border-radius: 2px; padding: 0 1px; }
