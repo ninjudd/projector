@@ -19,6 +19,13 @@ around it.
 
 Resolve the operator as `../fix-pr/SKILL.md` describes, once for the loop.
 
+Run the loop only in the top-level conversation, the one the user talks to.
+A subagent's processes end when it returns, and the conversation that
+started it cannot see a loop it left behind, so a subagent never starts or
+joins a fix loop. A subagent that opens a pull request, such as one running
+`implement`, hands the pull request back instead, and it counts as one this
+conversation created.
+
 Watch only the repository containing the current working directory. Covering a
 second repository requires starting this skill from that repository with its
 own tracked set and watcher state.

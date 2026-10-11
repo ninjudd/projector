@@ -159,13 +159,19 @@ body too, and it is the wrong body; replace it as
 
 Then start the fix loop on the pull request, so review findings are fixed as
 they arrive instead of waiting for the user to notice that nothing is fixing
-them. Start none when any of these holds:
+them. Only the top-level conversation, the one the user talks to, starts or
+joins a fix loop. A subagent's processes end when it returns, and the
+conversation that started it cannot see a loop it left behind, so it would
+start a second one. When you run as a subagent, start no fix loop and join
+none: return the pull request with your result, so it reaches the top-level
+conversation. That conversation treats a pull request its subagent opened
+as one it opened itself, and starts its fix loop on it or appends it to the
+loop it already runs.
+
+The top-level conversation starts no fix loop when either of these holds:
 
 - `project config get fix.auto_start --default true` prints `false`.
 - The host cannot keep a process running after this turn.
-- You run as a subagent. Your processes end when you return, so the loop
-  would stop watching with you, and the conversation that started you,
-  which cannot see your loop, would start a second one.
 
 Otherwise run `../start-fix-loop/SKILL.md` with the pull request, and every
 layer of a stack, as its tracked set, and start its watcher with
@@ -178,11 +184,10 @@ not once per change.
 
 When you hand over the URL, say whether a fix loop is watching the pull
 request. Either this session's fix loop watches it and stops when the
-session ends, or none does, and you say which of the three cases above
-applies. Where the setting or the host stopped it, say that review findings
-wait until the user runs `start-fix-loop`. As a subagent, report the pull
-request to the conversation that started you, so it can start or join its
-own fix loop.
+session ends, or none does, and you say whether the setting or the host
+stopped it, and that review findings wait until the user runs
+`start-fix-loop`. As a subagent, say that you started no fix loop because
+the top-level conversation runs it.
 
 ## Stack dependent work
 
