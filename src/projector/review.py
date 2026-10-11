@@ -510,6 +510,19 @@ def read_hold(repo: str, comment: int) -> dict:
             "marked": bool(lines) and lines[-1] == HOLD_MARKER}
 
 
+def hold_repo(repo: Optional[str], cwd: Path) -> str:
+    """The repository `review hold` acts on: `repo`, else the origin of the checkout `cwd` is in. Unlike the
+    commands that follow a review, it never takes one from review state: it posts and deletes comments, so
+    it acts only on a repository it was given or is run in."""
+    if repo:
+        return repo
+    try:
+        return origin_repo(checkout_root(cwd))
+    except ReviewError as exc:
+        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository to "
+                          "hold a pull request in; pass --repo owner/name") from exc
+
+
 def hold_changes(texts: list[str], flag: str) -> list[str]:
     """The changes given to --add or --drop, trimmed and without repeats, each refused unless it is one line."""
     changes: list[str] = []

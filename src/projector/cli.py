@@ -475,16 +475,17 @@ def parser() -> argparse.ArgumentParser:
         "hold", help="hold your pull request in draft while changes for it are built, and lift the hold once they "
                      "are pushed"
     )
-    for command in (review_status, review_hold):
-        command.add_argument("pr", type=int, help="the pull request number")
-        command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
-                                            "this checkout's origin)")
+    review_status.add_argument("pr", type=int, help="the pull request number")
+    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                              "this checkout's origin)")
     review_status.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
                                                   "members, and collaborators (default: review.username, then you)")
-    for command in (review_status, review_hold):
-        command.add_argument("--state-dir", type=Path,
-                             help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
-        add_output(command)
+    review_status.add_argument("--state-dir", type=Path,
+                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+    add_output(review_status)
+    review_hold.add_argument("pr", type=int, help="the pull request number")
+    review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
+    add_output(review_hold)
     hold_mode = review_hold.add_mutually_exclusive_group(required=True)
     hold_mode.add_argument("--add", action="append", metavar="TEXT",
                            help="a change about to be built: post the hold listing it, or add it to the open hold, "
@@ -898,10 +899,10 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def review_hold(root: Path, arguments: argparse.Namespace) -> int:
-    """`review hold`: post, extend, shrink, or lift your hold on a pull request, finding the repository as
-    `status` does."""
-    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+def review_hold(arguments: argparse.Namespace) -> int:
+    """`review hold`: post, extend, shrink, or lift your hold on a pull request in `--repo`, or else in the
+    repository of the checkout it runs in."""
+    repo = review.hold_repo(arguments.repo, Path.cwd())
     result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [], arguments.lift)
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
     return 0
@@ -910,11 +911,11 @@ def review_hold(root: Path, arguments: argparse.Namespace) -> int:
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
+    if arguments.review_command == "hold":
+        return review_hold(arguments)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
-    if arguments.review_command == "hold":
-        return review_hold(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "setup":

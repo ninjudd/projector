@@ -1688,8 +1688,22 @@ class HoldTests(ReviewCase):
     CHANGE = "Skip fenced code blocks when looking for headings"
     OTHER = "Name the held layer in the stack's readiness report"
 
-    def hold(self, *args: str) -> tuple[int, str, str]:
-        return self.project("hold", "1", "--state-dir", str(self.state), *args)
+    def hold(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
+        return self.project("hold", "1", *args, cwd=cwd)
+
+    def checkout_of(self, repo: str | None) -> Path:
+        """A Git checkout whose origin is `repo` on GitHub, or that has no origin."""
+        checkout = Path(tempfile.mkdtemp())
+        git(checkout, "init", "--quiet")
+        if repo:
+            git(checkout, "remote", "add", "origin", f"https://github.com/{repo}.git")
+        return checkout
+
+    def repos_called(self) -> set[str]:
+        """Every repository a call to GitHub named."""
+        return {match.group(1) for args, _ in self.github.calls for arg in args
+                if (match := re.match(r"repos/([^/]+/[^/]+)/", arg))} | \
+            {args[args.index("--repo") + 1] for args, _ in self.github.calls if "--repo" in args}
 
     def held(self) -> dict[int, str]:
         """Each comment that carries the hold marker, by id."""
@@ -1898,6 +1912,49 @@ class HoldTests(ReviewCase):
                           "changes": [self.CHANGE], "held_at": self.head[:7], "draft": True}, lifted)
         self.assertEqual({"repo": REPO, "number": 1, "head": head, "action": "none", "comment": None, "changes": [],
                           "held_at": None, "draft": True}, run("--lift"))
+
+    def test_repo_wins_over_the_checkout_it_runs_in(self) -> None:
+        elsewhere = self.checkout_of("other/app")
+        self.assertEqual("other/app", review.hold_repo(None, elsewhere), "the checkout alone names another repository")
+
+        code, _, err = self.hold("--repo", REPO, "--add", self.CHANGE, cwd=elsewhere)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.held()))
+        self.assertEqual({REPO}, self.repos_called())
+
+    def test_without_repo_it_holds_in_the_checkouts_origin(self) -> None:
+        code, out, err = self.hold("--add", self.CHANGE, cwd=self.checkout)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.held()))
+        self.assertEqual({REPO}, self.repos_called())
+        self.assertTrue(out.startswith("posted hold comment 101 on acme/app#1 "), out)
+
+    def test_a_review_set_up_for_the_same_number_in_another_repository_is_ignored(self) -> None:
+        xdg = Path(tempfile.mkdtemp())
+        state = xdg / "projector" / "reviews" / "prs" / "other" / "app" / "1" / review.model_key(self.model)
+        state.mkdir(parents=True)
+        (state / "state.json").write_text(json.dumps({"model": self.model}))
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(xdg)}):
+            self.assertEqual("other/app", review.find_repo(review.state_dir(), 1, None, self.checkout),
+                             "the commands that follow a review would take other/app from its state")
+
+            code, _, err = self.hold("--add", self.CHANGE, cwd=self.checkout)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({REPO}, self.repos_called())
+
+    def test_refuses_without_repo_outside_a_checkout_with_a_github_origin(self) -> None:
+        cases = {"outside a checkout": Path(tempfile.mkdtemp()), "a checkout with no origin": self.checkout_of(None)}
+        for name, cwd in cases.items():
+            with self.subTest(name):
+                code, _, err = self.hold("--lift", cwd=cwd)
+
+                self.assertEqual(1, code)
+                self.assertIn("is not in a checkout whose origin is on GitHub", err)
+                self.assertIn("pass --repo owner/name", err)
+        self.assertEqual([], self.github.calls)
 
     def test_refuses_a_change_that_is_not_one_line_before_asking_github(self) -> None:
         for text in ("", "   ", "Rename\nthe flag"):

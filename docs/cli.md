@@ -1292,11 +1292,12 @@ Held in draft at `4f2a9c1` while the following changes are implemented:
 Each mode first checks that `gh` is signed in as the pull request's author,
 and refuses otherwise, because only the author's comment holds a pull
 request. No mode marks the pull request ready: a clean review of the head you
-push does that. `hold` posts as the signed-in account and runs from any
-directory. It finds the repository as `status` does: `--repo`, else the
-repository of a review of that pull request number set up on this machine,
-else the `origin` of the checkout you run it in. Pass `--repo` whenever a
-review of the same number in another repository may be set up here. It
+push does that. `hold` posts as the signed-in account. It acts on the
+repository `--repo` names, or else on the `origin` of the checkout you run it
+in, and refuses outside a checkout whose `origin` is on GitHub unless you pass
+`--repo`. Unlike `status` and the commands that follow a review, it never
+takes the repository from a review set up on this machine, because a command
+that posts and deletes comments must not act on a repository it guessed. It
 prints what it did, the comment's id and URL, the changes the hold lists, and
 the draft state:
 

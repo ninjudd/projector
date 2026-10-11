@@ -173,8 +173,9 @@ the pull request must not look ready to merge while you build that change.
 Hold it with `project review hold` before you start. Run the command as the
 operator, who authored the pull request; it refuses any other account,
 because only the author's hold counts. Pass `--repo <owner>/<repo>` every
-time: without it, the command takes the repository of any review set up on
-this machine for the same pull request number before the checkout's own.
+time, so the command acts on the pull request's repository from any
+directory. Without it, the command acts on the `origin` of the checkout you
+run it in, and refuses outside one.
 
 1. Hold the pull request, with one `--add` for each change you are about to
    build:
