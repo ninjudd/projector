@@ -1,0 +1,163 @@
+{
+ "version": 1,
+ "name": "Project page section list",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 246,
+  "title": "List a page's sections and a nested project's neighbors in its sidebar",
+  "head": "fd7e766287e18f171b7df65c6398839b24c310cb",
+  "headRef": "list-plan-sections",
+  "base": "e1c147f4264cfffa552d8b0553d68a96484f1111",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A project page on the Projector site shows a plan beside a sidebar, drawn the way a pull request summary's sidebar is: the project's stacks of pull requests, then the project's other pages. Unlike a summary's sidebar, it has no list of the page's sections, so on a plan of 500 to 800 lines you scroll to find a section. A nested project's sidebar also has no link to its parent or to its sibling projects, so you go through the breadcrumbs.",
+   "This pull request adds both. The sidebar lists the page's <code>##</code> headings, read from the page after it renders, with the plan's own number in a column of its own. A nested project's sidebar ends with its parent project over the parent's other nested projects. One helper, <code>watchSections</code>, marks the section in view as you scroll, on project pages and on summary pages. At 980 pixels and narrower, the list starts folded behind a <b>Sections</b> toggle. At the owner's request, the project page's <b>View on GitHub</b> link also moves into a <b>…</b> menu at the end of the title row, the same menu a summary page's header has.",
+   "The build and <code>site.json</code> do not change: everything happens in the browser, in the TypeScript under <code>site/src/</code> and its compiled copies under <code>site/assets/</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Section</b>: a top-level <code>##</code> heading of a rendered page, or a group on a summary page.</li><li><b>Mark</b>: <code>aria-current=\"location\"</code> on the sidebar link to the section in view, drawn as a band with an accent bar.</li><li><b>The line</b>: a horizontal line 30% of the way down the window. The marked section is the last one whose top has passed it.</li><li><b>Neighbors</b>: a nested project's parent and the parent's other nested projects.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review status",
+    "html": "<p>The first Projector review, of <code>b676859</code>, flagged that a jump carrying a heading past the line in one frame was never reported. The fix extends the observer's band far above the page, and the review of <code>fd7e766</code> confirmed it in headless Chrome and resolved the thread. That review is clean. The validation gate passes, and the compiled scripts match the TypeScript.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "shared",
+   "title": "The shared section list and the watch",
+   "kicker": "Helpers that summary pages and project pages both use",
+   "intro": [
+    "<code>summary.ts</code> holds helpers that every site page loads before <code>site.js</code>. This group adds two of them. <code>sectionListHtml</code> draws a list of sections, with the summary's reviewed dots or without them. <code>watchSections</code> marks the link to the section in view and keeps the mark current as the page scrolls. It also moves <code>moreMenu</code> and <code>wireMenus</code>, the summary page's <b>…</b> menu, out of the summary page's own code into the shared helpers, so that project pages can use them.",
+    "The watch uses two <code>IntersectionObserver</code>s and no scroll listener. The first watches each section's target against a band that runs from far above the page down to a line 30% of the way down the window, so a target is in the band exactly while its top is above the line. The second watches a zero-height marker placed after the sections, so that a short last section can still be marked at the end of the page. Each report reads every target's position again and moves the mark."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds <code>PageSection</code>, a section's id, number, and title, and <code>MenuItem</code>, one link in a <b>…</b> menu."
+    },
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds <code>sectionListHtml</code> and <code>watchSections</code>, and moves <code>moreMenu</code> and <code>wireMenus</code> to the shared helpers unchanged.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 148,
+       "text": "A jump that carries a heading past the line in one frame moves the mark. In headless Chrome 151, with the compiled <code>watchSections</code> from this head, a <code>scrollTo</code> into the middle of a long section marked it, and a jump back to the top cleared the mark."
+      },
+      {
+       "kind": "context",
+       "line": 137,
+       "text": "At the end of a scrolled page, the line drops to the window's bottom, because a short last section never reaches the 30% line before the page stops scrolling."
+      },
+      {
+       "kind": "verify",
+       "line": 636,
+       "text": "The summary's list is the markup it drew before, plus <code>class=\"sections\"</code> on the <code>&lt;ol&gt;</code>; <code>SectionWatchTests</code> asserts the exact markup, and the suite passes at this head."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Draws the mark: the row's hover band with an accent bar at its start."
+    },
+    {
+     "path": "site/assets/summary.js"
+    }
+   ]
+  },
+  {
+   "id": "project-page",
+   "title": "The project page sidebar",
+   "kicker": "Sections, a nested project's neighbors, the narrow-screen toggle, and the title row's menu",
+   "intro": [
+    "A project page draws its sidebar twice: once while the Markdown loads, and again once it renders. <code>showDocument</code> now passes the sidebar as a function of the page's sections, so the second drawing can list the headings the render produced, with the ids the render gave them. An HTML page lists no sections.",
+    "<code>projectNav</code> puts the readme's sections in their own block between the stacks and the pages. On a supplemental page, the sections open under that page's entry in the pages, through a new <code>under</code> argument to <code>tree</code>. A nested project's sidebar then ends with its neighbors, found by <code>parentOf</code>, the deepest project whose folder holds the nested project's folder.",
+    "The title row's <b>View on GitHub</b> link becomes a <b>…</b> menu with <b>View file on GitHub</b> and <b>View history on GitHub</b>. <code>frame</code> wires the menus of each drawing, and an HTML page wires the menu in the breadcrumbs it adds after <code>frame</code> runs."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>frame</code> stops the watch before it draws any view, and <code>showDocument</code> starts it again after the render, so only one list is watched at a time."
+    }
+   ],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "Reads the rendered sections, draws the new sidebar blocks and the title row's menu, and flips the <b>Sections</b> toggle.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 333,
+       "text": "<code>sectionsOf</code> takes only top-level <code>&lt;h2&gt;</code> elements, so a heading inside a quote is not listed. A leading number such as <code>2.</code> or <code>2.1</code> moves to the number column, and a year such as <code>2026 roadmap</code> stays in the title. Links are removed by unwrapping them in a copy of the heading."
+      },
+      {
+       "kind": "verify",
+       "line": 517,
+       "text": "<code>parentOf</code> drops the folder's trailing slash before it calls <code>ownerOf</code>, so the project never finds itself. The nested-project tests in <code>ProjectPageTests</code> pass, including a nested project of the current one that stays out of the neighbors."
+      },
+      {
+       "kind": "verify",
+       "line": 275,
+       "text": "Each menu gets its listeners once: <code>frame</code> wires what it draws, and this call wires only the head appended after it. Traced through <code>frame</code>, <code>showHtml</code>, and <code>showDocument</code>."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Dividers for the new blocks, a two-column row for a plan's sections, the toggle that folds them at 980 pixels and narrower, and an HTML page's breadcrumbs row with the menu at its end."
+    },
+    {
+     "path": "site/assets/site.js"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Page, watch, and style tests under node",
+   "intro": [
+    "The page tests run the compiled <code>showProjectFile</code> under node with a stub DOM. The watch tests run <code>watchSections</code> with a stub <code>IntersectionObserver</code> and call its callbacks directly, so they check the marking rule but not which scrolls the browser reports."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plan and the CLI docs",
+   "kicker": "The settled plan, marked completed, and the site description",
+   "intro": [
+    "The plan <code>project-page-sections</code> records each question, its options, and the owner's decision, then the sidebar those decisions make. It ends <code>completed</code>, with an outcome section that lists the browser checks and the menu change the owner added. <code>docs/cli.md</code> describes the new sidebar and the menu."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/project-page-sections/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 295,
+       "text": "§ 2.10 gives the observer's band as <code>10000000px 0px -70% 0px</code> and explains why a jump past a heading is still reported."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ],
+ "project": "project-page-sections"
+}
