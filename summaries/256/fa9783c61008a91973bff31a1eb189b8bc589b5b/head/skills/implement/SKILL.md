@@ -1,0 +1,316 @@
+---
+name: implement
+description: Implement a Projector project while keeping its plan and status current, or build a change the user describes directly when it needs no spec. Use when the user asks to start, continue, or complete work recorded under docs/projects, or describes a change to build.
+---
+
+# Implement
+
+Build from a project's plan, or from the user's description of work small
+enough to need no spec. Either way, treat the repository and current
+runtime behavior as authoritative evidence.
+
+## Start from a description
+
+When the user describes the work rather than naming a project:
+
+1. Read the repository instructions and run `project list --json`. When a
+   project already covers the work, start from its plan instead, as the next
+   section describes. When the command exits 66 with `projects directory not
+   found`, the repository has not adopted Projector and has no projects.
+2. Decide whether the work needs a spec first. It does when it spans several
+   parts of the system, changes an interface that other code depends on, or
+   leaves a product choice open. Then stop, tell the user why, and suggest
+   `spec`. Build it without a spec only when the user asks you to.
+3. Otherwise, restate the change in a sentence or two, and build it. Ask the
+   user only about a choice that the repository cannot answer.
+
+Work built from a description has no plan and no project, so skip the steps
+below that need one: the status and priority changes, the plan updates, and
+`finish`. Everything else applies: the self-review, the validation gate, and
+handing the work over.
+
+## Start from the project
+
+1. Read the repository instructions and run `project show <name> --json`.
+2. Read the entry point, its supplemental files, relevant nested projects, and
+   the code and documentation they cite.
+3. Check every open question before claiming readiness. Resolve a product
+   choice with the user when the repository cannot answer it.
+4. Run `project status <name> in-progress` only when implementation truly
+   begins, and `project priority <name> now` when the work also becomes the
+   current focus. Keep both changes in the implementation pull request; do not
+   open a status-only change.
+
+## Implement coherent work
+
+Build the requested outcome, not merely the easiest plan item. Keep changes
+reviewable and verify each behavior in proportion to its risk. Follow the
+repository's branch, stack, commit, review, and merge rules, and
+[Hand the work over](#hand-the-work-over) where they are silent.
+
+Apply the review method's passes to your own change before the review loop
+does; `../review-pr/method.md` § 3 describes them, and three apply to
+nearly every change:
+
+- **Correctness.** Trace each change past the happy path: what happens when
+  an input is missing, when the call repeats, when the operation fails or is
+  cancelled, and at zero, empty, and maximum. Write the test that pins the
+  answer while the reasoning is fresh.
+- **Performance**, the Cost pass. Know how often the code you touch runs
+  before you add work to it. Measure the paths the plan named as hot, and
+  put no new read, allocation, or request inside a loop or a per-request
+  path the plan did not budget for.
+- **Reuse**, the Simplicity pass. Search the repository before writing a
+  helper, and use the one you find. When you write the same shape a second
+  time, extract it then, not later. When the change replaces something,
+  delete the old path, move every caller, and search for the old name
+  afterwards so nothing still refers to what is gone. Leave no stub, no
+  commented-out block, and no compatibility wrapper the plan did not ask
+  for.
+
+Follow `../guidelines.md`, the code guidelines every Projector skill shares.
+The review loop reads your head against them and the fix loop follows them in
+each fix, so a rule skipped here comes back as a finding citing the section
+you skipped. Its first rule is about comments: write code that needs none,
+simplify a stretch before you explain it, and add a comment only to preserve a
+constraint or reason the code cannot carry on its own.
+
+When the work has a plan, update it in the same change whenever
+implementation settles a decision, changes scope, reveals a new constraint,
+or completes an acceptance criterion. Follow the writing guide in
+`../writing.md` when you write the update, as `spec` does. Append numbered
+sections rather than renumbering cited sections. Create a nested project
+only when it has an independently useful lifecycle. Put details that belong
+to the parent in a supplemental document.
+
+Do not infer a parent's status or priority from a child or vice versa. Do not
+move project directories, generate a tracked status index, or duplicate either
+field elsewhere.
+
+## Verify the current slice
+
+Run the repository's full validation gate plus:
+
+```sh
+project show <name>
+project check
+git diff --check
+```
+
+Resolve any warning `project check` prints; `project init` refreshes a stale
+Projector section in `AGENTS.md` without touching the repository's own text.
+Work built from a description has no project, so skip `project show`. In a
+repository where `project list` found no projects directory, skip
+`project check` as well. Its errors there say only that the repository does
+not use Projector, and running `project init` to clear them is not part of
+the change.
+
+Compare the result against the plan's acceptance criteria, or against the
+description for work without a plan. If required work on a project
+remains, record the exact state, leave the status `in-progress`, and set the
+priority to `now`, `next`, or `later` as the user's real scheduling intent
+requires. If every criterion in the plan is proven, continue with `finish`
+in the same implementation change.
+
+## Hand the work over
+
+These are the defaults where the repository's instructions are silent. Where
+its written rules or pull request template say otherwise, follow them — except
+that the merge stays the user's checkpoint either way.
+
+Open a pull request and never merge it. The merge is the user's checkpoint,
+however small the change: end at `gh pr create --draft`, or
+`gh stack submit --auto` for a stack, and hand over the URL.
+
+Size the pull request for its reviewer, not for the plan. A review costs
+about the same whether the diff is twenty lines or three hundred, and that
+cost is charged per pull request and per review cycle, so combine by default
+and make splitting the thing that needs an argument. Fold a follow-on — a
+move, a documentation sweep, the retirement this change made possible — into
+the pull request that unblocked it, because none of those is worth anything
+alone. Split only at the reviewability ceiling: when a reviewer would be
+holding two unrelated arguments at once, or when one half would still be
+worth shipping if the other were abandoned. Work that crosses it becomes a
+stack, built as [Stack dependent work](#stack-dependent-work) describes.
+
+Open it as a draft. A review loop marks it ready on a clean head, so the
+draft says the work has not been signed off yet; never mark it ready
+yourself.
+
+Follow the writing guide in `../writing.md`, § 10 in particular, when you
+write each commit message, the title, and the body. Its first rule starts
+before your first commit: read the default branch's recent subjects and
+write every commit subject, and later the title, in the pattern they
+follow. Before you hand over the URL, read each title back against those
+subjects. `gh stack submit` writes a layer's title itself, so retitle one
+that falls outside the pattern with `gh pr edit <number> --title`. When
+you delegate the pull request to a subagent, pass it the pattern you
+found.
+
+Write a body that explains why the change exists, because a squash merge
+makes the body the commit message. End every body with a `## Testing`
+section: the exact commands, in order, that you ran yourself from the
+directory you name; what the reader should see; the signal that would show
+the change is wrong; and what needs building first and what state the
+commands leave behind. Where a change cannot be exercised by hand, say so
+and point at the test that covers it. `gh stack submit` writes each layer's
+body too, and it is the wrong body; replace it as
+[Stack dependent work](#stack-dependent-work) describes.
+
+Then start the fix loop on the pull request, so review findings are fixed as
+they arrive instead of waiting for the user to notice that nothing is fixing
+them. Start none when any of these holds:
+
+- `project config get fix.auto_start --default true` prints `false`.
+- The host cannot keep a process running after this turn.
+- You run as a subagent. Your processes end when you return, so the loop
+  would stop watching with you, and the conversation that started you,
+  which cannot see your loop, would start a second one.
+
+Otherwise run `../start-fix-loop/SKILL.md` with the pull request, and every
+layer of a stack, as its tracked set, and start its watcher with
+`--exit-when-closed`, so the loop ends on its own once every pull request it
+watches has merged or closed. When this conversation already runs a fix
+loop, append the pull request to that loop's tracked file instead; never
+start a second one. Leave the review loop alone: it watches every pull
+request the operator has in the repository, so it runs once per repository,
+not once per change.
+
+When you hand over the URL, say whether a fix loop is watching the pull
+request. Either this session's fix loop watches it and stops when the
+session ends, or none does, and you say which of the three cases above
+applies. Where the setting or the host stopped it, say that review findings
+wait until the user runs `start-fix-loop`. As a subagent, report the pull
+request to the conversation that started you, so it can start or join its
+own fix loop.
+
+## Stack dependent work
+
+A stack is a chain of pull requests, each based on the branch of the one
+below it, that GitHub records as one stack. Make and keep one with
+`gh stack`, the GitHub CLI extension. GitHub's own `gh-stack` skill is the
+reference for its commands; Projector's marketplace serves it as the
+`gh-stack` plugin, which Claude Code installs with Projector and Projector's
+installer adds for Codex. Where the skill is not installed,
+`gh stack <command> --help` covers the flags. `fix-pr` and `start-fix-loop`
+find and update a stack's layers, and fall back when `gh stack` cannot help,
+as this section describes.
+
+The `gh-stack` skill is upstream's, unmodified. Where it and Projector
+differ, these rules win:
+
+- **Split only at the reviewability ceiling.** Stack work only where the
+  hand-over above says to split it, never because a layer is large. A
+  change's tests and documentation ride the layer whose code they verify,
+  never a layer of their own. Order the layers by dependency, as the skill
+  describes.
+- **Open every layer as a draft.** `gh stack submit --auto` opens new pull
+  requests as drafts. Never pass `--open` to `submit` or `link`: it marks
+  every layer ready for review, the existing ones included, and only a
+  review loop's clean verdict marks a layer ready.
+- **Replace the title and body `submit` writes.** The body is a "Stack
+  created with GitHub Stacks CLI" footer, after the hard-wrapped commit body
+  when the layer has one commit, with no `## Testing` section, and a squash
+  merge would keep it. A layer of several commits gets its branch name as its
+  title. Write each layer's title and body as the hand-over above describes
+  and set them with `gh pr edit <number> --title <title> --body-file <file>`.
+- **Keep the stack mergeable as a unit.** The user merges a stack from
+  GitHub in one step: the whole stack, or any number of layers from the
+  bottom up. GitHub shows a layer that lacks the current head of the layer
+  below it as needing a rebase, and the stack cannot merge as a unit until
+  it is rebased. So keep the stack in sync: every open layer contains the
+  current head of the open layer below it. Carry every new commit on a
+  layer up through each layer above it right away, as the update below
+  describes, and never leave a layer behind its parent. Never plan or
+  propose a merge one layer at a time, such as merging the bottom layer and
+  then retargeting the next to the default branch, and never retarget a
+  layer while a layer below it is open.
+- **Never merge.** Never run `gh stack merge` or `gh pr merge`, whatever the
+  skill says about merging. The merge is the user's checkpoint.
+
+Within those rules, work a stack this way:
+
+- **Create it.** Plan the layers from the bottom up, make them with
+  `gh stack init` and `gh stack add`, and open them all as drafts with
+  `gh stack submit --auto`. Pull requests you chain yourself with
+  `gh pr create --base` look like a stack, but GitHub does not record them
+  as one, so open no layer that way while `gh stack` works.
+- **Adopt a chain.** Make pull requests already chained by base branch into
+  a stack with `gh stack link` and their numbers, bottom first.
+- **Update it by rebasing.** `gh stack` keeps a stack current by rebasing
+  its layers, and it has no option to merge instead. Inside a stack, that
+  rebase is how a layer takes in a fix to the layer below it, the default
+  branch, and a layer below it that has merged. Whenever a layer with
+  layers above it gets a new commit, run `gh stack rebase --upstack` from
+  that layer at once, before the push or right after it. Add `--no-trunk`
+  where moving the local default branch would touch a checkout the user is
+  using: it fetches nothing and rebases only the layers onto each other,
+  from the local branches. Run `gh stack rebase`
+  when a layer falls behind or conflicts with its base or a layer below it
+  merges; the rebase drops a squash-merged layer's commits from the layers
+  above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
+  describes under "Exit 3 recovery". Then run the full gate on every
+  layer the rebase rewrote, and only once each passes, run `gh stack push`,
+  which pushes each branch with `--force-with-lease`. Never merge a base into
+  a layer of a stack `gh stack` works on. In a checkout that does not track
+  the stack yet, `gh stack checkout <number>` sets it up from GitHub.
+- **Find its layers.** Ask GitHub which stack holds a pull request:
+
+  ```sh
+  gh api "repos/<owner>/<repo>/stacks?pull_request=<number>"
+  ```
+
+  It returns the stack with its pull requests from the bottom up, or `[]`
+  when the pull request is in none, and it needs neither a checkout nor the
+  extension. In a checkout that tracks the stack, `gh stack view --json`
+  lists the same layers with their branches.
+- **Check that it is in sync.** GitHub's comparison is the check that
+  counts, because GitHub is where the user merges. Read each open layer's
+  base and head branches from `gh api repos/<owner>/<repo>/stacks/<number>`,
+  using the `number` the lookup above returns, and compare each layer
+  based on another layer's branch with that base:
+
+  ```sh
+  gh api "repos/<owner>/<repo>/compare/<base branch>...<head branch>" --jq .behind_by
+  ```
+
+  It prints `0` when the layer on GitHub contains its base's current head
+  on GitHub. The comparison needs neither a checkout nor the extension, so
+  it checks a chain of base branches the same way, with the branches
+  `gh pr view <number> --json baseRefName,headRefName` names. Before a
+  push, `gh stack view --json` gives a quick local check: it reads
+  `"needsRebase": false` on every layer above the bottom when the
+  checkout's own branches are in sync. It sees only those branches, so a
+  layer pushed from somewhere else, or a push that updated only some
+  branches, can read as in sync there while GitHub shows a layer behind.
+  Never report a stack in sync from it.
+
+Fall back to base branches whenever `gh stack` cannot answer, and keep
+working. That is when `gh extension list` shows no `github/gh-stack`, when a
+`gh stack` command exits 9 because the repository does not have stacks
+enabled, or when the stacks API returns an error or `[]`. Then work from the
+pull requests' base branches:
+
+- **Find its layers** by following base branches. The layer below a pull
+  request is the open pull request whose head branch is its base branch,
+  from `gh pr list --head <baseRefName> --json number`, and the chain ends
+  at the default branch. The layers above it are the open pull requests
+  based on its head branch, from
+  `gh pr list --base <headRefName> --json number`.
+- **Create it** from the bottom up when `gh stack` is missing or exits 9:
+  push each layer's branch with `git push -u origin <branch>`, and open it
+  with `gh pr create --draft --base <branch of the layer below> --head <branch>`.
+- **Update it by merging**, as `fix-pr` updates any branch: carry a fix up
+  right away by merging each layer into the one above it, from the bottom
+  up, and take in the default branch by merging it into the bottom layer
+  and carrying that up the same way. Run each layer's full gate before you
+  push it. A merge needs no force-push, so review threads stay anchored to
+  their commits. The chain stays in sync as a stack does, with every child
+  on its parent's current head, and the comparison under "Check that it is
+  in sync" checks it.
+
+Tell the user at most once why the chain is not a stack: that
+`gh extension install github/gh-stack` would make it one when the extension
+is missing, or that the repository does not have stacks enabled when
+`gh stack` exits 9. A pull request that is simply in no stack needs no note.
+Never install the extension yourself.

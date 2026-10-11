@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "Auto-started fix loop",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 256,
+  "title": "Start the fix loop from implement, and end a loop implement started",
+  "head": "fa9783c61008a91973bff31a1eb189b8bc589b5b",
+  "headRef": "auto-fix-loop",
+  "base": "e321ef48b27a4d80c6d617d540f296cc5598ab64",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector has two background loops that drive a pull request to a clean review. The <b>review loop</b> (<code>start-review-loop</code>) reviews every new head and posts findings as review threads. The <b>fix loop</b> (<code>start-fix-loop</code>) watches the pull requests its conversation created and runs <code>fix-pr</code> on each one that has findings or a merge conflict. The fix loop only runs when someone starts it, so a pull request that <code>implement</code> opened could sit with unanswered findings until the user noticed nothing was fixing them.",
+   "This pull request makes <code>implement</code> start the fix loop itself when it hands a pull request over, or append the pull request to the fix loop the conversation already runs. A new setting, <code>fix.auto_start</code>, turns that off. The hand-over now always says whether a fix loop is watching the pull request and, when none is, why.",
+   "A fix loop the user starts runs until the user stops it, idling on an empty tracked file. An auto-started loop should not outlive its pull requests, so the fix loop's watcher script gains <code>--exit-when-closed</code>: once every tracked pull request has merged or closed, it prints <code>DONE</code> and exits. The review loop is unchanged, because it already covers every pull request the operator has in the repository."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Tracked file</b>: the file of <code>owner/repo#number</code> lines that is the fix loop's whole scope. The watcher rereads it every pass.</li><li><b>Watcher</b>: <code>watch-threads.sh</code>, a polling script that prints one line per piece of outstanding work, such as <code>FINDING</code> or <code>CONFLICT</code>. Each line becomes a notification to the loop.</li><li><b>Pass</b>: one cycle of the watcher, querying every tracked pull request once.</li></ul>"
+   },
+   {
+    "id": "setting",
+    "title": "Turning it off",
+    "html": "<p><code>project config get fix.auto_start --default true</code> prints <code>false</code> when <code>.projector.toml</code> sets <code>fix.auto_start = false</code>, at the repository or in <code>~/.projector.toml</code>. <code>implement</code> then starts no loop. It also starts none as a subagent or on a host that cannot keep a process running after the turn.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watcher",
+   "title": "The watcher can end itself",
+   "kicker": "A new flag makes the fix loop's watcher exit once nothing it tracks is open",
+   "intro": [
+    "<code>watch-threads.sh</code> loops forever by default. Under <code>--exit-when-closed</code>, each pass now records two things: whether any tracked pull request answered as open, and whether the pass failed to learn the state of one. A failed GitHub query, a line in the tracked file that is not <code>owner/repo#number</code>, or a number that names no pull request all count as failing to learn. The watch ends only after a pass where nothing was open and nothing failed, so a network blip cannot end it early.",
+    "A tracked file that names no pull request at all, such as one whose merged lines were all deleted, also ends the watch."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-fix-loop/scripts/watch-threads.sh",
+     "note": "Adds the flag, the <code>open</code> and <code>unsure</code> per-pass variables, and the <code>DONE</code> exit after the state file is written.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>open</code> and <code>unsure</code> are reset at the top of every pass, so <code>set -u</code> never meets them unset and one pass's failure does not carry into the next. Every failure path that <code>continue</code>s past a pull request (a failed or empty <code>fetch_pr</code>, a not-found pull request, a failed <code>fetch_reviews</code>) sets <code>unsure=1</code> first. Checked by reading each branch."
+      },
+      {
+       "kind": "context",
+       "text": "The <code>DONE</code> check runs after the state file is rewritten and before the <code>--once</code> exit, so a <code>--once</code> run with the flag also prints <code>DONE</code>. The skill's pre-start check runs <code>--once</code> without the flag, so it never does.",
+       "line": 400
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Six tests for the flag through the fake <code>gh</code>: all closed, one open, an empty file, a failed query, a malformed line appended after the pre-start check, and a running watch that must exit within 30 seconds. The fake gains <code>FAKE_GH_LATE_LINE</code>, which appends a line to the tracked file on its first call.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passed at this head: 807 tests, <code>OK (skipped=1)</code>, run by the review."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "implement starts the loop, and the loop knows when to stop",
+   "kicker": "The skill text agents follow when they hand a pull request over and when the watcher exits",
+   "intro": [
+    "<code>implement</code>'s hand-over now ends by starting the fix loop on the new pull request, with every layer of a stack in its tracked set and the watcher run with <code>--exit-when-closed</code>. When the conversation already runs a fix loop, it appends the pull request to that loop's tracked file instead of starting a second one. It starts none when the setting is off, when the host cannot keep a process running, or when it runs as a subagent, which reports the pull request to its parent instead.",
+    "<code>start-fix-loop</code> learns the two new situations. When the user asks for a loop while an auto-started one is running, it restarts the watcher without the flag, so the loop then lives until the user stops it. On <code>DONE</code>, it checks the state of each pull request the tracked file names, deletes the closed ones, and restarts the watcher while one is open. Otherwise it finishes its subagents and reports that the loop stopped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "New text at the end of \"Hand the work over\": the three cases that start no loop, starting or joining the fix loop otherwise, and what the hand-over says about it.",
+     "checks": []
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "Says a loop <code>implement</code> started ends when its pull requests close, documents the <code>DONE</code> event, and says what to do on it.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The watcher announces nothing when a pull request merges; its rows just drop out. So when <code>DONE</code> arrives, the tracked file usually still names the merged pull requests, which is why the loop checks each one's state with <code>gh pr view</code> rather than trusting the file.",
+       "line": 202
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The new setting and the new default behavior",
+   "intro": [
+    "<code>docs/cli.md</code> adds <code>fix.auto_start</code> to the table of configuration keys, and <code>docs/plugins.md</code> says that <code>implement</code> starts the fix loop and how to turn that off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
