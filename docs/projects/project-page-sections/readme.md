@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -431,3 +431,42 @@ target, 4 to 14 on a plan and one per group on a summary, only when a
 target crosses the line or the window's top, or when the end of the content
 comes into view or leaves it. The build does not change, and `site.json`
 does not grow.
+
+## 7. Outcome
+
+The project shipped in the pull request that implements it. Every row of
+§ 5 has a test in `tests/test_site.py` that passes, and fails against the
+code before the change: the page rows in `ProjectPageTests`, the watch rows
+and the summary's list in `SectionWatchTests`, and the style rows in
+`SectionStyleTests`. `project-page-nav`'s scoping tests pass unchanged. The
+page tests run the compiled `showProjectFile` under node, with a stub DOM
+whose headings take their ids from the compiled `slug`.
+
+The browser checks ran with `project site serve` on this repository's
+summaries, and on a scratch checkout that holds `alpha`, `alpha/beta`,
+`alpha/beta/zeta`, and `alpha/gamma`, in a window 1,200 by 857 pixels:
+
+- **Scrolling a plan.** On `incremental-review`'s page, the mark sits on
+  **1 Problem** at the top and moves on as each heading passes the line. At
+  the page's end it reaches **8 Implementation status**, whose heading sits
+  65% of the way down the window, and a click on that row marks it too.
+- **Scrolling a summary.** On #242's summary page, the mark follows the
+  groups, and the check dots still show.
+- **At 375 pixels.** In a frame 375 pixels wide, the list starts folded
+  below the stacks, and the toggle opens and closes it. The plan starts at
+  555 pixels, and `scrollWidth` and `clientWidth` are both 375.
+- **A nested project.** `alpha/beta`'s readme lists its sections, its
+  pages, and then **Build alpha** over **Build gamma**.
+  `alpha/beta/design.md` lists its sections under its entry, and `alpha`'s
+  pages list no neighbors.
+- **Themes.** The pages draw in the dark theme and with
+  `data-theme="light"`.
+
+The implementation settles two details the design left open:
+
+- **The toggle lines up with the rows.** Its chevron sits in the numbers'
+  column, and its label in the titles' column.
+- **A click on a section redraws the page.** The site's `popstate`
+  listener routes every change of the address, a new hash included, so a
+  click on a section's row draws the page again, and the new drawing starts
+  a new watch, which marks the section the page scrolled to.
