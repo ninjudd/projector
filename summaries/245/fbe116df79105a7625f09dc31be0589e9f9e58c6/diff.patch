@@ -1,0 +1,433 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index eb5e8de5..12d0d402 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1175,13 +1175,19 @@ request `publish` posts `REQUEST_CHANGES` or a `COMMENT`, and leaves draft
+ state alone. Where `review.allow_approve` is `true` it posts an `APPROVE` for
+ a clean verdict only when the rule, counting that verdict as posted, signs
+ the head off after the same wait, because one account's newest approval
+-would replace another model's change request. `publish` then re-reads the
+-review and the draft state, adds the review id to the loop's record, deletes
+-the start comment, and releases the lock. It prints the sign-off, how long it
+-waited and for which models, and the draft state it set; `--json` gives them
+-as `signoff`, `waited`, `pending`, `moved`, and `draft`. A run that fails
+-after submitting exits non-zero, and running it again finishes that review
+-rather than posting another.
++would replace another model's change request. A `COMMENT` leaves the
++account's last change request holding `reviewDecision`, so when the rule signs
++the head off `clean`, after the same wait, `publish` dismisses each of the
++reviewer's Projector `REQUEST_CHANGES` reviews that nobody dismissed and no
++later approval by the account replaced. A change request without a Projector
++marker is left alone. `publish` then re-reads the review and the draft state,
++adds the review id to the loop's record, deletes the start comment, and
++releases the lock. It prints the sign-off, how long it waited and for which
++models, the draft state it set, and the change requests it dismissed;
++`--json` gives them as `signoff`, `waited`, `pending`, `moved`, `draft`, and
++`dismissed`, the dismissed review ids. A run that fails after submitting,
++including a dismissal GitHub refuses, exits non-zero, and running it again
++finishes that review rather than posting another.
+ 
+ `status` prints the sign-off of the pull request's current head, by the same
+ rule, with each model's part in it and the open finding threads:
+diff --git a/docs/projects/multi-model-review/readme.md b/docs/projects/multi-model-review/readme.md
+index 89bd50e2..30c64b0a 100644
+--- a/docs/projects/multi-model-review/readme.md
++++ b/docs/projects/multi-model-review/readme.md
+@@ -241,9 +241,9 @@ draft state alone, because the reviews of the new head decide it.
+ #### Cross-author reviews
+ 
+ On another author's pull request, publish leaves the draft state alone, as
+-today. A changes-requested verdict posts `REQUEST_CHANGES`. The rule decides
+-only whether a clean verdict posts an `APPROVE` or a `COMMENT`, and only where
+-`review.allow_approve` is `true`. Every model posts as one account, and
++today. A changes-requested verdict posts `REQUEST_CHANGES`. Where
++`review.allow_approve` is `true`, the rule decides whether a clean verdict
++posts an `APPROVE` or a `COMMENT`. Every model posts as one account, and
+ GitHub's `reviewDecision` follows that account's newest approval or change
+ request, so one model's approval would replace another model's standing
+ `REQUEST_CHANGES`. Publish therefore applies the rule before it submits,
+@@ -251,6 +251,14 @@ counting its own verdict as posted, and approves only on `clean`, after the
+ peer wait. Two models that finish at the same moment each see the other still
+ reviewing, so both post a `COMMENT`, and a person approves.
+ 
++A `COMMENT` replaces nothing, so it also leaves the account's own earlier
++`REQUEST_CHANGES` holding `reviewDecision` after every model has found the
++head clean, and the pull request stays blocked on a change request its reviews
++have settled. When the rule signs the head off `clean`, after the same peer
++wait, publish therefore dismisses each Projector `REQUEST_CHANGES` review by
++the account that nobody dismissed and no later approval replaced. A change
++request without a Projector marker is a person's, and stays.
++
+ ### 2.4 Data shapes
+ 
+ The markers name the model:
+@@ -735,11 +743,13 @@ The tests run in temporary Git repositories against the fake GitHub in
+ | 21 | Let the adopter stop in turn. | A third model's `adopt` posts a reply with `adopted-from=` naming the adopter, and becomes the verifier. |
+ | 22 | Run `watch-threads.sh` on a pull request with unresolved findings from two models still reviewing and from one that has stopped. | It reports a `FINDING` for each thread, whichever model opened it. |
+ | 23 | Leave a Projector finding from another account open on a self-review, then publish `clean`. | The sign-off is `waiting`, and the pull request stays a draft. Another account's verdicts on H do not change the rule. While that account's model is still reviewing, census marks the finding `adopt: no`. Once it has stopped, census marks it `adopt: now`, and `adopt` takes it over. |
++| 24 | On another author's pull request, request changes on an earlier head, then publish `clean` on H without `review.allow_approve`. | Publish dismisses the change request once the rule signs H off, after waiting for a peer that reviewed an earlier head. It dismisses nothing while another model requests changes or is reviewing H, after an `APPROVE`, or for a change request without a Projector marker, from another account, or older than an approval. A dismissal GitHub refuses exits non-zero, and the retry finishes it. |
+ 
+-Criteria 1, 4, 6, 8, 10, 16 to 21, and 23 fail before the change: the second
+-setup refuses on the lock, the collision check refuses the other model, the
+-census counts every thread as the operator's to settle, the last publish sets
+-the draft state, and nothing adopts a finding. Criterion 22 passes before and
++Criteria 1, 4, 6, 8, 10, 16 to 21, 23, and 24 fail before the change: the
++second setup refuses on the lock, the collision check refuses the other model,
++the census counts every thread as the operator's to settle, the last publish
++sets the draft state, nothing adopts a finding, and a clean head leaves the
++account's change request standing. Criterion 22 passes before and
+ after the change. It pins that the fix loop still reports every finding.
+ 
+ ## 5. Cost
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 16357e9a..582b5047 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -96,7 +96,9 @@ skill carry the outcome instead: the **verdict line** in every review body, and
+ normally here. Post `REQUEST_CHANGES` when findings are open. When the head is
+ clean, post a `COMMENT` review saying so — **never `APPROVE`**. An approval is a
+ person vouching for code, and an agent must not vouch on the reviewer's behalf;
+-recommend it in the body and let a human click it.
++recommend it in the body and let a human click it. A `COMMENT` leaves an earlier
++`REQUEST_CHANGES` standing, so once the head is signed off `publish` dismisses
++the change requests your account's Projector reviews left.
+ 
+ That last rule is the one configurable piece of this skill:
+ 
+@@ -777,7 +779,13 @@ what remains. It posts a real `APPROVE` only where `review.allow_approve` is
+ `true`, and only when the rule, counting this verdict as posted, signs the
+ head off after the peer wait: one account's newest approval or change
+ request sets `reviewDecision`, so an approval would erase another model's
+-standing change request. Otherwise it posts a `COMMENT`.
++standing change request. Otherwise it posts a `COMMENT`, which leaves the
++account's last `REQUEST_CHANGES` holding `reviewDecision`. So when the rule
++signs the head off, after the same peer wait, `publish` dismisses each
++Projector `REQUEST_CHANGES` review by the account that nobody dismissed and no
++later approval replaced, and the pull request is no longer blocked on a
++change request that its reviews have settled. A change request the account
++posted by hand, without a Projector marker, is a person's and stays.
+ 
+ Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
+ around a permission failure, and never read GitHub's refusal of a self-review
+@@ -794,13 +802,17 @@ terminal, which adds the rules to their own settings, or to run the publish
+ command themselves. `init` adds the rules only for a person at a terminal, so
+ do not run it to add them yourself.
+ 
+-After submitting, `publish` applies the sign-off rule and sets draft state
+-for a self-review, re-reads the review it posted and the pull request's
++After submitting, `publish` applies the sign-off rule, then sets draft state
++for a self-review or dismisses the standing change requests on a clean
++cross-author head, re-reads the review it posted and the pull request's
+ `isDraft`, adds the review id to the loop's record, deletes the start
+ comment, and releases the lock, in that order, so the pull request is never
+ left with neither a start comment nor its sign-off's draft state. It prints
+-the sign-off, how long it waited and for which models, and whether it marked
+-the pull request draft or ready. It records the review as submitted before any of those
++the sign-off, how long it waited and for which models, whether it marked
++the pull request draft or ready, and which change requests it dismissed. When
++a dismissal fails, `publish` exits non-zero and names the review; dismiss it
++on GitHub, or fix the permission that refused it, and run `publish` again. It
++records the review as submitted before any of those
+ steps, so a run that fails partway exits non-zero and running it again
+ finishes that review instead of posting a second one.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index e95ee9de..3a021660 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -953,6 +953,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+                       + ("; the head moved, so its reviews decide the draft state" if result["moved"] else ""))
+                 if result["draft"] is not None:
+                     print("marked draft" if result["draft"] else "marked ready")
++                if result["dismissed"]:
++                    print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
+             return 0
+         if command == "gate":
+             state = review.read_state(paths)
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 8ac2eba4..a8a8dda6 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1066,6 +1066,40 @@ def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
+     return [json.loads(row) for row in rows if row.strip()]
+ 
+ 
++def standing_change_requests(repo: str, number: int, reviewer: str) -> list[dict]:
++    """The reviewer's Projector `REQUEST_CHANGES` reviews that still hold `reviewDecision`, each with its
++    `id` and `url`: those whose body carries a verdict marker, which nobody dismissed and no later
++    approval by the account replaced."""
++    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
++                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
++                           '| select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
++                           '| {id, url: .html_url, state, body} | @json']).splitlines()
++    standing = []
++    for review in (json.loads(row) for row in rows if row.strip()):
++        if review["state"] == "APPROVED":
++            standing = []
++        elif review["state"] == "CHANGES_REQUESTED" and verdict_marker(review.get("body") or "") is not None:
++            standing.append({"id": review["id"], "url": review["url"]})
++    return standing
++
++
++def dismiss(repo: str, number: int, reviewer: str, requests: list[dict], message: str, token: str) -> list[int]:
++    """Dismiss each change request as the reviewer, then read them back, and return their ids."""
++    for request in requests:
++        try:
++            run_gh(["api", "-X", "PUT", f"repos/{repo}/pulls/{number}/reviews/{request['id']}/dismissals",
++                    "-f", f"message={message}", "-f", "event=DISMISS"], token)
++        except ReviewError as exc:
++            raise ReviewError(f"could not dismiss change request {request['id']} ({exc}); dismiss it at "
++                              f"{request['url']} and run publish again") from exc
++    ids = [request["id"] for request in requests]
++    left = [request for request in standing_change_requests(repo, number, reviewer) if request["id"] in ids]
++    if left:
++        raise ReviewError(f"change request {left[0]['id']} still stands after its dismissal; dismiss it at "
++                          f"{left[0]['url']} and run publish again")
++    return ids
++
++
+ def read_record(root: Path, loop: str) -> list[dict]:
+     record = loop_record(root, loop)
+     return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
+@@ -1365,9 +1399,13 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
+ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
+             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
+             incremental: bool = False, enabled: bool = True, wait: int = PEER_WAIT) -> dict:
+-    """Submit the review, then apply the sign-off rule and set draft state, re-read, record, delete the
+-    start comment, and release the lock, in that order. Every refusal leaves the lock held for this
+-    review to retry.
++    """Submit the review, then apply the sign-off rule and act on it, re-read, record, delete the start
++    comment, and release the lock, in that order. Every refusal leaves the lock held for this review to
++    retry.
++
++    Acting on the rule sets a self-review's draft state. On another author's pull request a `clean`
++    sign-off dismisses the reviewer's standing Projector change requests, because a `COMMENT` review
++    leaves `reviewDecision` where the last of them put it.
+ 
+     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
+     review, published only while `incremental_rules` passes, with `enabled` from
+@@ -1474,9 +1512,14 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+               "login": reviewer, "body": read["body"]}
+     draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
+-    # Only a draft is about to be signed off, so only a draft waits for its peers.
++    standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
++    # Only a draft or a standing change request is about to be signed off, so only they wait for peers.
+     signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
+-                  deadline if published.get("self") and draft else now(), posted)
++                  deadline if (draft if published.get("self") else standing) else now(), posted)
++    dismissed = []
++    if standing and signed["signoff"] == "clean" and not signed["moved"]:
++        dismissed = dismiss(repo, number, reviewer, standing,
++                            f"{MARK} Every model reviewing {sha[:7]} found it clean: {posted['url']}", token)
+     draft_wanted = None
+     if published.get("self") and not signed["moved"]:
+         draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
+@@ -1504,6 +1547,6 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     write_state(paths, state)
+     paths.lock(sha).unlink(missing_ok=True)
+     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
+-            "event": published["event"], "draft": draft_wanted, "from": published.get("from"),
+-            "signoff": signed["signoff"], "waited": signed["waited"], "pending": signed["pending"],
+-            "moved": signed["moved"]}
++            "event": published["event"], "draft": draft_wanted, "dismissed": dismissed,
++            "from": published.get("from"), "signoff": signed["signoff"], "waited": signed["waited"],
++            "pending": signed["pending"], "moved": signed["moved"]}
+diff --git a/tests/test_review.py b/tests/test_review.py
+index c6979ca5..5de19305 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -74,6 +74,8 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.after_post = None
+         # Reviews the listing leaves out, as one GitHub has not indexed yet.
+         self.unlisted: set[int] = set()
++        # Answer a dismissal without dismissing anything.
++        self.ignore_dismissals = False
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
+@@ -81,10 +83,16 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             raise ReviewError(f"gh {' '.join(args)} failed: HTTP 502")
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
+             login = re.search(r'\.user\.login == "([^"]+)"', args[4]).group(1)
++            projector_only = "projector-review" in args[4]
+             return "".join(json.dumps({"id": r["id"], "url": review_page(r["id"]), "at": r.get("at"),
+-                                       "body": r["body"]}) + "\n"
+-                           for r in self.reviews if r["user"]["login"] == login and "projector-review" in r["body"]
+-                           and r["id"] not in self.unlisted)
++                                       "state": self.state(r), "body": r["body"]}) + "\n"
++                           for r in self.reviews if r["user"]["login"] == login
++                           and (not projector_only or "projector-review" in r["body"]) and r["id"] not in self.unlisted)
++        if args[:3] == ["api", "-X", "PUT"] and args[3].endswith("/dismissals"):
++            found = next(r for r in self.reviews if r["id"] == int(args[3].split("/")[-2]))
++            if not self.ignore_dismissals:
++                found.update(state="DISMISSED", dismissal=args[5].removeprefix("message="))
++            return json.dumps({"id": found["id"], "state": self.state(found)})
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/files"]:
+             return "".join(json.dumps([name, patch]) + "\n" for name, patch in self.files)
+         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/pulls/1/reviews"]:
+@@ -150,6 +158,12 @@ def comment(self, body: str, login: str = "operator", created_at: str | None = N
+         self.comment_info[comment_id] = {"login": login, "created_at": created, "updated_at": updated_at or created}
+         return comment_id
+ 
++    @staticmethod
++    def state(review: dict) -> str:
++        """The review's state as GitHub lists it: the event it was submitted with, until it is dismissed."""
++        return review.get("state") or {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED",
++                                       "COMMENT": "COMMENTED"}[review["event"]]
++
+     def posts(self) -> list[tuple[list[str], str | None]]:
+         return [(args, token) for args, token in self.calls if any(a.startswith("body=") for a in args)]
+ 
+@@ -638,9 +652,9 @@ def posted(self) -> dict:
+         return self.github.reviews[-1]
+ 
+     def add_verdict(self, model: str | None, at: str = "2026-09-27T01:10:00Z", sha: str | None = None,
+-                    verdict: str = "clean", login: str = "operator") -> int:
++                    verdict: str = "clean", login: str = "operator", event: str = "COMMENT") -> int:
+         review_id = 800 + len(self.github.reviews)
+-        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": "COMMENT", "comments": [],
++        self.github.reviews.append({"id": review_id, "user": {"login": login}, "event": event, "comments": [],
+                                     "commit_id": sha or self.head, "at": at,
+                                     "body": verdict_body(sha or self.head, model, verdict)})
+         return review_id
+@@ -1423,6 +1437,139 @@ def test_a_head_that_moves_during_the_approval_wait_refuses_and_points_at_move(s
+         self.assertTrue(self.lock(self.head).exists())
+ 
+ 
++class DismissalTests(SignoffCase):
++    """claude-opus-5-5 requested changes on an earlier head of another author's pull request."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.github.pr["user"] = {"login": "teammate"}
++        self.github.permissions = {"teammate": "write"}
++        self.github.commit_authors = ["teammate"]
++        self.request = self.change_request(self.model)
++
++    def change_request(self, model: str, login: str = "operator") -> int:
++        return self.add_verdict(model, sha=self.earlier, verdict="changes-requested", login=login,
++                                event="REQUEST_CHANGES")
++
++    def review_state(self, review_id: int) -> str:
++        return FakeGitHub.state(next(r for r in self.github.reviews if r["id"] == review_id))
++
++    def dismissals(self) -> list[tuple[list[str], str | None]]:
++        return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "PUT"]]
++
++    def test_a_clean_sign_off_dismisses_the_standing_change_request(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, out, err = self.publish("clean")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("COMMENT", self.posted()["event"])
++        self.assertEqual("DISMISSED", self.review_state(self.request))
++        dismissed = next(r for r in self.github.reviews if r["id"] == self.request)
++        self.assertEqual(f"{review.MARK} Every model reviewing {self.head[:7]} found it clean: "
++                         f"{review_page(self.posted()['id'])}", dismissed["dismissal"])
++        self.assertEqual(["token-operator"], [token for _, token in self.dismissals()])
++        self.assertIn(f"dismissed change request {self.request}", out)
++        self.assertTrue(self.github.pr["draft"], "another author's draft state is theirs")
++        steps = [" ".join(args) for args, _ in self.github.calls]
++        dismiss = next(i for i, c in enumerate(steps) if c.endswith("event=DISMISS"))
++        delete = next(i for i, c in enumerate(steps) if c.startswith("api -X DELETE"))
++        self.assertLess(dismiss, delete, "the start comment goes only after the dismissal")
++
++    def test_dismisses_only_the_reviewers_projector_change_requests_since_its_last_approval(self) -> None:
++        self.github.reviews.append({"id": 850, "user": {"login": "operator"}, "event": "APPROVE", "body": "",
++                                    "comments": [], "commit_id": self.earlier, "at": "2026-09-27T01:11:00Z"})
++        standing = self.change_request(self.model)
++        by_hand, naming_the_loop = 851, 852
++        for review_id, body in ((by_hand, "Rename this first."),
++                                (naming_the_loop, "The projector-review loop missed the empty case; handle it.")):
++            self.github.reviews.append({"id": review_id, "user": {"login": "operator"}, "event": "REQUEST_CHANGES",
++                                        "body": body, "comments": [], "commit_id": self.earlier,
++                                        "at": "2026-09-27T01:12:00Z"})
++        colleague = self.change_request("gpt-5.5", login="colleague")
++        already = self.change_request(self.model)
++        next(r for r in self.github.reviews if r["id"] == already)["state"] = "DISMISSED"
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual([standing], result["dismissed"])
++        self.assertEqual({self.request: "CHANGES_REQUESTED", standing: "DISMISSED", by_hand: "CHANGES_REQUESTED",
++                          naming_the_loop: "CHANGES_REQUESTED", colleague: "CHANGES_REQUESTED"},
++                         {i: self.review_state(i)
++                          for i in (self.request, standing, by_hand, naming_the_loop, colleague)})
++
++    def test_no_dismissal_while_another_model_requests_changes_or_is_reviewing_the_head(self) -> None:
++        cases = {"changes requested": lambda: self.add_verdict("gpt-5.5", verdict="changes-requested",
++                                                               event="REQUEST_CHANGES"),
++                 "reviewing": lambda: self.start("gpt-5.5")}
++        for name, arrange in cases.items():
++            with self.subTest(name):
++                self.setUp()
++                arrange()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertNotEqual("clean", result["signoff"])
++                self.assertEqual([], result["dismissed"])
++                self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
++                self.assertEqual([], self.dismissals())
++
++    def test_waits_for_a_peer_that_reviewed_an_earlier_head_before_it_dismisses(self) -> None:
++        for posts_nothing in (True, False):
++            with self.subTest(posts_nothing=posts_nothing):
++                self.setUp()
++                peer = self.change_request("gpt-5.5")
++                self.begin_now()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                if not posts_nothing:
++                    self.hooks[1] = lambda: self.start("gpt-5.5")
++
++                result = self.json_publish("clean")
++
++                if posts_nothing:
++                    self.assertEqual(("clean", 180), (result["signoff"], sum(self.slept)))
++                    self.assertEqual([self.request, peer], result["dismissed"])
++                else:
++                    self.assertEqual(("waiting", [15], []), (result["signoff"], self.slept, result["dismissed"]))
++                    self.assertEqual("CHANGES_REQUESTED", self.review_state(peer))
++
++    def test_an_approval_replaces_the_change_request_so_nothing_is_dismissed(self) -> None:
++        self.configure("allow_approve = true")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual(("APPROVE", []), (result["event"], result["dismissed"]))
++        self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
++        self.assertEqual([], self.dismissals())
++
++    def test_a_failed_dismissal_keeps_the_lock_and_a_retry_finishes_it(self) -> None:
++        cases = {"refused": lambda: setattr(self.github, "fail", "dismissals"),
++                 "still standing": lambda: setattr(self.github, "ignore_dismissals", True)}
++        for name, arrange in cases.items():
++            with self.subTest(name):
++                self.setUp()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                arrange()
++
++                code, _, err = self.publish("clean")
++
++                self.assertEqual(1, code)
++                self.assertIn(f"dismiss it at {review_page(self.request)} and run publish again", err)
++                self.assertTrue(self.lock(self.head).exists())
++                self.assertEqual(1, len(self.github.comments), "the start comment stays until the retry")
++
++                self.github.fail, self.github.ignore_dismissals = None, False
++                code, out, err = self.publish("clean")
++
++                self.assertEqual(0, code, err)
++                self.assertEqual(2, len(self.github.reviews), "the retry posts no second review")
++                self.assertEqual("DISMISSED", self.review_state(self.request))
++                self.assertFalse(self.lock(self.head).exists())
++
++
+ class StatusTests(SignoffCase):
+     def status(self, *extra: str) -> tuple[int, str, str]:
+         return self.project("status", "1", "--repo", REPO, *extra)

@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Dismiss settled change requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 245,
+  "title": "Dismiss a settled change request once every model finds the head clean",
+  "head": "fbe116df79105a7625f09dc31be0589e9f9e58c6",
+  "headRef": "dismiss-settled-change-requests",
+  "base": "ae7250fa42efdb7b66e9363a66d42593070ca7ea",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop posts each review as one GitHub account, and several models can review the same pull request under that account. On another author's pull request, a <code>changes-requested</code> verdict posts a real <code>REQUEST_CHANGES</code> review, which sets GitHub's <code>reviewDecision</code>, the status that blocks a merge. A later <code>clean</code> verdict posts only a <code>COMMENT</code> unless <code>review.allow_approve</code> is on, and a <code>COMMENT</code> replaces nothing. So the pull request stayed at <code>CHANGES_REQUESTED</code> after every model had found the head clean, and <code>fix-pr</code> kept reporting a change request that no finding backed.",
+   "This change makes <code>project review publish</code> dismiss those change requests. After it posts a review on another author's pull request, it lists the account's Projector <code>REQUEST_CHANGES</code> reviews that are still standing. When the sign-off rule says the head is <code>clean</code>, it dismisses each one as the reviewer, then reads them back to confirm. The sign-off rule is the existing check that every model's newest verdict on the head is clean, no model is still reviewing it, and no finding thread is open.",
+   "The first review found that the code recognized a Projector change request by the text <code>projector-review</code> anywhere in its body, so a hand-written change request that mentioned the loop by name was dismissed too. The author fixed it: a change request now counts only when its body carries a verdict marker line, the same test the sign-off rule uses. The review of this head is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Standing change request</b>: a <code>REQUEST_CHANGES</code> review by the reviewer's account that nobody dismissed and no later <code>APPROVE</code> by the account replaced.</li><li><b>Sign-off</b>: the result of the sign-off rule for a head, one of <code>clean</code>, <code>waiting</code>, <code>changes-requested</code>, or <code>unreviewed</code>.</li><li><b>Peer wait</b>: up to <code>review.peer_wait</code> seconds (180 by default) that <code>publish</code> waits for another model that reviewed an earlier head and has not started on this one.</li></ul>"
+   },
+   {
+    "id": "outcomes",
+    "title": "What publish does on another author's pull request",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Situation</th><th>Result</th></tr></thead><tbody><tr><td>Every model clean on the head</td><td class=\"r\">Dismisses the standing Projector change requests</td></tr><tr><td>Another model requests changes or is reviewing</td><td class=\"r\">Dismisses nothing</td></tr><tr><td>A peer that reviewed an earlier head posts nothing within the wait</td><td class=\"r\">Dismisses, including that peer's change request</td></tr><tr><td>An <code>APPROVE</code> came after the change request</td><td class=\"r\">Dismisses nothing</td></tr><tr><td>A change request without a Projector marker</td><td class=\"r\">Stays</td></tr><tr><td>GitHub refuses the dismissal</td><td class=\"r\">Exits 1 with the lock held; a rerun finishes</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>e8f0746</code>: changes requested. A hand-written change request that mentioned <code>projector-review</code> was dismissed.</li><li><code>fbe116d</code>: clean. The match now needs a verdict marker line, and the plan's section 2.3 no longer says the rule decides only between approve and comment.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Dismissal in publish",
+   "kicker": "How publish finds and dismisses the account's standing change requests",
+   "intro": [
+    "<code>standing_change_requests</code> reads every review on the pull request by the reviewer's account, in order. An <code>APPROVE</code> clears the list, because an approval already replaces the earlier change requests in <code>reviewDecision</code>. Each Projector <code>REQUEST_CHANGES</code> after it joins the list. A dismissed review has the state <code>DISMISSED</code>, so it never appears.",
+    "<code>publish</code> calls it after the review is posted, and only on another author's pull request, since GitHub refuses <code>REQUEST_CHANGES</code> on your own. A standing change request now makes <code>publish</code> wait for peers, as a draft does on a self-review. When the sign-off is <code>clean</code> and the head did not move during the wait, <code>dismiss</code> sends each dismissal with the reviewer's token, and then lists the change requests again to confirm that none still stands. A failure raises before the start comment is deleted, so a rerun of <code>publish</code> finishes the job without posting a second review."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite passes at this head: 761 tests, 1 skipped, with <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code> clean."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>standing_change_requests</code> and <code>dismiss</code>, and calls them from <code>publish</code> after the sign-off rule runs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1081,
+       "text": "A change request counts as Projector's only when <code>verdict_marker</code> finds a marker line in its body. I reran a reproduction at this head with the fake GitHub: a hand-written change request reading \"The projector-review loop missed the empty case\" stays <code>CHANGES_REQUESTED</code> after a clean publish."
+      },
+      {
+       "kind": "context",
+       "line": 1515,
+       "text": "The peer wait now applies on another author's pull request whenever a standing change request exists. When this review's own verdict is <code>changes-requested</code>, the sign-off is not <code>clean</code>, so <code>sign</code> returns at once and nothing waits."
+      },
+      {
+       "kind": "context",
+       "line": 1521,
+       "text": "The list of change requests to dismiss is taken before the peer wait. A change request that a peer posts during the wait is not in the list, and it also turns the sign-off to <code>changes-requested</code>, so nothing is dismissed."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Prints a <code>dismissed change request …</code> line when <code>publish</code> dismissed any."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Dismissal tests",
+   "kicker": "Six cases against the fake GitHub",
+   "intro": [
+    "The fake GitHub in <code>tests/test_review.py</code> now returns each review's state, so the code can tell an approval from a change request, and answers the dismissal call by marking the review <code>DISMISSED</code>. <code>DismissalTests</code> sets up another author's pull request where <code>claude-opus-5-5</code> requested changes on an earlier head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1519,
+       "text": "This test pins the case where a peer that requested changes on an earlier head posts nothing within 180 seconds: <code>publish</code> treats it as absent and dismisses its change request too. That matches how a self-review marks a draft ready after the same wait."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill, reference, and plan text",
+   "kicker": "Where the dismissal is described for agents and readers",
+   "intro": [
+    "The <code>review-pr</code> skill, <code>docs/cli.md</code>, and the multi-model-review plan's section 2.3 each describe the dismissal. The plan also gains acceptance criterion 24, which the new tests cover."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Tells the agent that <code>publish</code> dismisses the change requests and what to do when a dismissal fails."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/multi-model-review/readme.md"
+    }
+   ]
+  }
+ ],
+ "project": "multi-model-review"
+}
