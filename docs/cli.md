@@ -761,7 +761,8 @@ every pull request in its stack, the ones beneath it and the ones above it,
 under its segments' headers, one row each with its title, and highlights the
 current one. A pull request with no summary on the site links to GitHub, and
 a pull request with no stack is a stack of one, with its own row highlighted. Its older
-versions follow the sections. A summary's header shows the same status as its
+versions follow the sections, and as you scroll, the list of sections marks
+the one in view. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict on its head, linked to the review on GitHub that decides it.
 Each model that reviewed the head counts by its newest Projector review of it,
@@ -831,12 +832,18 @@ GitHub. Another project's segment opens with that project's header, linked
 to its page. The project's own segments show only their rows, and where one
 follows another project's segment, a thin rule above its rows ends that
 segment. A project that heads no segment shows **No reviews of this
-project.** in place of the stacks. Below them, the sidebar lists the
-project's supplemental files and nested projects, with the current page in
-bold, and its last row holds the credit and an icon that opens the page's
-history on GitHub. An HTML page in a project keeps its frame, with the
-sidebar in the column the menu button shows. At 980 pixels and narrower, the
-sidebar sits between the title row and the plan.
+project.** in place of the stacks. On the readme, the plan's `##` sections
+follow, each a link with the plan's own number, such as `2`, in a column
+beside its title. Below them, the sidebar lists the project's supplemental
+files and nested projects, with the current page in bold, and a
+supplemental Markdown page lists its own sections under its entry. A nested
+project's sidebar then names its parent project above the parent's other
+nested projects, each a link. The sidebar's last row holds the credit and an
+icon that opens the page's history on GitHub. As you scroll, the list of
+sections marks the one in view. An HTML page in a project keeps its frame,
+with the sidebar in the column the menu button shows, and lists no sections.
+At 980 pixels and narrower, the sidebar sits between the title row and the
+plan, and its sections start folded behind a **Sections** toggle.
 A review page's header has a **…** menu with
 the pull request's conversation, files, and compare views on GitHub. Each file
 card's header has one too: **View diff on GitHub**, **View file on GitHub**,

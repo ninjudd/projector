@@ -127,6 +127,13 @@ interface StackRow {
   current?: boolean;
 }
 
+/** A section of a page as its sidebar lists it: the id its link names, its number or "", and its title as markup. */
+interface PageSection {
+  id: string;
+  num: string;
+  title: string;
+}
+
 /**
  * A sidebar, as `sideNavHtml` draws it on a summary page and on a project page: a landmark named `label`; `head`, the
  * page's own project's header, once, drawn as the page you are on when `current` says so; each of `stacks`, its

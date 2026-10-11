@@ -107,6 +107,63 @@ function sideNavHtml(nav: SideNav): string {
     `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
 }
 
+// A page's sections as a sidebar lists them: a link to each, holding its
+// number in a column of its own beside its title. A summary's list ends each
+// row with the dot that marks the section reviewed.
+function sectionListHtml(sections: PageSection[], checks: boolean, id = ''): string {
+  return `<ol class="sections"${id !== '' ? ` id="${esc(id)}"` : ''}>` + sections.map(function (s) {
+    const target = esc(s.id);
+    return `<li><a href="#${target}"><span class="nnum">${esc(s.num)}</span><span class="ntitle">${s.title}</span>` +
+      `${checks ? `<span class="ncheck" data-gid="${target}"></span>` : ''}</a></li>`;
+  }).join('') + '</ol>';
+}
+
+// The watch on a page's list of sections: its observers, and the marker it
+// put after the sections. A page watches one list at a time.
+let sectionWatch: { observers: IntersectionObserver[]; end: Element } | null = null;
+
+// Marks the link in `list` to the section in view, and keeps the mark current
+// as the page scrolls. The section in view is the last one whose top has
+// passed a line 30% of the way down the window. A short last section never
+// reaches that line, because the page stops scrolling first, so once the
+// marker after the sections is in view on a scrolled page, the line drops to
+// the window's bottom. A list of null stops the watch.
+function watchSections(list: Element | null): void {
+  if (sectionWatch !== null) {
+    sectionWatch.observers.forEach(function (o) { o.disconnect(); });
+    sectionWatch.end.remove();
+    sectionWatch = null;
+  }
+  if (list === null || !('IntersectionObserver' in window)) return;
+  const sections = Array.from(list.querySelectorAll('a[href^="#"]')).flatMap(function (link) {
+    const target = document.getElementById(decodeURIComponent((link.getAttribute('href') ?? '').slice(1)));
+    return target !== null ? [{ link: link, target: target }] : [];
+  });
+  const container = sections[sections.length - 1]?.target.parentElement;
+  if (container == null) return;
+  const end = document.createElement('div');
+  end.setAttribute('aria-hidden', 'true');
+  container.after(end);
+  let atEnd = false;
+  function mark(): void {
+    const line = atEnd && window.scrollY > 0 ? window.innerHeight : window.innerHeight * 0.3;
+    const passed = sections.filter(function (s) { return s.target.getBoundingClientRect().top <= line; });
+    const current = passed[passed.length - 1];
+    sections.forEach(function (s) {
+      if (s === current) s.link.setAttribute('aria-current', 'location');
+      else s.link.removeAttribute('aria-current');
+    });
+  }
+  const passing = new IntersectionObserver(mark, { rootMargin: '0px 0px -70% 0px' });
+  sections.forEach(function (s) { passing.observe(s.target); });
+  const ending = new IntersectionObserver(function (entries) {
+    atEnd = entries[entries.length - 1]?.isIntersecting ?? atEnd;
+    mark();
+  });
+  ending.observe(end);
+  sectionWatch = { observers: [passing, ending], end: end };
+}
+
 (function (): void {
 // How many hidden lines one expand up or expand down reveals.
 const STEP = 20;
@@ -529,9 +586,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
   }
 
   function renderPage(): string {
-    const sections = data.groups.map(function (g, i) {
-      return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
-    }).join('');
+    const sections = data.groups.map(function (g, i) { return { id: g.id, num: String(i + 1), title: g.title }; });
     const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
     const menu = moreMenu('pr-menu', 'Pull request links', [
       { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
@@ -543,7 +598,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
       titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
       '<div class="layout"><aside class="side">' +
         sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
-          middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
+          middle: `<div class="extra">${extra}</div>${sectionListHtml(sections, true)}`, foot: headsList() }) +
         '</aside>' +
       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
         `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
@@ -878,6 +933,7 @@ function wireSummary(views: Record<string, ContextView>): void {
   }
   setupStuck();
   void document.fonts.ready.then(setupStuck);
+  watchSections(document.querySelector('.layout > .side ol.sections'));
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);

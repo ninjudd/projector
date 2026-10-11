@@ -84,8 +84,33 @@ body.barhidden .barshow { display: inline-flex; }
 .sidetree a.active, .sidetop a.active { color: var(--text); font-weight: 600; }
 .sidetop { font-weight: 600; margin-bottom: 10px; }
 .sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-/* A project's other pages, below its stacks in the sidebar, lined up with the stacks' rows. */
-.nav .navpages { padding: 6px 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; line-height: 1.4; }
+/* The blocks below a project's stacks in its sidebar, each under a divider:
+   the readme's sections, the project's other pages, and a nested project's
+   parent over its siblings. The pages and the neighbors line up with the
+   stacks' rows. */
+.nav > .navsections, .nav .navpages, .nav .navnear { padding-top: 6px; border-top: 1px solid var(--border); }
+.nav > .navsections + .navpages, .nav .navpages + .navnear, .nav > .navsections + .navnear { margin-top: 10px; }
+.nav .navpages, .nav .navnear { padding-inline: 9px; font-size: 13.5px; line-height: 1.4; }
+.nav .navnear .sidetop { margin-bottom: 5px; }
+/* A page's sections have no reviewed dots, so the title takes the dot's
+   column. Under a page's entry in the pages, they keep their own spacing. */
+.nav .navsections ol a { grid-template-columns: 22px 1fr; }
+.sidetree .navsections { margin-top: 4px; }
+.sidetree .navsections li { margin: 0; }
+/* At 980 pixels and narrower the sections start folded behind a toggle, so the
+   plan stays near the top of the page. A wider screen shows them whole. The
+   toggle's chevron sits in the numbers' column, and its label in the titles'. */
+.nav .navfold { display: none; }
+@media (max-width: 980px) {
+  .nav .navfold {
+    display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: center; width: 100%; padding: 6px; border: 0;
+    border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.3;
+    text-align: left; cursor: pointer;
+  }
+  .nav .navfold:hover { background: var(--surface-2); }
+  .nav .navfold[aria-expanded="false"] .chev { transform: rotate(-45deg); }
+  .nav .navfold[aria-expanded="false"] + ol { display: none; }
+}
 
 /* An HTML page fills the window below the header, edge to edge, with its section
    sidebar, when shown, as a column beside it. */
