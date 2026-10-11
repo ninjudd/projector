@@ -332,6 +332,16 @@ workflow opens the pull request with its own token, which needs **Allow
 GitHub Actions to create and approve pull requests** turned on under the
 repository's **Settings > Actions > General**.
 
+GitHub starts no workflow for a pull request that a workflow's own token
+opened, so the Check workflow would never run on the release pull request by
+itself. The Release workflow dispatches Check on the release branch instead,
+both when it opens the pull request and when a rerun finds one already open,
+because `workflow_dispatch` is the one event that token may trigger. The
+dispatched run's checks land on the branch's commit, which is the pull
+request's head, so they show on the release pull request like any other
+checks. That is why `.github/workflows/check.yml` lists `workflow_dispatch`
+among its triggers and the Release workflow's propose job has `actions: write`.
+
 The workflow runs `.github/scripts/release.py`, which also works by hand
 from any checkout. `bump` raises one part of the version and `set` writes an
 exact one, both refusing a version that does not go up:

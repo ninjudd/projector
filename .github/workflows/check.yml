@@ -3,6 +3,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The Release workflow dispatches this on each release branch it pushes.
+  # GitHub starts no workflow for a pull request that a workflow's own token
+  # opened, and workflow_dispatch is the exception it allows, so this is how a
+  # release pull request gets its checks (docs/plugins.md#release-an-update).
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
