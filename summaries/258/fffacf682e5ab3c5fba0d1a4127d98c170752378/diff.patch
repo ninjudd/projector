@@ -1,0 +1,96 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 89486fb..195e02c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1127,12 +1127,13 @@ at which a lock is stale. `setup` refuses a model ID that is empty, holds
+ whitespace, or makes a folder name that starts with `.`, and deletes a start
+ comment this machine's state recorded for the model and never published.
+ 
+-The start comment and the review's signature line name the Projector version
+-that `project --version` reports, the model from `--model`, and the reasoning
+-effort from `CLAUDE_EFFORT` in the environment, which Claude Code sets for the
+-Bash tool and keeps current through a mid-session `/effort` change. When
+-`CLAUDE_EFFORT` is unset or empty, as on Codex or on a model without effort
+-support, they leave the effort out rather than guess it.
++The start comment and the review's signature line name the head under review
++by its short SHA, the Projector version that `project --version` reports, the
++model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
++environment, which Claude Code sets for the Bash tool and keeps current
++through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
++empty, as on Codex or on a model without effort support, they leave the
++effort out rather than guess it.
+ 
+ `move` follows a head that moved mid-review: it creates a worktree for the new
+ head, rechecks trust, edits the start comment in place to name it, re-reads the
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 13e1c8c..edded1d 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -515,11 +515,17 @@ this skill — nothing in GitHub enforces them.
+ **Every review body opens with a signature line and a marker:**
+ 
+ ```
+-📽️ **Projector review** · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
++📽️ **Projector review** of `<short-sha>` · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
+ 
+ <!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
+ ```
+ 
++The short SHA names the head the review read, the first seven characters of
++`sha=`. GitHub places a commit on the pull request's timeline at the time it
++was committed, not pushed, so a review published while a later commit waited
++to be pushed appears below that commit. The SHA tells the reader which head
++the verdict is about. `project review publish` writes it.
++
+ State the model **actually running this review** — the model identifier the
+ host reports for the running session — never a default copied from this file.
+ A review whose signature misstates what produced it is worse than an unlabeled
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 0137a48..c48d313 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -942,7 +942,7 @@ def change_size(result: dict) -> str:
+ # A comment of Projector's own at the start of a line, as a review or finding carries it.
+ OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
+ SIGNATURE = re.compile(
+-    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* · `[^`\n]+` · model `[^`\n]+` · "
++    r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
+     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
+     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+ )
+@@ -1287,7 +1287,8 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
+     seconds = elapsed(state["start_comment"]["created_at"], at)
+     took = duration(seconds, state["heads"])
+     version, effort = distribution_version(), live_effort()
+-    signature = (f"{MARK} **Projector review** · {producer_segments(version, state['model'], effort)}"
++    signature = (f"{MARK} **Projector review** of `{state['sha'][:7]}` · "
++                 f"{producer_segments(version, state['model'], effort)}"
+                  f"**{VERDICT_WORDS[verdict]}** · "
+                  + (f"incremental from `{incremental_from[:7]}` · " if incremental_from else "")
+                  + f"took {took}")
+diff --git a/tests/test_review.py b/tests/test_review.py
+index fb7e1d8..b18b046 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -680,8 +680,8 @@ def test_publishes_a_clean_self_review_marks_it_ready_and_cleans_up_in_order(sel
+         self.assertEqual(0, code, err)
+         review_body = self.posted()["body"]
+         self.assertEqual(
+-            f"{review.MARK} **Projector review** · `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
+-            "took 12m 34s",
++            f"{review.MARK} **Projector review** of `{self.head[:7]}` · `1.2.3` · model `claude-opus-5-5` · "
++            "**CLEAN** · took 12m 34s",
+             review_body.splitlines()[0])
+         self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
+                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
+@@ -2135,8 +2135,8 @@ def test_publishes_a_clean_incremental_self_review_with_exactly_its_parts(self)
+         self.assertEqual(0, code, err)
+         posted = self.posted()
+         self.assertEqual(
+-            f"{review.MARK} **Projector review** · `1.2.3` · model `claude-opus-5-5` · **CLEAN** · "
+-            f"incremental from `{self.reviewed[:7]}` · took 12m 34s\n\n"
++            f"{review.MARK} **Projector review** of `{head[:7]}` · `1.2.3` · model `claude-opus-5-5` · "
++            f"**CLEAN** · incremental from `{self.reviewed[:7]}` · took 12m 34s\n\n"
+             f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 sha={head} findings=0 "
+             "seconds=754 covered=1/1 -->\n"
+             f"<!-- projector-incremental v=1 from={self.reviewed} kind=push insertions=1 deletions=1 files=1 "

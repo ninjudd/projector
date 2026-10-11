@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Reviewed head in signature",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 258,
+  "title": "Name the reviewed head in a review's signature line",
+  "head": "fffacf682e5ab3c5fba0d1a4127d98c170752378",
+  "headRef": "review-names-sha",
+  "base": "e321ef48b27a4d80c6d617d540f296cc5598ab64",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every review that <code>project review publish</code> posts opens with a visible signature line, such as <code>📽️ **Projector review** · `0.7.8` · model `claude-opus-5-5` · **CLEAN** · took 1m 38s</code>, and a hidden marker comment below it. The marker records the full SHA of the head the review read. Until now, the visible line did not name that head.",
+   "That made the pull request timeline misleading. GitHub places a commit on the timeline at the time it was committed, not the time it was pushed. So a review published while a later commit waited to be pushed appears below that later commit, and a reader takes the verdict to be about the wrong head. This change adds the head's short SHA to the visible line, as <code>**Projector review** of `5dbc122` · …</code>.",
+   "Only the visible line changes. Every piece of code that reads a posted review, from the review commands to the site and the watchers, reads the hidden marker, which this change leaves alone. Reviews that earlier releases posted keep reading the same, and earlier releases read reviews from this one."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Signature line</b>: the first, visible line of a Projector review body, naming what produced the review and its verdict.</li><li><b>Marker</b>: the hidden <code>&lt;!-- projector-review v=1 … --&gt;</code> comment under it, which code reads.</li><li><b>Short SHA</b>: the first seven characters of a commit SHA.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review, at <code>fffacf6</code>: clean, with no finding threads and no suggestions.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "writer",
+   "title": "Writing the SHA into the signature line",
+   "kicker": "How publish builds the new line, and the pattern that checks it",
+   "intro": [
+    "<code>heading</code> in <code>src/projector/review.py</code> builds both the signature line and the marker from the review's saved state and one reading of the clock. It now puts <code>of `&lt;short-sha&gt;`</code> after <b>Projector review</b>, taking the SHA from <code>state[\"sha\"]</code>, the same field the marker's <code>sha=</code> comes from.",
+    "Before posting, <code>heading</code> checks the line against <code>SIGNATURE</code>, a regular expression that mirrors the shape <code>review-pr</code> documents, and refuses to publish a line that does not match. <code>SIGNATURE</code> now requires the SHA segment, so the documented shape and the written line stay in step."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No code parses the signature line of a posted review. I traced every reader: <code>verdict_marker</code> reads only the marker and the incremental line, and it serves <code>census</code>, <code>interdiff</code>, the collision check, <code>status</code>, the draft transition, and the site's <code>review_statuses</code>. <code>START_MODEL</code> reads only start comments. The watcher scripts key on the finding, verify, and hold markers, and <code>site/src</code> never parses a review body."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>SIGNATURE</code> requires the SHA segment, and <code>heading</code> writes it from the review's state.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>SIGNATURE</code> matches the new line with and without the effort segment, with the <code>incremental from</code> segment and a duration over several heads, and rejects the old line that has no SHA. I checked all three shapes against the pattern at this head.",
+       "line": 945
+      },
+      {
+       "kind": "context",
+       "text": "The SHA and the marker's <code>sha=</code> both come from <code>state[\"sha\"]</code>, so the visible line and the marker cannot name different heads. A head that moves during the review updates that field through <code>project review move</code>.",
+       "line": 1290
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "The two tests that compare a full review's and an incremental review's whole signature line now expect the SHA.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The <code>verdict_body</code> fixture still writes the old line without a SHA. That is the shape reviews already on GitHub have, so the tests that read verdicts keep covering them."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documenting the new line",
+   "kicker": "The skill and the CLI reference show the SHA and say why it is there",
+   "intro": [
+    "<code>review-pr</code>'s <code>SKILL.md</code> is what a reviewing agent reads to know what a review looks like, so its sample signature line gains the SHA, followed by a paragraph explaining the timeline problem it solves. <code>docs/cli.md</code> lists the short SHA among what the start comment and the signature line name."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The sample signature line now names the head, with a paragraph on why.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The incremental review's description below still holds: its <code>incremental from &lt;short-sha&gt;</code> segment sits between the verdict word and the duration, after the new SHA segment.",
+       "line": 518
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Lists the short SHA among what the start comment and the signature line name."
+    }
+   ]
+  }
+ ]
+}
