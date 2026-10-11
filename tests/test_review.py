@@ -1480,10 +1480,12 @@ class DismissalTests(SignoffCase):
         self.github.reviews.append({"id": 850, "user": {"login": "operator"}, "event": "APPROVE", "body": "",
                                     "comments": [], "commit_id": self.earlier, "at": "2026-09-27T01:11:00Z"})
         standing = self.change_request(self.model)
-        by_hand = 851
-        self.github.reviews.append({"id": by_hand, "user": {"login": "operator"}, "event": "REQUEST_CHANGES",
-                                    "body": "Rename this first.", "comments": [], "commit_id": self.earlier,
-                                    "at": "2026-09-27T01:12:00Z"})
+        by_hand, naming_the_loop = 851, 852
+        for review_id, body in ((by_hand, "Rename this first."),
+                                (naming_the_loop, "The projector-review loop missed the empty case; handle it.")):
+            self.github.reviews.append({"id": review_id, "user": {"login": "operator"}, "event": "REQUEST_CHANGES",
+                                        "body": body, "comments": [], "commit_id": self.earlier,
+                                        "at": "2026-09-27T01:12:00Z"})
         colleague = self.change_request("gpt-5.5", login="colleague")
         already = self.change_request(self.model)
         next(r for r in self.github.reviews if r["id"] == already)["state"] = "DISMISSED"
@@ -1493,8 +1495,9 @@ class DismissalTests(SignoffCase):
 
         self.assertEqual([standing], result["dismissed"])
         self.assertEqual({self.request: "CHANGES_REQUESTED", standing: "DISMISSED", by_hand: "CHANGES_REQUESTED",
-                          colleague: "CHANGES_REQUESTED"},
-                         {i: self.review_state(i) for i in (self.request, standing, by_hand, colleague)})
+                          naming_the_loop: "CHANGES_REQUESTED", colleague: "CHANGES_REQUESTED"},
+                         {i: self.review_state(i)
+                          for i in (self.request, standing, by_hand, naming_the_loop, colleague)})
 
     def test_no_dismissal_while_another_model_requests_changes_or_is_reviewing_the_head(self) -> None:
         cases = {"changes requested": lambda: self.add_verdict("gpt-5.5", verdict="changes-requested",

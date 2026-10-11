@@ -1068,7 +1068,8 @@ def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
 
 def standing_change_requests(repo: str, number: int, reviewer: str) -> list[dict]:
     """The reviewer's Projector `REQUEST_CHANGES` reviews that still hold `reviewDecision`, each with its
-    `id` and `url`: those nobody dismissed and no later approval by the account replaced."""
+    `id` and `url`: those whose body carries a verdict marker, which nobody dismissed and no later
+    approval by the account replaced."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
                    "--jq", f'.[] | select(.user.login == "{reviewer}") '
                            '| select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
@@ -1077,7 +1078,7 @@ def standing_change_requests(repo: str, number: int, reviewer: str) -> list[dict
     for review in (json.loads(row) for row in rows if row.strip()):
         if review["state"] == "APPROVED":
             standing = []
-        elif review["state"] == "CHANGES_REQUESTED" and "projector-review" in (review.get("body") or ""):
+        elif review["state"] == "CHANGES_REQUESTED" and verdict_marker(review.get("body") or "") is not None:
             standing.append({"id": review["id"], "url": review["url"]})
     return standing
 
