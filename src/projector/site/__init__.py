@@ -153,7 +153,8 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
     When it is a clean incremental review, the status also carries
     `incrementalFrom`: the head of the full review it builds on, and that
     model's newest full review of that head as `url`, or None when none is
-    among `reviews`. Models are told apart by `identity`.
+    among `reviews`. Models are told apart by `identity`. The heads come in
+    the order of the reviews that decide them, oldest first.
     """
     newest: dict[str, dict] = {}
     full: dict[tuple[str, str], dict] = {}
@@ -177,12 +178,31 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
         if marker.incremental_from is None:
             keep(full, (marker.sha, model), found)
     statuses = {}
-    for head, found in newest.items():
+    for head, found in sorted(newest.items(), key=lambda item: item[1]["at"]):
         statuses[head] = {"status": found["status"], "url": found["url"]}
         if found["from"] is not None and found["status"] == "clean":
             statuses[head]["incrementalFrom"] = {"head": found["from"],
                                                  "url": (full.get((found["from"], found["model"])) or {}).get("url")}
     return statuses
+
+
+def head_status(statuses: dict[str, dict], head: str, later: set[str]) -> dict:
+    """The review status a page of `head` shows, given its pull request's `statuses` from `review_statuses`.
+
+    A head a Projector review names shows that review's status. One that
+    none names is `pending` when an earlier head has a status: it carries the
+    newest of those as `last`, with its `status`, `head`, and `url`. A head
+    is earlier unless it is `head` or in `later`, the heads whose summaries
+    are newer, so a head with no summary counts as earlier. With no earlier
+    status, the head is `unreviewed`.
+    """
+    if head in statuses:
+        return statuses[head]
+    earlier = [(h, s) for h, s in statuses.items() if h not in later]
+    if not earlier:
+        return {"status": "unreviewed"}
+    last_head, last = earlier[-1]
+    return {"status": "pending", "last": {"status": last["status"], "head": last_head, "url": last["url"]}}
 
 
 def stored_head_file(folder: Path, path: str) -> bytes | None:
@@ -296,9 +316,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
     GitHub reports, or None once that branch is deleted, and `review`, the
-    newest Projector review of its head, as `review_statuses` gives it:
-    `unreviewed` when none names the head. A page has none of them when the
-    lookup is missing or cannot ask, and each entry carries its newest head's
+    newest Projector review of its head, as `review_statuses` gives it, or,
+    when none names the head, `pending` or `unreviewed`, as `head_status`
+    decides given the pull request's heads with newer summaries. A page has
+    none of them when the lookup is missing or cannot ask, and each entry
+    carries its newest head's
     `pr.state` and `review` the same way. Each page also carries
     `defaultBranch`, `trunk`, where a merged pull request's files now are
     when the branch it merged into is gone.
@@ -382,7 +404,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
         header = next(s["header"] for s in segments if pull in s["members"])
         status = asked[number]
         statuses = review_statuses(status["reviews"]) if status is not None else None
-        for _, payload, _ in versions:
+        for i, (_, payload, _) in enumerate(versions):
             head = payload["pr"]["head"]
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
                            header=header, defaultBranch=trunk)
@@ -390,7 +412,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
                 payload["pr"]["state"] = status["state"]
                 if "base" in status:
                     payload["pr"]["currentBaseRef"] = status["base"]
-                payload["review"] = statuses.get(head, {"status": "unreviewed"})
+                payload["review"] = head_status(statuses, head, {h["head"] for h in heads[:i]})
             folder = out / "reviews" / number / head
             folder.mkdir(parents=True, exist_ok=True)
             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
