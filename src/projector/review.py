@@ -1081,6 +1081,40 @@ def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
     return [json.loads(row) for row in rows if row.strip()]
 
 
+def standing_change_requests(repo: str, number: int, reviewer: str) -> list[dict]:
+    """The reviewer's Projector `REQUEST_CHANGES` reviews that still hold `reviewDecision`, each with its
+    `id` and `url`: those whose body carries a verdict marker, which nobody dismissed and no later
+    approval by the account replaced."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                   "--jq", f'.[] | select(.user.login == "{reviewer}") '
+                           '| select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
+                           '| {id, url: .html_url, state, body} | @json']).splitlines()
+    standing = []
+    for review in (json.loads(row) for row in rows if row.strip()):
+        if review["state"] == "APPROVED":
+            standing = []
+        elif review["state"] == "CHANGES_REQUESTED" and verdict_marker(review.get("body") or "") is not None:
+            standing.append({"id": review["id"], "url": review["url"]})
+    return standing
+
+
+def dismiss(repo: str, number: int, reviewer: str, requests: list[dict], message: str, token: str) -> list[int]:
+    """Dismiss each change request as the reviewer, then read them back, and return their ids."""
+    for request in requests:
+        try:
+            run_gh(["api", "-X", "PUT", f"repos/{repo}/pulls/{number}/reviews/{request['id']}/dismissals",
+                    "-f", f"message={message}", "-f", "event=DISMISS"], token)
+        except ReviewError as exc:
+            raise ReviewError(f"could not dismiss change request {request['id']} ({exc}); dismiss it at "
+                              f"{request['url']} and run publish again") from exc
+    ids = [request["id"] for request in requests]
+    left = [request for request in standing_change_requests(repo, number, reviewer) if request["id"] in ids]
+    if left:
+        raise ReviewError(f"change request {left[0]['id']} still stands after its dismissal; dismiss it at "
+                          f"{left[0]['url']} and run publish again")
+    return ids
+
+
 def read_record(root: Path, loop: str) -> list[dict]:
     record = loop_record(root, loop)
     return json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
@@ -1321,9 +1355,14 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
             incremental: bool = False, enabled: bool = True) -> dict:
-    """Submit the review, then re-read it, set draft state by the head's newest verdict and its open
-    finding threads, record, delete the start comment, and release the lock, in that order. Every
-    refusal leaves the lock held for this review to retry.
+    """Submit the review, then re-read it, act on the head's newest verdict and its open finding
+    threads, record, delete the start comment, and release the lock, in that order. Every refusal
+    leaves the lock held for this review to retry.
+
+    Acting on the newest verdict sets a self-review's draft state. On another author's pull request a
+    clean newest verdict with no finding open dismisses the reviewer's standing Projector change
+    requests, because a `COMMENT` review leaves `reviewDecision` where the last of them put it. While
+    the author holds the pull request, it stays a draft and its change requests stand.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
@@ -1417,11 +1456,12 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
     if f"sha={sha}" not in (read.get("body") or ""):
         raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
-    newest, draft_wanted, open_threads, held = None, None, None, None
-    if published.get("self"):
-        # The head's newest Projector verdict sets draft state, whichever model gave it: this review, counted
-        # as read back whether or not the listing shows it yet, or one another model posted since. A finding
-        # thread open now keeps it a draft whatever that verdict says, because another model can post one
+    newest, draft_wanted, open_threads, dismissed, held = None, None, None, [], None
+    standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
+    if published.get("self") or standing:
+        # The head's newest Projector verdict decides, whichever model gave it: this review, counted as read
+        # back whether or not the listing shows it yet, or one another model posted since. A finding thread
+        # open now holds the pull request whatever that verdict says, because another model can post one
         # after this review counted none and before its own verdict landed. So does the author's hold: the
         # author is building changes no review has read.
         posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
@@ -1431,6 +1471,10 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         open_threads = census(repo, number)["open"]
         current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
         held = bool(holds(repo, number, (current.get("user") or {}).get("login") or ""))
+    if standing and newest["verdict"] == "clean" and not open_threads and not held:
+        dismissed = dismiss(repo, number, reviewer, standing,
+                            f"{MARK} The newest verdict on {sha[:7]} is clean: {newest['url']}", token)
+    if published.get("self"):
         draft_wanted = newest["verdict"] == "changes-requested" or open_threads > 0 or held
         draft = bool(current.get("draft"))
         if draft != draft_wanted:
@@ -1457,5 +1501,5 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     write_state(paths, state)
     paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
-            "event": published["event"], "draft": draft_wanted, "from": published.get("from"), "newest": newest,
-            "open_threads": open_threads, "held": held}
+            "event": published["event"], "draft": draft_wanted, "dismissed": dismissed, "from": published.get("from"),
+            "newest": newest, "open_threads": open_threads, "held": held}

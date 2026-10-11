@@ -1156,13 +1156,21 @@ posted included, and those of any account that owns the repository, belongs
 to its organization, or collaborates on it. On another author's pull request
 it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
 verdict where `review.allow_approve` is `true` and the author has no hold
-comment open, and leaves draft state alone. It then adds the review id to the
-loop's record, deletes the start comment, and releases the lock. It prints
-the draft state it set, the newer verdict that decided it when that is
-another model's, and the open finding threads or hold that kept a clean head
-a draft; `--json` gives them as `draft`, `newest`, `open_threads`, a count,
-and `held`. A run that fails after submitting exits non-zero, and running it
-again finishes that review rather than posting another.
+comment open, and leaves draft state alone. A `COMMENT` leaves the account's
+last change request holding `reviewDecision`, so when the newest verdict on
+the head is clean and no finding thread or hold is open, read the same way,
+`publish` dismisses each of the reviewer's Projector `REQUEST_CHANGES`
+reviews that nobody dismissed and no later approval by the account replaced.
+A change request whose body carries no Projector verdict marker is left
+alone. It then adds the review id to the loop's record, deletes the start
+comment, and releases the lock. It prints the draft state it set, the newer
+verdict that decided it when that is another model's, the open finding
+threads or hold that kept a clean head a draft or its change requests
+standing, and the change requests it dismissed; `--json` gives them as
+`draft`, `newest`, `open_threads`, a count, `held`, and `dismissed`, the
+dismissed review ids. A run that fails after submitting, including a
+dismissal GitHub refuses, exits non-zero, and running it again finishes that
+review rather than posting another.
 
 `status` prints the newest Projector verdict on the pull request's current
 head, the one `publish` sets draft state by, with the model and the review it
