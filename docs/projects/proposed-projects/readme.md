@@ -162,9 +162,8 @@ that links the pull request's review page.
 
 - **Projects page.** `showProjects` lists a proposed project in its status
   group, sorted with the others by priority and name, with the badge after
-  its title. The note under the heading counts the proposed projects when
-  there are any. The filter matches the word, so typing `proposed` lists only
-  the proposed projects.
+  its title. The page draws no count or legend above the list. The filter
+  matches the word, so typing `proposed` lists only the proposed projects.
 - **Project page.** `showProjectFile` draws a banner above the status badges
   on every page of a proposed project, its plan and each of its files. The
   banner names the pull request with its title and review status, drawn by
@@ -184,8 +183,6 @@ The Projects page, with this plan's pull request, #218, open:
 
 ```text
 Projects
-16 projects under docs/projects, 1 of them proposed in open pull requests.
-Status says how finished a project is; priority says when it is scheduled.
 
 READY 5
  Project                                                          Priority  Name
@@ -325,7 +322,7 @@ implementing pull request changes it by hand in the same way.
 | `src/projector/site/__init__.py` | `build_summaries` asks for statuses before it links, finds the proposed projects, writes their files, links over both lists, and returns them. `build_site` adds them to its list before `assign_routes`, and names `projectsDir` whenever it lists a project. `search_index` reads from `content/`. |
 | `src/projector/cli.py` | `site_projects` returns the configured projects directory even when the checkout lacks it. `build_checkout` counts the proposed projects. `check` adds the `site-workflow-outdated` warning. |
 | `.github/workflows/projector-site.yml` | This repository's own workflow gains the same trigger, condition, and concurrency group by hand. |
-| `site/src/site.ts` | `PROPOSED`, the badge, the banner, the Projects page count and filter, links at `proposed.head`, the sidebar badge, and the search badge. |
+| `site/src/site.ts` | `PROPOSED`, the badge, the banner, the Projects page filter, links at `proposed.head`, the sidebar badge, and the search badge. |
 | `site/src/globals.d.ts` | `proposed` on `SiteProject`, and on `SearchEntry`. |
 | `site/assets/site.css` | The badge and the banner, in the light and dark themes. |
 | `site/assets/site.js` | Rebuilt with `npm run build` in `site/`. |
@@ -455,8 +452,8 @@ implementing pull request changes it by hand in the same way.
   of its own would read as a fifth status, the confusion the name was chosen
   to avoid. In its group, a proposed `ready` plan sits beside the other
   `ready` plans, where a reader looking for ready work finds it, and a
-  proposed nested project keeps its place under its parent. The badge, the
-  count, and the filter keep proposed projects easy to find. A separate
+  proposed nested project keeps its place under its parent. The badge and
+  the filter keep proposed projects easy to find. A separate
   section remains a possible later change, as § 6 says.
 - **The same address before and after the merge.** A proposed project lives at
   `projects/<name>/`, so a link to it, in a pull request or a stack header,
@@ -527,7 +524,7 @@ Projects view tests do:
 
 | Do | Expect |
 | --- | --- |
-| Draw the Projects page with one proposed `ready` project | Its row is in the **ready** group with `<a class="badge proposed" href="/reviews/9/">Proposed #9</a>`, and the note says `1 of them proposed in open pull requests` |
+| Draw the Projects page with one proposed `ready` project | Its row is in the **ready** group with `<a class="badge proposed" href="/reviews/9/">Proposed #9</a>`, and the page draws no note under the heading |
 | Type `proposed` in the filter | Only the proposed rows stay |
 | Draw the proposed project's page | The banner names #9 with its title and status, **View on GitHub** links `blob/<head>/docs/projects/gamma/readme.md`, and a relative link to a file the site lacks links at `<head>` |
 | Draw a search result for a proposed page | It shows the badge |
