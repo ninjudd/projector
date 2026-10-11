@@ -1,0 +1,2309 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 588105bd..674e3bf9 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -757,7 +757,9 @@ every pull request in its stack, the ones beneath it and the ones above it,
+ under its segments' headers, one row each with its title, and highlights the
+ current one. A pull request with no summary on the site links to GitHub, and
+ a pull request with no stack is a stack of one, with its own row highlighted. Its older
+-versions follow the sections. A summary's header shows the same status as its
++versions follow the sections, and as you scroll, the list of sections marks
++the one in view. A jump to a section or to the files pane lands it level
++with the top of the sidebar. A summary's header shows the same status as its
+ row on Reviews: **Merged** or **Closed** once the pull request is, and until
+ then the verdict of the newest Projector review of its head, **Clean** or
+ **Changes requested**, linked to that review on GitHub, or **Unreviewed** when
+@@ -806,24 +808,36 @@ Pass `--base` with the path the site is served under, such as `/projector/`
+ for a project site, so every page links to the others and to the shared
+ assets under `assets/`; it defaults to `/`. A project page takes a summary
+ page's layout. A title row across the top holds the breadcrumbs, the status
+-and priority badges, the owner when the plan names one, **View on GitHub**,
+-and the plan's title, so the plan's own first heading leaves the body when
+-the body opens with it. Beside the plan, the summary's sidebar opens with the
+-project's header, once. On the project's readme the header is highlighted
+-and is the page's current item, and on a supplemental page it links to the
+-readme. Below it, the sidebar lists every stack that holds a segment the
+-project heads, newest first, each whole: every layer, merged and closed ones
+-included, and a layer with no summary on the site as its number, linked to
+-GitHub. Another project's segment opens with that project's header, linked
+-to its page. The project's own segments show only their rows, and where one
+-follows another project's segment, a thin rule above its rows ends that
+-segment. A project that heads no segment shows **No reviews of this
+-project.** in place of the stacks. Below them, the sidebar lists the
+-project's supplemental files and nested projects, with the current page in
+-bold, and its last row holds the credit and an icon that opens the page's
+-history on GitHub. An HTML page in a project keeps its frame, with the
+-sidebar in the column the menu button shows. At 980 pixels and narrower, the
+-sidebar sits between the title row and the plan.
++and priority badges, the owner when the plan names one, and the plan's
++title, so the plan's own first heading leaves the body when the body opens
++with it. At the row's end, a **…** menu, as on a review page, holds
++**View file on GitHub** and **View history on GitHub**. Beside the plan, the
++summary's sidebar opens with the project's header, once. On the project's
++readme the header is highlighted and is the page's current item, and on a
++supplemental page it links to the readme. Below it, the sidebar lists every
++stack that holds a segment the project heads, newest first, each whole:
++every layer, merged and closed ones included, and a layer with no summary
++on the site as its number, linked to GitHub. Another project's segment
++opens with that project's header, linked to its page. The project's own
++segments show only their rows, and where one follows another project's
++segment, a thin rule above its rows ends that segment. A project that
++heads no segment shows **No reviews of this project.** in place of the
++stacks. On the readme, the plan's `##` sections
++follow, each a link with the plan's own number, such as `2`, in a column
++beside its title. Below them, the sidebar lists the project's supplemental
++files and nested projects, with the current page in bold, and a
++supplemental Markdown page lists its own sections under its entry. A nested
++project's sidebar then names its parent project above the parent's other
++nested projects, each a link. The sidebar's last row holds the credit and an
++icon that opens the page's history on GitHub. As you scroll, the list of
++sections marks the one in view. A jump to a heading, from the list or from
++a link with its `#` anchor, lands it level with the top of the sidebar, and
++the page leaves room after its last section so that one can scroll there
++too. An HTML page in a project keeps its frame, with the sidebar in the
++column the menu button shows, and lists no sections. Its breadcrumbs above
++the frame end in the same **…** menu.
++At 980 pixels and narrower, the sidebar sits between the title row and the
++plan, and its sections start folded behind a **Sections** toggle.
+ A review page's header has a **…** menu with
+ the pull request's conversation, files, and compare views on GitHub. Each file
+ card's header has one too: **View diff on GitHub**, **View file on GitHub**,
+diff --git a/docs/projects/project-page-sections/readme.md b/docs/projects/project-page-sections/readme.md
+index e5adbdca..3289ff82 100644
+--- a/docs/projects/project-page-sections/readme.md
++++ b/docs/projects/project-page-sections/readme.md
+@@ -1,14 +1,15 @@
+ ---
+-status: draft
+-priority: later
++status: completed
++priority: now
+ ---
+ 
+ # List a plan's sections and its nearby projects in the sidebar
+ 
+ A project page's sidebar lists the sections of the plan you are reading, as a
+ summary's sidebar lists its sections, and lets a nested project's page reach
+-its parent and sibling projects. This draft outlines the questions the two
+-raise and how they meet. It settles none of them.
++its parent and sibling projects. The plan sets out the questions the two
++raise, their options, and the owner's decisions, and § 2.9 draws the sidebar
++those decisions make.
+ 
+ It builds on [`project-page-nav`](../project-page-nav/readme.md), which gives
+ each project page a summary's title row and sidebar: every stack of pull
+@@ -35,8 +36,10 @@ and its sense of where you are.
+ 
+ ## 2. Solution
+ 
+-Not settled. The sections below list each question, the options, and their
+-trade-offs. Section 3 collects the decisions they need.
++Sections 2.1 to 2.8 each state a question, its options, and their
++trade-offs, and close with the owner's decision. Section 2.9 puts the
++decisions together as the sidebar after the change, § 2.10 says how the
++list marks the section in view, and § 2.11 lists the files that change.
+ 
+ ### 2.1 Where the headings come from
+ 
+@@ -54,6 +57,12 @@ Extraction has to skip fenced code. The `agent-instructions` plan holds
+ `project init` writes. Setext headings, a line of `-` under text, also render
+ as `<h2>`, and raw `<h2>` tags pass through.
+ 
++The owner chose to read them after the render. `showDocument` hands the
++rendered page's headings to the sidebar in the redraw that shows the page,
++so the list appears with the plan. The build does not change. Fenced code,
++setext headings, and raw `<h2>` tags raise no question, because the browser
++lists exactly the headings it rendered.
++
+ ### 2.2 Anchors that match the rendered plan
+ 
+ `renderMarkdown` gives every rendered heading without an id one from `slug`:
+@@ -68,6 +77,11 @@ headings with the same text share one id today.
+ | The browser slugs the build's source | The build sends each heading's raw inline source. The sidebar renders it with `marked.parseInline` and DOMPurify, takes its text, and slugs it with the same `slug`. | One rule, and the text matches the rendered heading exactly. One inline render per heading on first paint, which is tens per plan. |
+ | The build assigns the ids | The build gives each heading an id, and the browser applies them to the rendered top-level `<h2>` elements in order | Links always land, and duplicates can get distinct ids. It depends on the build finding exactly the headings the browser renders, and it can change the id of an unusual heading, which breaks links to it. |
+ 
++None is needed. The headings come from the rendered page (§ 2.1), so each
++link takes the id that `slug` already gave its heading, and no id changes.
++Two headings with the same text still share one id, and the list links both
++to the first, as any link into the plan does.
++
+ ### 2.3 Which headings to list
+ 
+ - **`##` only.** Every plan has them, as its numbered sections: 4 to 14 per
+@@ -82,6 +96,20 @@ into that column, leaving the title beside it, or the heading could show as
+ written with the number column empty. A section with no number needs a rule
+ either way.
+ 
++The owner chose `##` only, and the plan's number moves into the `nnum`
++column:
++
++- **Which headings.** The `<h2>` elements at the top level of the rendered
++  page. A heading inside a quote or a block of raw HTML stays out.
++- **The number.** A heading is numbered when its text opens with digits and
++  a dot, such as `2. Solution`, or with a dotted number such as `2.1`, and a
++  space follows. The column shows the number without its last dot, `2`, and
++  the title beside it reads `Solution`.
++- **No number.** A heading such as `## Background` or `## 2026 roadmap`
++  leaves the column empty, and its whole text is its title.
++- **The title's markup.** The title keeps the heading's inline markup, such
++  as a code span, and drops its links, because the row is itself a link.
++
+ ### 2.4 Marking the current section
+ 
+ A summary page does not mark the section you are scrolled to. Its list marks
+@@ -96,6 +124,10 @@ has no reviewed state, so its list would draw no dots.
+   sidebar carries `aria-current="page"`, and that rule would become one
+   `page` and at most one `location`.
+ 
++The owner chose to mark it as you scroll, on plan pages and summary pages
++both, as § 2.10 describes. The sidebar holds exactly one item with
++`aria-current="page"` and at most one with `aria-current="location"`.
++
+ ### 2.5 Reusing the summary's section list
+ 
+ The summary's list is an `<ol>` of links, each holding the `nnum`, `ntitle`,
+@@ -106,6 +138,16 @@ lay the list out as a grid of columns. A shared `sectionListHtml`, beside
+ summary's with its check dots, the plan's without. Either source in § 2.1
+ feeds it.
+ 
++`sectionListHtml(sections, checks, id)` in `site/src/summary.ts` draws both
++lists as `<ol class="sections">`, with `id` on the list when it is given.
++Each item is a link to its section around the `nnum` and `ntitle` spans, and
++with `checks` the `ncheck` dot. Each section is a `PageSection`, a new type
++in `site/src/globals.d.ts`: its `id`, its number as `num`, and its title as
++markup. The summary page passes its groups, numbered from 1, with `checks`,
++so its list draws the markup it draws today, plus the `sections` class and
++the mark of § 2.10. A plan's list draws no dots, and its rows leave out the
++dot's column, so the title takes its width.
++
+ ### 2.6 What a nested project's sidebar lists
+ 
+ | Option | What the sidebar lists | Trade-off |
+@@ -115,6 +157,21 @@ feeds it.
+ | Its own pages, and its neighbors | Its own pages, then a short block naming the parent and the siblings | Siblings are one click away, and the title row and the pages still agree. A third kind of block in the sidebar. |
+ | The whole tree, folded | The top-level tree, open along the path to the current project and closed elsewhere | Today's reach without today's length. The tree's own entry for the current project repeats the title row. |
+ 
++The owner chose its own pages and its neighbors:
++
++- **The neighbors block.** Below its pages, a nested project's sidebar
++  names its parent project, linked, then the parent's other nested
++  projects, each linked, as the docs tree draws a heading over its entries.
++- **Parent and siblings.** A project's parent is the deepest other project
++  whose folder holds it. Its siblings are the other projects with the same
++  parent, so a sibling's own nested projects are not listed.
++- **Not the current project.** The block leaves out the project you are on,
++  because the sidebar's header already names it, and a sidebar holds one
++  current page.
++- **No block on a top-level project.** Its neighbors are every other
++  top-level project. The Projects page lists them, and the breadcrumbs
++  reach that page in one click, so a block would only repeat that page.
++
+ ### 2.7 How the sections and the pages share the sidebar
+ 
+ - **Separate blocks.** The stacks, the sections, the pages, and the footer,
+@@ -139,25 +196,160 @@ Only one item may be the current page: on the readme, the first of the
+ project's headers, and on any other page, the file's entry. The current
+ section, if § 2.4 marks one, is a location within it.
+ 
++The owner chose sections inside the tree:
++
++- **The current page's entry opens.** It lists its sections beneath it. No
++  other entry opens, because the browser has the headings of only the page
++  it rendered.
++- **The readme's sections get a block of their own.** The block sits below
++  the stacks and above the pages.
++- **The order.** The project's header and its stacks, the readme's
++  sections on the readme, the pages with a supplemental page's sections
++  under its entry, a nested project's neighbors, and the footer row.
++- **Folded on a narrow screen.** At 980 pixels and narrower, the section
++  list starts folded behind a **Sections** toggle, so the plan stays near
++  the top of the page. The toggle is a button whose `aria-expanded` a tap
++  flips, and the list shows while it reads `true`. A wider screen hides the
++  toggle and shows the list whole.
++
+ ### 2.8 Pages without sections
+ 
+ An HTML page in a project renders in a frame, so the site does not see its
+ headings, and its sidebar lists no sections. A supplemental Markdown page has
+ headings of its own, and § 2.7 decides whether its sidebar lists them.
+ 
+-## 3. Open questions
++A supplemental Markdown page lists its own `##` sections under its entry in
++the pages, as § 2.7 decides. An HTML page lists none, and neither does a
++page with no `##` heading, which draws no section block at all.
++
++### 2.9 The sidebar after the change
++
++On `incremental-review`'s readme, a top-level project with only its readme,
++the sections follow the stacks. The bar marks the section in view.
++
++```text
++ ┌──────────────────────────────────┐
++ │ Review a minimal push            │
++ │ incrementally                    │
++ │ #212  Plan incremental reviews   │
++ │       of minimal pushes          │
++ │ ──────────────────────────────── │
++ │ 1   Problem                      │
++ │ 2   Solution                     │
++ │ 3   Why this design              │
++ │▐4   Acceptance criteria          │
++ │ 5   Cost                         │
++ │ 6   Open questions               │
++ │ 7   Background                   │
++ │ 8   Implementation status        │
++ │ ──────────────────────────────── │
++ │ Generated by Projector       (⟲) │
++ └──────────────────────────────────┘
++```
++
++On `alpha/beta/design.md`, a supplemental page of the nested project
++`alpha/beta`, whose parent `alpha` also holds `alpha/gamma`, the page's
++sections open under its entry, and the neighbors follow the pages:
++
++```text
++ ┌──────────────────────────────────┐
++ │ Build beta                       │
++ │ #9    Plan beta                  │
++ │ ──────────────────────────────── │
++ │ Beta design                      │
++ │   1   Layout                     │
++ │   2   Colors                     │
++ │ ──────────────────────────────── │
++ │ Build alpha                      │
++ │   Build gamma                    │
++ │ ──────────────────────────────── │
++ │ Generated by Projector       (⟲) │
++ └──────────────────────────────────┘
++```
++
++At 980 pixels and narrower, each list of sections starts folded:
++
++```text
++ │ #212  Plan incremental reviews   │
++ │       of minimal pushes          │
++ │ ──────────────────────────────── │
++ │ ›  Sections                      │
++ │ ──────────────────────────────── │
++ │ Generated by Projector       (⟲) │
++```
++
++The pieces draw this way:
++
++- **The sections block.** `<div class="navsections">` holds the toggle,
++  `<button class="navfold" aria-expanded="false">`, and the list that
++  `sectionListHtml` draws, with the id the toggle's `aria-controls` names.
++  On the readme it follows the `.prblock`, and on a supplemental page it
++  follows the page's entry in the pages.
++- **The neighbors block.** `<div class="navnear">` holds the tree that
++  `tree` draws, with the parent as its heading and the siblings as its
++  entries, so a proposed sibling keeps its badge.
++- **One current page.** The project's header on the readme, or the file's
++  entry on another page, carries `aria-current="page"`. Neither new block
++  holds a current page.
++
++### 2.10 Marking the section in view
++
++`watchSections(list)`, a shared helper in `site/src/summary.ts`, marks the
++link to the section in view in a list of sections, and keeps the mark
++current as the page scrolls. A summary page calls it once its page is
++wired. A project page calls it each time `showDocument` draws a rendered
++page, and `frame` stops the watch before it draws any view.
++
++- **Targets.** Each link's target is the element its `#id` names: the
++  `<h2>` on a plan page, and the `<section class="group">` on a summary
++  page.
++- **The rule.** The section in view is the last one whose top has scrolled
++  above a line 30% of the way down the window. Above the first section, as
++  in a plan's opening paragraphs, no section is marked.
++- **The end of the page.** A page's last section is tall enough to scroll
++  its top level with the sidebar, as § 7 describes, so even a short last
++  section reaches the line as you scroll.
++- **The observer.** One `IntersectionObserver` watches the targets with a
++  root margin of `10000000px 0px -70% 0px`: a band from far above any page
++  down to the line. A target is in the band exactly while its top is above
++  the line, so the observer reports every target whose top crosses the
++  line. That holds for a jump as well, such as a link to a `###` heading,
++  the Home key, or a dragged scrollbar, which can carry a heading from below
++  the line to above the window in one frame. Each report reads the
++  targets' positions again and moves the mark. No scroll listener runs.
++- **The mark.** The marked link carries `aria-current="location"`, and
++  `summary.css` draws it as a row's hover band with an accent bar at its
++  start. A browser without `IntersectionObserver` marks nothing.
++
++### 2.11 Files that change
++
++| File | Change |
++| --- | --- |
++| `site/src/summary.ts` | `sectionListHtml` and `watchSections` join the shared helpers. `renderPage` draws its list with `sectionListHtml`, and `wireSummary` calls `watchSections`. |
++| `site/src/site.ts` | `sectionHeadings` and `sectionOf` read a rendered page's sections, and `holdLastSection` wraps its last one. `showPage` and `showDocument` take the sidebar as a function of the page's sections. `showDocument` calls it with the rendered page's sections and starts `watchSections`, and `frame` stops it. `projectNav` takes the sections and draws the readme's block, a supplemental page's sections through `tree`, and the neighbors through `parentOf`. `tree` takes markup to put under the current entry. The click handler flips the **Sections** toggle. |
++| `site/src/globals.d.ts` | `PageSection` |
++| `site/assets/summary.css` | The mark on the section in view. The rule that lands a summary's line counts level with the sidebar also lands its sections and a plan's targets, and the rule that gives its last section room also covers a plan's `lastsection`. |
++| `site/assets/site.css` | The sections and neighbors blocks, the two columns of a plan's rows, and the toggle that folds the list at 980 pixels and narrower |
++| `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/` |
++| `docs/cli.md` | The project page paragraph, and the sentence on a summary's sidebar |
++| `tests/test_site.py` | The tests in § 5 |
+ 
+-The user decides each, and the plan moves to `ready` once all are answered.
++## 3. Open questions
+ 
+-1. **Where the headings come from**, after the render, at build time, or both
+-   (§ 2.1).
+-2. **How the links match the rendered ids** (§ 2.2).
+-3. **Which levels to list, and how to show the plan's numbers** (§ 2.3).
+-4. **Whether to mark the current section as you scroll**, and if so on
+-   summary pages too (§ 2.4).
+-5. **What a nested project's sidebar lists** (§ 2.6).
+-6. **How the sections and the pages share the sidebar**, and whether a
+-   supplemental page lists its own sections (§ 2.7 and § 2.8).
++The owner answered each on 2026-10-10:
++
++1. **Where the headings come from.** After the render (§ 2.1).
++2. **How the links match the rendered ids.** They take the ids the render
++   sets, so no change is needed (§ 2.2).
++3. **Which levels to list, and how to show the plan's numbers.** `##` only,
++   with the plan's number in the `nnum` column (§ 2.3).
++4. **Whether to mark the current section as you scroll.** Yes, on plan
++   pages and summary pages both (§ 2.4).
++5. **What a nested project's sidebar lists.** Its own pages, then its
++   parent and siblings (§ 2.6).
++6. **How the sections and the pages share the sidebar.** Inside the tree,
++   with the readme's own block, folded on a narrow screen. A supplemental
++   page lists its own sections (§ 2.7 and § 2.8).
+ 
+ ## 4. Background
+ 
+@@ -170,3 +362,153 @@ The user decides each, and the plan moves to `ready` once all are answered.
+ - **The summary's list.** `renderPage` in `site/src/summary.ts` draws the
+   sections as `<ol>` items with the `nnum`, `ntitle`, and `ncheck` spans, and
+   no script on the page marks a section as current while you scroll.
++
++## 5. Acceptance criteria
++
++Page tests run under node against the compiled `site.js` and `summary.js`,
++as `project-page-nav`'s do, with a stub DOM whose rendered Markdown is the
++elements each test names. In every row, the sidebar's markup holds exactly
++one `aria-current="page"` and no other `aria-current`, because only the
++watch marks a location.
++
++| Do | Expect |
++| --- | --- |
++| Draw alpha's readme, whose body holds `## 1. Problem`, `### 1.1 Detail`, `## 2. Solution`, and `## Background` | Between the `.prblock` and the pages, a `navsections` block whose list links `#1-problem`, `#2-solution`, and `#background`, with the numbers `1`, `2`, and none, and the titles `Problem`, `Solution`, and `Background` |
++| Draw headings `## 10. Outcome`, `## 2.1 Detail`, and `## 2026 roadmap` | The numbers `10`, `2.1`, and none, and the last title keeps its year |
++| Draw `## 3. <code>project init</code> writes` and a heading with a link | The first keeps its code span beside the number `3`, and the second keeps the link's text without the link |
++| Draw a body whose `<h2>` sits inside a quote | No section block |
++| Draw `alpha/notes`, whose body holds two `##` headings | No block after the `.prblock`. The list follows the notes entry, inside its item in the pages. |
++| Draw `alpha/demo.html` | No section block |
++| Draw `alpha/beta`'s readme with the siblings `alpha/gamma` and `alpha/beta/zeta` | After the pages, a `navnear` block whose heading links `/projects/alpha/` and whose one entry links `/projects/alpha/gamma/`. Zeta is in beta's pages and not in the block, and beta is in neither. |
++| Draw alpha's readme | No `navnear` block |
++| Draw alpha's readme with stacks, sections, and pages | The `.prblock`, the sections, the pages, and the footer row, in that order |
++| Draw any page with sections | The toggle reads `aria-expanded="false"` and names the list in `aria-controls`, and the list follows it |
++| Draw a summary page with two groups | Its list is `sectionListHtml`'s with check dots: the markup it drew before, with `class="sections"` on the `<ol>` |
++| Draw alpha's readme and `alpha/notes` with two `##` sections and a `###` | The last `##` heading and everything after it sit, in order, in a `lastsection` that ends the body |
++| Draw a page with no `##` heading | No `lastsection` |
++
++Watch tests run `watchSections` under node with a stub
++`IntersectionObserver` and a window 1,000 pixels tall:
++
++| Do | Expect |
++| --- | --- |
++| Report targets at -500, 200, and 600 pixels | The second link alone carries `aria-current="location"` |
++| Report targets at 400 and 900 pixels | No link carries it |
++| Watch a list, then another, then `null` | Each new watch disconnects the earlier observer |
++| Jump from the top, where no heading has reached the line, into the middle of the third section, back into the second, to where a jump lands the third, and to the top | The marks read none, the third, the second, the third, and none |
++| Read the observer's options | One observer, whose root margin is `10000000px 0px -70% 0px` |
++
++Style tests read the stylesheets:
++
++| Do | Expect |
++| --- | --- |
++| Read `site.css` outside its media queries | `.nav .navfold` is hidden |
++| Read its `max-width: 980px` query | It shows `.nav .navfold` and hides the list that follows a toggle whose `aria-expanded` is `false` |
++| Read `summary.css` | `.nav ol a[aria-current="location"]` draws the mark |
++| Read `summary.css` for where a jump lands | One rule lands a summary's line counts and sections and every target in a plan at `calc(var(--stick-top) + 16px)`, the sidebar's sticky offset |
++| Read `summary.css` for the room after the last section | One rule makes a summary's last section and a plan's `lastsection` `calc(100vh - var(--stick-top) - 16px)` tall at least |
++| Read the sidebar's scoping rules | `project-page-nav`'s scoping tests pass unchanged |
++
++Every new test fails before the change.
++
++In a browser, the implementing pull request runs `project site serve` on
++this repository and on a checkout with nested projects, in the light and
++dark themes:
++
++- **Scrolling a plan.** On a long plan, the mark moves from section to
++  section as each heading passes the top third of the window, and a click
++  on the last section marks it.
++- **Jumping.** A jump with `scrollTo` into the middle of a long section,
++  with no heading in the window, marks that section, and a jump back to the
++  top marks the first.
++- **Scrolling a summary.** On a summary page, the mark follows the groups,
++  and the check dots still mark the reviewed ones.
++- **At 375 pixels.** The list starts folded, the toggle opens and closes it,
++  and `document.documentElement.scrollWidth` equals `clientWidth`.
++- **A nested project.** Its sidebar links its parent and its siblings.
++
++The pull request's Testing section records these steps.
++
++## 6. Cost
++
++The page reads the rendered body's top-level elements once each time it
++draws a page, tens of elements on a long plan, and moves the last section's
++into one element. The watch adds one observer and no scroll listener. Each
++report reads the position of every target, 4 to 14 on a plan and one per
++group on a summary, only when a target's top crosses the line. The build
++does not change, and `site.json` does not grow.
++
++## 7. Outcome
++
++The project shipped in the pull request that implements it. Every row of
++§ 5 has a test in `tests/test_site.py` that passes, and fails against the
++code before the change: the page rows in `ProjectPageTests`, the watch rows
++and the summary's list in `SectionWatchTests`, and the style rows in
++`SectionStyleTests`. `project-page-nav`'s scoping tests pass unchanged. The
++page tests run the compiled `showProjectFile` under node, with a stub DOM
++whose headings take their ids from the compiled `slug`.
++
++The browser checks ran with `project site serve` on this repository's
++summaries, and on a scratch checkout that holds `alpha`, `alpha/beta`,
++`alpha/beta/zeta`, and `alpha/gamma`, in a window 1,200 by 857 pixels:
++
++- **Scrolling a plan.** On `incremental-review`'s page, the mark sits on
++  **1 Problem** at the top and moves on as each heading passes the line. A
++  load with `#8-implementation-status` lands the last heading 16 pixels
++  down, level with the sidebar, and marks it. Scrolled to the page's end,
++  that heading sits above the window's top.
++- **Jumping.** A `scrollTo` from the top to 1,500 pixels below
++  **2 Solution**'s heading, with no heading in the window, marks
++  **2 Solution**, and a `scrollTo` back to the top marks **1 Problem**.
++- **Scrolling a summary.** On #242's summary page, the mark follows the
++  groups, and the check dots still show.
++- **At 375 pixels.** In a frame 375 pixels wide, the list starts folded
++  below the stacks, and the toggle opens and closes it. The plan starts at
++  555 pixels, and `scrollWidth` and `clientWidth` are both 375.
++- **A nested project.** `alpha/beta`'s readme lists its sections, its
++  pages, and then **Build alpha** over **Build gamma**.
++  `alpha/beta/design.md` lists its sections under its entry, and `alpha`'s
++  pages list no neighbors.
++- **Themes.** The pages draw in the dark theme and with
++  `data-theme="light"`.
++
++The implementation settles three details the design left open:
++
++- **The toggle lines up with the rows.** Its chevron sits in the numbers'
++  column, and its label in the titles' column.
++- **A title drops its links in a copy of the heading.** `sectionOf`
++  replaces each `<a>` in a clone of the heading with the link's contents,
++  so the title does not depend on how a browser writes a link's attributes
++  out as markup.
++- **A click on a section redraws the page.** The site's `popstate`
++  listener routes every change of the address, a new hash included, so a
++  click on a section's row draws the page again, and the new drawing starts
++  a new watch, which marks the section the page scrolled to.
++
++The owner asked for one more change in the same pull request: a project
++page's **View on GitHub** moves from the title row's eyebrow into a **…**
++menu at the row's end, as on a review page. `moreMenu` and `wireMenus`, the
++summary page's menu and the code that makes it work, join the shared
++helpers, and both pages call them. The menu holds **View file on GitHub**
++and **View history on GitHub**. An HTML page's breadcrumbs end in the same
++menu.
++
++The owner also asked that a jump to a section land its heading level with
++the top of the sticky sidebar, not at the window's edge. A summary page
++already landed its line counts there, 16 pixels below its sticky offset,
++with `scroll-margin-top`. That one rule now covers a summary's sections and
++every target in a project page's plan as well, so a sidebar link, a `#`
++anchor, and a reload with a hash all land a heading 16 pixels down, where
++the 30% line marks it. A project page has no compact bar at 980 pixels and
++narrower, so there its sticky offset is 0.
++
++Last, the owner asked for room at the bottom of a project page, so any
++section can scroll to the very top, as on a summary page. A summary's last
++section has a minimum height that leaves that room. A plan's sections are
++not elements of their own, so on a page with a title row `showDocument`
++moves the last `##` heading and everything after it into one
++`lastsection`, and the summary's rule covers it too. That rule now sizes
++both to `calc(100vh - var(--stick-top) - 16px)`, so the last heading can
++scroll level with the sidebar, where a jump lands it. The room lets every
++section reach the 30% line by scrolling, so the watch needs no rule of its
++own for the end of the page.
+diff --git a/site/assets/site.css b/site/assets/site.css
+index ec0b4624..47f0c576 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -52,6 +52,9 @@ body.barhidden .barshow { display: inline-flex; }
+    sidebar. */
+ .sitemain.withnav { max-width: none; padding: 0; }
+ .sitemain.withnav .sidebody { max-width: 880px; }
++/* No compact bar sticks to the top of a project's page at 980px and narrower,
++   as a summary's does, so a jump there lands 16px down, as on a wide screen. */
++@media (max-width: 980px) { .sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); } }
+ /* The badges fit the eyebrow's line, so the title row is as tall as a summary's,
+    and sit as far from the separators beside them as the eyebrow's words do. */
+ .top .eyebrow .badge { line-height: 1; margin-right: 0; }
+@@ -84,8 +87,33 @@ body.barhidden .barshow { display: inline-flex; }
+ .sidetree a.active, .sidetop a.active { color: var(--text); font-weight: 600; }
+ .sidetop { font-weight: 600; margin-bottom: 10px; }
+ .sidedir { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+-/* A project's other pages, below its stacks in the sidebar, lined up with the stacks' rows. */
+-.nav .navpages { padding: 6px 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; line-height: 1.4; }
++/* The blocks below a project's stacks in its sidebar, each under a divider:
++   the readme's sections, the project's other pages, and a nested project's
++   parent over its siblings. The pages and the neighbors line up with the
++   stacks' rows. */
++.nav > .navsections, .nav .navpages, .nav .navnear { padding-top: 6px; border-top: 1px solid var(--border); }
++.nav > .navsections + .navpages, .nav .navpages + .navnear, .nav > .navsections + .navnear { margin-top: 10px; }
++.nav .navpages, .nav .navnear { padding-inline: 9px; font-size: 13.5px; line-height: 1.4; }
++.nav .navnear .sidetop { margin-bottom: 5px; }
++/* A page's sections have no reviewed dots, so the title takes the dot's
++   column. Under a page's entry in the pages, they keep their own spacing. */
++.nav .navsections ol a { grid-template-columns: 22px 1fr; }
++.sidetree .navsections { margin-top: 4px; }
++.sidetree .navsections li { margin: 0; }
++/* At 980 pixels and narrower the sections start folded behind a toggle, so the
++   plan stays near the top of the page. A wider screen shows them whole. The
++   toggle's chevron sits in the numbers' column, and its label in the titles'. */
++.nav .navfold { display: none; }
++@media (max-width: 980px) {
++  .nav .navfold {
++    display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: center; width: 100%; padding: 6px; border: 0;
++    border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.3;
++    text-align: left; cursor: pointer;
++  }
++  .nav .navfold:hover { background: var(--surface-2); }
++  .nav .navfold[aria-expanded="false"] .chev { transform: rotate(-45deg); }
++  .nav .navfold[aria-expanded="false"] + ol { display: none; }
++}
+ 
+ /* An HTML page fills the window below the header, edge to edge, with its section
+    sidebar, when shown, as a column beside it. */
+@@ -210,10 +238,12 @@ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
+ .proposal p + p { margin-top: 4px; }
+ .proposal b { color: var(--info); }
+ 
++/* An HTML page's head: its breadcrumbs, with the page's "…" menu at the row's
++   end, and below them a proposed project's banner. */
+ .phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+-.crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
++.crumbs { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--muted); }
+ .crumbs a { text-decoration: none; }
+-.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
++.phead .proposal { margin: 8px 0 0; }
+ 
+ .sitesearch { margin: 0 0 0 auto; display: flex; }
+ .sitesearch input {
+diff --git a/site/assets/site.js b/site/assets/site.js
+index 6bf45281..713ee3fe 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -1,9 +1,9 @@
+ "use strict";
+ // Projector site: three sections, drawn from site.json. Projects lists the projects
+ // and renders each one's files in a summary page's layout, beside a summary's
+-// sidebar of its stacks and pages; Reviews lists the pull request summaries; Docs
+-// renders the README and everything else under docs/ beside a sidebar of that
+-// tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
++// sidebar of its stacks, sections, and pages; Reviews lists the pull request
++// summaries; Docs renders the README and everything else under docs/ beside a
++// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+ // Every view has a real path under the site's base; links between views update
+ // the address without a page load. Every page loads summary.js first, for the
+ // helpers a summary page draws with too.
+@@ -171,7 +171,8 @@
+             `<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form>${hide}</header>`;
+     }
+     function isHtml(path) { return /\.html$/i.test(path); }
+-    // Draw the page around `body`, and return the element the body went into.
++    // Draw the page around `body`, make its menus work, and return the element
++    // the body went into.
+     // `side`, a section's tree, is a column at the window's left edge. A page
+     // with `top`, a title row, takes a summary page's layout instead: the title
+     // row across the top, `nav`, a summary's sidebar, beside the body, and a
+@@ -184,6 +185,7 @@
+             throw new Error('A view needs the #site element to draw into');
+         document.title = title !== '' ? `${title} · ${site.repo}` : site.repo;
+         fitFrame = null;
++        watchSections(null);
+         const isWide = wide === true;
+         if (!isWide)
+             document.body.classList.remove('barhidden');
+@@ -210,12 +212,14 @@
+             main.innerHTML = body;
+         else
+             main.appendChild(body);
++        wireMenus(root);
+         return main;
+     }
+     // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
+     // heading. A folder holding a readme is labelled by it; any other folder by its name.
+     // The outer list is a `sidetree`, which its styles name, so they reach no other list.
+-    function tree(items, prefix, top, current) {
++    // `under` follows the current entry, inside its item.
++    function tree(items, prefix, top, current, under = '') {
+         const rootNode = { dirs: {}, files: [], index: null };
+         items.forEach(function (item) {
+             const parts = item.path.slice(prefix.length).split('/');
+@@ -229,24 +233,24 @@
+             else
+                 node.files.push(item);
+         });
+-        function link(item) {
+-            return `<a href="${esc(routeFor(item.path))}"` +
+-                `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
+-                (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
++        function entry(item) {
++            const here = item.path === current;
++            return `<a href="${esc(routeFor(item.path))}"${here ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
++                (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '') + (here ? under : '');
+         }
+         function render(node) {
+             const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+-                .map(function (f) { return `<li>${link(f)}</li>`; });
++                .map(function (f) { return `<li>${entry(f)}</li>`; });
+             const dirs = Object.keys(node.dirs).sort().map(function (name) {
+                 const dir = node.dirs[name];
+                 if (dir === undefined)
+                     return '';
+-                return `<li>${dir.index !== null ? link(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
++                return `<li>${dir.index !== null ? entry(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
+             });
+             const all = files.concat(dirs);
+             return all.length > 0 ? `<ul${node === rootNode ? ' class="sidetree"' : ''}>${all.join('')}</ul>` : '';
+         }
+-        return (top !== null ? `<div class="sidetop">${link(top)}</div>` : '') + render(rootNode);
++        return (top !== null ? `<div class="sidetop">${entry(top)}</div>` : '') + render(rootNode);
+     }
+     function loadMarkdown(path) {
+         return fetch(contentUrl(path)).then(function (response) {
+@@ -260,8 +264,10 @@
+     // frame and follows it back out, so a deep link into a hash-routed page works.
+     function showHtml(active, path, title, before, side, nav) {
+         const main = frame(active, title, '', side, true, undefined, nav);
+-        if (before !== null)
++        if (before !== null) {
+             main.appendChild(before);
++            wireMenus(main);
++        }
+         const page = document.createElement('iframe');
+         page.className = 'htmlpage';
+         page.title = title;
+@@ -287,31 +293,66 @@
+     }
+     // `ref` is where a Markdown page's links to repository files the site lacks
+     // point on GitHub. `top` and `nav` give a Markdown page a summary page's
+-    // layout, and `nav` is an HTML page's column, as `frame` draws them.
++    // layout, and `nav` is an HTML page's column, as `frame` draws them. The
++    // site sees no sections in an HTML page.
+     function showPage(active, path, title, before, side, ref = site.branch, top, nav) {
+         if (isHtml(path))
+-            showHtml(active, path, title, before, side, nav);
++            showHtml(active, path, title, before, side, nav?.([]));
+         else
+             showDocument(active, path, title, before, side, ref, top, nav);
+     }
+     // Under a title row, which shows the page's title, the body leaves out its
+-    // own when that is its first element.
++    // own when that is its first element, and its last section gets the room
++    // after it that a summary's last section has. The sidebar lists the
++    // sections of the page as it renders, and marks the one in view.
+     function showDocument(active, path, title, before, side, ref, top, nav) {
+-        frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav);
++        frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav?.([]));
+         loadMarkdown(path).then(function (text) {
+             const box = renderMarkdown(text, path, ref);
+             if (top !== undefined && box.firstElementChild?.tagName === 'H1')
+                 box.firstElementChild.remove();
+-            const main = frame(active, title, box, side, false, top, nav);
++            const headings = sectionHeadings(box);
++            const last = headings[headings.length - 1];
++            if (top !== undefined && last !== undefined)
++                holdLastSection(box, last);
++            const main = frame(active, title, box, side, false, top, nav?.(headings.map(sectionOf)));
+             if (before !== null)
+                 main.insertBefore(before, main.firstChild);
+             const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+             if (target !== null)
+                 target.scrollIntoView();
++            watchSections(document.querySelector('.layout > .side ol.sections'));
+         }, function (error) {
+-            frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top, nav);
++            frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top, nav?.([]));
+         });
+     }
++    // A rendered page's sections: its `##` headings at the top level of the page.
++    function sectionHeadings(box) {
++        return Array.from(box.children).filter(function (h) { return h.tagName === 'H2' && h.id !== ''; });
++    }
++    // A section as the sidebar lists it. A heading that opens with its number,
++    // as `2. Solution` and `2.1 Detail` do, gives the number a column of its
++    // own, without its last dot. The title keeps its inline markup but not its
++    // links, because the sidebar's row is itself a link.
++    function sectionOf(heading) {
++        const unlinked = heading.cloneNode(true);
++        unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
++        const title = unlinked.innerHTML;
++        const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(heading.textContent);
++        return number !== null && title.startsWith(number[0])
++            ? { id: heading.id, num: number[1] ?? '', title: title.slice(number[0].length) }
++            : { id: heading.id, num: '', title: title };
++    }
++    // Moves the page's last section, from its heading to the page's end, into a
++    // `lastsection`, which summary.css makes tall enough that the section's
++    // heading scrolls level with the sidebar, as a summary's last section does.
++    function holdLastSection(box, heading) {
++        const section = document.createElement('div');
++        section.className = 'lastsection';
++        const nodes = Array.from(box.childNodes);
++        nodes.slice(nodes.indexOf(heading)).forEach(function (node) { section.appendChild(node); });
++        box.appendChild(section);
++    }
+     // The README, or any document under docs/, beside the docs tree when there is
+     // more than the README to list. The README's entry is Overview, the page the
+     // tree starts from, rather than a title the README's own heading repeats.
+@@ -379,11 +420,11 @@
+         }
+     }
+     // Any file of a project, its readme or a supplemental file, in a summary
+-    // page's layout: a title row of the breadcrumbs, the readme's badges and
+-    // owner, and its link to GitHub over the page's title, and the project's
+-    // sidebar beside the page. An HTML page keeps its frame, with the sidebar
+-    // in its column and the breadcrumbs and link above it. A proposed
+-    // project's banner opens every page.
++    // page's layout: a title row of the breadcrumbs and the readme's badges and
++    // owner over the page's title, with a "…" menu of the file's links to
++    // GitHub at its end, and the project's sidebar beside the page. An HTML
++    // page keeps its frame, with the sidebar in its column and the breadcrumbs
++    // and menu above it. A proposed project's banner opens every page.
+     function showProjectFile(path) {
+         const project = ownerOf(path);
+         if (project === null) {
+@@ -401,34 +442,38 @@
+             const here = isReadme && i === parts.length - 1;
+             return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
+         }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
+-        const github = esc(repoUrl('blob', path, ref));
++        const menu = moreMenu('page-menu', 'Page links', [
++            { href: repoUrl('blob', path, ref), text: 'View file on GitHub', short: 'File', external: true },
++            { href: repoUrl('commits', path, ref), text: 'View history on GitHub', short: 'History', external: true },
++        ]);
+         const banner = project.proposed !== undefined ? proposalBanner(project.proposed) : '';
+-        const nav = projectNav(project, path);
++        const nav = function (sections) { return projectNav(project, path, sections); };
+         if (isHtml(path)) {
+             const head = document.createElement('div');
+             head.className = 'phead';
+-            head.innerHTML = `<div class="crumbs">${crumbs}</div>${banner}<div class="pmeta"><a class="note" href="${github}">View on GitHub</a></div>`;
++            head.innerHTML = `<div class="crumbs"><span>${crumbs}</span>${menu}</div>${banner}`;
+             showPage('projects', path, title, head, null, ref, undefined, nav);
+             return;
+         }
+         const owner = project.owner != null && project.owner !== '' ? `Owner ${esc(project.owner)}` : '';
+-        const link = `<a href="${github}">View on GitHub</a>`;
+-        const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner, link] : [crumbs, link])
++        const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner] : [crumbs])
+             .filter(function (group) { return group !== ''; }).join(' · ');
+         let before = null;
+         if (banner !== '') {
+             before = document.createElement('div');
+             before.innerHTML = banner;
+         }
+-        showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
++        showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, menu), nav);
+     }
+     // A project's sidebar, drawn as a summary's is: the project's header once,
+     // then every stack that holds a segment it heads, each whole but for this
+-    // project's headers, or a line saying it has none; then the other pages
+-    // under its folder; then the credit and its history on GitHub. On its
+-    // readme, its header is the page you are on, and on any other page it links
+-    // to the readme and the page's own entry in the pages is current.
+-    function projectNav(project, path) {
++    // project's headers, or a line saying it has none; then the readme's
++    // `sections`; then the other pages under its folder, with another page's
++    // sections under its entry; then a nested project's neighbors; then the
++    // credit and its history on GitHub. On its readme, its header is the page
++    // you are on, and on any other page it links to the readme and the page's
++    // own entry in the pages is current.
++    function projectNav(project, path, sections) {
+         const isReadme = path === project.path;
+         const ref = project.proposed?.head ?? site.branch;
+         const stacks = project.stacks.map(function (segments) {
+@@ -444,12 +489,14 @@
+         const items = [];
+         site.projects.forEach(function (p) {
+             if (p !== project && p.path.startsWith(folder))
+-                items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
++                items.push(itemOf(p));
+         });
+         site.projects.forEach(function (p) {
+             if (p.path.startsWith(folder))
+                 p.files.forEach(function (f) { items.push(f); });
+         });
++        const listed = sections.length > 0 ? foldedSections(sections) : '';
++        const pages = items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path, isReadme ? '' : listed)}</div>` : '';
+         const history = `<a class="history" href="${esc(repoUrl('commits', path, ref))}" aria-label="History on GitHub" ` +
+             `title="History on GitHub">${HISTORY_ICON}</a>`;
+         return sideNavHtml({
+@@ -457,10 +504,34 @@
+             head: { header: own, current: isReadme },
+             stacks: stacks,
+             empty: '<p class="snone">No reviews of this project.</p>',
+-            middle: items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path)}</div>` : '',
++            middle: (isReadme ? listed : '') + pages + neighborsHtml(project),
+             foot: history,
+         });
+     }
++    function itemOf(project) {
++        return { path: project.path, title: project.title, proposed: project.proposed?.number };
++    }
++    // A page's sections in its project's sidebar. At 980 pixels and narrower
++    // they start folded behind a Sections toggle, which a wider screen hides.
++    function foldedSections(sections) {
++        return '<div class="navsections"><button type="button" class="navfold" aria-expanded="false" aria-controls="pagesections">' +
++            `<span class="chev" aria-hidden="true"></span>Sections</button>${sectionListHtml(sections, false, 'pagesections')}</div>`;
++    }
++    // The project a nested project sits in, which is the deepest project whose
++    // folder holds its folder, or null for a top-level project.
++    function parentOf(project) {
++        return ownerOf(folderOf(project).slice(0, -1));
++    }
++    // A nested project's neighbors: its parent, linked, over the parent's other
++    // nested projects. A top-level project draws none, because the Projects
++    // page lists its neighbors.
++    function neighborsHtml(project) {
++        const parent = parentOf(project);
++        if (parent === null)
++            return '';
++        const siblings = site.projects.filter(function (p) { return p !== project && parentOf(p) === parent; });
++        return `<div class="navnear">${tree(siblings.map(itemOf), folderOf(parent), itemOf(parent), null)}</div>`;
++    }
+     // The banner atop every page of a proposed project: the pull request that
+     // proposes it, with its title and status as the Reviews index draws them,
+     // the head the site shows, and any other open pull request that proposes a
+@@ -711,6 +782,11 @@
+                 fitFrame();
+             return;
+         }
++        const fold = target?.closest('.navfold');
++        if (fold != null) {
++            fold.setAttribute('aria-expanded', String(fold.getAttribute('aria-expanded') !== 'true'));
++            return;
++        }
+         const bar = target?.closest('.barhide, .barshow');
+         if (bar != null) {
+             const hidden = document.body.classList.toggle('barhidden', bar.classList.contains('barhide'));
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index 1c8fa0eb..c8ffe3fd 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -150,6 +150,9 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
+ .nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+ .nav ol a, .nav .extra a { display: grid; grid-template-columns: 22px 1fr 16px; gap: 8px; align-items: center; padding: 6px 6px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13.5px; line-height: 1.3; }
+ .nav ol a:hover, .nav .extra a:hover { background: var(--surface-2); }
++/* The section in view, which the list marks as the page scrolls: a row's hover band, with an accent bar at its start. */
++.nav ol a[aria-current="location"] { position: relative; background: var(--surface-2); }
++.nav ol a[aria-current="location"]::before { content: ""; position: absolute; top: 7px; bottom: 7px; left: 0; width: 2px; border-radius: 1px; background: var(--accent); }
+ .nav .nnum { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+ .nav .ntitle { overflow-wrap: anywhere; }
+ .nav .ncheck, .ftree .fcheck { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border); justify-self: end; flex: none; }
+@@ -160,8 +163,10 @@ a.srow:hover { background: var(--surface-2); color: var(--text); }
+ 
+ /* overview */
+ .overview { display: flex; flex-direction: column; gap: 20px; }
+-/* Level with the sidebar, which sticks 16px down. */
+-.stats { scroll-margin-top: calc(var(--stick-top) + 16px); }
++/* Where a jump lands each target, level with the sidebar, which sticks 16px
++   down: a summary's line counts and its sections, and any heading or other
++   target in a project page's plan. */
++.stats, .group, .sitemain.withnav .sidebody [id] { scroll-margin-top: calc(var(--stick-top) + 16px); }
+ .filespane > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
+ .filespane > summary::-webkit-details-marker, .fcollapsed > summary::-webkit-details-marker { display: none; }
+ .filespane > summary h3 { margin: 0; }
+@@ -201,9 +206,10 @@ ul.tight { margin: 0; padding-left: 18px; } ul.tight li { margin: 0 0 8px; } ul.
+ 
+ /* groups */
+ .groups { display: flex; flex-direction: column; gap: 28px; margin-top: 36px; }
+-.group { position: relative; scroll-margin-top: var(--stick-top); }
+-/* Tall enough that jumping to the last section still brings it to the top. */
+-.group:last-child { min-height: calc(100vh - var(--stick-top)); }
++.group { position: relative; }
++/* A page's last section, a summary's or a plan's, is tall enough that it
++   scrolls level with the sidebar, as a jump lands every other one. */
++.group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }
+ .gsentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
+ .ghead { position: sticky; top: var(--stick-top); z-index: 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 2px solid var(--border); }
+ .group.gstuck .ghead { box-shadow: 0 8px 8px -8px rgba(0, 0, 0, .2); }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index 1aca2d30..fc469894 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -90,6 +90,142 @@ function sideNavHtml(nav) {
+     return `<nav class="nav" aria-label="${esc(nav.label)}"><div class="prblock">${head}${stacks !== '' ? stacks : nav.empty}</div>` +
+         `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
+ }
++// A page's sections as a sidebar lists them: a link to each, holding its
++// number in a column of its own beside its title. A summary's list ends each
++// row with the dot that marks the section reviewed.
++function sectionListHtml(sections, checks, id = '') {
++    return `<ol class="sections"${id !== '' ? ` id="${esc(id)}"` : ''}>` + sections.map(function (s) {
++        const target = esc(s.id);
++        return `<li><a href="#${target}"><span class="nnum">${esc(s.num)}</span><span class="ntitle">${s.title}</span>` +
++            `${checks ? `<span class="ncheck" data-gid="${target}"></span>` : ''}</a></li>`;
++    }).join('') + '</ol>';
++}
++// The observer that marks the section in view. A page watches one list of
++// sections at a time.
++let sectionWatch = null;
++// Marks the link in `list` to the section in view, and keeps the mark current
++// as the page scrolls. The section in view is the last one whose top has
++// passed a line 30% of the way down the window. The room after a page's last
++// section, which summary.css gives it, lets the reader scroll that section to
++// the line too. A list of null stops the watch.
++function watchSections(list) {
++    sectionWatch?.disconnect();
++    sectionWatch = null;
++    if (list === null || !('IntersectionObserver' in window))
++        return;
++    const sections = Array.from(list.querySelectorAll('a[href^="#"]')).flatMap(function (link) {
++        const target = document.getElementById(decodeURIComponent((link.getAttribute('href') ?? '').slice(1)));
++        return target !== null ? [{ link: link, target: target }] : [];
++    });
++    function mark() {
++        const line = window.innerHeight * 0.3;
++        const passed = sections.filter(function (s) { return s.target.getBoundingClientRect().top <= line; });
++        const current = passed[passed.length - 1];
++        sections.forEach(function (s) {
++            if (s === current)
++                s.link.setAttribute('aria-current', 'location');
++            else
++                s.link.removeAttribute('aria-current');
++        });
++    }
++    // The band runs from far above any page down to the line, so a target is in
++    // it exactly while its top is above the line, and a jump that carries a top
++    // across the line reports it, however far past the window the jump goes.
++    const passing = new IntersectionObserver(mark, { rootMargin: '10000000px 0px -70% 0px' });
++    sections.forEach(function (s) { passing.observe(s.target); });
++    sectionWatch = passing;
++}
++// A "…" button and the menu of links it opens, which wireMenus makes work. A
++// link to GitHub opens in a new tab; a link within the site does not. A
++// browser without popovers, such as Safari before 17, would draw every menu
++// open, so there the links sit in place as a row, under their short names.
++const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
++const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
++    '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
++function moreMenu(id, label, items) {
++    function link(i, attrs, text) {
++        return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
++    }
++    if (!popovers)
++        return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
++    return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
++        `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
++        items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
++        '</div>';
++}
++// Whether the window closes an open menu when it scrolls or resizes, which it
++// starts doing once a page wires its first menu.
++let menusCloseWithWindow = false;
++// Makes each "…" menu in `root` work. Its button opens its links as a
++// popover, which sits in the top layer, clear of a card's clipping and the
++// sticky headers. An auto popover closes on Escape or a click outside it, and
++// opening one closes any other. The menu opens under its button, right-aligned
++// to it, or above it where the window has no room below, and closes when the
++// page scrolls rather than drift from its button.
++function wireMenus(root) {
++    if (!popovers)
++        return;
++    root.querySelectorAll('.moremenu').forEach(function (menu) {
++        const button = menu.previousElementSibling;
++        if (!(button instanceof HTMLButtonElement))
++            return;
++        const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
++        function close() { if (menu.matches(':popover-open'))
++            menu.hidePopover(); }
++        menu.addEventListener('beforetoggle', function (ev) {
++            if (ev.newState === 'open') {
++                const b = button.getBoundingClientRect();
++                menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
++                menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
++            }
++            else if (menu.contains(document.activeElement)) {
++                button.focus({ preventScroll: true });
++            }
++        });
++        menu.addEventListener('toggle', function (ev) {
++            const open = ev.newState === 'open';
++            button.setAttribute('aria-expanded', String(open));
++            if (!open)
++                return;
++            const b = button.getBoundingClientRect(), h = menu.offsetHeight;
++            if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0)
++                menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
++            items[0]?.focus({ preventScroll: true });
++        });
++        menu.addEventListener('keydown', function (ev) {
++            const at = items.findIndex(function (item) { return item === document.activeElement; });
++            let next;
++            if (ev.key === 'ArrowDown')
++                next = (at + 1) % items.length;
++            else if (ev.key === 'ArrowUp')
++                next = at <= 0 ? items.length - 1 : at - 1;
++            else if (ev.key === 'Home')
++                next = 0;
++            else if (ev.key === 'End')
++                next = items.length - 1;
++            else {
++                // Tab leaves the menu from its button, so focus moves on to the
++                // control after it, or back to the one before it.
++                if (ev.key === 'Tab') {
++                    button.focus({ preventScroll: true });
++                    close();
++                }
++                return;
++            }
++            ev.preventDefault();
++            items[next]?.focus();
++        });
++        items.forEach(function (item) { item.addEventListener('click', close); });
++    });
++    if (menusCloseWithWindow)
++        return;
++    menusCloseWithWindow = true;
++    const closeOpenMenu = function () {
++        document.querySelectorAll('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
++    };
++    window.addEventListener('scroll', closeOpenMenu, { passive: true });
++    window.addEventListener('resize', closeOpenMenu);
++}
+ (function () {
+     // How many hidden lines one expand up or expand down reveals.
+     const STEP = 20;
+@@ -157,8 +293,6 @@ function sideNavHtml(nav) {
+         const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="ic-copy" fill="currentColor" d="M0 6.75C0 5.78.78 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Zm5-5C5 .78 5.78 0 6.75 0h7.5C15.22 0 16 .78 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .14.11.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/><path class="ic-ok" fill="currentColor" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
+         // Two arrows folding in on a line: the expanded lines closing up again.
+         const COLLAPSE_ICON = `${ICON}<path d="M6.5 3L10 6.5 13.5 3"/><path d="M6.5 17L10 13.5 13.5 17"/><path d="M4 10h12"/></svg>`;
+-        const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
+-            '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+         // An expander's controls: down from the hunk above, up from the hunk below, and the whole gap.
+         const EXPAND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">';
+         const EXPANDS = [
+@@ -166,22 +300,6 @@ function sideNavHtml(nav) {
+             ['up', 'Expand up', `${EXPAND_ICON}<path d="M4 10l4-4 4 4"/></svg>`],
+             ['all', 'Expand all', `${EXPAND_ICON}<path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10"/></svg>`],
+         ];
+-        // A "…" button and the menu of links it opens, which wireSummary makes work.
+-        // A link to GitHub opens in a new tab; a link within the site does not. A
+-        // browser without popovers, such as Safari before 17, would draw every menu
+-        // open, so there the links sit in place as a row, under their short names.
+-        const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
+-        function moreMenu(id, label, items) {
+-            function link(i, attrs, text) {
+-                return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
+-            }
+-            if (!popovers)
+-                return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
+-            return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
+-                `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
+-                items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
+-                '</div>';
+-        }
+         const CHIPS = { context: 'context', verify: 'verified', flag: 'concern' };
+         function kindOf(c) { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
+         // A note's checkbox state is keyed by where it sits and what it says, so a
+@@ -478,9 +596,7 @@ function sideNavHtml(nav) {
+             return ` · ${status} · ${link}`;
+         }
+         function renderPage() {
+-            const sections = data.groups.map(function (g, i) {
+-                return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+-            }).join('');
++            const sections = data.groups.map(function (g, i) { return { id: g.id, num: String(i + 1), title: g.title }; });
+             const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
+             const menu = moreMenu('pr-menu', 'Pull request links', [
+                 { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
+@@ -492,7 +608,7 @@ function sideNavHtml(nav) {
+                 titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
+                 '<div class="layout"><aside class="side">' +
+                 sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
+-                    middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
++                    middle: `<div class="extra">${extra}</div>${sectionListHtml(sections, true)}`, foot: headsList() }) +
+                 '</aside>' +
+                 `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+                 `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+@@ -718,71 +834,7 @@ function sideNavHtml(nav) {
+                 }
+             });
+         });
+-        // A "…" button, on the page header or a file's, opens its links as a popover,
+-        // which sits in the top layer, clear of the card's clipping and the sticky
+-        // headers. An auto popover closes on Escape or a click outside it, and
+-        // opening one closes any other. The menu opens under its button, right-aligned
+-        // to it, or above it where the window has no room below, and closes when the
+-        // page scrolls rather than drift from its button.
+-        if ('popover' in HTMLElement.prototype) {
+-            document.querySelectorAll('.moremenu').forEach(function (menu) {
+-                const button = menu.previousElementSibling;
+-                if (!(button instanceof HTMLButtonElement))
+-                    return;
+-                const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+-                function close() { if (menu.matches(':popover-open'))
+-                    menu.hidePopover(); }
+-                menu.addEventListener('beforetoggle', function (ev) {
+-                    if (ev.newState === 'open') {
+-                        const b = button.getBoundingClientRect();
+-                        menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
+-                        menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
+-                    }
+-                    else if (menu.contains(document.activeElement)) {
+-                        button.focus({ preventScroll: true });
+-                    }
+-                });
+-                menu.addEventListener('toggle', function (ev) {
+-                    const open = ev.newState === 'open';
+-                    button.setAttribute('aria-expanded', String(open));
+-                    if (!open)
+-                        return;
+-                    const b = button.getBoundingClientRect(), h = menu.offsetHeight;
+-                    if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0)
+-                        menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
+-                    items[0]?.focus({ preventScroll: true });
+-                });
+-                menu.addEventListener('keydown', function (ev) {
+-                    const at = items.findIndex(function (item) { return item === document.activeElement; });
+-                    let next;
+-                    if (ev.key === 'ArrowDown')
+-                        next = (at + 1) % items.length;
+-                    else if (ev.key === 'ArrowUp')
+-                        next = at <= 0 ? items.length - 1 : at - 1;
+-                    else if (ev.key === 'Home')
+-                        next = 0;
+-                    else if (ev.key === 'End')
+-                        next = items.length - 1;
+-                    else {
+-                        // Tab leaves the menu from its button, so focus moves on to the
+-                        // control after it, or back to the one before it.
+-                        if (ev.key === 'Tab') {
+-                            button.focus({ preventScroll: true });
+-                            close();
+-                        }
+-                        return;
+-                    }
+-                    ev.preventDefault();
+-                    items[next]?.focus();
+-                });
+-                items.forEach(function (item) { item.addEventListener('click', close); });
+-            });
+-            const closeOpenMenu = function () {
+-                document.querySelectorAll('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
+-            };
+-            window.addEventListener('scroll', closeOpenMenu, { passive: true });
+-            window.addEventListener('resize', closeOpenMenu);
+-        }
++        wireMenus(document);
+         // Pinned-header detection: a 1px sentinel sits at the top of each section and
+         // each file card. Once it scrolls above its header's sticky offset the header
+         // is pinned: a section header gains a shadow, and a file header, pinned just
+@@ -826,6 +878,7 @@ function sideNavHtml(nav) {
+         }
+         setupStuck();
+         void document.fonts.ready.then(setupStuck);
++        watchSections(document.querySelector('.layout > .side ol.sections'));
+         let resizeTimer;
+         window.addEventListener('resize', function () {
+             clearTimeout(resizeTimer);
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 8dba808b..03b7635e 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -115,6 +115,21 @@ interface StackRow {
+   current?: boolean;
+ }
+ 
++/** A link in a "…" menu: its text in the menu, its short name where links sit in place, and whether it opens a new tab. */
++interface MenuItem {
++  href: string;
++  text: string;
++  short: string;
++  external: boolean;
++}
++
++/** A section of a page as its sidebar lists it: the id its link names, its number or "", and its title as markup. */
++interface PageSection {
++  id: string;
++  num: string;
++  title: string;
++}
++
+ /**
+  * A sidebar, as `sideNavHtml` draws it on a summary page and on a project page: a landmark named `label`; `head`, the
+  * page's own project's header, once, drawn as the page you are on when `current` says so; each of `stacks`, its
+diff --git a/site/src/site.ts b/site/src/site.ts
+index 4524f364..4f9525a3 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -1,14 +1,16 @@
+ // Projector site: three sections, drawn from site.json. Projects lists the projects
+ // and renders each one's files in a summary page's layout, beside a summary's
+-// sidebar of its stacks and pages; Reviews lists the pull request summaries; Docs
+-// renders the README and everything else under docs/ beside a sidebar of that
+-// tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
++// sidebar of its stacks, sections, and pages; Reviews lists the pull request
++// summaries; Docs renders the README and everything else under docs/ beside a
++// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+ // Every view has a real path under the site's base; links between views update
+ // the address without a page load. Every page loads summary.js first, for the
+ // helpers a summary page draws with too.
+ (function (): void {
+   type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
+   type Body = string | Node;
++  /** A page's sidebar, drawn once the page's sections are known. */
++  type SideNavOf = (sections: PageSection[]) => string;
+ 
+   /** A page in a sidebar's tree, and for a proposed project's plan the pull request that proposes it. */
+   interface Item {
+@@ -180,7 +182,8 @@
+ 
+   function isHtml(path: string): boolean { return /\.html$/i.test(path); }
+ 
+-  // Draw the page around `body`, and return the element the body went into.
++  // Draw the page around `body`, make its menus work, and return the element
++  // the body went into.
+   // `side`, a section's tree, is a column at the window's left edge. A page
+   // with `top`, a title row, takes a summary page's layout instead: the title
+   // row across the top, `nav`, a summary's sidebar, beside the body, and a
+@@ -193,6 +196,7 @@
+     if (root === null) throw new Error('A view needs the #site element to draw into');
+     document.title = title !== '' ? `${title} · ${site.repo}` : site.repo;
+     fitFrame = null;
++    watchSections(null);
+     const isWide = wide === true;
+     if (!isWide) document.body.classList.remove('barhidden');
+     if (top !== undefined) {
+@@ -214,13 +218,15 @@
+     if (main === null) throw new Error('The page lost the #sidebody element it just drew');
+     if (typeof body === 'string') main.innerHTML = body;
+     else main.appendChild(body);
++    wireMenus(root);
+     return main;
+   }
+ 
+   // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
+   // heading. A folder holding a readme is labelled by it; any other folder by its name.
+   // The outer list is a `sidetree`, which its styles name, so they reach no other list.
+-  function tree(items: Item[], prefix: string, top: Item | null, current: string | null): string {
++  // `under` follows the current entry, inside its item.
++  function tree(items: Item[], prefix: string, top: Item | null, current: string | null, under = ''): string {
+     const rootNode: TreeNode = { dirs: {}, files: [], index: null };
+     items.forEach(function (item) {
+       const parts = item.path.slice(prefix.length).split('/');
+@@ -232,23 +238,23 @@
+       if (node !== rootNode && /^readme\.md$/i.test(name)) node.index = item;
+       else node.files.push(item);
+     });
+-    function link(item: Item): string {
+-      return `<a href="${esc(routeFor(item.path))}"` +
+-        `${item.path === current ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
+-        (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '');
++    function entry(item: Item): string {
++      const here = item.path === current;
++      return `<a href="${esc(routeFor(item.path))}"${here ? ' class="active" aria-current="page"' : ''}>${esc(item.title)}</a>` +
++        (item.proposed !== undefined ? ` ${proposedBadge(item.proposed)}` : '') + (here ? under : '');
+     }
+     function render(node: TreeNode): string {
+       const files = node.files.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+-        .map(function (f) { return `<li>${link(f)}</li>`; });
++        .map(function (f) { return `<li>${entry(f)}</li>`; });
+       const dirs = Object.keys(node.dirs).sort().map(function (name) {
+         const dir = node.dirs[name];
+         if (dir === undefined) return '';
+-        return `<li>${dir.index !== null ? link(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
++        return `<li>${dir.index !== null ? entry(dir.index) : `<span class="sidedir">${esc(name)}</span>`}${render(dir)}</li>`;
+       });
+       const all = files.concat(dirs);
+       return all.length > 0 ? `<ul${node === rootNode ? ' class="sidetree"' : ''}>${all.join('')}</ul>` : '';
+     }
+-    return (top !== null ? `<div class="sidetop">${link(top)}</div>` : '') + render(rootNode);
++    return (top !== null ? `<div class="sidetop">${entry(top)}</div>` : '') + render(rootNode);
+   }
+ 
+   function loadMarkdown(path: string): Promise<string> {
+@@ -264,7 +270,10 @@
+   function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null,
+     nav?: string): void {
+     const main = frame(active, title, '', side, true, undefined, nav);
+-    if (before !== null) main.appendChild(before);
++    if (before !== null) {
++      main.appendChild(before);
++      wireMenus(main);
++    }
+     const page = document.createElement('iframe');
+     page.className = 'htmlpage';
+     page.title = title;
+@@ -288,30 +297,68 @@
+ 
+   // `ref` is where a Markdown page's links to repository files the site lacks
+   // point on GitHub. `top` and `nav` give a Markdown page a summary page's
+-  // layout, and `nav` is an HTML page's column, as `frame` draws them.
++  // layout, and `nav` is an HTML page's column, as `frame` draws them. The
++  // site sees no sections in an HTML page.
+   function showPage(active: Section, path: string, title: string, before: Node | null, side: string | null,
+-    ref: string = site.branch, top?: string, nav?: string): void {
+-    if (isHtml(path)) showHtml(active, path, title, before, side, nav);
++    ref: string = site.branch, top?: string, nav?: SideNavOf): void {
++    if (isHtml(path)) showHtml(active, path, title, before, side, nav?.([]));
+     else showDocument(active, path, title, before, side, ref, top, nav);
+   }
+ 
+   // Under a title row, which shows the page's title, the body leaves out its
+-  // own when that is its first element.
++  // own when that is its first element, and its last section gets the room
++  // after it that a summary's last section has. The sidebar lists the
++  // sections of the page as it renders, and marks the one in view.
+   function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null,
+-    ref: string, top?: string, nav?: string): void {
+-    frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav);
++    ref: string, top?: string, nav?: SideNavOf): void {
++    frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav?.([]));
+     loadMarkdown(path).then(function (text) {
+       const box = renderMarkdown(text, path, ref);
+       if (top !== undefined && box.firstElementChild?.tagName === 'H1') box.firstElementChild.remove();
+-      const main = frame(active, title, box, side, false, top, nav);
++      const headings = sectionHeadings(box);
++      const last = headings[headings.length - 1];
++      if (top !== undefined && last !== undefined) holdLastSection(box, last);
++      const main = frame(active, title, box, side, false, top, nav?.(headings.map(sectionOf)));
+       if (before !== null) main.insertBefore(before, main.firstChild);
+       const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+       if (target !== null) target.scrollIntoView();
++      watchSections(document.querySelector('.layout > .side ol.sections'));
+     }, function (error: unknown) {
+-      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top, nav);
++      frame(active, title, `<p class="note">Could not load ${esc(path)}: ${esc(errorMessage(error))}</p>`, side, false, top,
++        nav?.([]));
+     });
+   }
+ 
++  // A rendered page's sections: its `##` headings at the top level of the page.
++  function sectionHeadings(box: HTMLElement): Element[] {
++    return Array.from(box.children).filter(function (h) { return h.tagName === 'H2' && h.id !== ''; });
++  }
++
++  // A section as the sidebar lists it. A heading that opens with its number,
++  // as `2. Solution` and `2.1 Detail` do, gives the number a column of its
++  // own, without its last dot. The title keeps its inline markup but not its
++  // links, because the sidebar's row is itself a link.
++  function sectionOf(heading: Element): PageSection {
++    const unlinked = heading.cloneNode(true) as Element;
++    unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
++    const title = unlinked.innerHTML;
++    const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(heading.textContent);
++    return number !== null && title.startsWith(number[0])
++      ? { id: heading.id, num: number[1] ?? '', title: title.slice(number[0].length) }
++      : { id: heading.id, num: '', title: title };
++  }
++
++  // Moves the page's last section, from its heading to the page's end, into a
++  // `lastsection`, which summary.css makes tall enough that the section's
++  // heading scrolls level with the sidebar, as a summary's last section does.
++  function holdLastSection(box: HTMLElement, heading: Element): void {
++    const section = document.createElement('div');
++    section.className = 'lastsection';
++    const nodes = Array.from(box.childNodes);
++    nodes.slice(nodes.indexOf(heading)).forEach(function (node) { section.appendChild(node); });
++    box.appendChild(section);
++  }
++
+   // The README, or any document under docs/, beside the docs tree when there is
+   // more than the README to list. The README's entry is Overview, the page the
+   // tree starts from, rather than a title the README's own heading repeats.
+@@ -382,11 +429,11 @@
+   }
+ 
+   // Any file of a project, its readme or a supplemental file, in a summary
+-  // page's layout: a title row of the breadcrumbs, the readme's badges and
+-  // owner, and its link to GitHub over the page's title, and the project's
+-  // sidebar beside the page. An HTML page keeps its frame, with the sidebar
+-  // in its column and the breadcrumbs and link above it. A proposed
+-  // project's banner opens every page.
++  // page's layout: a title row of the breadcrumbs and the readme's badges and
++  // owner over the page's title, with a "…" menu of the file's links to
++  // GitHub at its end, and the project's sidebar beside the page. An HTML
++  // page keeps its frame, with the sidebar in its column and the breadcrumbs
++  // and menu above it. A proposed project's banner opens every page.
+   function showProjectFile(path: string): void {
+     const project = ownerOf(path);
+     if (project === null) {
+@@ -404,35 +451,39 @@
+       const here = isReadme && i === parts.length - 1;
+       return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
+     }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
+-    const github = esc(repoUrl('blob', path, ref));
++    const menu = moreMenu('page-menu', 'Page links', [
++      { href: repoUrl('blob', path, ref), text: 'View file on GitHub', short: 'File', external: true },
++      { href: repoUrl('commits', path, ref), text: 'View history on GitHub', short: 'History', external: true },
++    ]);
+     const banner = project.proposed !== undefined ? proposalBanner(project.proposed) : '';
+-    const nav = projectNav(project, path);
++    const nav = function (sections: PageSection[]): string { return projectNav(project, path, sections); };
+     if (isHtml(path)) {
+       const head = document.createElement('div');
+       head.className = 'phead';
+-      head.innerHTML = `<div class="crumbs">${crumbs}</div>${banner}<div class="pmeta"><a class="note" href="${github}">View on GitHub</a></div>`;
++      head.innerHTML = `<div class="crumbs"><span>${crumbs}</span>${menu}</div>${banner}`;
+       showPage('projects', path, title, head, null, ref, undefined, nav);
+       return;
+     }
+     const owner = project.owner != null && project.owner !== '' ? `Owner ${esc(project.owner)}` : '';
+-    const link = `<a href="${github}">View on GitHub</a>`;
+-    const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner, link] : [crumbs, link])
++    const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner] : [crumbs])
+       .filter(function (group) { return group !== ''; }).join(' · ');
+     let before: HTMLElement | null = null;
+     if (banner !== '') {
+       before = document.createElement('div');
+       before.innerHTML = banner;
+     }
+-    showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
++    showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, menu), nav);
+   }
+ 
+   // A project's sidebar, drawn as a summary's is: the project's header once,
+   // then every stack that holds a segment it heads, each whole but for this
+-  // project's headers, or a line saying it has none; then the other pages
+-  // under its folder; then the credit and its history on GitHub. On its
+-  // readme, its header is the page you are on, and on any other page it links
+-  // to the readme and the page's own entry in the pages is current.
+-  function projectNav(project: SiteProject, path: string): string {
++  // project's headers, or a line saying it has none; then the readme's
++  // `sections`; then the other pages under its folder, with another page's
++  // sections under its entry; then a nested project's neighbors; then the
++  // credit and its history on GitHub. On its readme, its header is the page
++  // you are on, and on any other page it links to the readme and the page's
++  // own entry in the pages is current.
++  function projectNav(project: SiteProject, path: string, sections: PageSection[]): string {
+     const isReadme = path === project.path;
+     const ref = project.proposed?.head ?? site.branch;
+     const stacks = project.stacks.map(function (segments) {
+@@ -447,11 +498,13 @@
+     const folder = folderOf(project);
+     const items: Item[] = [];
+     site.projects.forEach(function (p) {
+-      if (p !== project && p.path.startsWith(folder)) items.push({ path: p.path, title: p.title, proposed: p.proposed?.number });
++      if (p !== project && p.path.startsWith(folder)) items.push(itemOf(p));
+     });
+     site.projects.forEach(function (p) {
+       if (p.path.startsWith(folder)) p.files.forEach(function (f) { items.push(f); });
+     });
++    const listed = sections.length > 0 ? foldedSections(sections) : '';
++    const pages = items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path, isReadme ? '' : listed)}</div>` : '';
+     const history = `<a class="history" href="${esc(repoUrl('commits', path, ref))}" aria-label="History on GitHub" ` +
+       `title="History on GitHub">${HISTORY_ICON}</a>`;
+     return sideNavHtml({
+@@ -459,11 +512,38 @@
+       head: { header: own, current: isReadme },
+       stacks: stacks,
+       empty: '<p class="snone">No reviews of this project.</p>',
+-      middle: items.length > 0 ? `<div class="navpages">${tree(items, folder, null, path)}</div>` : '',
++      middle: (isReadme ? listed : '') + pages + neighborsHtml(project),
+       foot: history,
+     });
+   }
+ 
++  function itemOf(project: SiteProject): Item {
++    return { path: project.path, title: project.title, proposed: project.proposed?.number };
++  }
++
++  // A page's sections in its project's sidebar. At 980 pixels and narrower
++  // they start folded behind a Sections toggle, which a wider screen hides.
++  function foldedSections(sections: PageSection[]): string {
++    return '<div class="navsections"><button type="button" class="navfold" aria-expanded="false" aria-controls="pagesections">' +
++      `<span class="chev" aria-hidden="true"></span>Sections</button>${sectionListHtml(sections, false, 'pagesections')}</div>`;
++  }
++
++  // The project a nested project sits in, which is the deepest project whose
++  // folder holds its folder, or null for a top-level project.
++  function parentOf(project: SiteProject): SiteProject | null {
++    return ownerOf(folderOf(project).slice(0, -1));
++  }
++
++  // A nested project's neighbors: its parent, linked, over the parent's other
++  // nested projects. A top-level project draws none, because the Projects
++  // page lists its neighbors.
++  function neighborsHtml(project: SiteProject): string {
++    const parent = parentOf(project);
++    if (parent === null) return '';
++    const siblings = site.projects.filter(function (p) { return p !== project && parentOf(p) === parent; });
++    return `<div class="navnear">${tree(siblings.map(itemOf), folderOf(parent), itemOf(parent), null)}</div>`;
++  }
++
+   // The banner atop every page of a proposed project: the pull request that
+   // proposes it, with its title and status as the Reviews index draws them,
+   // the head the site shows, and any other open pull request that proposes a
+@@ -699,6 +779,11 @@
+       if (fitFrame !== null) fitFrame();
+       return;
+     }
++    const fold = target?.closest('.navfold');
++    if (fold != null) {
++      fold.setAttribute('aria-expanded', String(fold.getAttribute('aria-expanded') !== 'true'));
++      return;
++    }
+     const bar = target?.closest('.barhide, .barshow');
+     if (bar != null) {
+       const hidden = document.body.classList.toggle('barhidden', bar.classList.contains('barhide'));
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index d8b62032..ec4450eb 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -95,6 +95,130 @@ function sideNavHtml(nav: SideNav): string {
+     `${nav.middle}<div class="navfoot"><div class="credit">${creditHtml()}</div>${nav.foot}</div></nav>`;
+ }
+ 
++// A page's sections as a sidebar lists them: a link to each, holding its
++// number in a column of its own beside its title. A summary's list ends each
++// row with the dot that marks the section reviewed.
++function sectionListHtml(sections: PageSection[], checks: boolean, id = ''): string {
++  return `<ol class="sections"${id !== '' ? ` id="${esc(id)}"` : ''}>` + sections.map(function (s) {
++    const target = esc(s.id);
++    return `<li><a href="#${target}"><span class="nnum">${esc(s.num)}</span><span class="ntitle">${s.title}</span>` +
++      `${checks ? `<span class="ncheck" data-gid="${target}"></span>` : ''}</a></li>`;
++  }).join('') + '</ol>';
++}
++
++// The observer that marks the section in view. A page watches one list of
++// sections at a time.
++let sectionWatch: IntersectionObserver | null = null;
++
++// Marks the link in `list` to the section in view, and keeps the mark current
++// as the page scrolls. The section in view is the last one whose top has
++// passed a line 30% of the way down the window. The room after a page's last
++// section, which summary.css gives it, lets the reader scroll that section to
++// the line too. A list of null stops the watch.
++function watchSections(list: Element | null): void {
++  sectionWatch?.disconnect();
++  sectionWatch = null;
++  if (list === null || !('IntersectionObserver' in window)) return;
++  const sections = Array.from(list.querySelectorAll('a[href^="#"]')).flatMap(function (link) {
++    const target = document.getElementById(decodeURIComponent((link.getAttribute('href') ?? '').slice(1)));
++    return target !== null ? [{ link: link, target: target }] : [];
++  });
++  function mark(): void {
++    const line = window.innerHeight * 0.3;
++    const passed = sections.filter(function (s) { return s.target.getBoundingClientRect().top <= line; });
++    const current = passed[passed.length - 1];
++    sections.forEach(function (s) {
++      if (s === current) s.link.setAttribute('aria-current', 'location');
++      else s.link.removeAttribute('aria-current');
++    });
++  }
++  // The band runs from far above any page down to the line, so a target is in
++  // it exactly while its top is above the line, and a jump that carries a top
++  // across the line reports it, however far past the window the jump goes.
++  const passing = new IntersectionObserver(mark, { rootMargin: '10000000px 0px -70% 0px' });
++  sections.forEach(function (s) { passing.observe(s.target); });
++  sectionWatch = passing;
++}
++
++// A "…" button and the menu of links it opens, which wireMenus makes work. A
++// link to GitHub opens in a new tab; a link within the site does not. A
++// browser without popovers, such as Safari before 17, would draw every menu
++// open, so there the links sit in place as a row, under their short names.
++const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
++const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
++  '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
++function moreMenu(id: string, label: string, items: MenuItem[]): string {
++  function link(i: MenuItem, attrs: string, text: string): string {
++    return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
++  }
++  if (!popovers) return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
++  return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
++    `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
++    items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
++    '</div>';
++}
++
++// Whether the window closes an open menu when it scrolls or resizes, which it
++// starts doing once a page wires its first menu.
++let menusCloseWithWindow = false;
++
++// Makes each "…" menu in `root` work. Its button opens its links as a
++// popover, which sits in the top layer, clear of a card's clipping and the
++// sticky headers. An auto popover closes on Escape or a click outside it, and
++// opening one closes any other. The menu opens under its button, right-aligned
++// to it, or above it where the window has no room below, and closes when the
++// page scrolls rather than drift from its button.
++function wireMenus(root: ParentNode): void {
++  if (!popovers) return;
++  root.querySelectorAll<HTMLElement>('.moremenu').forEach(function (menu) {
++    const button = menu.previousElementSibling;
++    if (!(button instanceof HTMLButtonElement)) return;
++    const items = Array.from(menu.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
++    function close(): void { if (menu.matches(':popover-open')) menu.hidePopover(); }
++    menu.addEventListener('beforetoggle', function (ev) {
++      if (ev.newState === 'open') {
++        const b = button.getBoundingClientRect();
++        menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
++        menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
++      } else if (menu.contains(document.activeElement)) {
++        button.focus({ preventScroll: true });
++      }
++    });
++    menu.addEventListener('toggle', function (ev) {
++      const open = ev.newState === 'open';
++      button.setAttribute('aria-expanded', String(open));
++      if (!open) return;
++      const b = button.getBoundingClientRect(), h = menu.offsetHeight;
++      if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0) menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
++      items[0]?.focus({ preventScroll: true });
++    });
++    menu.addEventListener('keydown', function (ev) {
++      const at = items.findIndex(function (item) { return item === document.activeElement; });
++      let next: number;
++      if (ev.key === 'ArrowDown') next = (at + 1) % items.length;
++      else if (ev.key === 'ArrowUp') next = at <= 0 ? items.length - 1 : at - 1;
++      else if (ev.key === 'Home') next = 0;
++      else if (ev.key === 'End') next = items.length - 1;
++      else {
++        // Tab leaves the menu from its button, so focus moves on to the
++        // control after it, or back to the one before it.
++        if (ev.key === 'Tab') { button.focus({ preventScroll: true }); close(); }
++        return;
++      }
++      ev.preventDefault();
++      items[next]?.focus();
++    });
++    items.forEach(function (item) { item.addEventListener('click', close); });
++  });
++  if (menusCloseWithWindow) return;
++  menusCloseWithWindow = true;
++  const closeOpenMenu = function (): void {
++    document.querySelectorAll<HTMLElement>('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
++  };
++  window.addEventListener('scroll', closeOpenMenu, { passive: true });
++  window.addEventListener('resize', closeOpenMenu);
++}
++
+ (function (): void {
+ // How many hidden lines one expand up or expand down reveals.
+ const STEP = 20;
+@@ -186,8 +310,6 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+ 
+   // Two arrows folding in on a line: the expanded lines closing up again.
+   const COLLAPSE_ICON = `${ICON}<path d="M6.5 3L10 6.5 13.5 3"/><path d="M6.5 17L10 13.5 13.5 17"/><path d="M4 10h12"/></svg>`;
+-  const MORE_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/>' +
+-    '<circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+   // An expander's controls: down from the hunk above, up from the hunk below, and the whole gap.
+   const EXPAND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">';
+   const EXPANDS: [string, string, string][] = [
+@@ -195,22 +317,6 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+     ['up', 'Expand up', `${EXPAND_ICON}<path d="M4 10l4-4 4 4"/></svg>`],
+     ['all', 'Expand all', `${EXPAND_ICON}<path d="M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10"/></svg>`],
+   ];
+-  // A "…" button and the menu of links it opens, which wireSummary makes work.
+-  // A link to GitHub opens in a new tab; a link within the site does not. A
+-  // browser without popovers, such as Safari before 17, would draw every menu
+-  // open, so there the links sit in place as a row, under their short names.
+-  const popovers = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
+-  interface MenuItem { href: string; text: string; short: string; external: boolean }
+-  function moreMenu(id: string, label: string, items: MenuItem[]): string {
+-    function link(i: MenuItem, attrs: string, text: string): string {
+-      return `<a${attrs} href="${esc(i.href)}"${i.external ? ' target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
+-    }
+-    if (!popovers) return `<span class="morelinks">${items.map(function (i) { return link(i, '', i.short); }).join('')}</span>`;
+-    return `<button class="more" type="button" popovertarget="${id}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">${MORE_ICON}</button>` +
+-      `<div class="moremenu" id="${id}" popover role="menu" aria-label="${esc(label)}">` +
+-      items.map(function (i) { return link(i, ' role="menuitem"', i.text); }).join('') +
+-      '</div>';
+-  }
+ 
+   const CHIPS: Record<string, string> = { context: 'context', verify: 'verified', flag: 'concern' };
+   function kindOf(c: SummaryCheck): string { return c.kind === 'flag' || c.kind === 'context' ? c.kind : 'verify'; }
+@@ -500,9 +606,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+   }
+ 
+   function renderPage(): string {
+-    const sections = data.groups.map(function (g, i) {
+-      return `<li><a href="#${esc(g.id)}"><span class="nnum">${String(i + 1)}</span><span class="ntitle">${g.title}</span><span class="ncheck" data-gid="${esc(g.id)}"></span></a></li>`;
+-    }).join('');
++    const sections = data.groups.map(function (g, i) { return { id: g.id, num: String(i + 1), title: g.title }; });
+     const extra = '<a href="#top">Overview</a><a href="#files">Files</a>';
+     const menu = moreMenu('pr-menu', 'Pull request links', [
+       { href: prUrl, text: 'Conversation on GitHub', short: 'Conversation', external: true },
+@@ -514,7 +618,7 @@ function renderSummary(data: SummaryData): Record<string, ContextView> {
+       titleRowHtml(`${ext(prUrl, esc(prRef))}${reviewStatus()}`, pr.title, menu) +
+       '<div class="layout"><aside class="side">' +
+         sideNavHtml({ label: 'Sections', stacks: [{ segments: data.segments, rows: stackRows() }], empty: '',
+-          middle: `<div class="extra">${extra}</div><ol>${sections}</ol>`, foot: headsList() }) +
++          middle: `<div class="extra">${extra}</div>${sectionListHtml(sections, true)}`, foot: headsList() }) +
+         '</aside>' +
+       `<main><div class="overview" id="overview">${renderOverview()}</div>` +
+         `<div class="groups">${data.groups.map(renderGroup).join('')}</div></main></div></div>`;
+@@ -720,59 +824,7 @@ function wireSummary(views: Record<string, ContextView>): void {
+     });
+   });
+ 
+-  // A "…" button, on the page header or a file's, opens its links as a popover,
+-  // which sits in the top layer, clear of the card's clipping and the sticky
+-  // headers. An auto popover closes on Escape or a click outside it, and
+-  // opening one closes any other. The menu opens under its button, right-aligned
+-  // to it, or above it where the window has no room below, and closes when the
+-  // page scrolls rather than drift from its button.
+-  if ('popover' in HTMLElement.prototype) {
+-    document.querySelectorAll<HTMLElement>('.moremenu').forEach(function (menu) {
+-      const button = menu.previousElementSibling;
+-      if (!(button instanceof HTMLButtonElement)) return;
+-      const items = Array.from(menu.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
+-      function close(): void { if (menu.matches(':popover-open')) menu.hidePopover(); }
+-      menu.addEventListener('beforetoggle', function (ev) {
+-        if (ev.newState === 'open') {
+-          const b = button.getBoundingClientRect();
+-          menu.style.top = `${String(Math.round(b.bottom + 4))}px`;
+-          menu.style.right = `${String(Math.round(document.documentElement.clientWidth - b.right))}px`;
+-        } else if (menu.contains(document.activeElement)) {
+-          button.focus({ preventScroll: true });
+-        }
+-      });
+-      menu.addEventListener('toggle', function (ev) {
+-        const open = ev.newState === 'open';
+-        button.setAttribute('aria-expanded', String(open));
+-        if (!open) return;
+-        const b = button.getBoundingClientRect(), h = menu.offsetHeight;
+-        if (b.bottom + 4 + h > window.innerHeight && b.top - 4 - h >= 0) menu.style.top = `${String(Math.round(b.top - 4 - h))}px`;
+-        items[0]?.focus({ preventScroll: true });
+-      });
+-      menu.addEventListener('keydown', function (ev) {
+-        const at = items.findIndex(function (item) { return item === document.activeElement; });
+-        let next: number;
+-        if (ev.key === 'ArrowDown') next = (at + 1) % items.length;
+-        else if (ev.key === 'ArrowUp') next = at <= 0 ? items.length - 1 : at - 1;
+-        else if (ev.key === 'Home') next = 0;
+-        else if (ev.key === 'End') next = items.length - 1;
+-        else {
+-          // Tab leaves the menu from its button, so focus moves on to the
+-          // control after it, or back to the one before it.
+-          if (ev.key === 'Tab') { button.focus({ preventScroll: true }); close(); }
+-          return;
+-        }
+-        ev.preventDefault();
+-        items[next]?.focus();
+-      });
+-      items.forEach(function (item) { item.addEventListener('click', close); });
+-    });
+-    const closeOpenMenu = function (): void {
+-      document.querySelectorAll<HTMLElement>('.moremenu:popover-open').forEach(function (menu) { menu.hidePopover(); });
+-    };
+-    window.addEventListener('scroll', closeOpenMenu, { passive: true });
+-    window.addEventListener('resize', closeOpenMenu);
+-  }
++  wireMenus(document);
+ 
+   // Pinned-header detection: a 1px sentinel sits at the top of each section and
+   // each file card. Once it scrolls above its header's sticky offset the header
+@@ -812,6 +864,7 @@ function wireSummary(views: Record<string, ContextView>): void {
+   }
+   setupStuck();
+   void document.fonts.ready.then(setupStuck);
++  watchSections(document.querySelector('.layout > .side ol.sections'));
+   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+   window.addEventListener('resize', function () {
+     clearTimeout(resizeTimer);
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 33e7932b..1f28ebcc 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -1575,20 +1575,42 @@ def test_the_manifest_carries_each_owner(self) -> None:
+         self.assertEqual("aparsuri-poly", json.loads((out / "site.json").read_text())["projects"][0]["owner"])
+ 
+ 
+-PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "badge",
++PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "slug", "badge",
+                           "proposedBadge", "nav", "header", "isHtml", "frame", "tree", "showHtml", "showPage",
+-                          "showDocument", "showProjectFile", "projectNav", "proposalBanner", "reviewFor")
+-
+-
+-def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> dict:
+-    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, and return it.
+-
+-    The page's Markdown renders as `body`, its elements as [tag, text], by
+-    default a heading and a paragraph. `page` is the markup `frame` draws,
+-    with the body's place empty, and `body` what went into that place: the
+-    rendered elements, after any element showProjectFile puts before them,
+-    each as [tag, markup]. `ref` is the ref the Markdown rendered its links
+-    at, and `title` the document's title.
++                          "showDocument", "sectionHeadings", "sectionOf", "holdLastSection", "showProjectFile", "projectNav", "itemOf", "foldedSections",
++                          "parentOf", "neighborsHtml", "proposalBanner", "reviewFor")
++
++
++MORE_BUTTON = ('<button class="more" type="button" popovertarget="page-menu" aria-haspopup="menu" aria-expanded="false" '
++               'aria-label="Page links"><svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor">'
++               '<circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/>'
++               '</svg></button>')
++
++
++def page_menu(path: str, ref: str = "main") -> str:
++    """A project page's "…" menu, as a browser with popovers draws it: `path` and its history on GitHub at `ref`."""
++    return ('<div class="moremenu" id="page-menu" popover role="menu" aria-label="Page links">'
++            f'<a role="menuitem" href="https://github.com/owner/example/blob/{ref}/{path}" target="_blank" rel="noopener">'
++            'View file on GitHub</a>'
++            f'<a role="menuitem" href="https://github.com/owner/example/commits/{ref}/{path}" target="_blank" '
++            'rel="noopener">View history on GitHub</a></div>')
++
++
++def project_page(site: dict, path: str, body: list[list[str]] | None = None, popovers: bool = True) -> dict:
++    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, in a browser with
++    or without popovers, and return it.
++
++    The page's Markdown renders as `body`, its elements as [tag, markup], by
++    default a heading and a paragraph, and each heading takes the id the
++    compiled `slug` gives its text, as renderMarkdown gives it. `page` is the
++    markup `frame` draws, with the body's place empty, and `body` what went
++    into that place: the rendered elements, after any element showProjectFile
++    puts before them, each as [tag, markup], with the elements of a
++    `lastsection` in their places. `held` lists each `lastsection`: where it
++    sits in the body, whether it ends the body, and its elements' markup.
++    `ref` is the ref the Markdown rendered its links at, `title` the
++    document's title, and `wired` whether the last drawing of the page looked
++    for menus to make work.
+     """
+     rendered = [["H1", "Build alpha"], ["P", "Text."]] if body is None else body
+     stub = (
+@@ -1597,31 +1619,48 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None) ->
+         "const pageFiles = new Set(), siteFiles = new Set();\n"
+         "let fitFrame = null, main = null, ref = null;\n"
+         "const location = {hash: '', pathname: '/', search: ''};\n"
+-        "const window = {innerHeight: 800};\n"
++        "const window = {innerHeight: 800, addEventListener: function () {}};\n"
++        f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n"
+         "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>', FULL_ICON = '<svg full></svg>',"
+         " EXIT_FULL_ICON = '<svg exit></svg>';\n"
+-        "const root = {innerHTML: ''};\n"
+-        "function element(tag, html) { return {tagName: tag, innerHTML: html, className: '', children: [], parent: null,"
+-        " style: {}, get firstElementChild() { return this.children[0] ?? null; },"
+-        " get firstChild() { return this.children[0] ?? null; },"
+-        " appendChild: function (child) { child.parent = this; this.children.push(child); return child; },"
++        "const root = {innerHTML: '', queried: [], querySelectorAll: function (selector) {"
++        " this.queried.push([selector, this.innerHTML]); return []; }};\n"
++        "function element(tag, html) { return {tagName: tag, innerHTML: html, id: '', className: '', children: [],"
++        " parent: null, style: {}, get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },"
++        " get firstElementChild() { return this.children[0] ?? null; },"
++        " get firstChild() { return this.children[0] ?? null; }, get childNodes() { return this.children.slice(); },"
++        " appendChild: function (child) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1);"
++        " child.parent = this; this.children.push(child); return child; },"
+         " insertBefore: function (child, next) { child.parent = this;"
+         " this.children.splice(next === null ? this.children.length : this.children.indexOf(next), 0, child); return child; },"
+         " remove: function () { this.parent.children.splice(this.parent.children.indexOf(this), 1); },"
+-        " getBoundingClientRect: function () { return {top: 0}; }, addEventListener: function () {}}; }\n"
++        " getBoundingClientRect: function () { return {top: 0}; }, addEventListener: function () {},"
++        " cloneNode: function () { return element(this.tagName, this.innerHTML); },"
++        " querySelectorAll: function (selector) { const self = this; return selector !== 'a' ? [] :"
++        " Array.from(this.innerHTML.matchAll(/<a\\b[^>]*>(.*?)<\\/a>/g), function (m) { return {childNodes: [m[1]],"
++        " replaceWith: function (...nodes) { self.innerHTML = self.innerHTML.replace(m[0], nodes.join('')); }}; }); }}; }\n"
+         "const document = {title: '', body: {classList: {remove: function () {}}},"
+         " createElement: function (tag) { return element(tag.toUpperCase(), ''); },"
+-        " getElementById: function () { main = element('DIV', ''); return main; }};\n"
++        " getElementById: function () { main = element('DIV', ''); return main; },"
++        " querySelector: function () { return null; }};\n"
+         "function loadMarkdown() { return {then: function (loaded) { loaded(''); }}; }\n"
+         "function renderMarkdown(text, path, at) { ref = at; const box = element('DIV', ''); box.className = 'markdown';"
+-        f" {json.dumps(rendered)}.forEach(function (e) {{ box.appendChild(element(e[0], e[1])); }}); return box; }}\n"
++        f" {json.dumps(rendered)}.forEach(function (e) {{ const el = box.appendChild(element(e[0], e[1]));"
++        " if (/^H[1-6]$/.test(e[0])) el.id = slug(el.textContent); }); return box; }\n"
+     )
+     program = stub + shared_js() + "\n" + page_constants() + "\n" + \
+         "\n".join(js_function(n) for n in PROJECT_PAGE_FUNCTIONS) + (
+             f"\nshowProjectFile({json.dumps(path)});"
+-            "\nconst drawn = main.children.flatMap(function (c) { return c.className === 'markdown'"
+-            " ? c.children.map(function (e) { return [e.tagName, e.innerHTML]; }) : [[c.tagName, c.innerHTML]]; });"
+-            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title}));")
++            "\nfunction flat(c) { return c.className === 'markdown' || c.className === 'lastsection'"
++            " ? c.children.flatMap(flat) : [[c.tagName, c.innerHTML]]; }"
++            "\nconst drawn = main.children.flatMap(flat);"
++            "\nconst held = main.children.filter(function (c) { return c.className === 'markdown'; })"
++            ".flatMap(function (box) { return box.children.map(function (c, i) { return c.className === 'lastsection'"
++            " ? {at: i, last: i === box.children.length - 1, held: c.children.map(function (e) { return e.innerHTML; })}"
++            " : null; }).filter(function (c) { return c !== null; }); });"
++            "\nconst query = root.queried[root.queried.length - 1];"
++            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title,"
++            " held: held, wired: query !== undefined && query[0] === '.moremenu' && query[1] === root.innerHTML}));")
+     return json.loads(node(program))
+ 
+ 
+@@ -1706,8 +1745,8 @@ def test_a_proposed_projects_page_opens_its_content_with_the_banner_and_links_gi
+         assert top is not None
+         self.assertIn('<span class="badge status-ready">ready</span>', top.group(0), "the badges sit in the title row")
+         self.assertNotIn("proposal", shown["page"], "the banner opens the content column, below the title row")
+-        self.assertIn(f' · <a href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
+-                      'readme.md">View on GitHub</a></div>', top.group(0))
++        self.assertIn(page_menu("docs/projects/gamma/readme.md", self.HEAD), top.group(0),
++                      "the menu links the file and its history at the proposal's head")
+         self.assertIn(f'<a class="history" href="https://github.com/owner/example/commits/{self.HEAD}/docs/projects/gamma/'
+                       'readme.md"', shown["page"], "the site's branch lacks the file, so its history is at the head")
+         self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock">'
+@@ -1813,9 +1852,11 @@ def outline(side: str) -> list[str]:
+         return [head or ("|" if group else "-" if split else row) for head, group, split, row in found]
+ 
+     def drawn(self, site: dict, path: str = README, body: list[list[str]] | None = None) -> tuple[dict, str]:
+-        """The page drawn for `path`, and its sidebar, which holds exactly one current item."""
++        """The page drawn for `path`, and its sidebar, which holds exactly one current page and no current location,
++        which only the watch on its sections marks."""
+         shown = project_page(site, path, body)
+         side = self.sidebar(shown["page"])
++        self.assertEqual(1, side.count('aria-current="page"'), side)
+         self.assertEqual(1, side.count("aria-current"), side)
+         return shown, side
+ 
+@@ -1828,19 +1869,29 @@ def test_a_readme_takes_a_summary_pages_layout_under_its_title_row(self) -> None
+         self.assertTrue(page.startswith('<header class="sitebar scrolls"><span class="sitebtn menuspace"'), page)
+         self.assertIn('<main class="sitemain withnav"><div class="wrap"><header class="top"><div><div class="eyebrow">'
+                       '<a href="/">Projects</a> / <span class="mono">alpha</span> · '
+-                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span> · '
+-                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md">View on GitHub</a>'
+-                      '</div><h1>Build alpha</h1></div></header>'
++                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span>'
++                      '</div><h1>Build alpha</h1></div><div class="sub">' + MORE_BUTTON, page)
++        self.assertIn(f'{page_menu("docs/projects/alpha/readme.md")}</div></header>'
+                       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Project">', page)
+         self.assertTrue(page.endswith('</nav></aside><div class="sidebody" id="sidebody"></div></div></div></main>'), page)
+         self.assertNotIn("sitefoot", page, "the sidebar's footer row carries the credit")
+         self.assertNotIn("phead", page)
++        self.assertNotIn("View on GitHub", page, "the menu holds the page's links to GitHub")
+         self.assertEqual("Build alpha · owner/example", shown["title"])
++        self.assertTrue(shown["wired"], "the page's last drawing makes its menu work")
+ 
+     def test_a_readme_names_its_owner_in_the_title_row(self) -> None:
+         shown, _ = self.drawn(self.site(owner="octocat"))
+ 
+-        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat · <a href=', shown["page"])
++        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat</div><h1>', shown["page"])
++
++    def test_without_popovers_the_title_rows_links_sit_in_place(self) -> None:
++        shown = project_page(self.site(), self.README, popovers=False)
++
++        self.assertIn('<h1>Build alpha</h1></div><div class="sub"><span class="morelinks">'
++                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md" target="_blank" '
++                      'rel="noopener">File</a><a href="https://github.com/owner/example/commits/main/docs/projects/alpha/'
++                      'readme.md" target="_blank" rel="noopener">History</a></span></div></header>', shown["page"])
+ 
+     def test_a_summary_page_and_a_project_page_draw_one_title_row(self) -> None:
+         summary_top = re.search(r'<header class="top">.*?</header>', rendered_summary(MINIMAL_SUMMARY))
+@@ -1851,7 +1902,10 @@ def skeleton(top: str) -> str:
+             top = re.sub(r'<div class="sub">.*</div></header>$', '</header>', top)
+             return re.sub(r'<div class="eyebrow">.*?</div><h1>.*?</h1>', '<div class="eyebrow"></div><h1></h1>', top)
+ 
+-        self.assertIn('<div class="sub">', summary_top.group(0))
++        self.assertIn('<div class="sub">' + MORE_BUTTON.replace("page-menu", "pr-menu").replace("Page links",
++                                                                                                "Pull request links"),
++                      summary_top.group(0), "both rows end in the same menu")
++        self.assertIn('<div class="sub">' + MORE_BUTTON, project_top.group(0))
+         self.assertEqual('<header class="top"><div><div class="eyebrow"></div><h1></h1></div></header>',
+                          skeleton(summary_top.group(0)))
+         self.assertEqual(skeleton(summary_top.group(0)), skeleton(project_top.group(0)))
+@@ -1871,8 +1925,8 @@ def test_a_supplemental_pages_title_row_ends_its_breadcrumbs_in_the_file(self) -
+                               [["H1", "Alpha notes"], ["P", "Text."]])
+ 
+         self.assertIn('<div class="eyebrow"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+-                      '<span class="mono">notes.md</span> · <a href="https://github.com/owner/example/blob/main/docs/projects/alpha/'
+-                      'notes.md">View on GitHub</a></div><h1>Alpha notes</h1>', shown["page"])
++                      '<span class="mono">notes.md</span></div><h1>Alpha notes</h1></div><div class="sub">' + MORE_BUTTON +
++                      page_menu("docs/projects/alpha/notes.md"), shown["page"])
+         self.assertEqual([["P", "Text."]], shown["body"])
+ 
+     def test_an_html_page_keeps_its_frame_with_the_sidebar_in_its_column(self) -> None:
+@@ -1884,9 +1938,9 @@ def test_an_html_page_keeps_its_frame_with_the_sidebar_in_its_column(self) -> No
+                       '<nav class="nav" aria-label="Project">', page)
+         self.assertNotIn('<header class="top">', page)
+         self.assertEqual(["DIV", "IFRAME"], [tag for tag, _ in shown["body"]])
+-        self.assertEqual('<div class="crumbs"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+-                         '<span class="mono">demo.html</span></div><div class="pmeta"><a class="note" href="https://github.com/owner/example/blob/'
+-                         'main/docs/projects/alpha/demo.html">View on GitHub</a></div>', shown["body"][0][1])
++        self.assertEqual('<div class="crumbs"><span><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
++                         f'<span class="mono">demo.html</span></span>{MORE_BUTTON}{page_menu("docs/projects/alpha/demo.html")}'
++                         '</div>', shown["body"][0][1], "the menu ends the breadcrumbs' row")
+ 
+     # The sidebar
+ 
+@@ -2004,6 +2058,283 @@ def test_a_project_title_is_escaped(self) -> None:
+                 self.assertIn("<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>", shown["page"])
+                 self.assertNotIn("<script>", shown["page"])
+ 
++    # The sections and the neighbors
++
++    FOLD = ('<div class="navsections"><button type="button" class="navfold" aria-expanded="false" '
++            'aria-controls="pagesections"><span class="chev" aria-hidden="true"></span>Sections</button>'
++            '<ol class="sections" id="pagesections">')
++
++    @staticmethod
++    def section_rows(side: str) -> list[tuple[str, str, str]]:
++        """Each listed section's link target, number, and title markup."""
++        return re.findall(r'<li><a href="#([^"]*)"><span class="nnum">([^<]*)</span><span class="ntitle">(.*?)</span></a></li>',
++                          side)
++
++    def test_a_readme_lists_its_sections_between_its_stacks_and_its_pages(self) -> None:
++        body = [["H1", "Build alpha"], ["P", "Intro."], ["H2", "1. Problem"], ["H3", "1.1 Detail"], ["H2", "2. Solution"],
++                ["H2", "Background"]]
++
++        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), body=body)
++
++        self.assertIn(f'</div></div>{self.FOLD}<li><a href="#1-problem">', side, "the block follows the stacks")
++        self.assertEqual([("1-problem", "1", "Problem"), ("2-solution", "2", "Solution"), ("background", "", "Background")],
++                         self.section_rows(side), "## only, each number in its own column, and none for Background")
++        self.assertLess(side.index("navsections"), side.index('<div class="navpages">'))
++
++    def test_a_section_number_is_digits_and_a_dot_or_a_dotted_number(self) -> None:
++        for heading, expected in (("10. Outcome", ("10", "Outcome")), ("2.1 Detail", ("2.1", "Detail")),
++                                  ("2.1. Detail", ("2.1", "Detail")), ("2026 roadmap", ("", "2026 roadmap")),
++                                  ("1.5x faster", ("", "1.5x faster"))):
++            with self.subTest(heading):
++                _, side = self.drawn(self.site(), body=[["H2", heading]])
++
++                self.assertEqual([expected], [row[1:] for row in self.section_rows(side)])
++
++    def test_a_section_title_keeps_its_code_and_drops_its_links(self) -> None:
++        body = [["H2", "3. <code>project init</code> writes"], ["H2", '4. See <a href="https://example.com">the guide</a>']]
++
++        _, side = self.drawn(self.site(), body=body)
++
++        self.assertEqual([("3-project-init-writes", "3", "<code>project init</code> writes"),
++                          ("4-see-the-guide", "4", "See the guide")], self.section_rows(side))
++
++    def test_a_page_without_a_top_level_section_lists_none(self) -> None:
++        _, side = self.drawn(self.site(), body=[["P", "Intro."], ["BLOCKQUOTE", "<h2>1. Quoted</h2>"], ["H3", "1.1 Sub"]])
++
++        self.assertNotIn("navsections", side)
++        self.assertNotIn("<ol", side)
++
++    def test_a_supplemental_page_lists_its_sections_under_its_entry(self) -> None:
++        body = [["H1", "Alpha notes"], ["H2", "1. First"], ["H2", "2. Second"]]
++
++        _, side = self.drawn(self.site([self.stack((self.ALPHA, [9]))]), "docs/projects/alpha/notes.md", body)
++
++        self.assertIn(f'<li><a href="/projects/alpha/notes/" class="active" aria-current="page">Alpha notes</a>{self.FOLD}'
++                      '<li><a href="#1-first">', side)
++        self.assertEqual(["1-first", "2-second"], [row[0] for row in self.section_rows(side)])
++        self.assertEqual(1, side.count("navsections"), "the readme's block is not drawn as well")
++        self.assertLess(side.index('<div class="navpages">'), side.index("navsections"))
++
++    def test_an_html_page_lists_no_sections(self) -> None:
++        shown, side = self.drawn(self.site(), "docs/projects/alpha/demo.html")
++
++        self.assertNotIn("navsections", shown["page"])
++        self.assertIn('<a href="/projects/alpha/demo/" class="active" aria-current="page">Alpha demo</a></li>', side)
++
++    def test_a_nested_project_lists_its_parent_and_siblings_after_its_pages(self) -> None:
++        site = self.site(more=(self.project("alpha/gamma", "Build gamma"), self.project("alpha/beta/zeta", "Build zeta")))
++
++        _, side = self.drawn(site, "docs/projects/alpha/beta/readme.md")
++
++        self.assertIn('<div class="navnear"><div class="sidetop"><a href="/projects/alpha/">Build alpha</a></div>'
++                      '<ul class="sidetree"><li><a href="/projects/alpha/gamma/">Build gamma</a></li></ul></div>'
++                      '<div class="navfoot">', side, "beta's own nested project is not its sibling")
++        pages = side[side.index('<div class="navpages">'):side.index('<div class="navnear">')]
++        self.assertIn('<a href="/projects/alpha/beta/zeta/">Build zeta</a>', pages)
++        self.assertNotIn("Build gamma", pages)
++        self.assertEqual(1, side.count(">Build beta<"), "the current project is in neither block")
++
++    def test_a_nested_projects_neighbors_follow_its_sections_when_it_has_no_pages(self) -> None:
++        site = self.site(more=(self.project("alpha/gamma", "Build gamma"),))
++
++        _, side = self.drawn(site, "docs/projects/alpha/gamma/readme.md", [["H2", "1. Problem"]])
++
++        self.assertNotIn("navpages", side)
++        self.assertIn('</ol></div><div class="navnear"><div class="sidetop"><a href="/projects/alpha/">Build alpha</a></div>'
++                      '<ul class="sidetree"><li><a href="/projects/alpha/beta/">Build beta</a></li></ul></div>', side)
++
++    def test_a_top_level_project_lists_no_neighbors(self) -> None:
++        _, side = self.drawn(self.site(more=(self.project("gamma", "Ship gamma"),)))
++
++        self.assertNotIn("navnear", side)
++
++    def test_the_sidebar_holds_its_stacks_sections_pages_neighbors_and_footer_in_that_order(self) -> None:
++        site = self.site([self.stack((self.ALPHA, [9]))], [self.stack((self.BETA, [10]))],
++                         more=(self.project("alpha/gamma", "Build gamma"),))
++
++        _, side = self.drawn(site, "docs/projects/alpha/beta/readme.md", [["H2", "1. Problem"]])
++
++        blocks = ('<div class="prblock">', '<div class="navsections">', '<div class="navpages">', '<div class="navnear">',
++                  '<div class="navfoot">')
++        self.assertEqual(sorted(side.index(b) for b in blocks), [side.index(b) for b in blocks])
++
++    def test_a_pages_last_section_is_held_to_the_end_of_the_page_so_it_can_scroll_level_with_the_sidebar(self) -> None:
++        body = [["H1", "Build alpha"], ["P", "Intro."], ["H2", "1. Problem"], ["P", "A."], ["H2", "2. Solution"],
++                ["P", "B."], ["H3", "2.1 Detail"], ["P", "C."]]
++        for path in (self.README, "docs/projects/alpha/notes.md"):
++            with self.subTest(path):
++                shown, _ = self.drawn(self.site(), path, body)
++
++                self.assertEqual([{"at": 3, "last": True, "held": ["2. Solution", "B.", "2.1 Detail", "C."]}],
++                                 shown["held"], "from the last ## heading to the end of the page")
++                self.assertEqual([tag for tag, _ in body[1:]], [tag for tag, _ in shown["body"]], "in the same order")
++
++    def test_a_page_without_a_section_holds_nothing(self) -> None:
++        shown, _ = self.drawn(self.site(), body=[["P", "Intro."], ["H3", "1.1 Detail"], ["P", "Text."]])
++
++        self.assertEqual([], shown["held"])
++
++
++@unittest.skipUnless(shutil.which("node"), "the section watch tests need node")
++class SectionWatchTests(unittest.TestCase):
++    """The watch that marks the section in view, run under node with a stub IntersectionObserver and a window 1,000
++    pixels tall."""
++
++    # The stub observer reports as a browser's does: once with every target when it starts, and then with each
++    # target whose intersection with its band changed, edges included, when `settle` runs after a scroll. Its band
++    # is the window grown or shrunk by its root margin. Each heading is 40 pixels tall, at a place on the page.
++    STUB = (
++        "const observers = [], targets = {};\n"
++        "function viewTop(element) { return element.pageTop - window.scrollY; }\n"
++        "class IntersectionObserver { constructor(callback, options) { this.callback = callback; this.options = options ?? {};"
++        " this.targets = []; this.disconnected = false; this.seen = new Map(); observers.push(this); }"
++        " observe(target) { this.targets.push(target); } disconnect() { this.disconnected = true; }"
++        " report() { const m = (this.options.rootMargin ?? '0px 0px 0px 0px').split(' ').map(function (v) {"
++        " return v.endsWith('%') ? parseFloat(v) / 100 * window.innerHeight : parseFloat(v); });"
++        " const top = -m[0], bottom = window.innerHeight + m[2], seen = this.seen;"
++        " const entries = this.targets.flatMap(function (t) {"
++        " const now = viewTop(t) <= bottom && viewTop(t) + t.height >= top;"
++        " if (seen.get(t) === now) return []; seen.set(t, now); return [{target: t, isIntersecting: now}]; });"
++        " if (!this.disconnected && entries.length > 0) this.callback(entries); } }\n"
++        "function settle() { observers.forEach(function (o) { o.report(); }); }\n"
++        "function scrollTo(y) { window.scrollY = y; settle(); }\n"
++        "const window = {innerHeight: 1000, scrollY: 0, IntersectionObserver: IntersectionObserver};\n"
++        "const document = {getElementById: function (id) { return targets[id] ?? null; }};\n"
++        "function heading(id, top) { targets[id] = {id: id, pageTop: top + window.scrollY, height: 40,"
++        " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }\n"
++        "function list(ids) { const links = ids.map(function (id) { return {attrs: {href: '#' + id},"
++        " getAttribute: function (n) { return this.attrs[n] ?? null; }, setAttribute: function (n, v) { this.attrs[n] = v; },"
++        " removeAttribute: function (n) { delete this.attrs[n]; }}; });"
++        " return {links: links, querySelectorAll: function () { return links; }}; }\n"
++        "function marks(l) { return l.links.map(function (a) { return a.attrs['aria-current'] ?? null; }); }\n"
++    )
++
++    def run_watch(self, program: str) -> object:
++        return json.loads(node(self.STUB + shared_js() + "\n" + program))
++
++    def marks(self, tops: list[int]) -> list[str | None]:
++        """The marks once the watch on sections whose tops are `tops` in the window hears from its targets."""
++        ids = [f"s{i}" for i in range(len(tops))]
++        return self.run_watch(
++            "".join(f"heading({json.dumps(i)}, {top});\n" for i, top in zip(ids, tops)) +
++            f"const l = list({json.dumps(ids)});\nwatchSections(l);\nsettle();\n"
++            "process.stdout.write(JSON.stringify(marks(l)));")
++
++    def test_the_last_section_above_the_line_30_percent_down_the_window_is_marked(self) -> None:
++        self.assertEqual([None, "location", None], self.marks([-500, 200, 600]))
++        self.assertEqual([None, None, "location"], self.marks([-900, -500, 300]))
++
++    def test_no_section_is_marked_above_the_first(self) -> None:
++        self.assertEqual([None, None], self.marks([400, 900]))
++
++    def test_a_jump_that_carries_a_heading_past_the_line_and_out_of_the_window_moves_the_mark(self) -> None:
++        # As a link to a ### heading, the Home key, or a dragged scrollbar
++        # does: from the top, where no heading has reached the line, into the
++        # middle of the third section, back into the second, to where a jump
++        # lands the last section, 16 pixels down, and back to the top.
++        seen = self.run_watch(
++            "heading('a', 400); heading('b', 3400); heading('c', 6400);\n"
++            "const l = list(['a', 'b', 'c']);\nwatchSections(l);\nsettle();\nconst seen = [marks(l)];\n"
++            "scrollTo(7400); seen.push(marks(l));\nscrollTo(4000); seen.push(marks(l));\n"
++            "scrollTo(6384); seen.push(marks(l));\nscrollTo(0); seen.push(marks(l));\n"
++            "process.stdout.write(JSON.stringify(seen));")
++
++        self.assertEqual([[None, None, None], [None, None, "location"], [None, "location", None],
++                          [None, None, "location"], [None, None, None]], seen)
++
++    def test_the_watch_reports_targets_whose_tops_cross_the_line(self) -> None:
++        seen = self.run_watch(
++            "heading('a', 0); heading('b', 0);\nconst l = list(['a', 'missing', 'b']);\nwatchSections(l);\n"
++            "process.stdout.write(JSON.stringify({options: observers.map(function (o) { return o.options; }),"
++            " targets: observers.map(function (o) { return o.targets.map(function (t) { return t.id; }); })}));")
++
++        self.assertEqual([{"rootMargin": "10000000px 0px -70% 0px"}], seen["options"],
++                         "one observer, whose band runs from far above the page down to the line")
++        self.assertEqual([["a", "b"]], seen["targets"], "a link to no section is left out")
++
++    def test_a_new_watch_or_none_stops_the_one_before(self) -> None:
++        seen = self.run_watch(
++            "heading('a', 0);\nwatchSections(list(['a']));\nwatchSections(list(['a']));\n"
++            "const second = observers.map(function (o) { return o.disconnected; });\nwatchSections(null);\n"
++            "process.stdout.write(JSON.stringify({second: second, none: observers.map(function (o) { return o.disconnected; }),"
++            " count: observers.length}));")
++
++        self.assertEqual([True, False], seen["second"])
++        self.assertEqual([True, True], seen["none"])
++        self.assertEqual(2, seen["count"], "watching nothing makes no observer")
++
++    def test_a_summary_lists_its_sections_with_the_shared_list_and_its_check_dots(self) -> None:
++        data = dict(MINIMAL_SUMMARY, groups=[{"id": "g-one", "title": "First <code>x</code>", "files": []},
++                                             {"id": "g-two", "title": "Second", "files": []}])
++
++        html = rendered_summary(data)
++
++        self.assertIn('<a href="#files">Files</a></div><ol class="sections">'
++                      '<li><a href="#g-one"><span class="nnum">1</span><span class="ntitle">First <code>x</code></span>'
++                      '<span class="ncheck" data-gid="g-one"></span></a></li>'
++                      '<li><a href="#g-two"><span class="nnum">2</span><span class="ntitle">Second</span>'
++                      '<span class="ncheck" data-gid="g-two"></span></a></li></ol>', html)
++
++
++class SectionStyleTests(unittest.TestCase):
++    """The rules that fold a project page's sections on a narrow screen and mark the section in view."""
++
++    @staticmethod
++    def blocks(sheet: str) -> tuple[str, dict[str, str]]:
++        """`sheet`'s rules outside every media query, and the body of each media query by its condition."""
++        css = re.sub(r"/\*.*?\*/", "", (SITE_JS.parent / sheet).read_text(), flags=re.S)
++        outside, queries, at = [], {}, 0
++        for found in re.finditer(r"@media ([^{]+)\{", css):
++            if found.start() < at:
++                continue
++            depth, end = 1, found.end()
++            while depth:
++                depth += {"{": 1, "}": -1}.get(css[end], 0)
++                end += 1
++            outside.append(css[at:found.start()])
++            queries[found.group(1).strip()] = queries.get(found.group(1).strip(), "") + css[found.end():end - 1]
++            at = end
++        outside.append(css[at:])
++        return "".join(outside), queries
++
++    def test_a_wide_screen_hides_the_toggle_and_a_narrow_one_folds_the_list_behind_it(self) -> None:
++        outside, queries = self.blocks("site.css")
++
++        self.assertRegex(outside, r"(^|\n)\.nav \.navfold \{ display: none; \}")
++        self.assertNotRegex(outside, r"aria-expanded=\"false\"\] \+ ol")
++        narrow = queries["(max-width: 980px)"]
++        self.assertRegex(narrow, r"\.nav \.navfold \{\s*display: grid;")
++        self.assertIn('.nav .navfold[aria-expanded="false"] + ol { display: none; }', narrow)
++
++    def test_a_jump_lands_every_target_level_with_the_sticky_sidebar(self) -> None:
++        outside, _ = self.blocks("summary.css")
++
++        self.assertRegex(outside, r"(^|\n)\.layout > \.side \{[^}]*top: calc\(env\(safe-area-inset-top, 0px\) \+ 16px\);",
++                         "the sidebar sticks 16px down")
++        margins = re.findall(r"(?:^|\n)([^{}\n]+)\{([^}]*scroll-margin-top[^}]*)\}", outside)
++        shared = [selectors for selectors, body in margins if "calc(var(--stick-top) + 16px)" in body]
++        self.assertEqual([[".stats", ".group", ".sitemain.withnav .sidebody [id]"]],
++                         [[s.strip() for s in selectors.split(",")] for selectors in shared],
++                         "a summary's line counts and sections and a plan's targets share one landing rule")
++        self.assertEqual([], [selectors for selectors, _ in margins if re.search(r"\.(group|stats)\b", selectors)
++                              and selectors not in shared], "no other rule moves where they land")
++        _, queries = self.blocks("site.css")
++        self.assertIn(".sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); }", queries["(max-width: 980px)"],
++                      "a project page has no compact bar to land below on a narrow screen")
++
++    def test_a_pages_last_section_is_tall_enough_to_scroll_level_with_the_sidebar(self) -> None:
++        outside, _ = self.blocks("summary.css")
++
++        self.assertIn(".group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }",
++                      outside, "a summary's last section and a plan's share one rule, sized to where a jump lands them")
++        self.assertEqual(1, len(re.findall(r"min-height: calc\(100vh", outside)))
++
++    def test_the_section_in_view_is_marked_in_every_list_of_sections(self) -> None:
++        outside, _ = self.blocks("summary.css")
++
++        self.assertIn('.nav ol a[aria-current="location"] { position: relative; background: var(--surface-2); }', outside)
++        self.assertRegex(outside, r'\.nav ol a\[aria-current="location"\]::before \{[^}]*background: var\(--accent\);')
++
+ 
+ @unittest.skipUnless(shutil.which("node"), "the header test needs node")
+ class HeaderTests(unittest.TestCase):
