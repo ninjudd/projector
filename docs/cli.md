@@ -1128,12 +1128,13 @@ at which a lock is stale. `setup` refuses a model ID that is empty, holds
 whitespace, or makes a folder name that starts with `.`, and deletes a start
 comment this machine's state recorded for the model and never published.
 
-The start comment and the review's signature line name the Projector version
-that `project --version` reports, the model from `--model`, and the reasoning
-effort from `CLAUDE_EFFORT` in the environment, which Claude Code sets for the
-Bash tool and keeps current through a mid-session `/effort` change. When
-`CLAUDE_EFFORT` is unset or empty, as on Codex or on a model without effort
-support, they leave the effort out rather than guess it.
+The start comment and the review's signature line name the head under review
+by its short SHA, the Projector version that `project --version` reports, the
+model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
+environment, which Claude Code sets for the Bash tool and keeps current
+through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
+empty, as on Codex or on a model without effort support, they leave the
+effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
