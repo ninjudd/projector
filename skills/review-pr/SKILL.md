@@ -114,19 +114,17 @@ everywhere you work; read it per repository rather than once per machine.
 ### Draft means the head is not signed off
 
 On your own pull request draft state *is* the sign-off: draft means the head
-is not signed off, ready means every model reviewing it found it clean.
-`project review publish` sets it after it submits, by the sign-off rule in
-[Review as one model among several](#review-as-one-model-among-several): it
-returns the pull request to draft when any model's verdict on the head
-requests changes, marks it ready when every one is clean, and leaves it as it
-is while a model is still reviewing the head or a finding thread is open.
-With one model reviewing, that is the old rule: a review with findings marks
-it draft, a clean review marks it ready. The one exception is a hold: while
-the author is building a change no review has read, `fix-pr` keeps the pull
-request a draft with a hold comment, and a clean review leaves it a draft
-until the hold is deleted. Nothing else enters into it — not when a review
-first saw the pull request, not who last changed the state, not whether it
-was ever a draft. Never set it yourself with `gh pr ready`.
+is not signed off, ready means the newest review of it found it clean.
+`project review publish` sets it after it submits, from the newest Projector
+verdict on the head, whichever model gave it, as
+[Review as one model among several](#review-as-one-model-among-several)
+describes. **A review with findings marks it draft; a clean review marks it
+ready.** The one exception is a hold: while the author is building a change
+no review has read, `fix-pr` keeps the pull request a draft with a hold
+comment, and a clean review leaves it a draft until the hold is deleted.
+Nothing else enters into it — not when a review first saw the pull request,
+not who last changed the state, not whether it was ever a draft. Never set
+it yourself with `gh pr ready`.
 
 Draft carries the outcome there because GitHub refuses `APPROVE` and
 `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
@@ -158,44 +156,34 @@ it.
 - **A model upgraded in the middle of a pull request**, such as a loop
   restarted on a newer version, is a new reviewer.
 
-One rule over GitHub's state decides the sign-off, and every `publish`
-applies it after it submits, so the last model to finish sets the draft
-state. It reads the reviewer account's verdicts and start comments, every
-Projector finding thread, from any account, and the pull request author's
-hold comments. A start comment is live until its model posts a verdict on
-its head, or until a day has passed since it was last edited, and a model is
-reviewing the head while its start comment on the head is live. Each model's
-newest verdict on the head counts, and the head is:
+The newest verdict on the head signs it off. After it submits, `publish`
+reads the Projector verdicts on the head, its own included, and on your own
+pull request sets draft state by the newest one, whichever model gave it:
+draft when it requests changes, ready when it is clean. The verdicts it reads
+are the reviewer account's and those of any account that owns the
+repository, belongs to its organization, or collaborates on it, the same
+ones the site's status reads. So a clean verdict from one model after
+another model's change request marks the pull request ready, and a change
+request after a clean verdict drafts it again. That is safe because a clean
+verdict needs every Projector finding thread settled first, whichever model
+opened it, and it lets you stop one model's loop partway through a pull
+request without the pull request waiting on it. In the same step `publish`
+reads the finding threads again, and while any is open it keeps the pull
+request a draft whatever the newest verdict says, because another model can
+post a finding after this review counted none and before its verdict landed.
+It reads the pull request author's hold comments too. While the author has
+one open, a comment carrying `<!-- projector-hold v=1 -->` that `fix-pr`
+posts while it builds a change for the pull request, such as a suggestion it
+implements, `publish` keeps the pull request a draft however clean the
+newest verdict is, and never approves another author's held pull request.
+Only the author's comment counts, because anyone can comment.
+Nothing waits for another model to finish, and nothing counts a model still
+reviewing. GitHub's branch rules, such as requiring every conversation to be
+resolved before a merge, hold the merge where they apply.
 
-- **`changes-requested`** when any model's newest verdict on it requests
-  changes. A self-review returns to draft.
-- **`held`** when none does, and the pull request's author has a hold
-  comment open: one carrying `<!-- projector-hold v=1 -->`, which `fix-pr`
-  posts while it builds a change for the pull request, such as a suggestion
-  it implements. A self-review returns to draft and stays one until the
-  author deletes the hold. Only the author's comment counts, because anyone
-  can comment.
-- **`waiting`** when neither applies, and a model is reviewing the head or a
-  Projector finding thread is open. The draft state stays as it is.
-- **`clean`** when at least one model has a verdict on the head, every
-  model's newest verdict on it is clean, no model is reviewing it, and no
-  finding thread or hold is open. A self-review is marked ready.
-- **`unreviewed`** when no model has a verdict on the head.
-
-A loop that has not noticed a push yet has posted nothing for the new head.
-So before `publish` marks a draft ready, it waits for each peer: another
-model with a verdict on an earlier head, or a live start comment on another
-head, and nothing on this one. It waits until `review.peer_wait` seconds,
-180 by default, after this review began on the head, re-reading every 15
-seconds. A peer's start comment makes the head `waiting`, a peer's verdict
-joins the rule, and a peer that posts nothing by then is absent. A review
-that already took longer does not wait, and neither does one that leaves a
-pull request already ready, or one on a head that moves meanwhile. Run
-`publish`, and on another author's pull request any `publish` that may
-approve, with a timeout of at least `review.peer_wait` plus two minutes.
-
-`project review status <number>` prints the rule's result for the current
-head, each model's part in it, and the open finding threads, as
+`project review status <number>` prints the newest verdict on the current
+head, the model and review it came from, each model's newest verdict there
+when several gave one, the open finding threads, and any open hold, as
 `docs/cli.md` describes; `fix-pr` reads it to tell whether a head is signed
 off.
 
@@ -493,7 +481,7 @@ the size of the change, how the head moved, and any conflict the author
 resolved, so none of them is typed. It posts a `COMMENT`, even where
 `review.allow_approve` is `true`, because an incremental review vouches only
 that the change since a reviewed head needed nothing more. On a self-review it
-then applies the sign-off rule, as any clean verdict does, and on another
+then marks the pull request ready, as any clean verdict does, and on another
 author's pull request it ends the body with "A human approval is what
 remains." It refuses, exiting 1 and keeping the lock so you can run the full
 review on the same setup, when:
@@ -763,9 +751,7 @@ author who fixes a finding without resolving it is not held up. Under
 the author answers: `RESPONDED` fires when every thread is resolved, or when
 the newest comment on an open finding thread is the author's.
 
-`publish` chooses the review state from the mode, and the draft transition
-from the sign-off rule in
-[Review as one model among several](#review-as-one-model-among-several):
+`publish` chooses the review state and draft transition from the mode:
 
 **Threads open, self-review:** a `COMMENT` review, verdict
 `changes-requested`, then the pull request returns to draft with `gh pr ready
@@ -775,20 +761,21 @@ from the sign-off rule in
 `changes-requested`. Draft state is left alone.
 
 **Clean head, self-review:** a `COMMENT` review, verdict `clean`, then the
-rule decides: the pull request is marked ready with `gh pr ready <number>`
-once every model reviewing the head is clean, after the peer wait, and is
-left as it is while another model is still reviewing it or a finding thread
-is open. While its author's hold is open it is returned to draft, or left
-one. That transition is the sign-off a reader sees in the pull-request
-list.
+pull request is marked ready with `gh pr ready <number>`, or kept a draft
+while its author's hold is open. That transition is the sign-off a reader
+sees in the pull-request list.
 
 **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
 plainly in the body that the head looks clean and that a human approval is
 what remains. It posts a real `APPROVE` only where `review.allow_approve` is
-`true`, and only when the rule, counting this verdict as posted, signs the
-head off after the peer wait: one account's newest approval or change
-request sets `reviewDecision`, so an approval would erase another model's
-standing change request. Otherwise it posts a `COMMENT`.
+`true`, and never while the author holds the pull request.
+
+On a self-review, the draft transition follows the newest verdict on the
+head rather than this review's alone. When another model posts a verdict on
+the head between this review's submit and its draft transition, the newer
+verdict decides, and `publish` says so. A finding thread open at that moment
+keeps the pull request a draft even under a clean newest verdict, and so
+does the author's open hold; `publish` says which.
 
 Never downgrade a `REQUEST_CHANGES` you could post to a `COMMENT` to work
 around a permission failure, and never read GitHub's refusal of a self-review
@@ -805,23 +792,23 @@ terminal, which adds the rules to their own settings, or to run the publish
 command themselves. `init` adds the rules only for a person at a terminal, so
 do not run it to add them yourself.
 
-After submitting, `publish` applies the sign-off rule and sets draft state
-for a self-review, re-reads the review it posted and the pull request's
-`isDraft`, adds the review id to the loop's record, deletes the start
-comment, and releases the lock, in that order, so the pull request is never
-left with neither a start comment nor its sign-off's draft state. It prints
-the sign-off, how long it waited and for which models, and whether it marked
-the pull request draft or ready. It records the review as submitted before any of those
-steps, so a run that fails partway exits non-zero and running it again
-finishes that review instead of posting a second one.
+After submitting, `publish` re-reads the review it posted, sets draft state
+for a self-review by the newest verdict on the head and re-reads the pull
+request's `isDraft`, adds the review id to the loop's record, deletes the
+start comment, and releases the lock, in that order, so the pull request is
+never left with neither a start comment nor its verdict's draft state. It
+records the review as submitted before any of those steps, so a run that
+fails partway exits non-zero and running it again finishes that review
+instead of posting a second one.
 
 Report the review as done only after `publish` exits 0. Report the SHA, the
-verdict, the sign-off, the review id, how many threads it opened, the head of
-the full review an incremental review builds on, and the summary's URL when
-the next section publishes one. Before a `clean` verdict, settle every
-earlier finding first; `publish` refuses one while a finding is open. Never
-resolve another reviewer's thread, resolve a finding you have not verified at
-this head, claim a newer SHA was reviewed, or merge.
+verdict, the review id, how many threads it opened, the head of the full
+review an incremental review builds on, a newer verdict that set the draft
+state when `publish` names one, and the summary's URL when the next section
+publishes one. Before a `clean` verdict, settle every earlier finding first;
+`publish` refuses one while a finding is open. Never resolve another
+reviewer's thread, resolve a finding you have not verified at this head,
+claim a newer SHA was reviewed, or merge.
 
 Once the summary below has run or been skipped, remove the scratch worktree,
 which a summary reads for context. A `start-review-loop` subagent may instead

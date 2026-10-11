@@ -30,7 +30,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, ProjectorError, project_from_text, title_from_text
-from ..review import identity, verdict_marker
+from ..review import TRUSTED, identity, verdict_marker
 from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
                        new_file_text, prepare_page, stored_attributes)
 
@@ -143,29 +143,19 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-# Anyone can review a public repository's pull request, and GitHub shows a
-# marker line as nothing, so only a review by someone the repository let in
-# can set a status.
-REVIEWER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
-
-
 def review_statuses(reviews: list[dict]) -> dict[str, dict]:
-    """Each head's status among `reviews`, from the newest Projector review each model gave it.
+    """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
 
     A review is Projector's when a line of its body is the marker a Projector
     review carries, which names the verdict, the head it reviewed, and the
     model, and its author owns the repository, belongs to its organization, or
-    collaborates on it. Models are told apart by `identity`. A head's `models`
-    lists each model's newest verdict on it, changes requested first and then
-    by model. Its `status` is `changes-requested` when any of them is and
-    `clean` otherwise, and its `url` is the newest review with that verdict.
-    A model whose newest review is a clean incremental review carries
+    collaborates on it. The newest review decides, whichever model wrote it.
+    When it is a clean incremental review, the status also carries
     `incrementalFrom`: the head of the full review it builds on, and that
     model's newest full review of that head as `url`, or None when none is
-    among `reviews`. The status carries the same when one model reviewed the
-    head.
+    among `reviews`. Models are told apart by `identity`.
     """
-    newest: dict[str, dict[str, dict]] = {}
+    newest: dict[str, dict] = {}
     full: dict[tuple[str, str], dict] = {}
 
     def keep(found_by: dict, key, found: dict) -> None:
@@ -173,7 +163,9 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
             found_by[key] = found
 
     for review in reviews:
-        if review.get("association") not in REVIEWER_ASSOCIATIONS:
+        # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
+        # only a review by someone the repository let in can set a status, as it can sign a head off.
+        if review.get("association") not in TRUSTED:
             continue
         marker = verdict_marker(review.get("body") or "")
         if marker is None:
@@ -181,24 +173,15 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
         model = identity(marker.model)
         found = {"model": model, "status": marker.verdict, "url": review["url"], "at": review["at"],
                  "from": marker.incremental_from}
-        keep(newest.setdefault(marker.sha, {}), model, found)
+        keep(newest, marker.sha, found)
         if marker.incremental_from is None:
             keep(full, (marker.sha, model), found)
     statuses = {}
-    for head, by_model in newest.items():
-        verdicts = sorted(by_model.values(), key=lambda found: (found["status"] != "changes-requested", found["model"]))
-        models = []
-        for found in verdicts:
-            entry = {"model": found["model"], "status": found["status"], "url": found["url"]}
-            if found["from"] is not None and found["status"] == "clean":
-                entry["incrementalFrom"] = {"head": found["from"],
-                                            "url": (full.get((found["from"], found["model"])) or {}).get("url")}
-            models.append(entry)
-        status = verdicts[0]["status"]
-        deciding = max((found for found in verdicts if found["status"] == status), key=lambda found: found["at"])
-        statuses[head] = {"status": status, "url": deciding["url"], "models": models}
-        if len(models) == 1 and "incrementalFrom" in models[0]:
-            statuses[head]["incrementalFrom"] = models[0]["incrementalFrom"]
+    for head, found in newest.items():
+        statuses[head] = {"status": found["status"], "url": found["url"]}
+        if found["from"] is not None and found["status"] == "clean":
+            statuses[head]["incrementalFrom"] = {"head": found["from"],
+                                                 "url": (full.get((found["from"], found["model"])) or {}).get("url")}
     return statuses
 
 
@@ -312,13 +295,13 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     describes. `status_lookup` returns a pull request's state and
     reviews, as `summary.pr_status` does, or None when it cannot ask. From
     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
-    GitHub reports, or None once that branch is deleted, and `review`, its
-    head's status across the models that reviewed it, as `review_statuses`
-    gives it: `unreviewed` when no Projector review names the head. A page
-    has none of them when the lookup is missing or cannot ask, and each
-    entry carries its newest head's `pr.state` and `review` the same way.
-    Each page also carries `defaultBranch`, `trunk`, where a merged pull
-    request's files now are when the branch it merged into is gone.
+    GitHub reports, or None once that branch is deleted, and `review`, the
+    newest Projector review of its head, as `review_statuses` gives it:
+    `unreviewed` when none names the head. A page has none of them when the
+    lookup is missing or cannot ask, and each entry carries its newest head's
+    `pr.state` and `review` the same way. Each page also carries
+    `defaultBranch`, `trunk`, where a merged pull request's files now are
+    when the branch it merged into is gone.
 
     It asks `status_lookup` about each pull request before it links any
     summary, finds the projects that open pull requests propose under
