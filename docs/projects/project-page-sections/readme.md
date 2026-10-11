@@ -485,3 +485,11 @@ The implementation settles three details the design left open:
   listener routes every change of the address, a new hash included, so a
   click on a section's row draws the page again, and the new drawing starts
   a new watch, which marks the section the page scrolled to.
+
+The owner asked for one more change in the same pull request: a project
+page's **View on GitHub** moves from the title row's eyebrow into a **…**
+menu at the row's end, as on a review page. `moreMenu` and `wireMenus`, the
+summary page's menu and the code that makes it work, join the shared
+helpers, and both pages call them. The menu holds **View file on GitHub**
+and **View history on GitHub**. An HTML page's breadcrumbs end in the same
+menu.

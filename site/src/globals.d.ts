@@ -115,6 +115,14 @@ interface StackRow {
   current?: boolean;
 }
 
+/** A link in a "…" menu: its text in the menu, its short name where links sit in place, and whether it opens a new tab. */
+interface MenuItem {
+  href: string;
+  text: string;
+  short: string;
+  external: boolean;
+}
+
 /** A section of a page as its sidebar lists it: the id its link names, its number or "", and its title as markup. */
 interface PageSection {
   id: string;

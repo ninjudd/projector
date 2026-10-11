@@ -171,7 +171,8 @@
             `<input type="search" name="q" placeholder="Search" aria-label="Search the site"></form>${hide}</header>`;
     }
     function isHtml(path) { return /\.html$/i.test(path); }
-    // Draw the page around `body`, and return the element the body went into.
+    // Draw the page around `body`, make its menus work, and return the element
+    // the body went into.
     // `side`, a section's tree, is a column at the window's left edge. A page
     // with `top`, a title row, takes a summary page's layout instead: the title
     // row across the top, `nav`, a summary's sidebar, beside the body, and a
@@ -211,6 +212,7 @@
             main.innerHTML = body;
         else
             main.appendChild(body);
+        wireMenus(root);
         return main;
     }
     // A nested list of `items`, each a {path, title} under `prefix`, with `top` as its
@@ -262,8 +264,10 @@
     // frame and follows it back out, so a deep link into a hash-routed page works.
     function showHtml(active, path, title, before, side, nav) {
         const main = frame(active, title, '', side, true, undefined, nav);
-        if (before !== null)
+        if (before !== null) {
             main.appendChild(before);
+            wireMenus(main);
+        }
         const page = document.createElement('iframe');
         page.className = 'htmlpage';
         page.title = title;
@@ -402,11 +406,11 @@
         }
     }
     // Any file of a project, its readme or a supplemental file, in a summary
-    // page's layout: a title row of the breadcrumbs, the readme's badges and
-    // owner, and its link to GitHub over the page's title, and the project's
-    // sidebar beside the page. An HTML page keeps its frame, with the sidebar
-    // in its column and the breadcrumbs and link above it. A proposed
-    // project's banner opens every page.
+    // page's layout: a title row of the breadcrumbs and the readme's badges and
+    // owner over the page's title, with a "…" menu of the file's links to
+    // GitHub at its end, and the project's sidebar beside the page. An HTML
+    // page keeps its frame, with the sidebar in its column and the breadcrumbs
+    // and menu above it. A proposed project's banner opens every page.
     function showProjectFile(path) {
         const project = ownerOf(path);
         if (project === null) {
@@ -424,26 +428,28 @@
             const here = isReadme && i === parts.length - 1;
             return ` / ${here ? `<span class="mono">${esc(part)}</span>` : `<a href="${esc(`${base}projects/${name}/`)}">${esc(part)}</a>`}`;
         }).join('') + (isReadme ? '' : ` / <span class="mono">${esc(leaf)}</span>`);
-        const github = esc(repoUrl('blob', path, ref));
+        const menu = moreMenu('page-menu', 'Page links', [
+            { href: repoUrl('blob', path, ref), text: 'View file on GitHub', short: 'File', external: true },
+            { href: repoUrl('commits', path, ref), text: 'View history on GitHub', short: 'History', external: true },
+        ]);
         const banner = project.proposed !== undefined ? proposalBanner(project.proposed) : '';
         const nav = function (sections) { return projectNav(project, path, sections); };
         if (isHtml(path)) {
             const head = document.createElement('div');
             head.className = 'phead';
-            head.innerHTML = `<div class="crumbs">${crumbs}</div>${banner}<div class="pmeta"><a class="note" href="${github}">View on GitHub</a></div>`;
+            head.innerHTML = `<div class="crumbs"><span>${crumbs}</span>${menu}</div>${banner}`;
             showPage('projects', path, title, head, null, ref, undefined, nav);
             return;
         }
         const owner = project.owner != null && project.owner !== '' ? `Owner ${esc(project.owner)}` : '';
-        const link = `<a href="${github}">View on GitHub</a>`;
-        const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner, link] : [crumbs, link])
+        const eyebrow = (isReadme ? [crumbs, badge('status', project.status) + badge('priority', project.priority), owner] : [crumbs])
             .filter(function (group) { return group !== ''; }).join(' · ');
         let before = null;
         if (banner !== '') {
             before = document.createElement('div');
             before.innerHTML = banner;
         }
-        showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, ''), nav);
+        showPage('projects', path, title, before, null, ref, titleRowHtml(eyebrow, title, menu), nav);
     }
     // A project's sidebar, drawn as a summary's is: the project's header once,
     // then every stack that holds a segment it heads, each whole but for this

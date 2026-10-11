@@ -1581,8 +1581,24 @@ PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "
                           "parentOf", "neighborsHtml", "proposalBanner", "reviewFor")
 
 
-def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> dict:
-    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, and return it.
+MORE_BUTTON = ('<button class="more" type="button" popovertarget="page-menu" aria-haspopup="menu" aria-expanded="false" '
+               'aria-label="Page links"><svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor">'
+               '<circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/>'
+               '</svg></button>')
+
+
+def page_menu(path: str, ref: str = "main") -> str:
+    """A project page's "…" menu, as a browser with popovers draws it: `path` and its history on GitHub at `ref`."""
+    return ('<div class="moremenu" id="page-menu" popover role="menu" aria-label="Page links">'
+            f'<a role="menuitem" href="https://github.com/owner/example/blob/{ref}/{path}" target="_blank" rel="noopener">'
+            'View file on GitHub</a>'
+            f'<a role="menuitem" href="https://github.com/owner/example/commits/{ref}/{path}" target="_blank" '
+            'rel="noopener">View history on GitHub</a></div>')
+
+
+def project_page(site: dict, path: str, body: list[list[str]] | None = None, popovers: bool = True) -> dict:
+    """Draw `path`'s page with the compiled showProjectFile under node, with `site` as site.json, in a browser with
+    or without popovers, and return it.
 
     The page's Markdown renders as `body`, its elements as [tag, markup], by
     default a heading and a paragraph, and each heading takes the id the
@@ -1590,7 +1606,8 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> 
     markup `frame` draws, with the body's place empty, and `body` what went
     into that place: the rendered elements, after any element showProjectFile
     puts before them, each as [tag, markup]. `ref` is the ref the Markdown
-    rendered its links at, and `title` the document's title.
+    rendered its links at, `title` the document's title, and `wired` whether
+    the last drawing of the page looked for menus to make work.
     """
     rendered = [["H1", "Build alpha"], ["P", "Text."]] if body is None else body
     stub = (
@@ -1599,10 +1616,12 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> 
         "const pageFiles = new Set(), siteFiles = new Set();\n"
         "let fitFrame = null, main = null, ref = null;\n"
         "const location = {hash: '', pathname: '/', search: ''};\n"
-        "const window = {innerHeight: 800};\n"
+        "const window = {innerHeight: 800, addEventListener: function () {}};\n"
+        f"function HTMLElement() {{}}\n{'HTMLElement.prototype.popover = null;' if popovers else ''}\n"
         "const MARK = '<svg class=\"sitemark\"></svg>', MENU_ICON = '<svg menu></svg>', FULL_ICON = '<svg full></svg>',"
         " EXIT_FULL_ICON = '<svg exit></svg>';\n"
-        "const root = {innerHTML: ''};\n"
+        "const root = {innerHTML: '', queried: [], querySelectorAll: function (selector) {"
+        " this.queried.push([selector, this.innerHTML]); return []; }};\n"
         "function element(tag, html) { return {tagName: tag, innerHTML: html, id: '', className: '', children: [],"
         " parent: null, style: {}, get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },"
         " get firstElementChild() { return this.children[0] ?? null; },"
@@ -1630,7 +1649,9 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None) -> 
             f"\nshowProjectFile({json.dumps(path)});"
             "\nconst drawn = main.children.flatMap(function (c) { return c.className === 'markdown'"
             " ? c.children.map(function (e) { return [e.tagName, e.innerHTML]; }) : [[c.tagName, c.innerHTML]]; });"
-            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title}));")
+            "\nconst last = root.queried[root.queried.length - 1];"
+            "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title,"
+            " wired: last !== undefined && last[0] === '.moremenu' && last[1] === root.innerHTML}));")
     return json.loads(node(program))
 
 
@@ -1715,8 +1736,8 @@ class ProposedViewTests(unittest.TestCase):
         assert top is not None
         self.assertIn('<span class="badge status-ready">ready</span>', top.group(0), "the badges sit in the title row")
         self.assertNotIn("proposal", shown["page"], "the banner opens the content column, below the title row")
-        self.assertIn(f' · <a href="https://github.com/owner/example/blob/{self.HEAD}/docs/projects/gamma/'
-                      'readme.md">View on GitHub</a></div>', top.group(0))
+        self.assertIn(page_menu("docs/projects/gamma/readme.md", self.HEAD), top.group(0),
+                      "the menu links the file and its history at the proposal's head")
         self.assertIn(f'<a class="history" href="https://github.com/owner/example/commits/{self.HEAD}/docs/projects/gamma/'
                       'readme.md"', shown["page"], "the site's branch lacks the file, so its history is at the head")
         self.assertIn('<nav class="nav" aria-label="Project"><div class="prblock">'
@@ -1839,19 +1860,29 @@ class ProjectPageTests(unittest.TestCase):
         self.assertTrue(page.startswith('<header class="sitebar scrolls"><span class="sitebtn menuspace"'), page)
         self.assertIn('<main class="sitemain withnav"><div class="wrap"><header class="top"><div><div class="eyebrow">'
                       '<a href="/">Projects</a> / <span class="mono">alpha</span> · '
-                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span> · '
-                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md">View on GitHub</a>'
-                      '</div><h1>Build alpha</h1></div></header>'
+                      '<span class="badge status-in-progress">in-progress</span><span class="badge priority-now">now</span>'
+                      '</div><h1>Build alpha</h1></div><div class="sub">' + MORE_BUTTON, page)
+        self.assertIn(f'{page_menu("docs/projects/alpha/readme.md")}</div></header>'
                       '<div class="layout"><aside class="side"><nav class="nav" aria-label="Project">', page)
         self.assertTrue(page.endswith('</nav></aside><div class="sidebody" id="sidebody"></div></div></div></main>'), page)
         self.assertNotIn("sitefoot", page, "the sidebar's footer row carries the credit")
         self.assertNotIn("phead", page)
+        self.assertNotIn("View on GitHub", page, "the menu holds the page's links to GitHub")
         self.assertEqual("Build alpha · owner/example", shown["title"])
+        self.assertTrue(shown["wired"], "the page's last drawing makes its menu work")
 
     def test_a_readme_names_its_owner_in_the_title_row(self) -> None:
         shown, _ = self.drawn(self.site(owner="octocat"))
 
-        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat · <a href=', shown["page"])
+        self.assertIn('<span class="badge priority-now">now</span> · Owner octocat</div><h1>', shown["page"])
+
+    def test_without_popovers_the_title_rows_links_sit_in_place(self) -> None:
+        shown = project_page(self.site(), self.README, popovers=False)
+
+        self.assertIn('<h1>Build alpha</h1></div><div class="sub"><span class="morelinks">'
+                      '<a href="https://github.com/owner/example/blob/main/docs/projects/alpha/readme.md" target="_blank" '
+                      'rel="noopener">File</a><a href="https://github.com/owner/example/commits/main/docs/projects/alpha/'
+                      'readme.md" target="_blank" rel="noopener">History</a></span></div></header>', shown["page"])
 
     def test_a_summary_page_and_a_project_page_draw_one_title_row(self) -> None:
         summary_top = re.search(r'<header class="top">.*?</header>', rendered_summary(MINIMAL_SUMMARY))
@@ -1862,7 +1893,10 @@ class ProjectPageTests(unittest.TestCase):
             top = re.sub(r'<div class="sub">.*</div></header>$', '</header>', top)
             return re.sub(r'<div class="eyebrow">.*?</div><h1>.*?</h1>', '<div class="eyebrow"></div><h1></h1>', top)
 
-        self.assertIn('<div class="sub">', summary_top.group(0))
+        self.assertIn('<div class="sub">' + MORE_BUTTON.replace("page-menu", "pr-menu").replace("Page links",
+                                                                                                "Pull request links"),
+                      summary_top.group(0), "both rows end in the same menu")
+        self.assertIn('<div class="sub">' + MORE_BUTTON, project_top.group(0))
         self.assertEqual('<header class="top"><div><div class="eyebrow"></div><h1></h1></div></header>',
                          skeleton(summary_top.group(0)))
         self.assertEqual(skeleton(summary_top.group(0)), skeleton(project_top.group(0)))
@@ -1882,8 +1916,8 @@ class ProjectPageTests(unittest.TestCase):
                               [["H1", "Alpha notes"], ["P", "Text."]])
 
         self.assertIn('<div class="eyebrow"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
-                      '<span class="mono">notes.md</span> · <a href="https://github.com/owner/example/blob/main/docs/projects/alpha/'
-                      'notes.md">View on GitHub</a></div><h1>Alpha notes</h1>', shown["page"])
+                      '<span class="mono">notes.md</span></div><h1>Alpha notes</h1></div><div class="sub">' + MORE_BUTTON +
+                      page_menu("docs/projects/alpha/notes.md"), shown["page"])
         self.assertEqual([["P", "Text."]], shown["body"])
 
     def test_an_html_page_keeps_its_frame_with_the_sidebar_in_its_column(self) -> None:
@@ -1895,9 +1929,9 @@ class ProjectPageTests(unittest.TestCase):
                       '<nav class="nav" aria-label="Project">', page)
         self.assertNotIn('<header class="top">', page)
         self.assertEqual(["DIV", "IFRAME"], [tag for tag, _ in shown["body"]])
-        self.assertEqual('<div class="crumbs"><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
-                         '<span class="mono">demo.html</span></div><div class="pmeta"><a class="note" href="https://github.com/owner/example/blob/'
-                         'main/docs/projects/alpha/demo.html">View on GitHub</a></div>', shown["body"][0][1])
+        self.assertEqual('<div class="crumbs"><span><a href="/">Projects</a> / <a href="/projects/alpha/">alpha</a> / '
+                         f'<span class="mono">demo.html</span></span>{MORE_BUTTON}{page_menu("docs/projects/alpha/demo.html")}'
+                         '</div>', shown["body"][0][1], "the menu ends the breadcrumbs' row")
 
     # The sidebar
 

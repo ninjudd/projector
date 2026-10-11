@@ -235,10 +235,12 @@ table.tbl.reviews a, table.tbl.reviews a:hover { text-decoration: none; }
 .proposal p + p { margin-top: 4px; }
 .proposal b { color: var(--info); }
 
+/* An HTML page's head: its breadcrumbs, with the page's "…" menu at the row's
+   end, and below them a proposed project's banner. */
 .phead { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.crumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+.crumbs { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--muted); }
 .crumbs a { text-decoration: none; }
-.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.phead .proposal { margin: 8px 0 0; }
 
 .sitesearch { margin: 0 0 0 auto; display: flex; }
 .sitesearch input {
