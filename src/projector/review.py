@@ -1111,7 +1111,7 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
 # The newest verdict
 
 # Anyone can review a public repository's pull request, so beside the reviewer's own, a verdict counts
-# only from an account the repository lets in, as the site's status counts it.
+# only from an account the repository lets in. The site's status reads the same tuple.
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 
 

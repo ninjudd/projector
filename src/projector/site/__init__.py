@@ -30,7 +30,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, ProjectorError, project_from_text, title_from_text
-from ..review import identity, verdict_marker
+from ..review import TRUSTED, identity, verdict_marker
 from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
                        new_file_text, prepare_page, stored_attributes)
 
@@ -143,12 +143,6 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-# Anyone can review a public repository's pull request, and GitHub shows a
-# marker line as nothing, so only a review by someone the repository let in
-# can set a status.
-REVIEWER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
-
-
 def review_statuses(reviews: list[dict]) -> dict[str, dict]:
     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
 
@@ -169,7 +163,9 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
             found_by[key] = found
 
     for review in reviews:
-        if review.get("association") not in REVIEWER_ASSOCIATIONS:
+        # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
+        # only a review by someone the repository let in can set a status, as it can sign a head off.
+        if review.get("association") not in TRUSTED:
             continue
         marker = verdict_marker(review.get("body") or "")
         if marker is None:
