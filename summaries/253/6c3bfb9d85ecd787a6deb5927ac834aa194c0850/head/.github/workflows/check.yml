@@ -1,0 +1,32 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # The Release workflow dispatches this on each release branch it pushes.
+  # GitHub starts no workflow for a pull request that a workflow's own token
+  # opened, and workflow_dispatch is the exception it allows, so this is how a
+  # release pull request gets its checks (docs/plugins.md#release-an-update).
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Installs the TypeScript compiler, so the test suite checks the committed
+      # JavaScript against its TypeScript instead of skipping that check.
+      - run: npm ci
+        working-directory: site
+      # Type-checks the site's TypeScript and lints it with the strict rule set.
+      - run: npm run check
+        working-directory: site
+      - run: PYTHONPATH=src python3 -m unittest discover -v
+      - run: PYTHONPATH=src python3 -m projector check

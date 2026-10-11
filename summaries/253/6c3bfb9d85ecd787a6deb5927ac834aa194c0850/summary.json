@@ -1,0 +1,105 @@
+{
+ "version": 1,
+ "name": "Release pull request checks",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 253,
+  "title": "Run Check on the release pull request the Release workflow opens",
+  "head": "6c3bfb9d85ecd787a6deb5927ac834aa194c0850",
+  "headRef": "release-dispatch-check",
+  "base": "be44748c630ad8a8a436fe29693bad4b06624876",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships a release through its Release workflow, <code>.github/workflows/release.yml</code>. You start it by hand, and its <b>propose</b> job bumps the version on a <code>release/vX.Y.Z</code> branch and opens a pull request for it. Merging that pull request tags and publishes the release. The Check workflow, <code>.github/workflows/check.yml</code>, runs the TypeScript checks, the Python tests, and <code>project check</code> on every pull request.",
+   "Until this change, a release pull request never got those checks. The propose job pushes the branch and opens the pull request with the workflow's own token, <code>GITHUB_TOKEN</code>, and GitHub starts no workflow run for an event that token causes. The exceptions are <code>workflow_dispatch</code> and <code>repository_dispatch</code>.",
+   "The change uses the first exception. Check gains a <code>workflow_dispatch</code> trigger, and the propose job, now granted <code>actions: write</code>, runs <code>gh workflow run check.yml --ref \"$branch\"</code> as its last command. The dispatched run checks out the release branch, so its <code>check</code> job reports on the branch's head commit, which is the pull request's head. The docs explain the dispatch and why it exists."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One full review at <code>6c3bfb9</code>, clean, with no finding threads.</li><li>One suggestion: the docs and comments call <code>workflow_dispatch</code> the only event the workflow token can trigger, but <code>repository_dispatch</code> is the other, and the publish job uses it.</li><li>The dispatch cannot run until this merges, because GitHub dispatches a workflow only when its default-branch file has the trigger. The next release is the first real test.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Workflow token</b>: <code>GITHUB_TOKEN</code>, the token GitHub gives each workflow run. Events it causes start no new run, except a dispatch.</li><li><b>Dispatch</b>: a request, such as <code>gh workflow run</code>, that starts a workflow on a named branch.</li><li><b>propose job</b>: the Release workflow job that bumps the version and opens the release pull request.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflows",
+   "title": "The Release workflow dispatches Check on its branch",
+   "kicker": "A new trigger on Check and a dispatch at the end of the propose job",
+   "intro": [
+    "The workflow token cannot start Check through a push or a pull request, but it can dispatch it. The propose job now does that after it opens the release pull request, or after it finds one already open on a rerun. The dispatch names the release branch, so GitHub runs the branch's copy of <code>check.yml</code>, which has the new trigger because the branch is cut from <code>main</code>.",
+    "The dispatched Check run keeps the workflow's <code>contents: read</code> permission and runs code the Release workflow itself committed from <code>main</code>, so it reaches no secrets and runs no outside code."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No branch protection or ruleset on <code>main</code> requires a status check, so the dispatched job's name, <code>check</code>, cannot mismatch a required check. The review read both from the GitHub API."
+    }
+   ],
+   "files": [
+    {
+     "path": ".github/workflows/check.yml",
+     "note": "Adds <code>workflow_dispatch</code> as a trigger, with a comment that says the Release workflow uses it.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The comment says <code>workflow_dispatch</code> is \"the exception\" GitHub allows for the workflow token. <code>repository_dispatch</code> is the other exception, and the publish job in <code>release.yml</code> relies on it. Consider naming both. The review lists this as a suggestion, not a finding.",
+       "line": 8
+      }
+     ]
+    },
+    {
+     "path": ".github/workflows/release.yml",
+     "note": "Grants the propose job <code>actions: write</code>, dispatches Check on the release branch as the step's last command, and updates the Testing text the job writes into the release pull request.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A job-level <code>permissions</code> block replaces the workflow-level one, so the job lists <code>contents: write</code> and <code>pull-requests: write</code> again beside the new scope. <code>gh workflow run</code> needs <code>actions: write</code>.",
+       "line": 27
+      },
+      {
+       "kind": "verify",
+       "text": "The dispatch runs after both branches of the <code>gh pr list</code> check, so a rerun that finds the pull request already open also dispatches Check on the new force-pushed head. A failed dispatch fails the step under <code>set -euo pipefail</code>, and a rerun repeats it. The review extracted the step's script and ran <code>bash -n</code> on it.",
+       "line": 65
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The release docs explain the dispatch",
+   "kicker": "docs/plugins.md and docs/develop.md describe why Check is dispatched",
+   "intro": [
+    "<code>docs/plugins.md</code>, under \"Release an update\", gains a paragraph on why the Release workflow dispatches Check and what that requires. <code>docs/develop.md</code>, under \"Release\", gains one sentence that says the same and links there."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "A new paragraph explains the workflow-token rule, the dispatch, and the two configuration changes it needs.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "\"<code>workflow_dispatch</code> is the one event that token may trigger\" is not accurate: <code>repository_dispatch</code> also starts a run, and the publish job's site rebuild uses it. <code>docs/projects/proposed-projects/readme.md</code> names both. The review lists this as a suggestion, not a finding.",
+       "line": 339
+      }
+     ]
+    },
+    {
+     "path": "docs/develop.md",
+     "note": "One sentence in \"Release\" says the workflow dispatches Check on the release pull request, and why."
+    }
+   ]
+  }
+ ]
+}

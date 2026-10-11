@@ -1,0 +1,84 @@
+diff --git a/.github/workflows/check.yml b/.github/workflows/check.yml
+index 839af616..1c05dde8 100644
+--- a/.github/workflows/check.yml
++++ b/.github/workflows/check.yml
+@@ -3,6 +3,11 @@ on:
+   pull_request:
+   push:
+     branches: [main]
++  # The Release workflow dispatches this on each release branch it pushes.
++  # GitHub starts no workflow for a pull request that a workflow's own token
++  # opened, and workflow_dispatch is the exception it allows, so this is how a
++  # release pull request gets its checks (docs/plugins.md#release-an-update).
++  workflow_dispatch:
+ permissions:
+   contents: read
+ jobs:
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 8c0cd44c..f3c6fca6 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -24,6 +24,7 @@ jobs:
+     if: github.event_name == 'workflow_dispatch'
+     runs-on: ubuntu-latest
+     permissions:
++      actions: write
+       contents: write
+       pull-requests: write
+     steps:
+@@ -48,7 +49,7 @@ jobs:
+ 
+           ## Testing
+ 
+-          The Release workflow ran \`python3 .github/scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. After the merge, the publish job runs \`python3 .github/scripts/release.py tag\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
++          The Release workflow ran \`python3 .github/scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. It then dispatched the Check workflow on this branch, and its checks appear on this pull request. After the merge, the publish job runs \`python3 .github/scripts/release.py tag\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
+           EOF
+           # A pull request someone opened by hand from the branch after a failed run
+           # already carries the force-pushed commit.
+@@ -57,6 +58,11 @@ jobs:
+           else
+             gh pr create --base main --head "$branch" --title "Release $version" --body-file "$RUNNER_TEMP/body.md"
+           fi
++          # GitHub starts no workflow for a pull request this job's token opened,
++          # or for the push before it, so Check would never run on the release.
++          # workflow_dispatch is the exception, and its checks land on the
++          # branch's commit, which is the pull request's head.
++          gh workflow run check.yml --ref "$branch"
+   publish:
+     if: github.event_name == 'push'
+     runs-on: ubuntu-latest
+diff --git a/docs/develop.md b/docs/develop.md
+index 894e4d0b..3d4f620c 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -104,6 +104,8 @@ every pull request.
+ A release is a deliberate step, and only a release changes the version. Run
+ the Release workflow from the Actions page, or with
+ `gh workflow run release.yml -f bump=patch`, and merge the pull request it
+-opens. Merging tags the release and moves `v0`, which is what the installer,
++opens. The workflow dispatches the Check workflow on that pull request, because
++GitHub runs no workflow for a pull request that a workflow's own token opened.
++Merging tags the release and moves `v0`, which is what the installer,
+ `project upgrade`, and every repository's site workflow use. See
+ [Release an update](plugins.md#release-an-update).
+diff --git a/docs/plugins.md b/docs/plugins.md
+index e5e18acd..e4b8bf8f 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -332,6 +332,16 @@ workflow opens the pull request with its own token, which needs **Allow
+ GitHub Actions to create and approve pull requests** turned on under the
+ repository's **Settings > Actions > General**.
+ 
++GitHub starts no workflow for a pull request that a workflow's own token
++opened, so the Check workflow would never run on the release pull request by
++itself. The Release workflow dispatches Check on the release branch instead,
++both when it opens the pull request and when a rerun finds one already open,
++because `workflow_dispatch` is the one event that token may trigger. The
++dispatched run's checks land on the branch's commit, which is the pull
++request's head, so they show on the release pull request like any other
++checks. That is why `.github/workflows/check.yml` lists `workflow_dispatch`
++among its triggers and the Release workflow's propose job has `actions: write`.
++
+ The workflow runs `.github/scripts/release.py`, which also works by hand
+ from any checkout. `bump` raises one part of the version and `set` writes an
+ exact one, both refusing a version that does not go up:
