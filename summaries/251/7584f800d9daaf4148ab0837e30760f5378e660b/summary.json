@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "Pending review status",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 251,
+  "title": "Show Pending when only an earlier head was reviewed",
+  "head": "7584f800d9daaf4148ab0837e30760f5378e660b",
+  "headRef": "review-status-pending",
+  "base": "7e4fa11eaafcd0675470ea7ef3cdc06b1535ee11",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site shows a review status for each pull request: in a summary page's header, on the pull request's row on the <b>Reviews</b> index, and in the banner of a project that an open pull request proposes. Until a pull request is merged or closed, that status is the verdict of the newest Projector review of the head the page describes, <b>Clean</b> or <b>Changes requested</b>.",
+   "Each head has its own status, because the newest verdict wins and a verdict covers only the commit it reviewed. So when the site was built before a new head's review landed, that head read <b>Unreviewed</b>, even if earlier heads had been reviewed several times. A pull request that the reviewers had looked at read as one nobody had looked at.",
+   "This pull request adds a fourth status, <code>pending</code>. A head shows it when no Projector review names the head but an earlier head of the same pull request has a verdict. The status carries that newest earlier verdict as <code>last</code>, and the site draws a <b>Pending</b> chip that links that review and names it in its tooltip. <b>Unreviewed</b> now means no verdict on this head or on any earlier one."
+  ],
+  "cards": [
+   {
+    "id": "statuses",
+    "title": "The four statuses",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Status</th><th>When a head shows it</th></tr></thead><tbody><tr><td><code>clean</code>, <code>changes-requested</code></td><td>A Projector review names this head. The newest such review decides, whichever model wrote it.</td></tr><tr><td><code>pending</code></td><td>No review names this head, and an earlier head has a verdict. Links the newest earlier verdict.</td></tr><tr><td><code>unreviewed</code></td><td>No review names this head or any earlier head.</td></tr></tbody></table></div><p class=\"note\">Merged and Closed replace all four once the pull request is merged or closed.</p>"
+   },
+   {
+    "id": "earlier",
+    "title": "What counts as an earlier head",
+    "html": "<p>The site knows when each summary was published, not when each head was pushed. So a head counts as earlier unless its summary is newer than the page's own summary. A reviewed head that the site has no summary of counts as earlier, because the site cannot place it in time.</p><p class=\"note\">An older head whose only reviewed heads are later stays Unreviewed: no review is coming for it.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "status",
+   "title": "Choose each page's status",
+   "kicker": "The build decides which status each head's page shows.",
+   "intro": [
+    "The site build asks GitHub for each pull request's reviews once. <code>review_statuses</code> turns them into each head's newest Projector verdict. The new <code>head_status</code> picks the status for one page from that table, so the code that reads and trusts verdicts stays in one place.",
+    "For <code>head_status</code> to find the newest verdict on an earlier head, the table needs an order. <code>review_statuses</code> now returns heads sorted by when their deciding review was submitted, oldest first, and <code>head_status</code> takes the last earlier entry."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds <code>head_status</code>, sorts <code>review_statuses</code> by review time, and passes each page the heads with newer summaries.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 415,
+       "text": "<code>versions</code> and <code>heads</code> are both sorted newest first by <code>summary_time</code>, so <code>heads[:i]</code> holds exactly the heads whose summaries are newer than this page's. Replacing it with an empty set fails <code>test_a_verdict_on_a_later_head_leaves_an_earlier_one_unreviewed</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 181,
+       "text": "<code>at</code> is GitHub's <code>submittedAt</code> timestamp, and <code>pr_status</code> drops reviews that have none, so the sort never compares a missing value. Dropping the sort fails <code>test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them</code>, because a dict keeps a head at its first insertion position."
+      },
+      {
+       "kind": "context",
+       "line": 204,
+       "text": "A verdict on the head itself returns first, so it always wins over a newer verdict on an earlier head. An incremental verdict is a verdict like any other here."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Adds the <code>pending</code> variant to <code>ReviewStatus</code>, with the verdict, head, and URL of the newest earlier review as <code>last</code>."
+    }
+   ]
+  },
+  {
+   "id": "chip",
+   "title": "Draw the Pending chip",
+   "kicker": "One shared function draws the status everywhere the site shows it.",
+   "intro": [
+    "<code>statusHtml</code> draws the status for the summary header, the Reviews row, and a proposed project's banner. A <code>pending</code> status becomes a link to the last review, with a <code>title</code> such as \"Last review: changes requested on e333044. This head hasn't been reviewed yet.\" The chip is a link, so a keyboard reaches it and a screen reader reads the title.",
+    "The chip has its own slate colour, <code>--pending</code>, in the light palette and in both dark palettes: the one the reader's system asks for and the one the reader picks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/summary.ts",
+     "note": "Adds the Pending branch to <code>statusHtml</code> and a <code>verdictWord</code> helper that the chip and its tooltip share.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 35,
+       "text": "Both <code>href</code> and <code>title</code> pass through <code>esc</code>, which escapes <code>\"</code>. Merged and Closed return before this branch, so they still take the chip's place."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/summary.css",
+     "note": "Adds the <code>--pending</code> token to the three palettes and the <code>.rstatus.pending</code> rule."
+    },
+    {
+     "path": "site/assets/summary.js",
+     "note": "Compiled from <code>summary.ts</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>npm ci</code>, <code>npm run check</code>, and <code>npm run build</code> in <code>site/</code> left this file unchanged."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs-tests",
+   "title": "Document and test it",
+   "kicker": "The CLI reference and the site tests.",
+   "intro": [
+    "<code>docs/cli.md</code> describes the Pending chip where it describes a summary's header. The tests cover the build's choice of status and the chip's rendering, which runs through <code>node</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite of 800 tests passed, and the pull request's 10 focused tests ran with the <code>node</code> rendering tests run rather than skipped."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds Pending to the header's statuses and redefines Unreviewed."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Tests pending, unreviewed, and own-verdict cases for the build, the Reviews row, the header, the chip's markup, and the colour tokens."
+    }
+   ]
+  }
+ ],
+ "project": ""
+}

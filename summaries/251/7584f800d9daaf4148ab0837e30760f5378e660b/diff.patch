@@ -1,0 +1,434 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a3c769e5..95713fff 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -762,10 +762,18 @@ the one in view. A jump to a section or to the files pane lands it level
+ with the top of the sidebar. A summary's header shows the same status as its
+ row on Reviews: **Merged** or **Closed** once the pull request is, and until
+ then the verdict of the newest Projector review of its head, **Clean** or
+-**Changes requested**, linked to that review on GitHub, or **Unreviewed** when
+-no Projector review names the head. The newest review decides whichever model
+-wrote it, as it decides the draft state. When that review is incremental, the
+-header reads **Clean · incremental from a8cf3d5**, where the second part names
++**Changes requested**, linked to that review on GitHub. A head no Projector
++review names yet shows **Pending** when an earlier head of the pull request
++has a verdict, as when the site was built before the head's review landed.
++**Pending** links the newest verdict on an earlier head, and its title names
++that verdict, as in "Last review: changes requested on e333044. This head
++hasn't been reviewed yet." Every other head counts as earlier except those
++with newer summaries, so a reviewed head the site has no summary of counts
++too. **Unreviewed** means no Projector review names the head or an earlier
++one, so on a pull request's newest head it means none names any of its
++heads. The newest review of a head decides whichever model wrote it, as it
++decides the draft state. When that review is incremental, the header reads
++**Clean · incremental from a8cf3d5**, where the second part names
+ the head of the full review it builds on, by the same model, and links that
+ review, while the row on Reviews shows **Clean** alone. Models are told apart
+ by their model ID, lowercased and without a trailing bracketed variant such as
+diff --git a/site/assets/summary.css b/site/assets/summary.css
+index c8ffe3fd..5c8804cf 100644
+--- a/site/assets/summary.css
++++ b/site/assets/summary.css
+@@ -9,7 +9,7 @@
+   --del-bg: #FBE8E6; --del-ln: #F4D0CC; --del-text: #8A1C17;
+   --hunk-bg: #F1EBE0; --hunk-text: #7A5A3A; --ctx-ln: #8F8B7F;
+   --warn: #946300; --warn-bg: #FFF4D6; --ok: #1E7A46; --ok-bg: #E4F5EA; --info: #0550AE; --info-bg: #E3EDFA;
+-  --merged: #7C3AED; --closed: #B42318;
++  --merged: #7C3AED; --closed: #B42318; --pending: #4B6382;
+   --code-bg: #EFECE3; --tok-bg: #FCE8A4; --tok-ring: #C99A1E;
+   --shadow: 0 1px 2px rgba(23,21,15,.06), 0 4px 16px rgba(23,21,15,.05);
+   --tk-kw: #7C3AED; --tk-str: #0550AE; --tk-num: #B45309; --tk-cmt: #6E7781; --tk-type: #953800; --tk-fn: #0F766E; --tk-attr: #0550AE; --tk-meta: #6E7781;
+@@ -24,7 +24,7 @@
+     --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+     --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+     --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+-    --merged: #C4A7FF; --closed: #F0A19B;
++    --merged: #C4A7FF; --closed: #F0A19B; --pending: #9FB3CF;
+     --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
+     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+     --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+@@ -38,7 +38,7 @@
+   --del-bg: #2E1414; --del-ln: #3F1B1B; --del-text: #F0A19B;
+   --hunk-bg: #221D16; --hunk-text: #C9A987; --ctx-ln: #6E6A5F;
+   --warn: #E3B341; --warn-bg: #2D2510; --ok: #5FCB8A; --ok-bg: #12301D; --info: #8CC4FF; --info-bg: #13243A;
+-  --merged: #C4A7FF; --closed: #F0A19B;
++  --merged: #C4A7FF; --closed: #F0A19B; --pending: #9FB3CF;
+   --code-bg: #1E1C16; --tok-bg: #4D3B0E; --tok-ring: #C9A13A;
+   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+   --tk-kw: #C4A7FF; --tk-str: #A5D6FF; --tk-num: #F0B37E; --tk-cmt: #8B949E; --tk-type: #FFA657; --tk-fn: #7EE0D0; --tk-attr: #A5D6FF; --tk-meta: #8B949E; --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5' fill='none' stroke='%231A0C03' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+@@ -74,6 +74,7 @@ h1, h2, h3, h4 { text-wrap: balance; margin: 0; line-height: 1.2; }
+ a.rstatus:hover { text-decoration: underline; }
+ .rstatus.clean { color: var(--ok); }
+ .rstatus.changes-requested { color: var(--accent); }
++.rstatus.pending { color: var(--pending); }
+ .rstatus.unreviewed { color: var(--muted); }
+ .rstatus.merged { color: var(--merged); }
+ .rstatus.closed { color: var(--closed); }
+diff --git a/site/assets/summary.js b/site/assets/summary.js
+index fc469894..e99e2a8f 100644
+--- a/site/assets/summary.js
++++ b/site/assets/summary.js
+@@ -17,10 +17,11 @@ function localTime(when) {
+     return when.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+ }
+ // A pull request's status: Merged or Closed once it is, and until then the
+-// verdict of the newest Projector review of its head, linked to that review,
+-// or Unreviewed when no Projector review names the head. Nothing when the
+-// build could not ask GitHub, so a status it does not know never reads as
+-// unreviewed.
++// verdict of the newest Projector review of its head, linked to that review.
++// A head no Projector review names is Pending, linked to the newest verdict
++// on an earlier head, which its title names, or Unreviewed when no earlier
++// head has one either. Nothing when the build could not ask GitHub, so a
++// status it does not know never reads as unreviewed.
+ function statusHtml(state, review) {
+     if (state === 'merged')
+         return '<span class="rstatus merged">Merged</span>';
+@@ -30,8 +31,17 @@ function statusHtml(state, review) {
+         return '';
+     if (review.status === 'unreviewed')
+         return '<span class="rstatus unreviewed">Unreviewed</span>';
+-    const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++    if (review.status === 'pending') {
++        const last = review.last;
++        const title = `Last review: ${verdictWord(last.status).toLowerCase()} on ${last.head.slice(0, 7)}. ` +
++            'This head hasn\'t been reviewed yet.';
++        return `<a class="rstatus pending" href="${esc(last.url)}" target="_blank" rel="noopener" title="${esc(title)}">Pending</a>`;
++    }
++    return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${verdictWord(review.status)}</a>`;
++}
++// A verdict as its status chip words it.
++function verdictWord(verdict) {
++    return verdict === 'clean' ? 'Clean' : 'Changes requested';
+ }
+ // The site bar's icons, a summary's versions toggle, and a plan's history link
+ // share this frame: a 20-unit square, stroked in the text colour.
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 03b7635e..0425e046 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -82,13 +82,16 @@ interface SummaryGroup {
+ type PullState = 'open' | 'merged' | 'closed';
+ 
+ /**
+- * The newest Projector review of a head, with its page on GitHub, or `unreviewed` when no
+- * Projector review names the head. A clean incremental review carries `incrementalFrom`: the
+- * head of the full review it builds on, and that review's page, or null when the build found none.
++ * The newest Projector review of a head, with its page on GitHub. A clean incremental review
++ * carries `incrementalFrom`: the head of the full review it builds on, and that review's page, or
++ * null when the build found none. A head no Projector review names is `pending` when an earlier
++ * head of its pull request has a verdict, with the newest such verdict as `last`, and otherwise
++ * `unreviewed`.
+  */
+ type ReviewStatus =
+   | { status: 'clean'; url: string; incrementalFrom?: { head: string; url: string | null } }
+   | { status: 'changes-requested'; url: string }
++  | { status: 'pending'; last: { status: 'clean' | 'changes-requested'; head: string; url: string } }
+   | { status: 'unreviewed' };
+ 
+ /** A stack segment's header: the project its pull requests carry out, with its page, or the stack's title alone. */
+diff --git a/site/src/summary.ts b/site/src/summary.ts
+index ec4450eb..04395e65 100644
+--- a/site/src/summary.ts
++++ b/site/src/summary.ts
+@@ -20,17 +20,28 @@ function localTime(when: Date): string {
+ }
+ 
+ // A pull request's status: Merged or Closed once it is, and until then the
+-// verdict of the newest Projector review of its head, linked to that review,
+-// or Unreviewed when no Projector review names the head. Nothing when the
+-// build could not ask GitHub, so a status it does not know never reads as
+-// unreviewed.
++// verdict of the newest Projector review of its head, linked to that review.
++// A head no Projector review names is Pending, linked to the newest verdict
++// on an earlier head, which its title names, or Unreviewed when no earlier
++// head has one either. Nothing when the build could not ask GitHub, so a
++// status it does not know never reads as unreviewed.
+ function statusHtml(state: PullState | undefined, review: ReviewStatus | undefined): string {
+   if (state === 'merged') return '<span class="rstatus merged">Merged</span>';
+   if (state === 'closed') return '<span class="rstatus closed">Closed</span>';
+   if (review === undefined) return '';
+   if (review.status === 'unreviewed') return '<span class="rstatus unreviewed">Unreviewed</span>';
+-  const word = review.status === 'clean' ? 'Clean' : 'Changes requested';
+-  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${word}</a>`;
++  if (review.status === 'pending') {
++    const last = review.last;
++    const title = `Last review: ${verdictWord(last.status).toLowerCase()} on ${last.head.slice(0, 7)}. ` +
++      'This head hasn\'t been reviewed yet.';
++    return `<a class="rstatus pending" href="${esc(last.url)}" target="_blank" rel="noopener" title="${esc(title)}">Pending</a>`;
++  }
++  return `<a class="rstatus ${review.status}" href="${esc(review.url)}" target="_blank" rel="noopener">${verdictWord(review.status)}</a>`;
++}
++
++// A verdict as its status chip words it.
++function verdictWord(verdict: 'clean' | 'changes-requested'): string {
++  return verdict === 'clean' ? 'Clean' : 'Changes requested';
+ }
+ 
+ // The site bar's icons, a summary's versions toggle, and a plan's history link
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 8ff29a01..80e5c48e 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -153,7 +153,8 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+     When it is a clean incremental review, the status also carries
+     `incrementalFrom`: the head of the full review it builds on, and that
+     model's newest full review of that head as `url`, or None when none is
+-    among `reviews`. Models are told apart by `identity`.
++    among `reviews`. Models are told apart by `identity`. The heads come in
++    the order of the reviews that decide them, oldest first.
+     """
+     newest: dict[str, dict] = {}
+     full: dict[tuple[str, str], dict] = {}
+@@ -177,7 +178,7 @@ def keep(found_by: dict, key, found: dict) -> None:
+         if marker.incremental_from is None:
+             keep(full, (marker.sha, model), found)
+     statuses = {}
+-    for head, found in newest.items():
++    for head, found in sorted(newest.items(), key=lambda item: item[1]["at"]):
+         statuses[head] = {"status": found["status"], "url": found["url"]}
+         if found["from"] is not None and found["status"] == "clean":
+             statuses[head]["incrementalFrom"] = {"head": found["from"],
+@@ -185,6 +186,25 @@ def keep(found_by: dict, key, found: dict) -> None:
+     return statuses
+ 
+ 
++def head_status(statuses: dict[str, dict], head: str, later: set[str]) -> dict:
++    """The review status a page of `head` shows, given its pull request's `statuses` from `review_statuses`.
++
++    A head a Projector review names shows that review's status. One that
++    none names is `pending` when an earlier head has a status: it carries the
++    newest of those as `last`, with its `status`, `head`, and `url`. A head
++    is earlier unless it is `head` or in `later`, the heads whose summaries
++    are newer, so a head with no summary counts as earlier. With no earlier
++    status, the head is `unreviewed`.
++    """
++    if head in statuses:
++        return statuses[head]
++    earlier = [(h, s) for h, s in statuses.items() if h not in later]
++    if not earlier:
++        return {"status": "unreviewed"}
++    last_head, last = earlier[-1]
++    return {"status": "pending", "last": {"status": last["status"], "head": last_head, "url": last["url"]}}
++
++
+ def stored_head_file(folder: Path, path: str) -> bytes | None:
+     """The head's copy of `path` that `publish` stored in `folder`, or None when it stored none.
+ 
+@@ -296,9 +316,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
+     reviews, as `summary.pr_status` does, or None when it cannot ask. From
+     them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
+     GitHub reports, or None once that branch is deleted, and `review`, the
+-    newest Projector review of its head, as `review_statuses` gives it:
+-    `unreviewed` when none names the head. A page has none of them when the
+-    lookup is missing or cannot ask, and each entry carries its newest head's
++    newest Projector review of its head, as `review_statuses` gives it, or,
++    when none names the head, `pending` or `unreviewed`, as `head_status`
++    decides given the pull request's heads with newer summaries. A page has
++    none of them when the lookup is missing or cannot ask, and each entry
++    carries its newest head's
+     `pr.state` and `review` the same way. Each page also carries
+     `defaultBranch`, `trunk`, where a merged pull request's files now are
+     when the branch it merged into is gone.
+@@ -382,7 +404,7 @@ def skip(path: Path, reason: object) -> None:
+         header = next(s["header"] for s in segments if pull in s["members"])
+         status = asked[number]
+         statuses = review_statuses(status["reviews"]) if status is not None else None
+-        for _, payload, _ in versions:
++        for i, (_, payload, _) in enumerate(versions):
+             head = payload["pr"]["head"]
+             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
+                            header=header, defaultBranch=trunk)
+@@ -390,7 +412,7 @@ def skip(path: Path, reason: object) -> None:
+                 payload["pr"]["state"] = status["state"]
+                 if "base" in status:
+                     payload["pr"]["currentBaseRef"] = status["base"]
+-                payload["review"] = statuses.get(head, {"status": "unreviewed"})
++                payload["review"] = head_status(statuses, head, {h["head"] for h in heads[:i]})
+             folder = out / "reviews" / number / head
+             folder.mkdir(parents=True, exist_ok=True)
+             data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 1f28ebcc..bf7599a3 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -423,7 +423,8 @@ def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -
+         self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+ 
+     def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+-        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None."""
++        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None.
++        Head c's summary is older than head d's, so d is the newest head."""
+         asked: list[tuple[str, int]] = []
+ 
+         def pr_status(repo: str, number: int) -> dict:
+@@ -432,8 +433,9 @@ def pr_status(repo: str, number: int) -> dict:
+                 raise summary.SummaryError("gh api failed: offline")
+             return {"state": "open", "reviews": reviews}
+ 
+-        self.publish(9, "c" * 40)
+-        self.publish(9, "d" * 40)
++        for when, head in ((1_700_000_000, "c" * 40), (1_700_000_100, "d" * 40)):
++            self.publish(9, head)
++            os.utime(self.summaries / "9" / head / "summary.json", (when, when))
+         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+             self.build()
+         self.assertEqual([("owner/example", 9)], asked, "the build asks once for each pull request")
+@@ -450,7 +452,6 @@ def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self)
+     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
+         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
+         statuses = self.statuses([
+-            projector_review("clean", "e" * 40, "2026-10-01T10:00:00Z", 1),
+             {"body": "Looks good to me.", "url": review_url(2), "at": "2026-10-02T10:00:00Z", "association": "OWNER"},
+             {"body": f"The marker {marker} only counts on a line of its own.", "url": review_url(3),
+              "at": "2026-10-03T10:00:00Z", "association": "OWNER"},
+@@ -469,8 +470,48 @@ def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
+             projector_review("clean", "d" * 40, "2026-10-03T10:00:00Z", 4, association="FIRST_TIME_CONTRIBUTOR"),
+         ])
+ 
+-        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "unreviewed"}},
+-                         statuses)
++        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
++                          "d": {"status": "pending",
++                                "last": {"status": "changes-requested", "head": "c" * 40, "url": review_url(1)}}},
++                         statuses, "d is pending on c's trusted change request, not the forged clean verdicts")
++
++    def test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them(self) -> None:
++        statuses = self.statuses([
++            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
++            projector_review("changes-requested", "e" * 40, "2026-10-02T10:00:00Z", 2),
++            projector_review("clean", "c" * 40, "2026-10-03T10:00:00Z", 3, model="gpt-5.5"),
++        ])
++
++        self.assertEqual({"status": "pending", "last": {"status": "clean", "head": "c" * 40, "url": review_url(3)}},
++                         statuses["d"], "the newest verdict on an earlier head, whichever head and model gave it")
++        self.assertEqual({"status": "clean", "url": review_url(3)}, statuses["c"])
++
++    def test_a_reviewed_head_with_no_summary_counts_as_earlier(self) -> None:
++        statuses = self.statuses([projector_review("changes-requested", "e" * 40, "2026-10-01T10:00:00Z", 1)])
++
++        pending = {"status": "pending", "last": {"status": "changes-requested", "head": "e" * 40, "url": review_url(1)}}
++        self.assertEqual({"c": pending, "d": pending}, statuses,
++                         "the site cannot tell when a head it has no summary of was pushed")
++
++    def test_a_verdict_on_a_later_head_leaves_an_earlier_one_unreviewed(self) -> None:
++        statuses = self.statuses([projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)])
++
++        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "clean", "url": review_url(1)}}, statuses,
++                         "no review will come for c, and none came before it")
++
++    def test_a_verdict_on_the_head_itself_wins_over_a_newer_one_on_an_earlier_head(self) -> None:
++        for own, expected in (
++                (projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2),
++                 {"status": "changes-requested", "url": review_url(2)}),
++                (incremental_review("d" * 40, "c" * 40, "2026-10-02T10:00:00Z", 2),
++                 {"status": "clean", "url": review_url(2), "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}})):
++            with self.subTest(expected["status"]):
++                self.reset()
++                statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1), own,
++                                          projector_review("clean", "c" * 40, "2026-10-03T10:00:00Z", 3,
++                                                           model="gpt-5.5")])
++
++                self.assertEqual(expected, statuses["d"], "an incremental verdict is a verdict like any other")
+ 
+     def test_a_member_or_collaborator_review_sets_the_status(self) -> None:
+         statuses = self.statuses([
+@@ -603,15 +644,20 @@ def test_a_stack_numbered_out_of_order_is_listed_by_what_sits_on_what(self) -> N
+     def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdict(self) -> None:
+         self.publish(9, "d" * 40)
+         self.publish(10, "e" * 40)
+-        states = {9: "open", 10: "merged"}
++        self.publish(11, "f" * 40)
++        states = {9: "open", 10: "merged", 11: "open"}
++        reviewed = {9: [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)], 10: [],
++                    11: [projector_review("changes-requested", "a" * 40, "2026-10-01T10:00:00Z", 2)]}
+ 
+         def pr_status(repo: str, number: int) -> dict:
+-            return {"state": states[number], "reviews": [projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)]}
++            return {"state": states[number], "reviews": reviewed[number]}
+ 
+         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+             reviews = self.build()["reviews"]
+ 
+-        self.assertEqual([(10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
++        self.assertEqual([(11, "open", {"status": "pending",
++                                        "last": {"status": "changes-requested", "head": "a" * 40, "url": review_url(2)}}),
++                          (10, "merged", {"status": "unreviewed"}), (9, "open", {"status": "clean", "url": review_url(1)})],
+                          [(r["number"], r["state"], r["review"]) for r in reviews],
+                          "each row carries what its newest head's page does")
+ 
+@@ -2521,6 +2567,17 @@ def test_the_address_says_which_boxes_start_checked(self) -> None:
+                 self.assertEqual([["open", boxes[0]], ["closed", boxes[1]]], drawn["boxes"])
+                 self.assertEqual(listed, [n for numbers in self.bodies(drawn["steps"][0]["list"]) for n in numbers])
+ 
++    def test_a_pending_review_is_listed_as_open_with_its_chip(self) -> None:
++        pending = {"status": "pending", "last": {"status": "clean", "head": "e333044" + "0" * 33, "url": review_url(1)}}
++        drawn = self.draw([self.review(12, None, "open", pending), self.review(11, None, "merged", pending)])
++
++        self.assertIn('<input type="checkbox" value="open" checked> Open <span class="count">1</span>', drawn["page"])
++        self.assertEqual([[12]], self.bodies(drawn["steps"][0]["list"]))
++        self.assertEqual([f'<a class="rstatus pending" href="{review_url(1)}" target="_blank" rel="noopener" '
++                          'title="Last review: clean on e333044. This head hasn\'t been reviewed yet.">Pending</a>'],
++                         re.findall(r'<td class="status"><span class="eyebrow">(.*?)</span></td>',
++                                    drawn["steps"][0]["list"]))
++
+     def test_a_state_no_review_is_in_says_so(self) -> None:
+         drawn = self.draw([self.review(9, None, "merged")])
+ 
+@@ -2628,6 +2685,29 @@ def test_merged_or_closed_takes_the_place_of_the_verdict(self) -> None:
+                           'rel="noopener">Changes requested</a>', '<span class="rstatus unreviewed">Unreviewed</span>',
+                           ""], json.loads(node(program)))
+ 
++    def test_a_pending_head_links_the_last_verdict_and_names_it_in_its_title(self) -> None:
++        def pending(verdict: str, url: str) -> dict:
++            return {"status": "pending", "last": {"status": verdict, "head": "e333044" + "0" * 33, "url": url}}
++
++        program = shared_js() + (
++            f"\nprocess.stdout.write(JSON.stringify([statusHtml('open', {json.dumps(pending('changes-requested', 'u'))}),"
++            f" statusHtml('open', {json.dumps(pending('clean', 'https://x/?a&b'))}),"
++            f" statusHtml('merged', {json.dumps(pending('clean', 'u'))})]));")
++
++        self.assertEqual(['<a class="rstatus pending" href="u" target="_blank" rel="noopener" title="Last review: '
++                          'changes requested on e333044. This head hasn\'t been reviewed yet.">Pending</a>',
++                          '<a class="rstatus pending" href="https://x/?a&amp;b" target="_blank" rel="noopener" '
++                          'title="Last review: clean on e333044. This head hasn\'t been reviewed yet.">Pending</a>',
++                          '<span class="rstatus merged">Merged</span>'], json.loads(node(program)),
++                         "a link, so a keyboard reaches its title, and Merged still takes its place")
++
++    def test_pending_has_a_colour_of_its_own_in_light_and_dark(self) -> None:
++        css = (SITE_JS.parent / "summary.css").read_text()
++
++        self.assertIn(".rstatus.pending { color: var(--pending); }", css)
++        self.assertEqual(["#4B6382", "#9FB3CF", "#9FB3CF"], re.findall(r"--pending: (#[0-9A-F]{6});", css),
++                         "the light palette, the dark one a reader's system asks for, and the dark one they pick")
++
+     def test_every_site_page_carries_the_summary_pages_credit(self) -> None:
+         stub = ("const root = {innerHTML: ''}, main = {innerHTML: ''};\n"
+                 "const document = {title: '', body: {classList: {remove: function () {}}},"
+@@ -3023,6 +3103,25 @@ def test_the_header_of_an_incremental_review_links_the_full_review_it_builds_on(
+         self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
+                       "a merged pull request shows Merged alone")
+ 
++    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
++    def test_the_header_shows_pending_when_only_an_earlier_head_was_reviewed(self) -> None:
++        earlier = "e333044" + "0" * 33
++        reviews = [projector_review("clean", earlier, "2026-10-01T10:00:00Z", 1),
++                   projector_review("changes-requested", earlier, "2026-10-02T10:00:00Z", 2)]
++
++        data = self.build(state="open", reviews=reviews)
++        html = rendered_summary(data)
++        shutil.rmtree(self.out)
++        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
++
++        self.assertEqual({"status": "pending", "last": {"status": "changes-requested", "head": earlier,
++                                                        "url": review_url(2)}}, data["review"])
++        self.assertIn(f' · <a class="rstatus pending" href="{review_url(2)}" target="_blank" rel="noopener" '
++                      'title="Last review: changes requested on e333044. This head hasn\'t been reviewed yet.">'
++                      'Pending</a></div><h1>', html, "one chip, linked to the last review, which its title names")
++        self.assertEqual(1, html.count('class="rstatus '))
++        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html)
++
+     @unittest.skipUnless(shutil.which("node"), "the status test needs node")
+     def test_the_header_shows_the_newest_verdict_alone_when_several_models_reviewed_the_head(self) -> None:
+         head = "c" * 40
