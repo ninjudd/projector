@@ -1714,12 +1714,30 @@ class ProposedViewTests(unittest.TestCase):
                             ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
                             "showProjects(); process.stdout.write(JSON.stringify({html: drawn}));")["html"]
 
-        self.assertIn('<p class="note">2 projects under <span class="mono">docs/projects</span>, '
-                      '1 of them proposed in open pull requests. ', drawn)
+        self.assertNotIn('class="note"', drawn, "the page draws no count or legend above the list")
         ready = drawn.split("<h2>ready ")[1].split("</section>")[0]
         self.assertIn('<a href="/projects/gamma/">Ship gamma</a> <a class="badge proposed" href="/reviews/9/">'
                       'Proposed #9</a></td>', ready)
         self.assertNotIn("Proposed", ready.split("Ship gamma")[0], "only the proposed row carries the badge")
+
+    def test_the_introduction_comes_after_the_last_status_group(self) -> None:
+        site = self.site([self.alpha(), self.gamma()])
+        site["projectsReadme"] = "docs/projects/README.md"
+        placed = self.run_js(site, ("badge", "proposedBadge", "depth", "ownerName", "showProjects"),
+                             "const appended = [], inserted = [];\n"
+                             "document.createElement = function (tag) { return {tag: tag, className: '', innerHTML: '',"
+                             " appendChild: function (c) { return c; }}; };\n"
+                             "function loadMarkdown() { return {then: function (ok) { ok('Projects are plans.'); }}; }\n"
+                             "function renderMarkdown() { return {tag: 'DIV'}; }\n"
+                             "const drawFrame = frame;\n"
+                             "frame = function (active, title, body) { const main = drawFrame(active, title, body);"
+                             " main.appendChild = function (c) { appended.push(c.className); return c; };"
+                             " main.insertBefore = function (c) { inserted.push(c.className); return c; };"
+                             " return main; };\n"
+                             "showProjects(); process.stdout.write(JSON.stringify({appended: appended, inserted: inserted}));")
+
+        self.assertEqual(["pintro"], placed["appended"], "the introduction is appended after the status groups")
+        self.assertEqual([], placed["inserted"], "nothing is inserted above the list")
 
     def test_the_filter_word_proposed_keeps_only_the_proposed_rows(self) -> None:
         kept = self.run_js(self.site([self.alpha(), self.gamma()]),

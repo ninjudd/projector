@@ -382,7 +382,6 @@
   // the same in every table, so the columns line up from one status to the next.
   function showProjects(): void {
     const owners = site.projects.some(function (p) { return ownerName(p) !== ''; });
-    const proposed = site.projects.filter(function (p) { return p.proposed !== undefined; }).length;
     const groups = STATUS_ORDER.map(function (status) {
       const rows = site.projects.filter(function (p) { return p.status === status; });
       rows.sort(function (a, b) {
@@ -404,9 +403,7 @@
         }).join('') + '</tbody></table></div></section>';
     }).join('');
     const main = frame('projects', 'Projects',
-      `<h1>Projects</h1><p class="note">${String(site.projects.length)} projects under <span class="mono">${esc(site.projectsDir)}</span>` +
-      `${proposed > 0 ? `, ${String(proposed)} of them proposed in open pull requests` : ''}. ` +
-      'Status says how finished a project is; priority says when it is scheduled.</p>' +
+      '<h1>Projects</h1>' +
       '<input class="filter" type="search" placeholder="Filter projects" aria-label="Filter projects">' + groups);
     const filter = main.querySelector('.filter');
     if (filter === null) throw new Error('The projects view lost the filter it just drew');
@@ -416,6 +413,8 @@
         row.hidden = q !== '' && !(row.dataset.search ?? '').includes(q);
       });
     });
+    // The introduction comes last, just above the site's footer, so the list
+    // leads the page.
     const intro = site.projectsReadme;
     if (intro !== null) {
       loadMarkdown(intro).then(function (text) {
@@ -423,7 +422,7 @@
         details.className = 'pintro';
         details.innerHTML = '<summary>How projects work</summary>';
         details.appendChild(renderMarkdown(text, intro));
-        main.insertBefore(details, filter);
+        main.appendChild(details);
       }, function () { /* the list reads fine without the introduction */ });
     }
   }

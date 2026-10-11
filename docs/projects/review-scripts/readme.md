@@ -1,6 +1,5 @@
 ---
 status: completed
-owner: ninjudd
 ---
 
 # Ship the review's mechanical steps as commands
