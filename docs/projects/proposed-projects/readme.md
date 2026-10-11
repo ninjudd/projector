@@ -689,8 +689,8 @@ has been observed of it.
 The project shipped in the two pull requests § 8 describes: #225, which
 deploys the site when a pull request closes and adds the
 `site-workflow-outdated` warning, and #229, which finds, serves, and shows
-the proposed projects. Both were first released in 0.7.4 and are in 0.7.6,
-the release now installed. On `main` at 0.7.6, every test in § 4 passes:
+the proposed projects. Both were first released in 0.7.4 and are in 0.7.6.
+On `main` at 0.7.6, every test in § 4 passes:
 
 - **Build tests.** `ProposedProjectTests` in `tests/test_site.py` has a test
   for each row, from

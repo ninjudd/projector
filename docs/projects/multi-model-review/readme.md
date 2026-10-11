@@ -549,8 +549,7 @@ requests and criterion 32. Two designs merged and were then replaced: #233's
 header, which showed each model's verdict, and #239's every-model sign-off,
 both removed by #243. #241, which built the adoption that the earlier § 2.8
 described, closed without merging when § 9 dropped adoption. Every merged
-pull request here was first released in 0.7.5 and is in 0.7.6, the release
-now installed.
+pull request here was first released in 0.7.5 and is in 0.7.6.
 
 On `main` at 0.7.6, every criterion that § 9 kept passes. The tests are in
 `tests/test_review.py` unless the table names another file:

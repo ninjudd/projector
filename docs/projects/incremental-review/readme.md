@@ -764,8 +764,8 @@ closed without it.
 
 ## 9. Outcome
 
-The project shipped in #228. It was first released in 0.7.4 and is in 0.7.6,
-the release now installed. On `main` at 0.7.6, criteria 1 to 4 pass:
+The project shipped in #228. It was first released in 0.7.4 and is in 0.7.6.
+On `main` at 0.7.6, criteria 1 to 4 pass:
 
 - **Measurement, criterion 1.** `InterdiffMeasureTests` in
   `tests/test_review.py` measures each case the criterion lists: a pushed
