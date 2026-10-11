@@ -1,0 +1,1003 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index eb5e8de5..bea4981c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1155,15 +1155,19 @@ publishes beside an earlier verdict the body names.
+ 
+ On a self-review `publish` submits a `COMMENT`, and then applies the sign-off
+ rule to the head it published on. The rule reads the reviewer's verdicts and
+-start comments and every Projector finding thread. A start comment is live
+-until its model posts a verdict on its head, or until a day passes since its
+-last edit, and a model is reviewing the head while its start comment there is
+-live. With each model's newest verdict on the head counting, the head is
+-`changes-requested` when any of those requests changes, `waiting` when none
+-does and a model is reviewing it or a finding thread is open, `clean` when
+-every one is clean, and `unreviewed` when there is none. `changes-requested`
+-returns the pull request to draft, `clean` marks it ready, and `waiting`
+-leaves it as it is, so the last model to finish sets the draft state. Before
++start comments, every Projector finding thread, and the pull request
++author's hold comments. A start comment is live until its model posts a
++verdict on its head, or until a day passes since its last edit, and a model
++is reviewing the head while its start comment there is live. A hold comment
++is one that carries `<!-- projector-hold v=1 -->`, which `fix-pr` posts
++while it builds a change for the pull request. With each model's newest
++verdict on the head counting, the head is `changes-requested` when any of
++those requests changes, `held` when none does and the author has a hold
++comment open, `waiting` when neither applies and a model is reviewing it or
++a finding thread is open, `clean` when every one is clean, and `unreviewed`
++when there is none. `changes-requested` and `held` return the pull request
++to draft, `clean` marks it ready, and `waiting` leaves it as it is, so the
++last model to finish sets the draft state. Before
+ it marks a draft ready, `publish` waits for each peer: another model with a
+ verdict on an earlier head, or a live start comment on another head, and
+ nothing on this one. It re-reads the start comments and verdicts every 15
+@@ -1184,7 +1188,8 @@ after submitting exits non-zero, and running it again finishes that review
+ rather than posting another.
+ 
+ `status` prints the sign-off of the pull request's current head, by the same
+-rule, with each model's part in it and the open finding threads:
++rule, with each model's part in it, the open finding threads, and any open
++hold comment:
+ 
+ ```
+ $ project review status 66
+@@ -1195,7 +1200,9 @@ $ project review status 66
+ ```
+ 
+ A model with a verdict or a start comment only on an earlier head is
+-`pending`, and does not change the sign-off. It reads the pull request, its
++`pending`, and does not change the sign-off. A hold comment adds a line,
++such as `held in draft by comment 4411 until the changes it lists are
++pushed`, and makes the sign-off `held`. It reads the pull request, its
+ reviews, its issue comments, and its threads, finds the reviewer as `setup`
+ does, from `--reviewer`, then `review.username`, then the authenticated user,
+ and runs from any directory. It exits 0 whatever the sign-off, and 1 only
+@@ -1205,9 +1212,10 @@ when it cannot read the pull request. With `--json` it prints one object:
+ | --- | --- |
+ | `repo`, `number`, `head` | The pull request and its current head SHA. |
+ | `draft` | Whether the pull request is a draft. |
+-| `signoff` | `clean`, `changes-requested`, `waiting`, or `unreviewed`. |
++| `signoff` | `clean`, `changes-requested`, `held`, `waiting`, or `unreviewed`. |
+ | `models` | One entry for each model with a verdict on the pull request or a live start comment: `model`, and `state`, which is `clean`, `changes-requested`, `reviewing`, or `pending`. A verdict, on the head or else the newest on an earlier one, adds `review`, `url`, `at`, and `sha`. A live start comment adds `comment`, `since`, and `comment_sha`. |
+ | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
++| `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+ 
+ `interdiff` decides whether the head may have an incremental review: a short
+ clean verdict on a head that changed little since this loop's last full review
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0b161966..e5e18acd 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -27,7 +27,13 @@ install docs`.
+ answers one pull request's findings, verifying each by the same protocol, and
+ merges the base into a branch that conflicts with it; `start-fix-loop` runs
+ it, one subagent per pull request, whenever its watcher reports work on one
+-this conversation owns. The reviewer settles its own
++this conversation owns. `fix-pr` also implements or defers each suggestion
++a review lists. While it builds a change that no review has read, such as a
++suggestion it implements or a change you ask for, it holds the pull request
++in draft with a comment that lists the changes, so the pull request never
++looks ready to merge while the changes are coming. It deletes the comment
++once they are pushed, and a clean review of that push marks the pull
++request ready. The reviewer settles its own
+ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+ what it checked rather than on who clicked resolve. In a repository with a
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 4a25be1f..bfcc0f69 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -1,15 +1,17 @@
+ ---
+ name: fix-pr
+-description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, and decline the rest with evidence. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
++description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
+ ---
+ 
+ # Fix a pull request
+ 
+ Bring one pull request's current head to where a review can sign it off.
+ Merge its base when the branch conflicts, and answer every outstanding
+-finding with a pushed fix or a declined reply. The fix runs once and starts
+-no watcher. `start-fix-loop` runs this skill whenever its watcher reports
+-work on a pull request.
++finding with a pushed fix or a declined reply. Implement or defer each
++suggestion a review lists, and hold the pull request in draft while you
++build a change no review has read. The fix runs once and starts no watcher.
++`start-fix-loop` runs this skill whenever its watcher reports work on a pull
++request.
+ 
+ ## Choose the pull request
+ 
+@@ -65,6 +67,14 @@ are resolved. The work outstanding on the head is:
+ - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
+   one whose findings exist only in its body.
+ - **A body-only finding** in a `COMMENT` review.
++- **Every suggestion you have not decided** in the newest Projector review
++  of the current head by each model, as
++  [Decide each suggestion](#decide-each-suggestion) describes.
++- **A change the owner asks for** in the conversation.
++- **Your open hold comment.** The changes it lists are outstanding until a
++  push carries them, and the comment itself until you delete it, as
++  [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
++  describes.
+ 
+ Findings arrive from two kinds of reviewer and both are answered the same way.
+ A **cross-author** reviewer — a teammate, Codex, Bugbot, or a review loop run by
+@@ -79,15 +89,13 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
+ of a body-only finding in a pull-request-level comment because there is no
+ thread to reply to or resolve.
+ 
+-A `Suggestions` list in a Projector review body is not a body-only finding,
+-and no item on it is outstanding work. Weigh each item yourself: take it when
+-the improvement is worth a push and the review cycle that follows, and leave
+-it when it is not. A clean verdict above such a list is a clean head either
+-way, and an item you leave needs no reply.
++A `Suggestions` list in a Projector review body is not a body-only finding.
++Its items never hold a head back from clean and need no reply, but you
++decide each one.
+ 
+ Draft state is not itself a finding. It says the head has not been signed
+ off, so look for the work in the threads and review bodies. A draft with no
+-outstanding finding is waiting on the review loop to re-review, not on a code
++outstanding work is waiting on the review loop to re-review, not on a code
+ change. When nothing is outstanding, say so and stop.
+ 
+ ## Merge the base when the branch conflicts
+@@ -127,6 +135,135 @@ A conflict has no thread to reply to, so the merge commit is its record.
+ Re-read the pull request body's `Testing` commands afterwards, because a merge
+ can change a count or a path they name.
+ 
++## Decide each suggestion
++
++A Projector review lists its P3 items, changes the code is correct without,
++under a `## Suggestions` heading in its body. A suggestion never holds a head
++back from clean, so a review can sign a head off and mark the pull request
++ready above a list of them. Each one still gets a decision: you implement it
++or you defer it. Decide every suggestion in the newest Projector review of
++the current head by each model. An incremental review lists none, so read
++its suggestions from the full review it builds on, which its lead links.
++
++- **Implement** a suggestion that is small and clearly right. That is the
++  default. Verify it first, as you verify a finding under
++  [Verify and fix findings](#verify-and-fix-findings): quote the lines it
++  names and confirm that the change it describes is correct there. Then hold
++  the pull request, as the next section describes, and build the change the
++  way you build a fix, through the full gate.
++- **Defer** a suggestion that is large, reaches beyond this change, needs a
++  decision you cannot make, or does not hold up when you verify it. Record
++  it in your report with a one-line reason, and post nothing about it on the
++  pull request.
++
++An instruction from the owner in the conversation overrides the default, in
++either direction: "defer the suggestions" or "take the second one". A
++suggestion you deferred on an earlier head stays deferred when a later
++review lists it again, unless the owner says otherwise.
++
++Neither decision needs a reply. A suggestion has no thread, so the push that
++carries an implemented one, and the review of that push, are its record.
++
++## Hold the pull request while changes are built
++
++A review that signs a head off marks the pull request ready, and from then
++on the owner can merge it. A change you make after that review is one it
++never read: a suggestion you implement, or a change the owner asks for. So
++the pull request must not look ready to merge while you build that change.
++Hold it before you start, posting the comment first and then marking the
++pull request draft:
++
++1. Post one comment that lists every change you are about to build. Write
++   its body to a file in exactly this shape, with nothing else: the opening
++   line, a bullet for each change, and the marker on the last line.
++
++   ```markdown
++   Held in draft while the following changes are implemented:
++
++   - Skip fenced code blocks when the packaging test looks for headings
++   - Name the held layer in the stack's readiness report
++
++   <!-- projector-hold v=1 -->
++   ```
++
++   Post it as the operator, who authored the pull request, with `-F`,
++   which reads the file, and read it back:
++
++   ```sh
++   gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id
++   gh api repos/<owner>/<repo>/issues/comments/<id> --jq .body
++   ```
++
++   The last line of the body you read back must be the marker.
++   `-f body=@<file>` posts the file's path instead, and a comment without
++   the marker holds nothing.
++2. Only once the marker is there, mark the pull request draft, and confirm
++   that it is one:
++
++   ```sh
++   gh pr ready <number> --undo
++   gh pr view <number> --json isDraft --jq .isDraft
++   ```
++
++   The order matters. To the review loop, a pull request that turns draft
++   on an unchanged head with no hold open is an author who answered without
++   pushing, so it re-reviews that head. The comment silences that from the
++   moment it lands, and keeps `publish` from marking the pull request ready.
++3. When another change comes in while the hold is open, add its bullet to
++   the same comment rather than posting a second one. Keep the marker as
++   the last line of every edit, so the hold never lapses, and read it back
++   the same way:
++
++   ```sh
++   gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>
++   ```
++
++   When the owner drops a listed change, remove its bullet the same way,
++   and when none is left, delete the comment as step 5 shows.
++
++4. Build each change, run the full gate, commit, and push.
++5. As soon as the push that carries every listed change succeeds, delete
++   the comment, before you resolve threads or report. Never delete it
++   before that push: a hold lifted on the unchanged head asks the review
++   loop to re-review it, and a clean verdict would then mark the pull
++   request ready while the changes are still local.
++
++   ```sh
++   gh api -X DELETE repos/<owner>/<repo>/issues/comments/<id>
++   ```
++
++Projector reads the hold. While the pull request's author has a comment
++carrying `<!-- projector-hold v=1 -->` open on it, `project review status`
++reports its head as `held` instead of `clean`, and `project review publish`
++keeps it a draft however clean a review of it is. The review loop asks for
++no re-review of an unchanged head while the hold is open, and asks for one
++when the hold is lifted without a push. Only a comment by the pull request's
++author counts, because anyone can comment. Once you delete it, the review of
++the head you pushed signs the pull request off. To find the hold again, take
++the operator's comment that carries the marker:
++
++```sh
++gh api repos/<owner>/<repo>/issues/<number>/comments --paginate \
++  --jq '.[] | select(.body | contains("<!-- projector-hold v=1 -->")) | {id, login: .user.login}'
++```
++
++Hold a pull request even when it is already a draft. A draft that is waiting
++on its review would be marked ready by a clean verdict, and the comment is
++what stops that. Hold only when a change is coming, though: when you defer
++every suggestion and the owner asks for nothing, post no comment and leave
++the draft state as it is. Your report lists the deferrals.
++
++Never mark the pull request ready yourself, when you delete the hold or at
++any other time. The review loop's clean verdict on the head you pushed does
++that.
++
++In a stack, hold the layer that gets the change. The user merges a stack
++from the bottom up, so a held layer holds every layer above it too, and
++those layers need no comment of their own. Carry the change up through them,
++as [Preserve stacked ownership](#preserve-stacked-ownership) describes, and
++delete the hold once the push that carries every listed change into the
++held layer succeeds.
++
+ ## Verify and fix findings
+ 
+ Handle findings in posting order, batching only related findings that touch the
+@@ -185,6 +322,9 @@ them. A Projector finding or another tool's thread is resolved either way.
+ Reply before pushing so a reviewer triggered by the push sees the reasoning,
+ but push promptly because the named commit is briefly local-only. If a push
+ fails, post that fact, leave the thread unresolved, and report the blocker.
++When a hold is open and the push carries the last change it lists, delete
++the hold before you resolve anything, so the review of that push can sign
++the head off.
+ 
+ Fixing an external reviewer's finding is not a reason to ask that reviewer for
+ another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
+@@ -235,6 +375,8 @@ A pull request is clean only when:
+   its current head, for each login that posted a Projector review on the
+   pull request,
+ - no unresolved threads remain,
++- no hold comment is open on it, and in a stack none is open on a layer
++  below it, because a held layer holds every layer above it,
+ - in a stack, it and every layer below it are in sync on GitHub, so the
+   stack shows none of them needing a rebase: GitHub's comparison, which
+   `../implement/SKILL.md` describes under "Stack dependent work", prints
+@@ -246,8 +388,10 @@ A pull request is clean only when:
+ 
+ `project review status <number> --reviewer <login>` applies a review loop's
+ sign-off rule to the current head, over the verdicts and start comments that
+-`<login>` posted: `clean` when every model reviewing it gave a clean verdict
+-and no Projector finding thread is open. A loop counts only its own account's
++`<login>` posted: `clean` when every model reviewing it gave a clean verdict,
++no Projector finding thread is open, and no hold comment is open. It reports
++`held` while the pull request's author has a hold comment open, which waits
++on the push that carries its changes. A loop counts only its own account's
+ verdicts, so run it once for each account whose reviews in the listing you
+ fetched carry a `projector-review` marker: your own when a self-review loop
+ reviews the pull request, and a teammate's when their loop reviews it. With
+@@ -266,7 +410,9 @@ as any other cross-author verdict would.
+ 
+ Report the head SHA, each layer's new head when you carried a change up a
+ stack, the merge commit if you made one, the fix commits, the declined
+-findings, the Suggestions you took and left, and the validation results. A
++findings, the suggestions you implemented, each suggestion you deferred with
++its one-line reason, any hold you posted, edited, or deleted and the changes
++it listed, and the validation results. A
+ stale `CHANGES_REQUESTED`, or a pull request still in draft after all
+ fixes, is a wait for re-review rather than another code change. Do not
+ manufacture an empty commit to trigger it.
+@@ -277,7 +423,9 @@ sign-off nothing gave it. If you opened it as a draft, you do not undraft it —
+ not when the reason you drafted it is resolved. That is the case that feels
+ justified: the red test you drafted around is passing, so the draft reads as
+ stale state left over from a fixed problem. It is not. It is a standing
+-request for review that has not been answered yet.
++request for review that has not been answered yet. A pull request you held
++is the same: deleting the hold is your part, and the review of the head you
++pushed is what marks it ready.
+ 
+ ## Never
+ 
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 16357e9a..18fe7db1 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -121,9 +121,12 @@ returns the pull request to draft when any model's verdict on the head
+ requests changes, marks it ready when every one is clean, and leaves it as it
+ is while a model is still reviewing the head or a finding thread is open.
+ With one model reviewing, that is the old rule: a review with findings marks
+-it draft, a clean review marks it ready. Nothing else enters into it — not
+-when a review first saw the pull request, not who last changed the state, not
+-whether it was ever a draft. Never set it yourself with `gh pr ready`.
++it draft, a clean review marks it ready. The one exception is a hold: while
++the author is building a change no review has read, `fix-pr` keeps the pull
++request a draft with a hold comment, and a clean review leaves it a draft
++until the hold is deleted. Nothing else enters into it — not when a review
++first saw the pull request, not who last changed the state, not whether it
++was ever a draft. Never set it yourself with `gh pr ready`.
+ 
+ Draft carries the outcome there because GitHub refuses `APPROVE` and
+ `REQUEST_CHANGES` on your own pull request, so `reviewDecision` never moves
+@@ -157,19 +160,26 @@ it.
+ 
+ One rule over GitHub's state decides the sign-off, and every `publish`
+ applies it after it submits, so the last model to finish sets the draft
+-state. It reads the reviewer account's verdicts and start comments and every
+-Projector finding thread, from any account. A start comment is live until
+-its model posts a verdict on its head, or until a day has passed since it was
+-last edited, and a model is reviewing the head while its start comment on the
+-head is live. Each model's newest verdict on the head counts, and the head is:
++state. It reads the reviewer account's verdicts and start comments, every
++Projector finding thread, from any account, and the pull request author's
++hold comments. A start comment is live until its model posts a verdict on
++its head, or until a day has passed since it was last edited, and a model is
++reviewing the head while its start comment on the head is live. Each model's
++newest verdict on the head counts, and the head is:
+ 
+ - **`changes-requested`** when any model's newest verdict on it requests
+   changes. A self-review returns to draft.
+-- **`waiting`** when none does, and a model is reviewing the head or a
++- **`held`** when none does, and the pull request's author has a hold
++  comment open: one carrying `<!-- projector-hold v=1 -->`, which `fix-pr`
++  posts while it builds a change for the pull request, such as a suggestion
++  it implements. A self-review returns to draft and stays one until the
++  author deletes the hold. Only the author's comment counts, because anyone
++  can comment.
++- **`waiting`** when neither applies, and a model is reviewing the head or a
+   Projector finding thread is open. The draft state stays as it is.
+ - **`clean`** when at least one model has a verdict on the head, every
+   model's newest verdict on it is clean, no model is reviewing it, and no
+-  finding thread is open. A self-review is marked ready.
++  finding thread or hold is open. A self-review is marked ready.
+ - **`unreviewed`** when no model has a verdict on the head.
+ 
+ A loop that has not noticed a push yet has posted nothing for the new head.
+@@ -768,7 +778,8 @@ from the sign-off rule in
+ rule decides: the pull request is marked ready with `gh pr ready <number>`
+ once every model reviewing the head is clean, after the peer wait, and is
+ left as it is while another model is still reviewing it or a finding thread
+-is open. That transition is the sign-off a reader sees in the pull-request
++is open. While its author's hold is open it is returned to draft, or left
++one. That transition is the sign-off a reader sees in the pull-request
+ list.
+ 
+ **Clean head, cross-author:** a `COMMENT` review, verdict `clean`; say
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-fix-loop/SKILL.md
+index 05668dd4..68b1cc42 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-fix-loop/SKILL.md
+@@ -87,7 +87,9 @@ The watcher is level-triggered:
+ - `CONFLICT` reports a branch that conflicts with its base. It clears when a
+   push makes the branch mergeable again.
+ - `REVIEW` reports a review body that has no inline thread, the shape every
+-  `COMMENT` review posts.
++  `COMMENT` review posts. A Projector review whose body lists `Suggestions`
++  is work even under a clean verdict, because `fix-pr` implements or defers
++  each one.
+ - `DRAFT` reports a pull request a review loop has not signed off. It clears
+   when the pull request is marked ready, which a review loop's `publish`
+   does once every model reviewing the current head has signed it off.
+@@ -96,7 +98,9 @@ The watcher is level-triggered:
+ A `DRAFT` line alone is not work. It says the head has not been signed off,
+ and any work behind it arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or
+ `REVIEW` line. A draft with nothing else outstanding is waiting on the review
+-loop to re-review, not on a code change.
++loop to re-review, not on a code change. A pull request that a subagent's
++hold keeps in draft reports `DRAFT` too, and its work is already with that
++subagent: the changes the hold lists.
+ 
+ ## Give each pull request its own subagent
+ 
+@@ -126,11 +130,18 @@ the recurrence it is instead of as new work.
+   stack, to the same subagent as a message; never start a second one for it.
+   Each message is another run of `fix-pr` for the pull request's current
+   head.
++- Send a change the owner asks for on a tracked pull request to its subagent
++  the same way, starting the subagent if the pull request has none yet.
++  `fix-pr` holds the pull request in draft while it builds the change, as
++  `../fix-pr/SKILL.md` describes under "Hold the pull request while changes
++  are built".
+ - The subagent reports each run back: the head SHA, each layer's new head
+   when it carried a change up a stack, the merge commit if it made one, the
+-  fix commits, the declined findings, and the validation results. A
+-  question for the user comes back to the main loop to ask, and the
+-  subagent goes on with the pull request's unrelated work meanwhile.
++  fix commits, the declined findings, the suggestions it implemented, each
++  one it deferred with its reason, any hold it posted, edited, or deleted,
++  and the validation results. A question for the user comes back to the
++  main loop to ask, and the subagent goes on with the pull request's
++  unrelated work meanwhile.
+ - When a pull request merges or closes, delete its line from the tracked
+   file at once. Tell its subagent to finish, remove its worktrees, and close
+   only when no layer it owns is still open. The user merges a stack as a
+@@ -152,7 +163,11 @@ request with work, in the order the events arrived.
+ 
+ After each subagent report, check the pull request against the clean
+ conditions in `../fix-pr/SKILL.md` and report its state with the head SHA,
+-fix commits, declined findings, and validation results, then keep watching.
++fix commits, declined findings, deferred suggestions, and validation
++results, then keep watching. A pull request with an open hold comment is not
++clean, however clean its review: `project review status` reports it `held`.
++Say so, and why: "#12 is held in draft while 2 changes are implemented",
++naming the changes the hold lists.
+ 
+ Report a stack's readiness as one unit, the same unit its subagent fixes,
+ because the user merges it as one from GitHub. Check every open layer
+@@ -163,9 +178,13 @@ only one checkout's branches. Say "stack #<number> is ready to merge as a
+ whole" when every layer's current head is clean and every comparison
+ prints `0`. Otherwise name the bottom layers that are ready, such as "#12
+ and #13 at the bottom of stack #14 are ready to merge", and what holds back
+-the lowest layer that is not. Name the stack by the number GitHub's stacks API
+-gives it, or by its bottom pull request for a chain of base branches that
+-GitHub does not record as a stack.
++the lowest layer that is not. A hold on a layer holds the stack from that
++layer up, because the user merges from the bottom, so name the held layer
++and the changes its hold lists: "#12 at the bottom of stack #14 is ready to
++merge; the stack is held at #13 while 2 changes are implemented". Name the
++stack by the number GitHub's stacks API gives it, or by its bottom pull
++request for a chain of base branches that GitHub does not record as a
++stack.
+ 
+ Delete closed or merged pull requests from the tracked file. An empty file is
+ idle, not an instruction to stop; remain ready to append pull requests this
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index bf6f293c..05122a7d 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -109,6 +109,17 @@ one. It prevents a response without a push from deadlocking both loops. A `TRACK
+ a problem with the tracked file itself, announced once; fix the file. Keep the
+ loop silent while no event needs action.
+ 
++The author's hold comment, which `fix-pr` posts while it builds a change, as
++`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
++are built", silences `RESPONDED`: the head waits on the author's push, not
++on a re-review, and `publish` keeps the pull request a draft while the hold
++is open however clean the review. Lifting a hold the watcher saw on the
++current head is an answer, so it asks for a re-review once the author
++deletes the hold, in case a review of that head ran while the hold kept it a
++draft. A `RESPONDED` that reaches a subagent after a review has marked the
++pull request ready, with no change request standing, needs nothing: that
++review already signed the head off.
++
+ If adopting an existing watcher, fetch unresolved state first, confirm it runs
+ with the adoption flags for this repository and operator and reads the tracked
+ file this loop records, and verify its state file contains every expected row.
+diff --git a/skills/start-review-loop/scripts/watch-prs.sh b/skills/start-review-loop/scripts/watch-prs.sh
+index 220af360..dcb8d028 100755
+--- a/skills/start-review-loop/scripts/watch-prs.sh
++++ b/skills/start-review-loop/scripts/watch-prs.sh
+@@ -13,7 +13,9 @@
+ #              thread is the author's rather than the reviewer's. No head
+ #              event is coming, so this asks for a re-review of the same
+ #              head. Once per answer, and never alongside NEW PR or NEW HEAD,
+-#              which already say to review that head.
++#              which already say to review that head. A hold the author lifts
++#              is an answer too, and while a hold is open nothing is: the
++#              author is building changes, so the head waits on them.
+ #   CLOSED     a tracked pull request is no longer open
+ #   BRANCH     the watched worktree changed branch
+ #   TRACKED    a problem with the tracked file: a line that is not
+@@ -141,9 +143,16 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+ # your own pull request, so reviewDecision never leaves NONE. reviewDecision
+ # carries a cross-author review, where REQUEST_CHANGES works and draft state
+ # is untouched — the skill forbids drafting another author's pull request.
++#
++# The last field is "held" while the pull request's author has a hold comment
++# open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
++# otherwise. Only the author's comment counts, because anyone can comment. A
++# hold lives only while its changes are built, so it is among the newest 100
++# comments.
+ PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+   pullRequest(number:$n){
+-    state isDraft reviewDecision headRefOid headRefName
++    state isDraft reviewDecision headRefOid headRefName author{login}
++    comments(last:100){ nodes{ author{login} body } }
+     reviewThreads(first:100){ nodes{ isResolved
+       comments(first:1){ nodes{ databaseId body } }
+       lastComment: comments(last:1){ nodes{ databaseId body } } } } } } }'
+@@ -154,7 +163,11 @@ PR_JQ='.data.repository.pullRequest
+       | ((.lastComment // .comments).nodes[-1])
+       | select(.body | test("projector-(finding|verify)") | not)
+       | .databaseId // 0] | max // "-") as $answer
+-  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer)"'
++  | (.author.login // "") as $author
++  | (if $author != "" and any(.comments.nodes[];
++         (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
++     then "held" else "-" end) as $held
++  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held)"'
+ 
+ # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
+ # can be told apart from a pull request that does not exist.
+@@ -258,11 +271,12 @@ EOF
+     known=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $3}' "$STATE" 2>/dev/null)
+     kref=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $4}' "$STATE" 2>/dev/null)
+     # Field 5 is the answer a RESPONDED line was last emitted for, as
+-    # <sha>:<reply id>, or "-". Comparing it against the current head and
+-    # newest reply is what makes that fire once per answer: a re-review that
+-    # requests changes again does not re-announce, a further reply on the same
+-    # head does, and a new push resets it because the row's SHA changed. A
+-    # bare SHA is the older form of <sha>:-.
++    # <sha>:<reply id>, "held" while a hold is open, or "-". Comparing it
++    # against the current head and newest reply is what makes that fire once
++    # per answer: a re-review that requests changes again does not
++    # re-announce, a further reply on the same head does, and a new push
++    # resets it because the row's SHA changed. A bare SHA is the older form
++    # of <sha>:-.
+     flag=$(awk -v r="$slug" -v n="$n" '$1==r && $2==n {print $5}' "$STATE" 2>/dev/null)
+     [ -n "$flag" ] || flag="-"
+ 
+@@ -280,7 +294,7 @@ EOF
+ "
+       continue
+     fi
+-    read -r pstate pdraft pdecision sha ref unresolved answer <<EOF
++    read -r pstate pdraft pdecision sha ref unresolved answer held <<EOF
+ $row
+ EOF
+     [ -n "${answer:-}" ] || answer="-"
+@@ -316,7 +330,16 @@ EOF
+     # self-reviewed draft ready, while on a cross-author changes request
+     # marking it ready is forbidden and a clean re-review is a COMMENT
+     # recommending a human approval.
+-    if [ -n "$known" ] && [ "$known" = "$sha" ]; then
++    #
++    # An open hold says the author is building changes, so the head waits on
++    # the author and nothing is a response; the flag records that a hold was
++    # seen. Lifting it is the response: a hold lifted without a push, or one
++    # that kept the new head's review in draft, leaves no other event to come.
++    # A head event's pass records the hold too, because the push that carries
++    # the changes can land a cycle before the hold is deleted.
++    if [ "$held" = "held" ]; then
++      flag="held"
++    elif [ -n "$known" ] && [ "$known" = "$sha" ]; then
+       rstate=""
+       if [ "$unresolved" = "0" ] || [ "$answer" != "-" ]; then
+         if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
+@@ -338,6 +361,7 @@ EOF
+           seen="$flag"; now="$key"
+           how="and the author replied on an open finding"
+         fi
++        [ "$flag" = "held" ] && how="now that its hold is lifted"
+         if [ "$seen" != "$now" ]; then
+           if [ "$rstate" = "changes-requested" ]; then
+             echo "RESPONDED $slug#$n ($ref) head=${sha:0:7} — changes requested $how; re-review this head, and a clean one is a COMMENT, never an approval"
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 8ac2eba4..f5653302 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -36,6 +36,9 @@
+ from .summary import repo_slug
+ 
+ FINDING_MARKER = "projector-finding"
++# The last line of the comment that holds a pull request in draft while changes for it are built, as
++# fix-pr/SKILL.md § Hold the pull request while changes are built writes it.
++HOLD_MARKER = "<!-- projector-hold v=1 -->"
+ # The mark that opens both the start comment and the review's signature line, as
+ # review-pr/SKILL.md § Label every review and finding writes it.
+ MARK = "📽️"
+@@ -471,6 +474,21 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
+     return True
+ 
+ 
++# Holds
++
++def holds(repo: str, number: int, author: str) -> list[dict]:
++    """The hold comments on the pull request, from every page, each with its `id` and `url`. Only the
++    pull request's `author` holds it: anyone can comment, so another account's comment carrying the
++    marker holds nothing."""
++    if not author:
++        return []
++    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
++                   "--jq", f'.[] | select(.body // "" | contains("{HOLD_MARKER}")) '
++                           '| {id, url: .html_url, login: .user.login} | @json']).splitlines()
++    return [{"id": comment["id"], "url": comment.get("url")} for comment in map(json.loads, filter(str.strip, rows))
++            if (comment.get("login") or "").lower() == author.lower()]
++
++
+ # Resolving which review a command means
+ 
+ def valid_loop(loop: Optional[str]) -> Optional[str]:
+@@ -1146,14 +1164,16 @@ def entry(model: str) -> dict:
+     return models
+ 
+ 
+-def signoff(models: dict[str, dict], open_threads: int) -> str:
++def signoff(models: dict[str, dict], open_threads: int, held: bool = False) -> str:
+     """The rule review-pr § Review as one model among several states: `changes-requested` when any
+-    model's newest verdict on the head requests changes, `waiting` while a model is reviewing the head
+-    or a Projector finding thread is open, `clean` when every model's newest verdict on it is clean,
+-    and `unreviewed` when no model has one."""
++    model's newest verdict on the head requests changes, `held` while a hold comment is open, `waiting`
++    while a model is reviewing the head or a Projector finding thread is open, `clean` when every
++    model's newest verdict on it is clean, and `unreviewed` when no model has one."""
+     verdicts = [m["verdict"]["verdict"] for m in models.values() if m["verdict"]]
+     if "changes-requested" in verdicts:
+         return "changes-requested"
++    if held:
++        return "held"
+     if open_threads or any(m["reviewing"] for m in models.values()):
+         return "waiting"
+     return "clean" if verdicts else "unreviewed"
+@@ -1176,12 +1196,13 @@ def peer_wait(value: object) -> int:
+ 
+ 
+ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads: int, deadline: datetime,
+-         posted: Optional[dict] = None) -> dict:
++         posted: Optional[dict] = None, *, author: str) -> dict:
+     """Apply the sign-off rule to the head this review published on, waiting for pending peers when it
+     says `clean`.
+ 
+-    The rule reads the reviewer's verdicts and start comments; `posted` stands
+-    in for this review's verdict before it is submitted. While the rule says
++    The rule reads the reviewer's verdicts and start comments, and the hold
++    comments of the pull request's `author`; `posted` stands in for this
++    review's verdict before it is submitted. While the rule says
+     `clean` and a peer is pending, it re-reads both every PEER_POLL seconds
+     until `deadline`: a peer's start comment makes it `waiting`, a peer's
+     verdict joins the rule, and a peer that posts nothing by the deadline is
+@@ -1194,7 +1215,7 @@ def sign(repo: str, number: int, reviewer: str, head: str, me: str, open_threads
+         reviews = [r for r in reviewer_reviews(repo, number, reviewer) if not posted or r.get("id") != posted["id"]] \
+             + ([posted] if posted else [])
+         models = models_on(head, reviews, start_comments(repo, number, reviewer), now())
+-        result = signoff(models, open_threads)
++        result = signoff(models, open_threads, bool(holds(repo, number, author)))
+         pending = pending_peers(models, me) if result == "clean" else []
+         waited = int((now() - started).total_seconds())
+         if not pending or now() >= deadline:
+@@ -1216,7 +1237,7 @@ def thread_model(thread: dict) -> Optional[str]:
+ 
+ def status(repo: str, number: int, reviewer: str) -> dict:
+     """The sign-off of the pull request's current head, by the rule `publish` applies, with each model's
+-    part in it and every open Projector finding thread."""
++    part in it, every open Projector finding thread, and every open hold comment."""
+     try:
+         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+     except NotFound as exc:
+@@ -1224,6 +1245,7 @@ def status(repo: str, number: int, reviewer: str) -> dict:
+     head = pr["head"]["sha"]
+     models = models_on(head, reviewer_reviews(repo, number, reviewer), start_comments(repo, number, reviewer), now())
+     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
++    held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
+     rows = []
+     for key in sorted(models):
+         m = models[key]
+@@ -1237,8 +1259,9 @@ def status(repo: str, number: int, reviewer: str) -> dict:
+             row.update(comment=comment["id"], since=comment["updated_at"], comment_sha=comment["sha"])
+         rows.append(row)
+     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
+-            "signoff": signoff(models, len(threads)), "models": rows,
+-            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads]}
++            "signoff": signoff(models, len(threads), bool(held)), "models": rows,
++            "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
++            "holds": held}
+ 
+ 
+ def status_lines(result: dict) -> list[str]:
+@@ -1257,6 +1280,8 @@ def status_lines(result: dict) -> list[str]:
+     if threads:
+         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
+         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
++    for hold in result["holds"]:
++        lines.append(f"  held in draft by comment {hold['id']} until the changes it lists are pushed")
+     return lines
+ 
+ 
+@@ -1444,7 +1469,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+                 # replace another model's standing change request: approve only when the rule, counting
+                 # this verdict as posted, signs the head off.
+                 posted = {"id": None, "url": None, "at": now().isoformat(), "body": text}
+-                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted)
++                ahead = sign(repo, number, reviewer, sha, me, open_after, deadline, posted,
++                             author=(pr.get("user") or {}).get("login") or "")
+                 if ahead["moved"]:
+                     raise ReviewError(f"the head moved since {sha[:7]} was set up, while publish waited for the "
+                                       f"other models; run `project review move {number}` and review the new head")
+@@ -1473,13 +1499,17 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     # The rule counts this review as read back, whether or not the reviews listing shows it yet.
+     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+               "login": reviewer, "body": read["body"]}
+-    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
++    current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
++    draft = bool(current.get("draft"))
+     # Only a draft is about to be signed off, so only a draft waits for its peers.
+     signed = sign(repo, number, reviewer, sha, me, published.get("open", 0),
+-                  deadline if published.get("self") and draft else now(), posted)
++                  deadline if published.get("self") and draft else now(), posted,
++                  author=(current.get("user") or {}).get("login") or "")
+     draft_wanted = None
+     if published.get("self") and not signed["moved"]:
+-        draft_wanted = {"changes-requested": True, "clean": False}.get(signed["signoff"])
++        # A hold says changes for the pull request are still being built, so it stays a draft however
++        # clean this head is.
++        draft_wanted = {"changes-requested": True, "held": True, "clean": False}.get(signed["signoff"])
+     if draft_wanted is not None and draft_wanted != draft:
+         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
+     if draft_wanted is not None:
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 20492044..c36cd3d0 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -146,6 +146,7 @@ def test_every_citation_of_another_skills_section_names_a_heading_it_has(self) -
+                 with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
+                     self.assertIn(heading, HEADING.findall(target))
+         self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
++        self.assertIn(("fix-pr", "Hold the pull request while changes are built"), cited)
+ 
+     def test_a_citation_resolves_to_a_heading_at_any_level_but_not_to_prose(self) -> None:
+         skill = "# Skill\n\n## Section\n\n### Subsection\n\nProse that mentions ## Elsewhere.\n"
+diff --git a/tests/test_review.py b/tests/test_review.py
+index c6979ca5..156ac38f 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -109,9 +109,10 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             del self.comments[int(args[3].rsplit("/", 1)[1])]
+             return ""
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
++            marker = re.search(r'contains\("([^"]+)"\)', args[4]).group(1)
+             return "".join(json.dumps({"id": i, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{i}",
+                                        "body": body, **self.comment_info[i]}) + "\n"
+-                           for i, body in self.comments.items() if "projector-start" in body)
++                           for i, body in self.comments.items() if marker in body)
+         if args[:2] == ["auth", "token"]:
+             return f"token-{args[-1]}\n"
+         if args == ["api", "user", "--jq", ".login"]:
+@@ -1000,6 +1001,12 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
+             "seconds=60 covered=1/1 -->\n")
+ 
+ 
++# The comment fix-pr posts while it builds a change for the pull request.
++HOLD = ("Held in draft while the following changes are implemented:\n\n"
++        "- Skip fenced code blocks when looking for headings\n\n"
++        "<!-- projector-hold v=1 -->\n")
++
++
+ class ModelTests(PublishCase):
+     """Each model is a reviewer of its own: its own state, lock, worktree, and collision check."""
+ 
+@@ -1268,6 +1275,40 @@ def test_a_verdict_from_another_account_does_not_count(self) -> None:
+ 
+         self.assertEqual("clean", self.json_publish("clean")["signoff"])
+ 
++    def test_the_authors_hold_keeps_a_clean_head_a_draft_without_waiting_for_peers(self) -> None:
++        # fix-pr holds a pull request while it builds a change a clean review cannot have read.
++        for draft in (True, False):
++            with self.subTest(draft=draft):
++                self.setUp()
++                self.github.pr["draft"] = draft
++                self.add_verdict("gpt-5.5", sha=self.earlier)
++                self.github.comment(HOLD)
++                self.begin_now()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++                result = self.json_publish("clean")
++
++                self.assertEqual(("held", True), (result["signoff"], result["draft"]))
++                self.assertTrue(self.github.pr["draft"])
++                self.assertEqual([], self.slept, "a held head is not about to be signed off")
++                self.assertEqual(not draft, any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
++
++    def test_a_hold_from_anyone_but_the_author_holds_nothing(self) -> None:
++        self.github.comment(HOLD, login="passerby")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual(("clean", False), (result["signoff"], result["draft"]))
++        self.assertFalse(self.github.pr["draft"])
++
++    def test_a_change_request_outranks_a_hold(self) -> None:
++        self.github.comment(HOLD)
++        self.add_verdict("gpt-5.5", verdict="changes-requested")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual("changes-requested", self.json_publish("clean")["signoff"])
++
+     def test_two_models_that_publish_together_sign_off_whichever_order_they_apply_the_rule_in(self) -> None:
+         for gpt_verdict, signed in (("clean", "clean"), ("changes-requested", "changes-requested")):
+             for first in ("claude-opus-5-5", "gpt-5.5"):
+@@ -1384,6 +1425,8 @@ def setUp(self) -> None:
+     def test_a_clean_verdict_approves_only_when_every_model_on_the_head_is_clean(self) -> None:
+         cases = {"changes requested": (lambda: self.add_verdict("gpt-5.5", verdict="changes-requested"), "COMMENT"),
+                  "reviewing": (lambda: self.start("gpt-5.5"), "COMMENT"),
++                 "held by its author": (lambda: self.github.comment(HOLD, login="teammate"), "COMMENT"),
++                 "held by the reviewer": (lambda: self.github.comment(HOLD), "APPROVE"),
+                  "clean": (lambda: self.add_verdict("gpt-5.5"), "APPROVE"),
+                  "alone": (lambda: None, "APPROVE")}
+         for name, (arrange, event) in cases.items():
+@@ -1474,6 +1517,44 @@ def test_fix_prs_status_command_reads_the_account_whose_loop_reviewed_the_pull_r
+         self.assertEqual("unreviewed", mine["signoff"], "the operator's own loop has not reviewed it")
+         self.assertEqual("clean", theirs["signoff"], "the teammate's loop found the head clean")
+ 
++    def test_an_open_hold_is_held_and_named_until_the_author_deletes_it(self) -> None:
++        self.add_verdict("claude-opus-5-5")
++        hold = self.github.comment(HOLD)
++        self.github.comment(HOLD, login="passerby")
++
++        code, out, err = self.status()
++        held = json.loads(self.status("--json")[1])
++        del self.github.comments[hold]
++        lifted = json.loads(self.status("--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(f"#1 at {self.head[:7]}: held", out.splitlines()[0])
++        self.assertEqual(f"  held in draft by comment {hold} until the changes it lists are pushed",
++                         out.splitlines()[-1])
++        self.assertEqual(("held", [{"id": hold, "url": f"https://github.com/{REPO}/pull/1#issuecomment-{hold}"}]),
++                         (held["signoff"], held["holds"]))
++        self.assertEqual(("clean", []), (lifted["signoff"], lifted["holds"]))
++
++    def test_the_hold_fix_pr_posts_is_the_one_the_sign_off_and_the_review_watcher_read(self) -> None:
++        skills = Path(cli.__file__).resolve().parents[2] / "skills"
++        fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
++        watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
++
++        self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
++        self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr's hold comment opens with the line HOLD does")
++        self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr's hold comment ends with HOLD_MARKER")
++        self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
++
++    def test_fix_pr_posts_the_hold_before_it_drafts_the_pull_request(self) -> None:
++        # A draft with no hold on an unchanged head reads to the review watcher as an answer, so a pass
++        # between the two steps would ask for a re-review of a head nothing changed.
++        fix_pr = [line.strip() for line in
++                  (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text().splitlines()]
++        post = fix_pr.index("gh api repos/<owner>/<repo>/issues/<number>/comments -F body=@<file> --jq .id")
++        draft = fix_pr.index("gh pr ready <number> --undo")
++
++        self.assertLess(post, draft)
++
+     def test_a_head_no_model_reviewed_is_unreviewed_and_the_reviewer_can_be_named(self) -> None:
+         self.add_verdict("claude-opus-5-5", login="review-bot", verdict="changes-requested")
+ 
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index ee17efcd..843c4a90 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -142,6 +142,7 @@ def pull_request(
+         verdict=None,
+         threads=(),
+         reviews=(),
++        comments=(),
+     ) -> None:
+         directory = self.fixtures / repo
+         directory.mkdir(parents=True, exist_ok=True)
+@@ -156,6 +157,7 @@ def pull_request(
+             "author": {"login": author},
+             "reviews": {"nodes": [verdict] if verdict else []},
+             "reviewThreads": {"nodes": list(threads)},
++            "comments": {"nodes": list(comments)},
+         }
+         (directory / f"{number}.json").write_text(json.dumps(node))
+         (directory / f"{number}.reviews.json").write_text(json.dumps(list(reviews)))
+@@ -583,6 +585,95 @@ def test_a_reply_on_another_reviewers_thread_is_not_a_response(self) -> None:
+         self.assert_ok(result)
+         self.assertEqual("", result.stdout)
+ 
++    def test_a_hold_is_never_a_response_and_lifting_it_is_one(self) -> None:
++        # fix-pr returns a signed-off pull request to draft while it builds a
++        # change. A re-review then would only find the unchanged head clean.
++        # It posts the hold while the pull request is still ready, then drafts
++        # it, so no pass sees a draft without the hold.
++        hold = {"author": {"login": "operator"},
++                "body": "Held in draft while the following changes are implemented:\n\n- Rename `x`\n\n"
++                        "<!-- projector-hold v=1 -->\n"}
++        self.pull_request(1, head=SHA_A)
++        self.track("acme/app#1")
++        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
++
++        self.pull_request(1, head=SHA_A, comments=[hold])
++        posted = self.run_watcher(PRS)
++        held_flag = self.state_rows()
++        self.pull_request(1, head=SHA_A, draft=True, comments=[hold])
++        held = self.run_watcher(PRS)
++        still_held = self.run_watcher(PRS)
++        self.pull_request(1, head=SHA_A, draft=True)
++        lifted = self.run_watcher(PRS)
++        quiet = self.run_watcher(PRS)
++
++        self.assert_ok(posted)
++        self.assertEqual("", posted.stdout)
++        self.assertEqual([["acme/app", "1", SHA_A, "feature", "held"]], held_flag)
++        self.assert_ok(held)
++        self.assertEqual("", held.stdout)
++        self.assert_ok(still_held)
++        self.assertEqual("", still_held.stdout)
++        self.assert_ok(lifted)
++        self.assertEqual(
++            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft now that its hold is lifted; "
++             "re-review this head and sign off if clean"],
++            lifted.stdout.splitlines(),
++        )
++        self.assert_ok(quiet)
++        self.assertEqual("", quiet.stdout)
++
++    def test_drafting_before_the_hold_lands_asks_to_re_review_the_unchanged_head(self) -> None:
++        # Why fix-pr posts the hold before it drafts: a pass between the two
++        # steps would read an author who answered without pushing.
++        self.pull_request(1, head=SHA_A)
++        self.track("acme/app#1")
++        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
++
++        self.pull_request(1, head=SHA_A, draft=True)
++        drafted_first = self.run_watcher(PRS)
++
++        self.assert_ok(drafted_first)
++        self.assertEqual(
++            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
++             "re-review this head and sign off if clean"],
++            drafted_first.stdout.splitlines(),
++        )
++
++    def test_a_hold_seen_on_a_new_head_asks_for_it_again_once_lifted(self) -> None:
++        # The push that carries the changes can land a cycle before the hold
++        # is deleted, and that head's review then leaves it a draft.
++        hold = {"author": {"login": "operator"}, "body": "Held\n\n- Rename `x`\n\n<!-- projector-hold v=1 -->"}
++        self.pull_request(1, head=SHA_A, draft=True, comments=[hold])
++        self.track("acme/app#1")
++        self.state.write_text(f"acme/app 1 {SHA_B} feature -\n")
++
++        moved = self.run_watcher(PRS)
++        self.pull_request(1, head=SHA_A, draft=True)
++        lifted = self.run_watcher(PRS)
++
++        self.assert_ok(moved)
++        self.assertEqual(["NEW HEAD acme/app#1 (feature): bbbbbbb -> aaaaaaa — needs an exact-head review"],
++                         moved.stdout.splitlines())
++        self.assert_ok(lifted)
++        self.assertEqual(1, len(lifted.stdout.splitlines()), lifted.stdout)
++        self.assertIn("still a draft now that its hold is lifted", lifted.stdout)
++
++    def test_a_hold_marker_from_anyone_but_the_author_holds_nothing(self) -> None:
++        planted = {"author": {"login": "passerby"}, "body": "<!-- projector-hold v=1 -->"}
++        self.pull_request(1, head=SHA_A, draft=True, comments=[planted])
++        self.track("acme/app#1")
++        self.state.write_text(f"acme/app 1 {SHA_A} feature -\n")
++
++        result = self.run_watcher(PRS)
++
++        self.assert_ok(result)
++        self.assertEqual(
++            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
++             "re-review this head and sign off if clean"],
++            result.stdout.splitlines(),
++        )
++
+     def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
+         self.pull_request(1)
+         self.track("acme/app#1")

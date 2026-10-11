@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "name": "Fix loop draft hold",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 244,
+  "title": "Hold a pull request in draft while changes for it are built",
+  "head": "45ad7a882c2b48927bf63e7d386f8f7bcb1b9819",
+  "headRef": "fix-loop-hold-draft",
+  "base": "ae7250fa42efdb7b66e9363a66d42593070ca7ea",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector runs two loops over the operator's pull requests. The <b>review loop</b> reviews each head and, on a pull request the operator wrote, uses draft state as its verdict: a clean review marks the pull request ready, and a review with findings returns it to draft. The <b>fix loop</b> runs <code>fix-pr</code> to answer the review's findings.",
+   "A clean review can still list <b>Suggestions</b>, small improvements that never block. Before this change, <code>fix-pr</code> weighed them on a whim, and nothing kept the pull request from looking ready to merge while <code>fix-pr</code> or the owner built a change that no review had read.",
+   "<ol><li><b><code>fix-pr</code> decides every suggestion.</b> It implements one that is small and clearly right, and defers the rest with a one-line reason in its report.</li><li><b>It holds the pull request while it builds.</b> It posts a <b>hold comment</b>, then marks the pull request draft. The comment is a list of the changes coming, ending in the marker <code>&lt;!-- projector-hold v=1 --&gt;</code>. It deletes the comment once the push that carries them succeeds.</li><li><b>The review side respects the hold.</b> While the pull request's author has a hold open, <code>project review status</code> and <code>publish</code> report a new sign-off, <code>held</code>, and keep the pull request a draft. The review watcher <code>watch-prs.sh</code> stops asking for re-reviews until the hold is lifted.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Hold comment</b>: an issue comment by the pull request's author whose body carries <code>&lt;!-- projector-hold v=1 --&gt;</code>. A comment with the marker from anyone else holds nothing.</li><li><b>Sign-off</b>: the rule <code>publish</code> applies after each review to set draft state: <code>changes-requested</code>, <code>held</code>, <code>waiting</code>, <code>clean</code>, or <code>unreviewed</code>.</li><li><b><code>RESPONDED</code></b>: the review watcher's request to re-review an unchanged head because the author answered without pushing.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>394c15a</code>: changes requested.</b> One finding: <code>fix-pr</code> marked the pull request draft before it posted the hold, so a watcher pass between the two steps asked for a re-review of an unchanged head.</li><li><b><code>45ad7a8</code>: clean.</b> <code>fix-pr</code> now posts and reads back the hold before it drafts, and a test checks that order. The finding is resolved.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "signoff",
+   "title": "The sign-off reads the hold",
+   "kicker": "How publish and status learn about a hold, and what they do with it",
+   "intro": [
+    "The <b>sign-off</b> is the rule that decides a self-reviewed pull request's draft state after each review. It already had four outcomes. This group adds a fifth, <code>held</code>, which applies when no model requests changes and the pull request's author has a hold comment open.",
+    "<code>holds</code> lists those comments through the REST issue-comments API, reading every page and keeping only the author's. <code>signoff</code> ranks <code>held</code> below <code>changes-requested</code> and above <code>waiting</code>. <code>publish</code> keeps a held self-review a draft. On a cross-author review it posts a <code>COMMENT</code> rather than an <code>APPROVE</code>. <code>status</code> prints a line for each open hold, and its JSON gains a <code>holds</code> list."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>HOLD_MARKER</code>, <code>holds</code>, the <code>held</code> branch in <code>signoff</code>, and the author argument that <code>sign</code>, <code>status</code>, and <code>publish</code> pass through.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Only the pull request's author can hold it. The login comparison is case-insensitive here, while the watcher compares GitHub's canonical logins exactly.",
+       "line": 479
+      },
+      {
+       "kind": "verify",
+       "text": "A held head maps to draft on a self-review and skips the peer wait, because only a draft about to be marked ready waits for peers. <code>test_the_authors_hold_keeps_a_clean_head_a_draft_without_waiting_for_peers</code> covers both starting states, and the full suite passed (765 tests at <code>45ad7a8</code>).",
+       "line": 1512
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Tests for held sign-off, a stranger's hold, change requests outranking a hold, cross-author approval, and <code>status</code> output. One test checks that <code>fix-pr</code>, the code, and the watcher agree on the comment's first line and marker. Another test checks that <code>fix-pr</code> posts the hold before it drafts."
+    }
+   ]
+  },
+  {
+   "id": "watcher",
+   "title": "The review watcher waits out a hold",
+   "kicker": "watch-prs.sh stops asking for re-reviews while a hold is open",
+   "intro": [
+    "<code>watch-prs.sh</code> polls each tracked pull request and prints one line per event. <code>RESPONDED</code> asks for a re-review of an unchanged head, and it fires when a draft has every thread resolved. Before this change, drafting a signed-off pull request was enough to trigger it. The re-review then found the unchanged head clean and marked the pull request ready again.",
+    "The GraphQL query now also reads the author and the newest 100 comments, and the row gains a <code>held</code> field. While a hold is open, the watcher records <code>held</code> in its state and announces nothing. When the hold is lifted on a draft, it prints <code>RESPONDED … now that its hold is lifted</code> once, because a review of that head may have run while the hold kept it a draft."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "Adds the author, the comments, and the <code>held</code> field to the query, and the held branch ahead of the <code>RESPONDED</code> test.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With the row flag at <code>-</code>, as it is after a clean review marks the pull request ready, a draft without a hold comment prints <code>RESPONDED</code>, and the same draft with the author's hold prints nothing. I checked both by running the watcher through the test suite's fake <code>gh</code>.",
+       "line": 340
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Covers a hold posted before the draft, a hold seen together with a new head, a stranger's marker, and the <code>RESPONDED</code> that drafting before the hold would cause."
+    }
+   ]
+  },
+  {
+   "id": "fix-pr",
+   "title": "fix-pr decides suggestions and holds while it builds",
+   "kicker": "The fix side: what fix-pr implements, and how it posts and lifts the hold",
+   "intro": [
+    "<code>fix-pr</code> answers one pull request's review work. It now treats every suggestion in the newest Projector review of the head, by each model, as a decision to make. It implements a suggestion that is small and clearly right, and defers the rest. An instruction from the owner overrides that default either way.",
+    "Before <code>fix-pr</code> builds a suggestion it implements, or a change the owner asks for, it holds the pull request. It posts the hold comment with <code>gh api … -F body=@&lt;file&gt;</code>, reads it back to confirm the marker landed, and only then marks the pull request draft. That order matters: a draft with no hold on an unchanged head looks to the review watcher like an author who answered without pushing, and it would ask for a re-review. <code>fix-pr</code> edits the same comment as more changes come in, keeping the marker on every edit, and deletes it only once the push that carries every change succeeds. It never marks the pull request ready itself; the review of the pushed head does that."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "New sections <b>Decide each suggestion</b> and <b>Hold the pull request while changes are built</b>, plus the hold in the outstanding-work list, the clean conditions, and the report.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The hold lands before the draft. Step 1 posts and reads back the comment, and step 2 runs <code>gh pr ready --undo</code>. <code>test_fix_pr_posts_the_hold_before_it_drafts_the_pull_request</code> checks the order in this file, and the watcher test that posts the hold on a ready pull request and then drafts it stays silent on both passes. The full suite passed (765 tests).",
+       "line": 200
+      }
+     ]
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "Treats a review with Suggestions as work, routes an owner's change to the pull request's subagent, and reports a held pull request or stack layer as not ready."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Requires a skill to cite the new hold section, so the citation checker covers it."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Review skills and docs describe the hold",
+   "kicker": "The written rules other readers follow",
+   "intro": [
+    "<code>review-pr</code> and <code>start-review-loop</code> describe the <code>held</code> sign-off and how the watcher treats a hold. <code>docs/cli.md</code> adds <code>held</code> to the sign-off rule and the <code>holds</code> field to <code>status --json</code>. <code>docs/plugins.md</code> explains the hold in one paragraph."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds <code>held</code> to the sign-off list and makes the hold the one exception to draft state following the verdict."
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Says a hold silences <code>RESPONDED</code>, and that lifting one asks for a re-review."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the <code>held</code> sign-off, the <code>status</code> hold line, and the <code>holds</code> JSON field."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "One paragraph on suggestions and the hold."
+    }
+   ]
+  }
+ ],
+ "project": ""
+}
