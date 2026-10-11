@@ -306,20 +306,17 @@ page, and `frame` stops the watch before it draws any view.
 - **The rule.** The section in view is the last one whose top has scrolled
   above a line 30% of the way down the window. Above the first section, as
   in a plan's opening paragraphs, no section is marked.
-- **The end of the page.** A short last section never reaches the line,
-  because the page stops scrolling first. A zero-height marker that the
-  watch puts after the sections' container says when the end of the
-  content is in view. Then, on a page scrolled from its top, the line drops
-  to the window's bottom, and the last section whose top shows is marked.
-- **The observers.** One `IntersectionObserver` watches the targets with a
+- **The end of the page.** A page's last section is tall enough to scroll
+  its top level with the sidebar, as § 7 describes, so even a short last
+  section reaches the line as you scroll.
+- **The observer.** One `IntersectionObserver` watches the targets with a
   root margin of `10000000px 0px -70% 0px`: a band from far above any page
   down to the line. A target is in the band exactly while its top is above
   the line, so the observer reports every target whose top crosses the
   line. That holds for a jump as well, such as a link to a `###` heading,
   the Home key, or a dragged scrollbar, which can carry a heading from below
-  the line to above the window in one frame. A second observer watches the
-  end marker against the whole window. Each report reads the targets'
-  positions again and moves the mark. No scroll listener runs.
+  the line to above the window in one frame. Each report reads the
+  targets' positions again and moves the mark. No scroll listener runs.
 - **The mark.** The marked link carries `aria-current="location"`, and
   `summary.css` draws it as a row's hover band with an accent bar at its
   start. A browser without `IntersectionObserver` marks nothing.
@@ -329,9 +326,9 @@ page, and `frame` stops the watch before it draws any view.
 | File | Change |
 | --- | --- |
 | `site/src/summary.ts` | `sectionListHtml` and `watchSections` join the shared helpers. `renderPage` draws its list with `sectionListHtml`, and `wireSummary` calls `watchSections`. |
-| `site/src/site.ts` | `sectionsOf` reads a rendered page's sections. `showPage` and `showDocument` take the sidebar as a function of the page's sections. `showDocument` calls it with the rendered page's sections and starts `watchSections`, and `frame` stops it. `projectNav` takes the sections and draws the readme's block, a supplemental page's sections through `tree`, and the neighbors through `parentOf`. `tree` takes markup to put under the current entry. The click handler flips the **Sections** toggle. |
+| `site/src/site.ts` | `sectionHeadings` and `sectionOf` read a rendered page's sections, and `holdLastSection` wraps its last one. `showPage` and `showDocument` take the sidebar as a function of the page's sections. `showDocument` calls it with the rendered page's sections and starts `watchSections`, and `frame` stops it. `projectNav` takes the sections and draws the readme's block, a supplemental page's sections through `tree`, and the neighbors through `parentOf`. `tree` takes markup to put under the current entry. The click handler flips the **Sections** toggle. |
 | `site/src/globals.d.ts` | `PageSection` |
-| `site/assets/summary.css` | The mark on the section in view |
+| `site/assets/summary.css` | The mark on the section in view. The rule that lands a summary's line counts level with the sidebar also lands its sections and a plan's targets, and the rule that gives its last section room also covers a plan's `lastsection`. |
 | `site/assets/site.css` | The sections and neighbors blocks, the two columns of a plan's rows, and the toggle that folds the list at 980 pixels and narrower |
 | `site/assets/summary.js`, `site/assets/site.js` | Rebuilt with `npm run build` in `site/` |
 | `docs/cli.md` | The project page paragraph, and the sentence on a summary's sidebar |
@@ -387,6 +384,8 @@ watch marks a location.
 | Draw alpha's readme with stacks, sections, and pages | The `.prblock`, the sections, the pages, and the footer row, in that order |
 | Draw any page with sections | The toggle reads `aria-expanded="false"` and names the list in `aria-controls`, and the list follows it |
 | Draw a summary page with two groups | Its list is `sectionListHtml`'s with check dots: the markup it drew before, with `class="sections"` on the `<ol>` |
+| Draw alpha's readme and `alpha/notes` with two `##` sections and a `###` | The last `##` heading and everything after it sit, in order, in a `lastsection` that ends the body |
+| Draw a page with no `##` heading | No `lastsection` |
 
 Watch tests run `watchSections` under node with a stub
 `IntersectionObserver` and a window 1,000 pixels tall:
@@ -395,11 +394,9 @@ Watch tests run `watchSections` under node with a stub
 | --- | --- |
 | Report targets at -500, 200, and 600 pixels | The second link alone carries `aria-current="location"` |
 | Report targets at 400 and 900 pixels | No link carries it |
-| Report the end marker in view on a page scrolled from its top | The last section whose top shows is marked |
-| Report the end marker in view on a page at its top | The 30% line still decides |
-| Watch a list, then another, then `null` | Each new watch disconnects the earlier observers and removes their end marker |
-| Jump from the top, where no heading has reached the line, into the middle of the third section, back into the second, to the end, and to the top | The marks read none, the third, the second, the third, and none |
-| Read the observers' options | The targets' root margin is `10000000px 0px -70% 0px` |
+| Watch a list, then another, then `null` | Each new watch disconnects the earlier observer |
+| Jump from the top, where no heading has reached the line, into the middle of the third section, back into the second, to where a jump lands the third, and to the top | The marks read none, the third, the second, the third, and none |
+| Read the observer's options | One observer, whose root margin is `10000000px 0px -70% 0px` |
 
 Style tests read the stylesheets:
 
@@ -408,6 +405,8 @@ Style tests read the stylesheets:
 | Read `site.css` outside its media queries | `.nav .navfold` is hidden |
 | Read its `max-width: 980px` query | It shows `.nav .navfold` and hides the list that follows a toggle whose `aria-expanded` is `false` |
 | Read `summary.css` | `.nav ol a[aria-current="location"]` draws the mark |
+| Read `summary.css` for where a jump lands | One rule lands a summary's line counts and sections and every target in a plan at `calc(var(--stick-top) + 16px)`, the sidebar's sticky offset |
+| Read `summary.css` for the room after the last section | One rule makes a summary's last section and a plan's `lastsection` `calc(100vh - var(--stick-top) - 16px)` tall at least |
 | Read the sidebar's scoping rules | `project-page-nav`'s scoping tests pass unchanged |
 
 Every new test fails before the change.
@@ -433,12 +432,11 @@ The pull request's Testing section records these steps.
 ## 6. Cost
 
 The page reads the rendered body's top-level elements once each time it
-draws a page, tens of elements on a long plan. The watch adds two
-observers and no scroll listener. Each report reads the position of every
-target, 4 to 14 on a plan and one per group on a summary, only when a
-target's top crosses the line, or when the end of the content comes into
-view or leaves it. The build does not change, and `site.json`
-does not grow.
+draws a page, tens of elements on a long plan, and moves the last section's
+into one element. The watch adds one observer and no scroll listener. Each
+report reads the position of every target, 4 to 14 on a plan and one per
+group on a summary, only when a target's top crosses the line. The build
+does not change, and `site.json` does not grow.
 
 ## 7. Outcome
 
@@ -455,9 +453,10 @@ summaries, and on a scratch checkout that holds `alpha`, `alpha/beta`,
 `alpha/beta/zeta`, and `alpha/gamma`, in a window 1,200 by 857 pixels:
 
 - **Scrolling a plan.** On `incremental-review`'s page, the mark sits on
-  **1 Problem** at the top and moves on as each heading passes the line. At
-  the page's end it reaches **8 Implementation status**, whose heading sits
-  65% of the way down the window, and a click on that row marks it too.
+  **1 Problem** at the top and moves on as each heading passes the line. A
+  load with `#8-implementation-status` lands the last heading 16 pixels
+  down, level with the sidebar, and marks it. Scrolled to the page's end,
+  that heading sits above the window's top.
 - **Jumping.** A `scrollTo` from the top to 1,500 pixels below
   **2 Solution**'s heading, with no heading in the window, marks
   **2 Solution**, and a `scrollTo` back to the top marks **1 Problem**.
@@ -477,7 +476,7 @@ The implementation settles three details the design left open:
 
 - **The toggle lines up with the rows.** Its chevron sits in the numbers'
   column, and its label in the titles' column.
-- **A title drops its links in a copy of the heading.** `sectionsOf`
+- **A title drops its links in a copy of the heading.** `sectionOf`
   replaces each `<a>` in a clone of the heading with the link's contents,
   so the title does not depend on how a browser writes a link's attributes
   out as markup.
@@ -493,3 +492,23 @@ summary page's menu and the code that makes it work, join the shared
 helpers, and both pages call them. The menu holds **View file on GitHub**
 and **View history on GitHub**. An HTML page's breadcrumbs end in the same
 menu.
+
+The owner also asked that a jump to a section land its heading level with
+the top of the sticky sidebar, not at the window's edge. A summary page
+already landed its line counts there, 16 pixels below its sticky offset,
+with `scroll-margin-top`. That one rule now covers a summary's sections and
+every target in a project page's plan as well, so a sidebar link, a `#`
+anchor, and a reload with a hash all land a heading 16 pixels down, where
+the 30% line marks it. A project page has no compact bar at 980 pixels and
+narrower, so there its sticky offset is 0.
+
+Last, the owner asked for room at the bottom of a project page, so any
+section can scroll to the very top, as on a summary page. A summary's last
+section has a minimum height that leaves that room. A plan's sections are
+not elements of their own, so on a page with a title row `showDocument`
+moves the last `##` heading and everything after it into one
+`lastsection`, and the summary's rule covers it too. That rule now sizes
+both to `calc(100vh - var(--stick-top) - 16px)`, so the last heading can
+scroll level with the sidebar, where a jump lands it. The room lets every
+section reach the 30% line by scrolling, so the watch needs no rule of its
+own for the end of the page.

@@ -106,35 +106,25 @@ function sectionListHtml(sections: PageSection[], checks: boolean, id = ''): str
   }).join('') + '</ol>';
 }
 
-// The watch on a page's list of sections: its observers, and the marker it
-// put after the sections. A page watches one list at a time.
-let sectionWatch: { observers: IntersectionObserver[]; end: Element } | null = null;
+// The observer that marks the section in view. A page watches one list of
+// sections at a time.
+let sectionWatch: IntersectionObserver | null = null;
 
 // Marks the link in `list` to the section in view, and keeps the mark current
 // as the page scrolls. The section in view is the last one whose top has
-// passed a line 30% of the way down the window. A short last section never
-// reaches that line, because the page stops scrolling first, so once the
-// marker after the sections is in view on a scrolled page, the line drops to
-// the window's bottom. A list of null stops the watch.
+// passed a line 30% of the way down the window. The room after a page's last
+// section, which summary.css gives it, lets the reader scroll that section to
+// the line too. A list of null stops the watch.
 function watchSections(list: Element | null): void {
-  if (sectionWatch !== null) {
-    sectionWatch.observers.forEach(function (o) { o.disconnect(); });
-    sectionWatch.end.remove();
-    sectionWatch = null;
-  }
+  sectionWatch?.disconnect();
+  sectionWatch = null;
   if (list === null || !('IntersectionObserver' in window)) return;
   const sections = Array.from(list.querySelectorAll('a[href^="#"]')).flatMap(function (link) {
     const target = document.getElementById(decodeURIComponent((link.getAttribute('href') ?? '').slice(1)));
     return target !== null ? [{ link: link, target: target }] : [];
   });
-  const container = sections[sections.length - 1]?.target.parentElement;
-  if (container == null) return;
-  const end = document.createElement('div');
-  end.setAttribute('aria-hidden', 'true');
-  container.after(end);
-  let atEnd = false;
   function mark(): void {
-    const line = atEnd && window.scrollY > 0 ? window.innerHeight : window.innerHeight * 0.3;
+    const line = window.innerHeight * 0.3;
     const passed = sections.filter(function (s) { return s.target.getBoundingClientRect().top <= line; });
     const current = passed[passed.length - 1];
     sections.forEach(function (s) {
@@ -147,12 +137,7 @@ function watchSections(list: Element | null): void {
   // across the line reports it, however far past the window the jump goes.
   const passing = new IntersectionObserver(mark, { rootMargin: '10000000px 0px -70% 0px' });
   sections.forEach(function (s) { passing.observe(s.target); });
-  const ending = new IntersectionObserver(function (entries) {
-    atEnd = entries[entries.length - 1]?.isIntersecting ?? atEnd;
-    mark();
-  });
-  ending.observe(end);
-  sectionWatch = { observers: [passing, ending], end: end };
+  sectionWatch = passing;
 }
 
 // A "…" button and the menu of links it opens, which wireMenus makes work. A

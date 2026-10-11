@@ -52,6 +52,9 @@ body.barhidden .barshow { display: inline-flex; }
    sidebar. */
 .sitemain.withnav { max-width: none; padding: 0; }
 .sitemain.withnav .sidebody { max-width: 880px; }
+/* No compact bar sticks to the top of a project's page at 980px and narrower,
+   as a summary's does, so a jump there lands 16px down, as on a wide screen. */
+@media (max-width: 980px) { .sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); } }
 /* The badges fit the eyebrow's line, so the title row is as tall as a summary's,
    and sit as far from the separators beside them as the eyebrow's words do. */
 .top .eyebrow .badge { line-height: 1; margin-right: 0; }

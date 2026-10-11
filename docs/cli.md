@@ -758,7 +758,8 @@ under its segments' headers, one row each with its title, and highlights the
 current one. A pull request with no summary on the site links to GitHub, and
 a pull request with no stack is a stack of one, with its own row highlighted. Its older
 versions follow the sections, and as you scroll, the list of sections marks
-the one in view. A summary's header shows the same status as its
+the one in view. A jump to a section or to the files pane lands it level
+with the top of the sidebar. A summary's header shows the same status as its
 row on Reviews: **Merged** or **Closed** once the pull request is, and until
 then the verdict of the newest Projector review of its head, **Clean** or
 **Changes requested**, linked to that review on GitHub, or **Unreviewed** when
@@ -829,9 +830,12 @@ supplemental Markdown page lists its own sections under its entry. A nested
 project's sidebar then names its parent project above the parent's other
 nested projects, each a link. The sidebar's last row holds the credit and an
 icon that opens the page's history on GitHub. As you scroll, the list of
-sections marks the one in view. An HTML page in a project keeps its frame,
-with the sidebar in the column the menu button shows, and lists no sections.
-Its breadcrumbs above the frame end in the same **…** menu.
+sections marks the one in view. A jump to a heading, from the list or from
+a link with its `#` anchor, lands it level with the top of the sidebar, and
+the page leaves room after its last section so that one can scroll there
+too. An HTML page in a project keeps its frame, with the sidebar in the
+column the menu button shows, and lists no sections. Its breadcrumbs above
+the frame end in the same **…** menu.
 At 980 pixels and narrower, the sidebar sits between the title row and the
 plan, and its sections start folded behind a **Sections** toggle.
 A review page's header has a **…** menu with

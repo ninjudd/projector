@@ -306,15 +306,19 @@
   }
 
   // Under a title row, which shows the page's title, the body leaves out its
-  // own when that is its first element. The sidebar lists the sections of the
-  // page as it renders, and marks the one in view.
+  // own when that is its first element, and its last section gets the room
+  // after it that a summary's last section has. The sidebar lists the
+  // sections of the page as it renders, and marks the one in view.
   function showDocument(active: Section, path: string, title: string, before: Node | null, side: string | null,
     ref: string, top?: string, nav?: SideNavOf): void {
     frame(active, title, '<p class="note">Loading…</p>', side, false, top, nav?.([]));
     loadMarkdown(path).then(function (text) {
       const box = renderMarkdown(text, path, ref);
       if (top !== undefined && box.firstElementChild?.tagName === 'H1') box.firstElementChild.remove();
-      const main = frame(active, title, box, side, false, top, nav?.(sectionsOf(box)));
+      const headings = sectionHeadings(box);
+      const last = headings[headings.length - 1];
+      if (top !== undefined && last !== undefined) holdLastSection(box, last);
+      const main = frame(active, title, box, side, false, top, nav?.(headings.map(sectionOf)));
       if (before !== null) main.insertBefore(before, main.firstChild);
       const target = location.hash !== '' ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
       if (target !== null) target.scrollIntoView();
@@ -325,22 +329,34 @@
     });
   }
 
-  // A rendered page's sections: its `##` headings at the top level of the
-  // page. A heading that opens with its number, as `2. Solution` and
-  // `2.1 Detail` do, gives the number a column of its own, without its last
-  // dot. The title keeps its inline markup but not its links, because the
-  // sidebar's row is itself a link.
-  function sectionsOf(box: HTMLElement): PageSection[] {
-    return Array.from(box.children).flatMap(function (h): PageSection[] {
-      if (h.tagName !== 'H2' || h.id === '') return [];
-      const unlinked = h.cloneNode(true) as Element;
-      unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
-      const title = unlinked.innerHTML;
-      const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(h.textContent);
-      return number !== null && title.startsWith(number[0])
-        ? [{ id: h.id, num: number[1] ?? '', title: title.slice(number[0].length) }]
-        : [{ id: h.id, num: '', title: title }];
-    });
+  // A rendered page's sections: its `##` headings at the top level of the page.
+  function sectionHeadings(box: HTMLElement): Element[] {
+    return Array.from(box.children).filter(function (h) { return h.tagName === 'H2' && h.id !== ''; });
+  }
+
+  // A section as the sidebar lists it. A heading that opens with its number,
+  // as `2. Solution` and `2.1 Detail` do, gives the number a column of its
+  // own, without its last dot. The title keeps its inline markup but not its
+  // links, because the sidebar's row is itself a link.
+  function sectionOf(heading: Element): PageSection {
+    const unlinked = heading.cloneNode(true) as Element;
+    unlinked.querySelectorAll('a').forEach(function (a) { a.replaceWith(...Array.from(a.childNodes)); });
+    const title = unlinked.innerHTML;
+    const number = /^(?=\d+\.)(\d+(?:\.\d+)*)\.?\s+/.exec(heading.textContent);
+    return number !== null && title.startsWith(number[0])
+      ? { id: heading.id, num: number[1] ?? '', title: title.slice(number[0].length) }
+      : { id: heading.id, num: '', title: title };
+  }
+
+  // Moves the page's last section, from its heading to the page's end, into a
+  // `lastsection`, which summary.css makes tall enough that the section's
+  // heading scrolls level with the sidebar, as a summary's last section does.
+  function holdLastSection(box: HTMLElement, heading: Element): void {
+    const section = document.createElement('div');
+    section.className = 'lastsection';
+    const nodes = Array.from(box.childNodes);
+    nodes.slice(nodes.indexOf(heading)).forEach(function (node) { section.appendChild(node); });
+    box.appendChild(section);
   }
 
   // The README, or any document under docs/, beside the docs tree when there is

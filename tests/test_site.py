@@ -1577,7 +1577,7 @@ class ProjectsViewTests(unittest.TestCase):
 
 PROJECT_PAGE_FUNCTIONS = ("errorMessage", "repoUrl", "contentUrl", "routeFor", "folderOf", "ownerOf", "slug", "badge",
                           "proposedBadge", "nav", "header", "isHtml", "frame", "tree", "showHtml", "showPage",
-                          "showDocument", "sectionsOf", "showProjectFile", "projectNav", "itemOf", "foldedSections",
+                          "showDocument", "sectionHeadings", "sectionOf", "holdLastSection", "showProjectFile", "projectNav", "itemOf", "foldedSections",
                           "parentOf", "neighborsHtml", "proposalBanner", "reviewFor")
 
 
@@ -1605,9 +1605,12 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None, pop
     compiled `slug` gives its text, as renderMarkdown gives it. `page` is the
     markup `frame` draws, with the body's place empty, and `body` what went
     into that place: the rendered elements, after any element showProjectFile
-    puts before them, each as [tag, markup]. `ref` is the ref the Markdown
-    rendered its links at, `title` the document's title, and `wired` whether
-    the last drawing of the page looked for menus to make work.
+    puts before them, each as [tag, markup], with the elements of a
+    `lastsection` in their places. `held` lists each `lastsection`: where it
+    sits in the body, whether it ends the body, and its elements' markup.
+    `ref` is the ref the Markdown rendered its links at, `title` the
+    document's title, and `wired` whether the last drawing of the page looked
+    for menus to make work.
     """
     rendered = [["H1", "Build alpha"], ["P", "Text."]] if body is None else body
     stub = (
@@ -1625,8 +1628,9 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None, pop
         "function element(tag, html) { return {tagName: tag, innerHTML: html, id: '', className: '', children: [],"
         " parent: null, style: {}, get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },"
         " get firstElementChild() { return this.children[0] ?? null; },"
-        " get firstChild() { return this.children[0] ?? null; },"
-        " appendChild: function (child) { child.parent = this; this.children.push(child); return child; },"
+        " get firstChild() { return this.children[0] ?? null; }, get childNodes() { return this.children.slice(); },"
+        " appendChild: function (child) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1);"
+        " child.parent = this; this.children.push(child); return child; },"
         " insertBefore: function (child, next) { child.parent = this;"
         " this.children.splice(next === null ? this.children.length : this.children.indexOf(next), 0, child); return child; },"
         " remove: function () { this.parent.children.splice(this.parent.children.indexOf(this), 1); },"
@@ -1647,11 +1651,16 @@ def project_page(site: dict, path: str, body: list[list[str]] | None = None, pop
     program = stub + shared_js() + "\n" + page_constants() + "\n" + \
         "\n".join(js_function(n) for n in PROJECT_PAGE_FUNCTIONS) + (
             f"\nshowProjectFile({json.dumps(path)});"
-            "\nconst drawn = main.children.flatMap(function (c) { return c.className === 'markdown'"
-            " ? c.children.map(function (e) { return [e.tagName, e.innerHTML]; }) : [[c.tagName, c.innerHTML]]; });"
-            "\nconst last = root.queried[root.queried.length - 1];"
+            "\nfunction flat(c) { return c.className === 'markdown' || c.className === 'lastsection'"
+            " ? c.children.flatMap(flat) : [[c.tagName, c.innerHTML]]; }"
+            "\nconst drawn = main.children.flatMap(flat);"
+            "\nconst held = main.children.filter(function (c) { return c.className === 'markdown'; })"
+            ".flatMap(function (box) { return box.children.map(function (c, i) { return c.className === 'lastsection'"
+            " ? {at: i, last: i === box.children.length - 1, held: c.children.map(function (e) { return e.innerHTML; })}"
+            " : null; }).filter(function (c) { return c !== null; }); });"
+            "\nconst query = root.queried[root.queried.length - 1];"
             "\nprocess.stdout.write(JSON.stringify({page: root.innerHTML, body: drawn, ref: ref, title: document.title,"
-            " wired: last !== undefined && last[0] === '.moremenu' && last[1] === root.innerHTML}));")
+            " held: held, wired: query !== undefined && query[0] === '.moremenu' && query[1] === root.innerHTML}));")
     return json.loads(node(program))
 
 
@@ -2149,6 +2158,22 @@ class ProjectPageTests(unittest.TestCase):
                   '<div class="navfoot">')
         self.assertEqual(sorted(side.index(b) for b in blocks), [side.index(b) for b in blocks])
 
+    def test_a_pages_last_section_is_held_to_the_end_of_the_page_so_it_can_scroll_level_with_the_sidebar(self) -> None:
+        body = [["H1", "Build alpha"], ["P", "Intro."], ["H2", "1. Problem"], ["P", "A."], ["H2", "2. Solution"],
+                ["P", "B."], ["H3", "2.1 Detail"], ["P", "C."]]
+        for path in (self.README, "docs/projects/alpha/notes.md"):
+            with self.subTest(path):
+                shown, _ = self.drawn(self.site(), path, body)
+
+                self.assertEqual([{"at": 3, "last": True, "held": ["2. Solution", "B.", "2.1 Detail", "C."]}],
+                                 shown["held"], "from the last ## heading to the end of the page")
+                self.assertEqual([tag for tag, _ in body[1:]], [tag for tag, _ in shown["body"]], "in the same order")
+
+    def test_a_page_without_a_section_holds_nothing(self) -> None:
+        shown, _ = self.drawn(self.site(), body=[["P", "Intro."], ["H3", "1.1 Detail"], ["P", "Text."]])
+
+        self.assertEqual([], shown["held"])
+
 
 @unittest.skipUnless(shutil.which("node"), "the section watch tests need node")
 class SectionWatchTests(unittest.TestCase):
@@ -2157,10 +2182,9 @@ class SectionWatchTests(unittest.TestCase):
 
     # The stub observer reports as a browser's does: once with every target when it starts, and then with each
     # target whose intersection with its band changed, edges included, when `settle` runs after a scroll. Its band
-    # is the window grown or shrunk by its root margin. Each heading is 40 pixels tall, at a place on the page, and
-    # the end marker is a line at `container.endTop`.
+    # is the window grown or shrunk by its root margin. Each heading is 40 pixels tall, at a place on the page.
     STUB = (
-        "const observers = [], ends = [], targets = {};\n"
+        "const observers = [], targets = {};\n"
         "function viewTop(element) { return element.pageTop - window.scrollY; }\n"
         "class IntersectionObserver { constructor(callback, options) { this.callback = callback; this.options = options ?? {};"
         " this.targets = []; this.disconnected = false; this.seen = new Map(); observers.push(this); }"
@@ -2175,13 +2199,8 @@ class SectionWatchTests(unittest.TestCase):
         "function settle() { observers.forEach(function (o) { o.report(); }); }\n"
         "function scrollTo(y) { window.scrollY = y; settle(); }\n"
         "const window = {innerHeight: 1000, scrollY: 0, IntersectionObserver: IntersectionObserver};\n"
-        "const container = {endTop: 100000, after: function (element) { element.after = this; element.pageTop = this.endTop;"
-        " ends.push(element); }};\n"
-        "const document = {getElementById: function (id) { return targets[id] ?? null; },"
-        " createElement: function () { return {attrs: {}, removed: false, pageTop: 0, height: 0,"
-        " setAttribute: function (n, v) { this.attrs[n] = v; }, remove: function () { this.removed = true; },"
-        " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }};\n"
-        "function heading(id, top) { targets[id] = {id: id, pageTop: top + window.scrollY, height: 40, parentElement: container,"
+        "const document = {getElementById: function (id) { return targets[id] ?? null; }};\n"
+        "function heading(id, top) { targets[id] = {id: id, pageTop: top + window.scrollY, height: 40,"
         " getBoundingClientRect: function () { return {top: viewTop(this)}; }}; }\n"
         "function list(ids) { const links = ids.map(function (id) { return {attrs: {href: '#' + id},"
         " getAttribute: function (n) { return this.attrs[n] ?? null; }, setAttribute: function (n, v) { this.attrs[n] = v; },"
@@ -2193,16 +2212,12 @@ class SectionWatchTests(unittest.TestCase):
     def run_watch(self, program: str) -> object:
         return json.loads(node(self.STUB + shared_js() + "\n" + program))
 
-    def marks(self, tops: list[int], end: bool | None = None, scrolled: int = 0) -> list[str | None]:
-        """The marks after the watch on sections whose tops are `tops` in the window hears from its targets, and then,
-        when `end` is given, hears whether the marker after the sections is in view, on a page scrolled by `scrolled`."""
+    def marks(self, tops: list[int]) -> list[str | None]:
+        """The marks once the watch on sections whose tops are `tops` in the window hears from its targets."""
         ids = [f"s{i}" for i in range(len(tops))]
         return self.run_watch(
-            f"window.scrollY = {scrolled};\n" +
             "".join(f"heading({json.dumps(i)}, {top});\n" for i, top in zip(ids, tops)) +
-            f"const l = list({json.dumps(ids)});\nwatchSections(l);\n"
-            "observers[0].callback([]);\n" +
-            (f"observers[1].callback([{{isIntersecting: {json.dumps(end)}}}]);\n" if end is not None else "") +
+            f"const l = list({json.dumps(ids)});\nwatchSections(l);\nsettle();\n"
             "process.stdout.write(JSON.stringify(marks(l)));")
 
     def test_the_last_section_above_the_line_30_percent_down_the_window_is_marked(self) -> None:
@@ -2212,50 +2227,41 @@ class SectionWatchTests(unittest.TestCase):
     def test_no_section_is_marked_above_the_first(self) -> None:
         self.assertEqual([None, None], self.marks([400, 900]))
 
-    def test_at_the_end_of_a_scrolled_page_the_last_section_in_view_is_marked(self) -> None:
-        self.assertEqual([None, None, "location", None], self.marks([-500, 200, 600, 1200], end=True, scrolled=100))
-
-    def test_the_line_stays_where_it_is_at_the_end_of_a_page_at_its_top_or_away_from_the_end(self) -> None:
-        self.assertEqual([None, "location", None], self.marks([-500, 200, 600], end=True, scrolled=0))
-        self.assertEqual([None, "location", None], self.marks([-500, 200, 600], end=False, scrolled=100))
-
     def test_a_jump_that_carries_a_heading_past_the_line_and_out_of_the_window_moves_the_mark(self) -> None:
         # As a link to a ### heading, the Home key, or a dragged scrollbar
         # does: from the top, where no heading has reached the line, into the
-        # middle of the third section, then to the end, then back to the top.
+        # middle of the third section, back into the second, to where a jump
+        # lands the last section, 16 pixels down, and back to the top.
         seen = self.run_watch(
-            "container.endTop = 9500;\nheading('a', 400); heading('b', 3400); heading('c', 6400);\n"
+            "heading('a', 400); heading('b', 3400); heading('c', 6400);\n"
             "const l = list(['a', 'b', 'c']);\nwatchSections(l);\nsettle();\nconst seen = [marks(l)];\n"
             "scrollTo(7400); seen.push(marks(l));\nscrollTo(4000); seen.push(marks(l));\n"
-            "scrollTo(8600); seen.push(marks(l));\nscrollTo(0); seen.push(marks(l));\n"
+            "scrollTo(6384); seen.push(marks(l));\nscrollTo(0); seen.push(marks(l));\n"
             "process.stdout.write(JSON.stringify(seen));")
 
         self.assertEqual([[None, None, None], [None, None, "location"], [None, "location", None],
                           [None, None, "location"], [None, None, None]], seen)
 
-    def test_the_watch_reports_targets_crossing_the_line_and_the_end_marker_against_the_window(self) -> None:
+    def test_the_watch_reports_targets_whose_tops_cross_the_line(self) -> None:
         seen = self.run_watch(
             "heading('a', 0); heading('b', 0);\nconst l = list(['a', 'missing', 'b']);\nwatchSections(l);\n"
             "process.stdout.write(JSON.stringify({options: observers.map(function (o) { return o.options; }),"
-            " targets: observers.map(function (o) { return o.targets.map(function (t) { return t.id ?? t.attrs; }); }),"
-            " after: ends[0].after === container}));")
+            " targets: observers.map(function (o) { return o.targets.map(function (t) { return t.id; }); })}));")
 
-        self.assertEqual([{"rootMargin": "10000000px 0px -70% 0px"}, {}], seen["options"],
-                         "the targets' band runs from far above the page down to the line")
-        self.assertEqual([["a", "b"], [{"aria-hidden": "true"}]], seen["targets"], "a link to no section is left out")
-        self.assertTrue(seen["after"], "the end marker follows the sections' container")
+        self.assertEqual([{"rootMargin": "10000000px 0px -70% 0px"}], seen["options"],
+                         "one observer, whose band runs from far above the page down to the line")
+        self.assertEqual([["a", "b"]], seen["targets"], "a link to no section is left out")
 
-    def test_a_new_watch_or_none_stops_the_one_before_and_removes_its_end_marker(self) -> None:
+    def test_a_new_watch_or_none_stops_the_one_before(self) -> None:
         seen = self.run_watch(
             "heading('a', 0);\nwatchSections(list(['a']));\nwatchSections(list(['a']));\n"
-            "const second = [ends[0].removed, observers.map(function (o) { return o.disconnected; })];\n"
-            "watchSections(null);\n"
-            "process.stdout.write(JSON.stringify({second: second, none: [ends[1].removed,"
-            " observers.map(function (o) { return o.disconnected; })], count: observers.length}));")
+            "const second = observers.map(function (o) { return o.disconnected; });\nwatchSections(null);\n"
+            "process.stdout.write(JSON.stringify({second: second, none: observers.map(function (o) { return o.disconnected; }),"
+            " count: observers.length}));")
 
-        self.assertEqual([True, [True, True, False, False]], seen["second"])
-        self.assertEqual([True, [True, True, True, True]], seen["none"])
-        self.assertEqual(4, seen["count"], "watching nothing makes no observer")
+        self.assertEqual([True, False], seen["second"])
+        self.assertEqual([True, True], seen["none"])
+        self.assertEqual(2, seen["count"], "watching nothing makes no observer")
 
     def test_a_summary_lists_its_sections_with_the_shared_list_and_its_check_dots(self) -> None:
         data = dict(MINIMAL_SUMMARY, groups=[{"id": "g-one", "title": "First <code>x</code>", "files": []},
@@ -2299,6 +2305,29 @@ class SectionStyleTests(unittest.TestCase):
         narrow = queries["(max-width: 980px)"]
         self.assertRegex(narrow, r"\.nav \.navfold \{\s*display: grid;")
         self.assertIn('.nav .navfold[aria-expanded="false"] + ol { display: none; }', narrow)
+
+    def test_a_jump_lands_every_target_level_with_the_sticky_sidebar(self) -> None:
+        outside, _ = self.blocks("summary.css")
+
+        self.assertRegex(outside, r"(^|\n)\.layout > \.side \{[^}]*top: calc\(env\(safe-area-inset-top, 0px\) \+ 16px\);",
+                         "the sidebar sticks 16px down")
+        margins = re.findall(r"(?:^|\n)([^{}\n]+)\{([^}]*scroll-margin-top[^}]*)\}", outside)
+        shared = [selectors for selectors, body in margins if "calc(var(--stick-top) + 16px)" in body]
+        self.assertEqual([[".stats", ".group", ".sitemain.withnav .sidebody [id]"]],
+                         [[s.strip() for s in selectors.split(",")] for selectors in shared],
+                         "a summary's line counts and sections and a plan's targets share one landing rule")
+        self.assertEqual([], [selectors for selectors, _ in margins if re.search(r"\.(group|stats)\b", selectors)
+                              and selectors not in shared], "no other rule moves where they land")
+        _, queries = self.blocks("site.css")
+        self.assertIn(".sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); }", queries["(max-width: 980px)"],
+                      "a project page has no compact bar to land below on a narrow screen")
+
+    def test_a_pages_last_section_is_tall_enough_to_scroll_level_with_the_sidebar(self) -> None:
+        outside, _ = self.blocks("summary.css")
+
+        self.assertIn(".group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }",
+                      outside, "a summary's last section and a plan's share one rule, sized to where a jump lands them")
+        self.assertEqual(1, len(re.findall(r"min-height: calc\(100vh", outside)))
 
     def test_the_section_in_view_is_marked_in_every_list_of_sections(self) -> None:
         outside, _ = self.blocks("summary.css")
