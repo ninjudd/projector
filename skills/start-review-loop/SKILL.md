@@ -139,10 +139,11 @@ reads the new head against that history instead of rediscovering it.
   that arrives mid-review is the moved-head case that skill's start-comment
   rule covers.
 - The subagent reports each published review back: the SHA, the verdict, the
-  sign-off, the review id, how many threads it opened, and for an
-  incremental review the head of the full review it builds on; `publish` has
-  already added the id to the loop's record. A question for the user comes
-  back to the main loop to ask.
+  review id, how many threads it opened, for an incremental review the head
+  of the full review it builds on, and a newer verdict by another model that
+  set the draft state when `publish` names one; `publish` has already added
+  the id to the loop's record. A question for the user comes back to the main
+  loop to ask.
 - Each subagent summarizes every pull request it reviews, as `review-pr`
   describes, another author's included. The loop never pauses or holds
   summaries on its own judgment. The one off switch is `review.summarize =
