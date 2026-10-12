@@ -18,9 +18,32 @@ import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Callable
 from unittest import mock
 
 from projector import cli, questions
+
+
+def at_once(*calls: Callable[[], object]) -> list[str]:
+    """Start the calls together, each in its own thread, and return how each ended, sorted:
+    `done`, or `refused` when it raised `QuestionError`."""
+    outcomes: list[str] = []
+    start = threading.Barrier(len(calls))
+
+    def run(call: Callable[[], object]) -> None:
+        start.wait()
+        try:
+            call()
+            outcomes.append("done")
+        except questions.QuestionError:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=run, args=(call,)) for call in calls]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return sorted(outcomes)
 
 
 class QuestionCase(unittest.TestCase):
@@ -163,23 +186,8 @@ class AnswerTests(QuestionCase):
         self.assertEqual(65, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
 
     def test_two_answers_at_once_record_one(self) -> None:
-        outcomes: list[str] = []
-        start = threading.Barrier(2)
-
-        def answer(letter: str) -> None:
-            start.wait()
-            try:
-                questions.answer("s1", "#337.1", letter)
-                outcomes.append("recorded")
-            except questions.QuestionError:
-                outcomes.append("refused")
-
-        threads = [threading.Thread(target=answer, args=(letter,)) for letter in "ab"]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        self.assertEqual(["recorded", "refused"], sorted(outcomes))
+        self.assertEqual(["done", "refused"], at_once(lambda: questions.answer("s1", "#337.1", "a"),
+                                                      lambda: questions.answer("s1", "#337.1", "b")))
         self.assertIn(json.loads((self.folder() / "%23337.1.json").read_text())["answer"]["letter"], "ab")
 
     def test_a_stale_lock_is_cleared(self) -> None:
@@ -205,6 +213,10 @@ class DeliveryTests(QuestionCase):
         self.assertEqual(0, code)
         self.assertTrue(out.endswith("\tANSWER #337.1.b Decline it? → Add a budget\n"), out)
         self.assertEqual(65, self.claim()[0])
+
+    def test_two_claims_at_once_take_one(self) -> None:
+        self.assertEqual(["done", "refused"], at_once(lambda: questions.claim("s1", "#337.1"),
+                                                      lambda: questions.claim("s1", "#337.1")))
 
     def test_renews_only_with_the_claims_token(self) -> None:
         _, token = self.claim()
