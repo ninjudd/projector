@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import permissions, review, site, summary
+from . import permissions, questions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
@@ -533,6 +533,8 @@ def parser() -> argparse.ArgumentParser:
                                 help="publish a clean incremental review of the change since this loop's last "
                                      "full review, when `project review interdiff` allows one")
 
+    add_question_parser(subcommands)
+
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
     site_build = site_commands.add_parser(
@@ -613,6 +615,63 @@ def parser() -> argparse.ArgumentParser:
 
 def add_output(command: argparse.ArgumentParser) -> None:
     command.add_argument("--json", action="store_true", dest="json_output")
+
+
+def seconds(text: str) -> float:
+    value = float(text)
+    if not 0 < value < float("inf"):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive number of seconds")
+    return value
+
+
+def add_question_parser(subcommands) -> None:
+    question = subcommands.add_parser("question", help="ask the person a question, and answer and deliver it")
+    commands = question.add_subparsers(dest="question_command", required=True)
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text)
+        parsed.add_argument("--session", help="the asking session's id (default: $PROJECTOR_SESSION)")
+        add_output(parsed)
+        return parsed
+
+    ask = command("ask", "check, number, and record a question, and print its reference")
+    ask.add_argument("question", help="the question, in one line of at most 120 characters")
+    ask.add_argument("--recommend", required=True, help="the answer you recommend, which becomes answer a")
+    ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to five")
+    detail = ask.add_mutually_exclusive_group()
+    detail.add_argument("--detail", default="", help="what the person needs to decide, as Markdown")
+    detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
+    ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+    ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
+
+    listing = command("list", "list open questions: the session's, or every session's without one")
+    listing.add_argument("--all", action="store_true", help="include delivered questions")
+
+    show = command("show", "print one question with its detail and lettered answers")
+    show.add_argument("reference", help="such as #337.3, owner/repo#337.3, or q2")
+
+    answer = command("answer", "record an answer, such as #337.3.a")
+    answer.add_argument("reference", help="the question's reference and the answer's letter, such as #337.3.a")
+    answer.add_argument("--text", help="the typed answer, for the question's last letter")
+
+    dismiss = command("dismiss", "record that you dismissed a question")
+    dismiss.add_argument("reference")
+
+    claim = command("claim", "claim a recorded answer for delivery and print its token and text")
+    claim.add_argument("reference")
+    claim.add_argument("--renew", metavar="TOKEN", help="keep this claim live while its delivery is pending")
+
+    for name, help_text in (("delivered", "mark a claimed answer delivered"),
+                            ("reopen", "clear a claimed answer whose delivery failed")):
+        settled = command(name, help_text)
+        settled.add_argument("reference")
+        settled.add_argument("--claim", required=True, metavar="TOKEN", help="the token `claim` printed")
+
+    watch = command("watch", "claim, print, and mark delivered each answer, one line an answer")
+    watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
+    watch.add_argument("--once", action="store_true", help="make one pass and exit")
+
+    command("context", "print what each question reference in standard input means")
 
 
 def open_editor(path: Path) -> None:
@@ -1011,6 +1070,108 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"worktree {state['worktree']}")
         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+    return 0
+
+
+def question_session(arguments: argparse.Namespace, required: bool) -> Optional[str]:
+    session = arguments.session or os.environ.get("PROJECTOR_SESSION") or None
+    if required and session is None:
+        raise UsageError(f"`project question {arguments.question_command}` needs the asking session: pass --session "
+                         "or set PROJECTOR_SESSION")
+    return session
+
+
+def checkout_repo(checkout: Path) -> Optional[str]:
+    try:
+        return review.origin_repo(checkout)
+    except ProjectorError:
+        return None
+
+
+def question_state(question: dict) -> str:
+    if not question.get("answer"):
+        return "open"
+    if question.get("deliveredAt"):
+        return f"delivered {questions.answer_ref(question)}"
+    if questions.live_claim(question):
+        return f"delivering {questions.answer_ref(question)}"
+    return f"answered {questions.answer_ref(question)}"
+
+
+def print_question(question: dict) -> None:
+    print(f"{question['ref']} {question['question']}")
+    if question.get("pr"):
+        print(f"about {question['pr']}")
+    if question.get("detail"):
+        print(f"\n{question['detail']}\n")
+    for index, choice in enumerate(question["choices"]):
+        print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
+    print(f"{questions.typed_letter(question)}. type an answer with --text")
+    print(question_state(question))
+
+
+def run_question(arguments: argparse.Namespace) -> int:
+    command = arguments.question_command
+    json_output = arguments.json_output
+    if command == "ask":
+        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+        question = questions.ask(question_session(arguments, True), arguments.question, arguments.recommend,
+                                 arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
+                                 repo=checkout_repo(Path.cwd()))
+        print(json_text({"question": question}) if json_output else question["ref"])
+    elif command == "list":
+        session = question_session(arguments, False)
+        names = [session] if session else questions.sessions()
+        rows = [{**question, "session": name} for name in names
+                for question in questions.load_questions(questions.session_dir(name))
+                if arguments.all or not question.get("deliveredAt")]
+        if json_output:
+            print(json_text({"questions": rows}))
+        for row in [] if json_output else rows:
+            columns = [row["ref"], question_state(row), row["question"]]
+            print("\t".join(columns if session else [row["session"], *columns]))
+    elif command == "show":
+        ref, _ = questions.parse_reference(arguments.reference)
+        _, question = questions.find(question_session(arguments, False), ref)
+        if json_output:
+            print(json_text({"question": question}))
+        else:
+            print_question(question)
+    elif command in ("answer", "dismiss"):
+        ref, letter = questions.parse_reference(arguments.reference)
+        session = question_session(arguments, False)
+        question = (questions.answer(session, ref, letter, arguments.text) if command == "answer"
+                    else questions.dismiss(session, ref))
+        print(json_text({"question": question}) if json_output
+              else f"{'answered' if command == 'answer' else 'dismissed'} {questions.answer_ref(question)}")
+    elif command == "claim":
+        ref, _ = questions.parse_reference(arguments.reference)
+        question = questions.claim(question_session(arguments, False), ref, arguments.renew)
+        token, text = question["claim"]["token"], questions.message(question)
+        print(json_text({"token": token, "text": text, "question": question}) if json_output
+              else f"{token}\t{text}")
+    elif command in ("delivered", "reopen"):
+        ref, _ = questions.parse_reference(arguments.reference)
+        question = questions.settle(question_session(arguments, False), ref, arguments.claim,
+                                    delivered=command == "delivered")
+        print(json_text({"question": question}) if json_output
+              else f"{'delivered' if command == 'delivered' else 'reopened'} {question['ref']}")
+    elif command == "watch":
+        session = question_session(arguments, True)
+
+        def send(line: str) -> None:
+            # A watcher reads one event a line, so JSON here stays on one line too.
+            print(json.dumps({"schema_version": 2, "text": line}, ensure_ascii=False) if json_output else line,
+                  flush=True)
+
+        while True:
+            questions.deliver_pass(session, send)
+            if arguments.once:
+                return 0
+            time.sleep(arguments.interval)
+    elif command == "context":
+        lines = questions.context(question_session(arguments, True), sys.stdin.read())
+        print(json_text({"context": lines}) if json_output else "\n".join(lines), end="" if not lines else "\n")
     return 0
 
 
@@ -1490,6 +1651,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_site(arguments)
     if arguments.command == "review":
         return run_review(arguments)
+    if arguments.command == "question":
+        return run_question(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
