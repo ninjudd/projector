@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Questions in the loop band",
+ "project": "questions-drawer",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 268,
+  "title": "Plan answering an agent's questions in the loop band",
+  "head": "9445f99bf478475b78bd87ab268513a3c58f6e31",
+  "headRef": "questions-drawer-spec",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops run subagents that sometimes need a decision only the person can make. Today a subagent hands its question to the main loop, which asks it as a line of text in the transcript. That line scrolls away, cannot be seen from another session, and nothing tracks which questions are still open or carries the answer back to the subagent.",
+   "This pull request adds one plan, <code>docs/projects/questions-drawer/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It changes no code. The plan builds on the <b>loop band</b> from #267: a Claude Code hooks module that draws a strip above the prompt listing the pull requests the loops track.",
+   "<ol><li><b>An agent posts a question.</b> The module registers a tool, <code>mcp__projector__ask</code>, that writes the question to one JSON file under Projector's state directory and returns at once, so the agent keeps working.</li><li><b>Every session's band lists it.</b> Each band reads that directory every 5 seconds and lists open questions above the pull requests. A question's drawer offers the agent's options, a free-text field, and dismiss.</li><li><b>The asking session delivers the answer.</b> Whichever session the person answers in writes the answer into the file. The session that asked finds it on its next tick, sends it to the subagent or queues it for its main loop, and deletes the file.</li></ol>",
+   "The review checked the plan's steps against Claude Code's plugin API declarations for version 2.1.296. The first review found three steps that disagreed with that API: how an answer is routed and when its file is removed, where the repository name comes from, and digit hotkeys that a prompt could press. This head fixes all three, and the review of it is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Loop band</b>: the strip above the Claude Code prompt that #267 adds, one line per tracked pull request.</li><li><b>Drawer</b>: the extra lines that open under a band line when you press it.</li><li><b>Tick</b>: the band's 5-second timer.</li><li><b>Main screen</b>: Claude Code's non-fullscreen layout, used under tmux, where only a <code>Button</code> takes a press.</li></ul>"
+   },
+   {
+    "id": "readiness",
+    "title": "Readiness",
+    "html": "<p>The plan is new at <code>ready</code>, so it owns every open question. Section 6 lists three: opening a pull request's drawer on the main screen (owned, outside this plan's questions), questions from an ended session (deferred), and Codex (deferred). None blocks implementation.</p>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>2b3a0ed</code>: changes requested, three findings on the delivery route, the repository name, and the option hotkeys.</li><li><code>9445f99</code>: all three fixed and their threads resolved. Clean, with one suggestion about a submit that a hook drops.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The questions-drawer plan",
+   "kicker": "How an agent's question reaches the person and how the answer gets back",
+   "intro": [
+    "The plan covers the whole round trip: the <code>ask</code> tool and what it writes (sections 2.1 to 2.3), what the band draws (2.4), the files the implementation touches (2.5), the reasons for each choice (3), and the acceptance tests (4).",
+    "Read section 2.1 first. Its numbered steps are the design, and the later sections fill in each step's data and drawing."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The other API calls the plan names exist as described in Claude Code 2.1.296's plugin declarations: <code>$.tool.register</code> with <code>isDeferred</code>, <code>$.ui.notify</code>, <code>$.session.send({ to: { agentId } })</code>, <code>$.session.id()</code>, <code>$.fs</code> with no delete, <code>Button</code> with <code>plain</code> and <code>hotkey</code>, <code>Input</code> with <code>onSubmit</code>, ctrl+x tab to focus the band, and <code>agentId</code> on <code>tool.call</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> passes at this head, and the plan's frontmatter reads <code>status: ready</code> and <code>priority: now</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/questions-drawer/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the problem, the <code>ask</code> tool and question file, the band's drawing, the design reasons, and the acceptance tests.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 97,
+       "text": "Step 7 removes the file once the submit resolves. <code>$.prompt.submit</code> can resolve <code>{ drop: reason }</code> when a hook refuses the prompt, and then the answer is removed undelivered. Claude Code shows the reason to the person, so the loss is visible. The review lists this as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 87,
+       "text": "The live statuses here, <code>pending</code>, <code>running</code>, <code>waiting</code>, and <code>idle</code>, and the ended ones, <code>completed</code>, <code>failed</code>, and <code>killed</code>, are exactly the <code>AgentStatus</code> values in Claude Code 2.1.296's plugin API, and <code>$.session.send</code> resolves <code>{ isDelivered: false, reason }</code> as the fallback assumes."
+      },
+      {
+       "kind": "verify",
+       "line": 111,
+       "text": "<code>state_dir</code> in <code>src/projector/review.py</code> uses <code>$XDG_STATE_HOME</code>, or <code>~/.local/state</code> when it is unset, under <code>projector/</code>, as this paragraph says."
+      },
+      {
+       "kind": "verify",
+       "line": 120,
+       "text": "In the 2.1.296 API, <code>$.session.repo()</code> returns <code>name</code> only for allowlisted repositories and always returns <code>remote</code>, so parsing <code>remote</code> is the route that works in this repository."
+      },
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "In the 2.1.296 API, a bare digit typed into an empty prompt presses only a band <code>Button</code> with that digit as its <code>hotkey</code>, so buttons with no hotkey cannot be pressed from the prompt."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
