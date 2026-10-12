@@ -17,7 +17,7 @@ import secrets
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
 from .core import ProjectorError
@@ -370,17 +370,17 @@ def undelivered(session: str) -> list[dict]:
             if question.get("answer") and not question.get("deliveredAt") and not live_claim(question)]
 
 
-def deliver_pass(session: str) -> list[str]:
-    """Claim, announce, and mark delivered each undelivered answer: one pass of `watch`."""
-    lines = []
+def deliver_pass(session: str, send: Callable[[str], None]) -> None:
+    """One pass of `watch`: claim each undelivered answer, `send` its line, and only then mark it
+    delivered, so an answer whose line fails to send keeps just a claim, which lapses for the next
+    deliverer."""
     for question in undelivered(session):
         try:
             claimed = claim(session, question["ref"])
         except QuestionError:
             continue
-        lines.append(message(claimed))
+        send(message(claimed))
         settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
-    return lines
 
 
 # References in prose

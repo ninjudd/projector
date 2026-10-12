@@ -1151,11 +1151,14 @@ def run_question(arguments: argparse.Namespace) -> int:
               else f"{'delivered' if command == 'delivered' else 'reopened'} {question['ref']}")
     elif command == "watch":
         session = question_session(arguments, True)
+
+        def send(line: str) -> None:
+            # A watcher reads one event a line, so JSON here stays on one line too.
+            print(json.dumps({"schema_version": 2, "text": line}, ensure_ascii=False) if json_output else line,
+                  flush=True)
+
         while True:
-            for line in questions.deliver_pass(session):
-                # A watcher reads one event a line, so JSON here stays on one line too.
-                print(json.dumps({"schema_version": 2, "text": line}, ensure_ascii=False) if json_output else line,
-                      flush=True)
+            questions.deliver_pass(session, send)
             if arguments.once:
                 return 0
             time.sleep(arguments.interval)

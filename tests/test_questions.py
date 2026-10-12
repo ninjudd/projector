@@ -242,6 +242,19 @@ class DeliveryTests(QuestionCase):
         self.assertEqual((0, "DISMISSED q1 Run init?\n"), (code, out))
         self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
 
+    def test_watch_leaves_an_answer_it_could_not_print_to_the_next_deliverer(self) -> None:
+        class ClosedPipe(io.StringIO):
+            def write(self, text: str) -> int:
+                raise BrokenPipeError(32, "Broken pipe")
+
+        with contextlib.chdir(self.checkout), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
+            self.assertEqual(65, cli.main(["question", "watch", "--once", "--session", "s1"]))
+        self.assertIn("\tdelivering #337.1.b\t", self.run_cli("list", "--session", "s1")[1])
+        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
+        with mock.patch.object(questions, "now_ms", return_value=later):
+            self.assertEqual("ANSWER #337.1.b Decline it? → Add a budget\n",
+                             self.run_cli("watch", "--once", "--session", "s1")[1])
+
     def test_keeps_the_newest_delivered_questions(self) -> None:
         with mock.patch.object(questions, "KEEP_DELIVERED", 2):
             for number in range(3):
