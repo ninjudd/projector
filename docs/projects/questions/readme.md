@@ -91,7 +91,9 @@ the rest of the CLI does.
 again. `answer` and `dismiss` exit `65` when the question already has an
 answer. `claim` exits `65` when the answer has a live claim or is
 delivered, and `claim --renew`, `delivered`, and `reopen` exit `65` when
-the token is not the answer's live claim. A command exits `66` when the
+the token is not the answer's claim. A lapsed claim's token still works
+until another `claim` replaces it, so a deliverer paused past the minute
+can still record what it delivered. A command exits `66` when the
 reference names no question, and `67` when, without a session, it names
 questions in more than one session.
 

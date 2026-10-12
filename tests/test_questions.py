@@ -221,6 +221,14 @@ class DeliveryTests(QuestionCase):
             self.assertEqual(65, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
             self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", fresh, "--session", "s1")[0])
 
+    def test_a_lapsed_claims_token_settles_it_until_a_new_claim_replaces_it(self) -> None:
+        _, token = self.claim()
+        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
+        with mock.patch.object(questions, "now_ms", return_value=later):
+            self.assertEqual(0, self.claim("--renew", token)[0])
+        with mock.patch.object(questions, "now_ms", return_value=later + questions.CLAIM_EXPIRES_MS + 1):
+            self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
+
     def test_delivered_hides_the_question_from_the_open_list(self) -> None:
         _, token = self.claim()
         self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])

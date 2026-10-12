@@ -1520,7 +1520,8 @@ such as Projector's band in Claude Code, uses the steps `watch` takes:
 | `reopen <reference> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
 
 A claim that is not renewed for a minute lapses, so a deliverer that stops
-halfway leaves the answer for the next one. `watch` marks an answer
+halfway leaves the answer for the next one. A lapsed claim's token still
+works until another `claim` takes the answer. `watch` marks an answer
 delivered only after its line prints, so when nothing reads the watcher any
 more, the answer waits for the next deliverer rather than being lost. Each
 session keeps its 100 most recently delivered questions.
