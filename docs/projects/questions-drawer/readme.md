@@ -143,13 +143,15 @@ in a new session.
 
 The `prompt.submit` hook matches exactly these forms, each standing alone:
 not touching a letter, a digit, `/`, `#`, or `.` on its left, and ending
-at a space, punctuation other than `.`, or the end of the prompt.
+at a space, a line break, punctuation other than `.`, or the end of the
+prompt. A `.` ends a reference too when a space, a line break, or the end
+of the prompt follows it, so a reference can close a sentence.
 
 | Form | Matches | Does not match |
 | --- | --- | --- |
-| `#<pr>.<n>`, with an optional `.<letter>` | `#337.3`, `#337.3.b` | `#337`, `#337.3.4`, `x#337.3` |
+| `#<pr>.<n>`, with an optional `.<letter>` | `#337.3`, `#337.3.b`, and `#337.3.b` in `Go with #337.3.b.` | `#337`, `#337.3.4`, `x#337.3` |
 | `<owner>/<repo>#<pr>.<n>`, with an optional `.<letter>` | `octo/app#337.3.b` | `app#337.3` |
-| `q<n>`, with an optional `.<letter>` | `q2`, `q2.a` | `2`, `Q2`, `eq2`, `q2.4` |
+| `q<n>`, with an optional `.<letter>` | `q2`, `q2.a`, and `q2.a` in `Let's do q2.a.` | `2`, `Q2`, `eq2`, `q2.4` |
 
 It attaches context only for a reference that names a question the session
 holds, and an answer's letter only when that question has the letter. Any
@@ -334,6 +336,7 @@ skills keep working in Codex and without the module.
 | A call about #12 in a repository other than the session's | Its reference is `owner/repo#12.1`, and stays so however the band labels pull requests |
 | Type `rerun the 2 failing tests` while `q2` is open | The prompt reaches the agent with no question attached |
 | Type `go with octo/app#12.1.a` | The prompt reaches the agent with that question and its choice `a` in its `context` |
+| Type `Go with #337.3.b.`, ending the sentence with a period | The prompt reaches the agent with #337.3 and its choice `b` in its `context` |
 | A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `{ deny }` with the reason, and no question is added or numbered |
 | Open a question with two options | Its drawer shows `detail`, then `a.` and `b.` with the recommended one ending `(recommended)`, a long choice wrapping under its own text, then `c.` with a `Type something` field, then **dismiss** |
 | Open a question without options | Its drawer shows `a.`, the recommendation, then `b.` with the field |
