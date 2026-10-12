@@ -13,8 +13,8 @@ Projector's band is the Claude Code hooks module in `hooks/`. It lists the
 open pull requests of your fix and review loops one line each, opens a
 drawer under a line when you click it, and `/projector` shows or hides it,
 as `docs/plugins.md` describes. This project adds the session's questions to
-the same band, each beside the pull request it is about. It uses the command and the
-band-prefixed state keys that
+the same band, each beside the pull request it is about. It uses the command
+and the band-prefixed state keys that
 [#269](https://github.com/ninjudd/projector/pull/269) gives the band, so its
 implementation follows #269.
 
@@ -49,18 +49,17 @@ The hooks module registers a tool, `ask`, that the model calls as
 `mcp__projector__ask`. Every question carries the agent's recommended
 answer, and may offer choices, of which the recommendation must be one. The
 tool records the question in the session's own plugin state and returns at
-once, so the agent keeps working. The session's band lists its questions
-as a checklist, each on the line after the pull request it is about and
-each open one marked `[ ]`, with the open count in the divider. Clicking a
+once, so the agent keeps working. The session's band lists its questions as
+a checklist, each on the line after the pull request it is about and each
+open one marked `[ ]`, with the open count in the divider. Clicking a
 question opens its drawer: its detail, then each choice as a bulleted line
 with the recommended one marked, a field for any other answer, and
-**dismiss**. When you answer, the module delivers the
-answer at once, to the subagent that asked or, when that subagent has ended,
-to the session's main loop. Once the answer was taken, the line reads `[x]`
-with the answer for one minute, then leaves the band. An answer that was not
-taken reopens the question, so an answer is never lost. Each session has
-only the questions its own agents asked, and you answer them only in that
-session.
+**dismiss**. When you answer, the module delivers the answer at once, to the
+subagent that asked or, when that subagent has ended, to the session's main
+loop. Once the answer was taken, the line reads `[x]` with the answer for
+one minute, then leaves the band. An answer that was not taken reopens the
+question, so an answer is never lost. Each session has only the questions
+its own agents asked, and you answer them only in that session.
 
 ### 2.1 What happens when an agent asks
 
