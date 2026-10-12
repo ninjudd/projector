@@ -1,0 +1,174 @@
+{
+ "version": 1,
+ "name": "Loop pull requests pane",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 267,
+  "title": "Show a loop's open pull requests in a Claude Code pane",
+  "head": "742c9234d60867e8d182553eca151b58dc4236ef",
+  "headRef": "loop-prs-pane",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops each run a watcher script in the background: <code>watch-prs.sh</code> for a review loop and <code>watch-threads.sh</code> for a fix loop. Each watcher reads a <b>tracked file</b>, a plain text file with one <code>owner/repo#number</code> line for each pull request the loop owns. Until now, to see which pull requests a loop watches and which of them need work, you read that file and looked each pull request up on GitHub.",
+   "This pull request adds a Claude Code <b>hooks module</b>: TypeScript that Claude Code loads from a plugin's <code>hooks/</code> directory and runs on engine events, such as a tool call or a slash command. The module draws a pane, titled Loop PRs, that lists each loop's open pull requests. Each row shows a link, <code>draft</code> or <code>ready</code>, and the title. A second line appears when the pull request has a merge conflict, a change request, or unresolved review threads.",
+   "<ul class=\"tight\"><li><b>How the pane finds loops.</b> When the session runs a watcher through the Bash or Monitor tool, the module reads the command's <code>--tracked</code> argument and opens the pane. It also scans <code>ps</code> for watchers that other sessions started. <code>/loop-prs &lt;file&gt;</code> adds a tracked file by hand.</li><li><b>How it asks GitHub.</b> One <code>gh api graphql</code> call each minute fetches every listed pull request, and only while the pane is open. Press <code>r</code> to refresh at once.</li><li><b>What it leaves alone.</b> The module is Claude Code packaging only. No skill depends on it, and Codex gets nothing new.</li></ul>",
+   "The validation gate gains <code>claude plugin test .</code>, which runs the module's <code>*.test.ts</code> files."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>742c923</code>, opened two findings. Both concern the watcher command that the session runs itself, and both appear as flags on the lines they concern.</li><li>The repository gate passed on this head, and <code>claude plugin test .</code> passed 13 of 13.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Watcher</b>: the shell script a loop runs in the background, <code>watch-prs.sh</code> or <code>watch-threads.sh</code>.</li><li><b>Tracked file</b>: the file a watcher reads, one <code>owner/repo#number</code> per line. A <code>!owner/repo#number</code> line keeps that pull request out.</li><li><b>Hooks module</b>: a plugin's TypeScript that Claude Code runs on engine events.</li><li><b>Pane</b>: a framed region of the Claude Code screen that a plugin draws.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "packaging",
+   "title": "Packaging the hooks module for Claude Code only",
+   "kicker": "Where Claude Code finds the module, and the state it keeps",
+   "intro": [
+    "Claude Code finds <code>hooks/hooks.json</code> at the plugin root by itself, and that file names the module's entry point, <code>register.tsx</code>. The Claude manifest adds a <code>types</code> field that points at <code>hooks/types.d.ts</code>, the module's state contract. That file declares the two values the module keeps in plugin state: the loops the session has seen, and the last snapshot it drew.",
+    "The Codex manifest does not change, and a new packaging test checks that it names neither <code>types</code> nor <code>hooks</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".claude-plugin/plugin.json",
+     "note": "Adds <code>types</code>, pointing at the module's state contract."
+    },
+    {
+     "path": "hooks/hooks.json",
+     "note": "Names <code>register.tsx</code> as the module Claude Code loads."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "The pull request, loop, and snapshot shapes, and the <code>projector</code> plugin-state keys <code>seenLoops</code> and <code>loopSnapshot</code>."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Checks that the module and its contract exist, and that only the Claude manifest declares them."
+    }
+   ]
+  },
+  {
+   "id": "parse",
+   "title": "Reading watcher commands and tracked files",
+   "kicker": "Pure functions that find a watcher's tracked path and read the file",
+   "intro": [
+    "The module learns a loop from a shell command, either the one the session ran or a line of <code>ps</code> output. <code>tokenize</code> splits the command into words and operators, and it records which parts of each word were quoted. <code>findWatchers</code> looks for a word whose last path segment is <code>watch-prs.sh</code> or <code>watch-threads.sh</code>. It then reads that command's <code>--tracked</code> value and stops at the next operator, such as <code>;</code> or <code>&amp;&amp;</code>.",
+    "<code>expand</code> expands a leading <code>~</code> and <code>$NAME</code> outside single quotes, using only the environment. It gives up on a command substitution or an unknown variable, so the caller can tell the person to add the file by hand. <code>parseTracked</code> reads the tracked file with the same entry pattern the watchers use."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "The tokenizer, path expansion, watcher detection, and tracked-file parser.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 164,
+       "text": "Open finding: <code>expand</code> reads variables only from the environment. A loop started as <code>D=~/.local/state/projector; ID=…; bash …/watch-prs.sh --tracked $D/$ID.tracked</code>, the form this machine's own loops use, gets <code>tracked: undefined</code>. The session then gets a toast asking it to add the file by hand, and the <code>ps</code> scan lists the loop under \"another session\". The fix is to read <code>NAME=value</code> words that come earlier in the same command."
+      },
+      {
+       "kind": "context",
+       "line": 187,
+       "text": "<code>parseTracked</code> matches <code>!</code> exclusions and duplicates with case. <code>parse_tracked</code> in <code>watch-prs.sh</code> ignores case, so a differently cased <code>!</code> line can leave a pull request in the pane that the watcher drops."
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Covers watcher detection, expansion, the tracked-file parser, and the GitHub query and response."
+    }
+   ]
+  },
+  {
+   "id": "github",
+   "title": "Asking GitHub for every pull request at once",
+   "kicker": "One GraphQL query, and a reader that tolerates a missing pull request",
+   "intro": [
+    "<code>buildQuery</code> groups the pull requests by repository and gives each one an alias, so one <code>gh api graphql</code> call fetches all of them. Repository names come from <code>parseTracked</code>, which admits only the characters GitHub allows in a name, so they are safe inside the query's string literals.",
+    "<code>parseResponse</code> keeps whatever data came back. A pull request that does not exist leaves its slot null and adds an error, but the call fails only when no data came back at all."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "Builds the query and reads its answer into <code>PullRequest</code> records.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 17,
+       "text": "<code>reviewThreads(first: 100)</code> reads only the first 100 threads, so the open-thread count is too low on a pull request with more."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "pane",
+   "title": "The hooks and the pane",
+   "kicker": "Learning loops from tool calls, polling GitHub, and drawing the pane",
+   "intro": [
+    "<code>register.tsx</code> wires the module to Claude Code events:",
+    "<ul class=\"tight\"><li><b><code>session.start</code></b> registers <code>/loop-prs</code> and starts a one-minute timer. The timer refreshes only while the pane is open.</li><li><b><code>tool.call</code> for Bash and Monitor</b> lets the tool run first. When the command started a watcher, the hook records the tracked file and opens the pane. A <code>.catch</code> handler replays the tool's result, so a failure in the hook never runs the tool twice.</li><li><b><code>command.run</code> for <code>/loop-prs</code></b> records a tracked file given as an argument, then opens the pane.</li><li><b><code>ui.render</code> for the pane</b> draws the last snapshot. It shows open pull requests, a count of merged or closed ones, and entries GitHub could not find.</li></ul>",
+    "<code>load</code> merges the session's own loops with watchers that <code>ps</code> found, reads each tracked file, and makes one GitHub call for every pull request. When that call fails, the pane keeps what GitHub returned last time."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The event hooks, the refresh loop, and the pane's drawing.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 71,
+       "text": "Open finding: <code>adopt</code> returns true for every watcher command, even one whose tracked file the session already holds, so each run calls <code>show</code>. A loop under Monitor starts its watcher again at least every 30 minutes, so a pane you closed opens again each time. The fix is to open the pane only when <code>adopt</code> adds a new loop."
+      },
+      {
+       "kind": "context",
+       "line": 173,
+       "text": "A forced refresh that starts while another refresh runs gets that run's result. A loop added during the run appears at the next poll, up to a minute later."
+      }
+     ]
+    },
+    {
+     "path": "hooks/pane.test.ts",
+     "note": "Drives a watcher command through <code>tool.call</code>, answers <code>ps</code>, file reads, and <code>gh</code> from memory, and checks what the pane draws."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the validation gate",
+   "kicker": "The new gate step and how to use the pane",
+   "intro": [
+    "The gate in <code>AGENTS.md</code> and <code>docs/develop.md</code> adds <code>claude plugin test .</code>. <code>docs/plugins.md</code> gains a section on the pane: how to open it, how it finds a loop, and what each row shows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "Adds <code>claude plugin test .</code> to the gate and says what each <code>claude plugin</code> command validates."
+    },
+    {
+     "path": "docs/develop.md"
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "New section on the pane."
+    }
+   ]
+  }
+ ]
+}
