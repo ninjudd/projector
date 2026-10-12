@@ -1,4 +1,4 @@
-import type { PullRequest } from './types'
+import type { Checks, PullRequest } from './types'
 import { keyOf, type TrackedPr } from './parse'
 
 /** Where one pull request's node sits in the response. */
@@ -11,8 +11,21 @@ export type Fetched = {
   error: string | null
 }
 
-const FIELDS = `number title url state isDraft reviewDecision mergeable
-  reviewThreads(first: 100) { nodes { isResolved } }`
+const FIELDS = `number title url state isDraft reviewDecision mergeable body
+  author { login } headRefName additions deletions changedFiles updatedAt
+  reviewThreads(first: 100) { nodes { isResolved } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
+
+// The line `project summary publish` leaves at the bottom of a description.
+const SUMMARY = /^<!-- projector-summary v=1 sha=[0-9a-f]{40} -->\r?\n\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?:\/\/\S+)\s*$/m
+
+const CHECKS: Record<string, Checks> = {
+  SUCCESS: 'passing',
+  FAILURE: 'failing',
+  ERROR: 'failing',
+  PENDING: 'pending',
+  EXPECTED: 'pending',
+}
 
 /**
  * Builds one GraphQL query for every pull request, grouped by repository.
@@ -51,12 +64,24 @@ function messageOf(body: unknown): string | undefined {
   return isRecord(first) && typeof first.message === 'string' ? first.message : undefined
 }
 
+const nodesOf = (value: unknown): unknown[] =>
+  isRecord(value) && Array.isArray(value.nodes) ? (value.nodes as unknown[]) : []
+
+const numberOf = (value: unknown) => (typeof value === 'number' ? value : 0)
+
+function checksOf(node: Record<string, unknown>): Checks | null {
+  const [last] = nodesOf(node.commits)
+  const commit = isRecord(last) ? last.commit : undefined
+  const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
+  return isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
+}
+
 function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
-  const threads = isRecord(node.reviewThreads) && Array.isArray(node.reviewThreads.nodes)
-    ? (node.reviewThreads.nodes as unknown[])
-    : []
+  const threads = nodesOf(node.reviewThreads)
   const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
   const decision = node.reviewDecision
+  const updatedAt = typeof node.updatedAt === 'string' ? Date.parse(node.updatedAt) : Number.NaN
+  const summary = typeof node.body === 'string' ? SUMMARY.exec(node.body) : null
   return {
     repo: pr.repo,
     number: pr.number,
@@ -70,6 +95,14 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
         : null,
     isConflicting: node.mergeable === 'CONFLICTING',
     openThreads: threads.filter(thread => isRecord(thread) && thread.isResolved === false).length,
+    author: isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login : null,
+    branch: typeof node.headRefName === 'string' ? node.headRefName : '',
+    additions: numberOf(node.additions),
+    deletions: numberOf(node.deletions),
+    changedFiles: numberOf(node.changedFiles),
+    checks: checksOf(node),
+    updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+    summaryUrl: summary?.[1] ?? null,
   }
 }
 

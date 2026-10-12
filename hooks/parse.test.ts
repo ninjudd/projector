@@ -105,6 +105,17 @@ describe('GitHub', () => {
             reviewDecision: 'CHANGES_REQUESTED',
             mergeable: 'CONFLICTING',
             reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
+            author: { login: 'ada' },
+            headRefName: 'first-change',
+            additions: 120,
+            deletions: 7,
+            changedFiles: 4,
+            updatedAt: '2026-10-12T12:00:00Z',
+            commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+            body:
+              'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
+              'a'.repeat(40) +
+              ' -->\n📽️ **Projector summary** of aaaaaaa: https://example.com/site/reviews/1\n',
           },
           p2: null,
         },
@@ -126,8 +137,17 @@ describe('GitHub', () => {
       reviewDecision: 'CHANGES_REQUESTED',
       isConflicting: true,
       openThreads: 2,
+      author: 'ada',
+      branch: 'first-change',
+      additions: 120,
+      deletions: 7,
+      changedFiles: 4,
+      checks: 'failing',
+      updatedAt: Date.UTC(2026, 9, 12, 12, 0),
+      summaryUrl: 'https://example.com/site/reviews/1',
     })
     expect(fetched.prs.get('x/y#3')?.state).toBe('MERGED')
+    expect(fetched.prs.get('x/y#3')).toMatchObject({ author: null, checks: null, updatedAt: null, summaryUrl: null })
     expect(fetched.prs.get('x/y#3')?.url).toBe('https://github.com/x/y/pull/3')
   })
 

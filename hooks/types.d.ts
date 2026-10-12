@@ -4,6 +4,8 @@ export type LoopKind = 'watching' | 'reviewing'
 /** A tracked file this session started a watcher on, or named by hand. */
 export type SeenLoop = { kind?: LoopKind; tracked: string }
 
+export type Checks = 'passing' | 'failing' | 'pending'
+
 export type PullRequest = {
   repo: string
   number: number
@@ -14,18 +16,37 @@ export type PullRequest = {
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
   isConflicting: boolean
   openThreads: number
+  author: string | null
+  branch: string
+  additions: number
+  deletions: number
+  changedFiles: number
+  /** The head commit's combined check state; null when it has no checks. */
+  checks: Checks | null
+  /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
+  updatedAt: number | null
+  /** The Projector summary the description links, when one was published. */
+  summaryUrl: string | null
 }
 
-/** The open pull requests the pane draws, by section. */
+/** One line of the band: an open pull request and what the loops do with it. */
+export type Row = { pr: PullRequest; kinds: LoopKind[] }
+
 export type Snapshot = {
-  watching: PullRequest[]
-  reviewing: PullRequest[]
+  rows: Row[]
   fetchedAt: number | null
   error: string | null
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    projector: { seenLoops: SeenLoop[]; loopSnapshot: Snapshot; loopNow: number; isLoopBandShown: boolean }
+    projector: {
+      seenLoops: SeenLoop[]
+      loopSnapshot: Snapshot
+      loopNow: number
+      isLoopBandShown: boolean
+      /** The pull request whose drawer is open, by `keyOf`. */
+      loopDrawer: string | null
+    }
   }
 }

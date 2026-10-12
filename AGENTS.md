@@ -77,7 +77,7 @@ The packaging tests validate both plugin manifests and their exact published
 skill set. `claude plugin validate .` validates the marketplace and the Claude
 Code hooks module in `hooks/`, while `claude plugin validate skills` validates
 the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
-files. Codex has no separate public validation command.
+and `*.test.tsx` files. Codex has no separate public validation command.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under

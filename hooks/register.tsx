@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LoopKind, PullRequest, SeenLoop, Snapshot } from './types'
+import type { Checks, LoopKind, PullRequest, Row, SeenLoop, Snapshot } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
 import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 
@@ -10,23 +10,28 @@ type Loop = { kind: LoopKind; tracked: string }
 
 const TICK_MS = 5_000
 const POLL_MS = 30_000
-const EMPTY: Snapshot = { watching: [], reviewing: [], fetchedAt: null, error: null }
+const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 
-const SECTIONS: { kind: LoopKind; title: string }[] = [
-  { kind: 'watching', title: 'Watching' },
-  { kind: 'reviewing', title: 'Reviewing' },
-]
+// Watching first: a pull request both loops track is listed once, where its
+// watch loop puts it.
+const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
+
+const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+  passing: 'success',
+  failing: 'error',
+  pending: 'warning',
+}
 
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isLoopBandShown' } as const, false)
+const drawer = atom({ plugin: 'projector', key: 'loopDrawer' } as const, null)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
-const isKind = (kind: unknown): kind is LoopKind => SECTIONS.some(section => section.kind === kind)
-const current = (value: Snapshot): Snapshot =>
-  Array.isArray(value.watching) && Array.isArray(value.reviewing) ? value : EMPTY
+const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
 
 let envLoad: Promise<Env> | undefined
 let inFlight: Promise<void> | undefined
@@ -69,9 +74,9 @@ async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
 }
 
 /**
- * Records the tracked file of each watcher a command starts, and opens the
+ * Records the tracked file of each watcher a command starts, and shows the
  * band when one is new. A loop restarts its watcher with the same command,
- * as a Monitor does each time it expires, so a known one opens nothing and
+ * as a Monitor does each time it expires, so a known one shows nothing and
  * a path it cannot read is said once.
  */
 async function adopt($: Engine, command: string): Promise<void> {
@@ -154,25 +159,32 @@ async function load($: Engine): Promise<void> {
     })),
   )
 
-  const unique = new Map(sets.flatMap(set => set.entries).map(pr => [keyOf(pr), pr]))
-  const fetched = await fetchPrs($, [...unique.values()])
+  const kindsOf = new Map<string, LoopKind[]>()
+  const tracked = new Map<string, TrackedPr>()
+  for (const kind of KINDS) {
+    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) {
+      const key = keyOf(entry)
+      tracked.set(key, tracked.get(key) ?? entry)
+      const kinds = kindsOf.get(key) ?? []
+      if (!kinds.includes(kind)) kindsOf.set(key, [...kinds, kind])
+    }
+  }
+
+  const fetched = await fetchPrs($, [...tracked.values()])
 
   // When GitHub cannot be reached, keep drawing what it said last time.
   const last = current(await read($, snapshot))
-  const previous = new Map([...last.watching, ...last.reviewing].map(pr => [keyOf(pr), pr]))
+  const previous = new Map(last.rows.map(row => [keyOf(row.pr), row.pr]))
   const isFetched = fetched.error === null
 
-  const openIn = (kind: LoopKind): PullRequest[] => {
-    const keys = new Set(sets.filter(set => set.kind === kind).flatMap(set => set.entries.map(keyOf)))
-    return [...keys]
-      .map(key => fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key)))
-      .filter((pr): pr is PullRequest => pr !== undefined && pr.state === 'OPEN')
-  }
+  const rows: Row[] = [...kindsOf].flatMap(([key, kinds]) => {
+    const pr = fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key))
+    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, kinds }] : []
+  })
 
   const time = await $.clock.now()
   await update($, snapshot, () => ({
-    watching: openIn('watching'),
-    reviewing: openIn('reviewing'),
+    rows,
     fetchedAt: isFetched ? time : last.fetchedAt,
     error: fetched.error,
   }))
@@ -227,6 +239,15 @@ function show($: Engine): void {
 /** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
 const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
 
+/**
+ * Names a pull request for the prompt: `#12` when the band shows one
+ * repository, `owner/repo#12` otherwise, so the reference is never ambiguous.
+ */
+function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+  const isOneRepo = new Set(prs.map(pr => pr.repo)).size <= 1
+  return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
+}
+
 type Note = { text: string; color: 'error' | 'warning' | 'success' }
 
 /** What a row says after the title: what holds the pull request back, or its approval. */
@@ -241,8 +262,24 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
+/** The drawer's facts, before its checks: what the loops do, who, where, and how big. */
+function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
+  const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
+  return [
+    kinds.join(' and '),
+    pr.author === null ? undefined : `by ${pr.author}`,
+    pr.branch || undefined,
+    `+${pr.additions} −${pr.deletions} in ${files}`,
+  ]
+    .filter(part => part !== undefined)
+    .join(' · ')
+}
+
 const ago = (seconds: number) =>
-  seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`
+  seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago`
+    : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86_400)}d ago`
+
+const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
 
 /** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
 function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
@@ -310,21 +347,20 @@ export const register: Register = on => {
   })
 
   // The band above the prompt spans the terminal and is as tall as its rows,
-  // so each pull request takes one line.
+  // so each pull request takes one line, and its drawer two more.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
 
-    const { Box, Link, Text } = $.ui.resolve(e)
+    const { Box, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
     const time = await read($, now)
-    const rows = SECTIONS.flatMap(section =>
-      shown[section.kind].map((pr, index) => ({ pr, section, isFirst: index === 0, notes: notesOf(pr) })),
-    )
-    const label = labeler(rows.map(row => row.pr))
-    const labelWidth = Math.max(0, ...rows.map(row => label(row.pr).length))
-    const sectionWidth = Math.max(...SECTIONS.map(section => section.title.length))
-    const updated =
-      shown.fetchedAt === null ? '' : ` updated ${ago(Math.max(0, Math.round((time - shown.fetchedAt) / 1000)))}`
+    const opened = await read($, drawer)
+    const label = labeler(shown.rows.map(row => row.pr))
+    const reference = referencer(shown.rows.map(row => row.pr))
+    const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+    // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
+    const drawerIndent = labelWidth + 1 + 'draft'.length + 1
+    const updated = shown.fetchedAt === null ? '' : ` updated ${ago(secondsSince(time, shown.fetchedAt))}`
     const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
@@ -336,7 +372,7 @@ export const register: Register = on => {
       </Text>
     )
 
-    if (rows.length === 0) {
+    if (shown.rows.length === 0) {
       return (
         <Box flexDirection="column">
           {divider}
@@ -352,18 +388,25 @@ export const register: Register = on => {
       )
     }
 
-    // Only the title gives way when the line is short. The section and
-    // label columns are fixed, so every title starts in one column.
-    return (
-      <Box flexDirection="column">
-        {divider}
-        {rows.map(({ pr, section, isFirst, notes }) => (
-          <Box key={`${section.kind}:${keyOf(pr)}`} flexDirection="row" columnGap={1}>
-            <Box flexShrink={0} width={sectionWidth}>
-              {isFirst && <Text bold>{section.title}</Text>}
-            </Box>
+    const drawRow = ({ pr, kinds }: Row) => {
+      const key = keyOf(pr)
+      const notes = notesOf(pr)
+      return (
+        <Box key={key} flexDirection="column">
+          {/* Only the title gives way when the line is short; the label column
+              is as wide as the longest label, so every title starts in one
+              column. A plain click on the label opens the drawer; a ctrl, alt
+              or terminal-kept cmd click opens its Projector summary, or the
+              pull request on GitHub when it has none. */}
+          <Box flexDirection="row" columnGap={1}>
             <Box flexShrink={0} width={labelWidth}>
-              <Link href={pr.url} label={label(pr)} />
+              <Markdown
+                key={`pr:${key}`}
+                text={`[${label(pr)}](${pr.summaryUrl ?? pr.url})`}
+                onLinkPress={() => {
+                  update($, drawer, open => (open === key ? null : key)).catch(() => undefined)
+                }}
+              />
             </Box>
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
@@ -384,7 +427,34 @@ export const register: Register = on => {
               </Box>
             )}
           </Box>
-        ))}
+          {opened === key && (
+            <Box flexDirection="column" marginLeft={drawerIndent}>
+              <Text wrap="truncate-end">
+                <Text dimColor>{factsOf(pr, kinds)}</Text>
+                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
+                {pr.updatedAt !== null && <Text dimColor> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>}
+              </Text>
+              <Box flexDirection="row" columnGap={2}>
+                <Markdown
+                  key={`discuss:${key}`}
+                  text={`[discuss](${pr.url})`}
+                  onLinkPress={() => {
+                    $.prompt.fill({ text: `${reference(pr)} `, mode: 'insert' }).catch(() => undefined)
+                  }}
+                />
+                <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+                {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+              </Box>
+            </Box>
+          )}
+        </Box>
+      )
+    }
+
+    return (
+      <Box flexDirection="column">
+        {divider}
+        {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
       </Box>
     )
