@@ -5,17 +5,17 @@ priority: now
 
 # Answer an agent's questions in the loop band
 
-An agent posts a question to the band above the Claude Code prompt and keeps
-working; you answer it there, from any session on the machine, and the answer
-reaches the agent that asked.
+An agent posts a question to its session's band above the Claude Code
+prompt and keeps working; you answer it there, and the answer goes straight
+to the agent that asked.
 
 The band is the Claude Code hooks module in `hooks/`, which lists the open
 pull requests of your fix and review loops one line each and opens a drawer
 under a line when you click it ([#267](https://github.com/ninjudd/projector/pull/267),
-documented in `docs/plugins.md`). This project adds questions to the same
-band, above the pull requests. Its implementation waits for #267 to merge,
-because `hooks/` and the band's section of `docs/plugins.md` exist only on
-that pull request's branch until then.
+documented in `docs/plugins.md`). This project adds the session's questions
+to the same band, above the pull requests. Its implementation waits for #267
+to merge, because `hooks/` and the band's section of `docs/plugins.md` exist
+only on that pull request's branch until then.
 
 ## 1. Problem
 
@@ -32,14 +32,12 @@ That line is easy to miss, and nothing remembers it:
 - **It scrolls away.** A loop's session also carries every watcher
   notification and subagent report, so a question asked an hour ago is far
   above the prompt.
-- **It is invisible from another session.** Loops run in background
-  sessions, and you see their questions only when you open that session.
 - **Nothing lists what is still open.** No view says which questions are
   waiting, how old they are, or which pull request they hold up.
 - **The answer has no route back.** The main loop must remember to relay
   your answer to the subagent that asked. Claude Code's `AskUserQuestion`
-  tool has a route, but it blocks the turn with a dialog in that one
-  session, which stops a loop that should keep working.
+  tool has a route, but it blocks the turn with a dialog, which stops a loop
+  that should keep working.
 
 Each unanswered question holds up the pull request it is about, often for
 hours, because a loop finishes everything else it can and then waits.
@@ -47,84 +45,69 @@ hours, because a loop finishes everything else it can and then waits.
 ## 2. Solution
 
 The hooks module registers a tool, `ask`, that the model calls as
-`mcp__projector__ask`. The tool writes the question to a file in
-Projector's state directory and returns at once, so the agent keeps working.
-Every Claude Code session's band reads that directory and lists the open
-questions above its pull requests, with their count in the divider. Clicking
-a question opens its drawer: the whole question, the pull request it is
-about, and the answers you can give, one button for each option the agent
-offered, a field for any other answer, and **dismiss**. Your answer goes
-into the question's file. The session that asked sees it on its next tick,
-delivers it to the subagent that asked, or to its main loop when that
-subagent has ended, and removes the file.
+`mcp__projector__ask`. The tool records the question in the session's own
+plugin state and returns at once, so the agent keeps working. The session's
+band lists its open questions above the pull requests, with their count in
+the divider. Clicking a question opens its drawer: the whole question, the
+pull request it is about, and the answers you can give, one button for each
+option the agent offered, a field for any other answer, and **dismiss**.
+When you answer, the module delivers the answer at once, to the subagent
+that asked or, when that subagent has ended, to the session's main loop. It
+drops the question only once the answer was taken, so an answer is never
+lost. Each session has only the questions its own agents asked, and you
+answer them only in that session.
 
 ### 2.1 What happens when an agent asks
 
 1. An agent, the main loop or a subagent, calls `mcp__projector__ask` with
    `question`, and optionally `options` and `pr`.
-2. The module's `tool.call` hook answers the call itself. It writes a
-   question file (§ 2.2) with the session's id, the calling subagent's
-   `agentId` when there is one, and the session's repository. It shows the
-   band, raises one `$.ui.notify` through your notification channel, and
-   returns `Posted question <id>. Keep working; the answer arrives as a
-   message.`
-3. Every session's band ticks every 5 seconds. Each tick lists the
-   questions directory and reads its files. That is local and costs no
-   GitHub call. A session shows its band when a question it has not seen
-   appears, as it does for a new watcher.
-4. The band lists open questions first, oldest first, then the pull
+2. The module's `tool.call` hook answers the call itself. It adds the
+   question (§ 2.2) to the session's `loopQuestions` state, with the
+   calling subagent's `agentId` when there is one. It shows the band, raises
+   one `$.ui.notify` through your notification channel, and returns `Posted
+   question <id>. Keep working; the answer arrives as a message.`
+3. The band lists the open questions first, oldest first, then the pull
    requests. The divider reads `──── 2 questions · updated 12s ago [-]`.
-5. You open a question's drawer by clicking its line in the fullscreen
+4. You open a question's drawer by clicking its line in the fullscreen
    layout, or on the main screen by focusing the band with ctrl+x tab and
    pressing Enter on the line. Opening any drawer closes any other, a pull
    request's included.
-6. You answer by pressing an option, by typing in the field and pressing
-   Enter, or by pressing **dismiss**. The answering session re-reads the
-   file, and writes `answer` into it only when it holds none yet.
-7. On its next tick, the session that asked finds the answer in its own
-   question and delivers it once:
+5. You answer by pressing an option, by typing in the field and pressing
+   Enter, or by pressing **dismiss**. The module records the answer on the
+   question, so its line reads `sending` and a second press does nothing,
+   and delivers it:
    - When the question has an `agentId` and `$.agent.list()` reports that
-     subagent `pending`, `running`, `waiting`, or `idle`, the session sends
+     subagent `pending`, `running`, `waiting`, or `idle`, the module sends
      the answer with `$.session.send({ to: { agentId } })`. The list keeps
      an ended subagent too, as `completed`, `failed`, or `killed`, so the
      status decides, not the listing.
    - Otherwise, or when the send resolves `{ isDelivered: false }`, the
-     session queues the answer for its main loop with `$.prompt.submit`,
+     module queues the answer for the main loop with `$.prompt.submit`,
      naming the subagent when one asked, so the main loop relays it as the
      loop skills already do.
-   - The session removes the file with `$.process.run(['rm', '-f', path])`,
-     because `$.fs` has no delete, and only once the send resolved
-     `{ isDelivered: true }` or the submit resolved. Until then the answer
-     stays in the file and a later tick tries again. The session skips a
-     question it is already delivering, so a submit that waits for the main
-     loop's turn is not sent twice.
-8. Each band drops the question on its next tick.
+6. When the send resolves `{ isDelivered: true }`, or the submit resolves
+   without `drop`, the module removes the question and closes its drawer.
+   When the submit resolves `{ drop }` or either call rejects, the module
+   clears the recorded answer, so the question is open again, and raises a
+   toast with the reason. You can answer it again.
 
 A dismissed question is delivered the same way, as `You dismissed question
 <id>`, so the agent stops waiting for it.
 
-### 2.2 The question file
+### 2.2 A question
 
-Each question is one JSON file,
-`$XDG_STATE_HOME/projector/questions/<id>.json`, with
-`~/.local/state/projector/questions/` when `XDG_STATE_HOME` is unset. That
-is the base `project review` uses for its own state, in `state_dir` in
-`src/projector/review.py`.
+Each question is one entry in `loopQuestions`, a list in the session's
+`$.state` under the `projector` plugin.
 
 | Field | Value |
 | --- | --- |
 | `id` | `q-` and the time in base 36, then four random base-36 characters |
 | `askedAt` | When the agent asked, in milliseconds |
-| `sessionId` | The asking session's id, from `$.session.id()` |
 | `agentId` | The asking subagent's id, from the `tool.call` input; absent for the main loop |
-| `repo` | The session's repository as `owner/name`, parsed from the `remote` URL that `$.session.repo()` returns, `https://github.com/owner/name.git` or `git@github.com:owner/name.git`; null when the session has no repository, no remote, or one of another shape. Its `name` field holds `owner/name` only for repositories on Claude Code's own allowlist, so the plan does not read it. |
 | `question` | The question, as Markdown |
 | `options` | Up to six short answers, in order; empty for a free answer only |
 | `pr` | The pull request it is about, as `owner/repo#number`; null when none |
-| `answer` | Absent until answered; then `{ text, answeredAt }`, or `{ dismissed: true, answeredAt }` |
-
-The band ignores a file it cannot parse, and a file whose `id` does not
-match its name, so a stray or half-written file never breaks it.
+| `answer` | Absent while open; `{ text }` or `{ dismissed: true }` while it is being delivered |
 
 ### 2.3 The `ask` tool
 
@@ -142,7 +125,7 @@ The module registers the tool in `session.start` with `$.tool.register`.
 A question's line is a `Button` with `plain`, so it is a press target in
 both layouts: a click in fullscreen, and Enter once the band has the
 keyboard on the main screen. It reads `?`, then the question's first line,
-truncated, then `pr` or `repo` and its age, dim:
+truncated, then its `pr`, when it has one, and its age, dim:
 
 ```text
 ──────────────────────────────────────── 1 question · updated 12s ago [-]
@@ -168,11 +151,11 @@ requests.
 
 | File | Change |
 | --- | --- |
-| `hooks/questions.ts` | New: the question file's type check, the id, the directory from the environment, the order, and the text each delivery sends |
-| `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; list and deliver questions in `tick`, even while the band is hidden; draw the questions and their drawer, and the count in the divider |
-| `hooks/types.d.ts` | The `Question` type; the questions in `loopSnapshot`; and `seenQuestions`, the ids of the questions this session has shown, so a new one shows the band once (§ 2.1 step 3) |
-| `hooks/questions.test.ts` | New: parsing, ignoring bad files, the repository from a remote URL, delivery routing by the subagent's status and after a send that is not delivered, and a second answer that finds the first |
-| `hooks/band.test.tsx` | Asking, listing from another session's file, answering by option, field, and dismiss, a digit typed in the empty prompt answering nothing, the main-screen press, and the divider's count |
+| `hooks/questions.ts` | New: the question's id and type check, the order, the route an answer takes from the subagent's status, and the text each delivery sends |
+| `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; deliver an answer and keep or remove its question; draw the questions, their drawer, and the count in the divider |
+| `hooks/types.d.ts` | The `Question` type, and `loopQuestions` under the `projector` plugin's state |
+| `hooks/questions.test.ts` | New: the id, the order, and the route by the subagent's status |
+| `hooks/band.test.tsx` | Asking, answering by option, field, and dismiss, each delivery route and each failure, a second press while sending, a digit typed in the empty prompt answering nothing, and the divider's count |
 | `docs/plugins.md` | A section on questions in the band |
 
 No skill changes. The tool exists only where Claude Code loads the hooks
@@ -186,59 +169,54 @@ skills keep working in Codex and without the module.
   get almost right and hard to answer back to. A tool call has a schema,
   the caller's `agentId`, and a result the agent reads.
 - **Posting, not blocking.** `AskUserQuestion` waits for an answer in a
-  dialog in the asking session. A loop must keep fixing and reviewing what
-  the question does not block, and you may be in another session.
-- **Files in Projector's state directory, not `$.store`.** `$.store` is one
-  JSON file per plugin under Claude Code's configuration directory. Its
-  behavior when several sessions write it at once is undocumented, and each
-  write rewrites the whole file, so two sessions can lose each other's
-  questions. A file per question makes each write independent. The
-  directory sits beside `project review`'s state, where a future `project`
-  command can list the same questions for a host with no band.
-- **The asking session delivers.** An `agentId` means something only in its
-  own session, and only that session can tell whether the subagent still
-  runs. Writing the answer into the file and letting the asker deliver it
-  gives one route for an answer from any session, with no cross-session
-  message to reach a subagent. The cost is at most one tick, 5 seconds.
+  dialog. A loop must keep fixing and reviewing what the question does not
+  block.
+- **Each session's own questions.** A question belongs to the session whose
+  agent asked it, and an `agentId` means something only in that session. So
+  the questions live in the session's `$.state`, which survives a hot
+  reload of the module and redraws the band whenever it is written, and
+  nothing crosses to another session's band.
+- **Delivered when answered.** You answer in the session that asked, which
+  knows whether its subagent still runs, so the module delivers at once
+  rather than leaving the answer for a later pass to find.
+- **Kept until taken.** A send can come back undelivered and a submit can
+  be dropped by a hook, so the question stays until one of them took the
+  answer, and a failure reopens it.
 - **Buttons, not links, for a question's line.** The pull requests' numbers
   are `Markdown` links, which take a click only in the fullscreen layout,
   as `docs/plugins.md` says. A `Button` also takes Enter when the band has
   the keyboard, so questions work on the main screen too.
 - **Built on the band, not beside it.** The band above the prompt has one
   slot, which the first hook that draws there fills, so a second band cannot
-  sit beside it. Questions reuse the band's divider, its tick, its
-  `loopDrawer` state, and the state-directory lookup the module already has
-  for tracked files.
+  sit beside it. Questions reuse the band's divider and its `loopDrawer`
+  state.
 
 ## 4. Acceptance criteria
 
 | Do | Expect |
 | --- | --- |
-| A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; its file exists with that subagent's `agentId`; the band shows the question and the divider counts it |
-| Another session on the machine has its band shown | It lists the question within one tick |
-| Press an option, or type an answer and press Enter | The file gets `answer`; within one tick the subagent receives the answer through `$.session.send`, the file is gone, and every band drops the question |
+| A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; `loopQuestions` holds the question with that subagent's `agentId`; the band shows it and the divider counts it |
+| Press an option, or type an answer and press Enter | The subagent receives the answer through `$.session.send`, and the question leaves the band |
 | Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
-| `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the answer through `$.prompt.submit`, and the file stays until the submit resolves |
+| `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the answer through `$.prompt.submit` |
+| `$.prompt.submit` resolves `{ drop }`, or rejects | The question is open again, a toast gives the reason, and answering again delivers |
+| Press an option twice before the first delivery settles | The agent receives one answer |
+| Press **dismiss** | The agent receives `You dismissed question <id>`, and the question leaves the band |
 | A question's drawer is open, and you type `2 things first:` in the empty prompt | The question stays unanswered, and the prompt holds what you typed |
-| A question asked in a repository whose remote is `git@github.com:owner/name.git` | Its file's `repo` is `owner/name`, and its line shows it |
-| Press **dismiss** | The agent receives `You dismissed question <id>`, and the file is gone |
-| Two sessions answer the same question | The second sees the first answer and writes nothing; the agent receives one answer |
-| A malformed file, or one whose `id` does not match its name, is in the directory | The band ignores it and draws the rest |
-| The band is hidden when a question arrives | The band appears in every session that has not seen the question |
+| The band is hidden when a question arrives | The band appears |
+| Another session's band | Shows none of this session's questions |
 | On the main screen, press ctrl+x tab and Enter on a question | Its drawer opens, and typing reaches the answer field |
 | No questions | The band and its divider look as they do today |
 
 `hooks/questions.test.ts` and `hooks/band.test.tsx` cover every row but the
-main-screen one, answering `fs.list`, `fs.read`, `fs.write`, `process.run`,
-`agent.list`, `session.send`, and `prompt.submit` from memory. Check the
-main-screen row by hand under tmux.
+main-screen one, answering `agent.list`, `session.send`, and `prompt.submit`
+from memory. Check the main-screen row by hand under tmux.
 
 ## 5. Cost
 
-- **The tick.** Every 5 seconds each session lists one small directory and
-  reads each question file, all on the local disk. Questions are few at a
-  time, so a tick reads a handful of small files. It makes no GitHub call;
-  the 30-second GitHub poll is unchanged.
+- **The band.** A question adds one write to the session's state when it is
+  asked and one when it is answered, and nothing on the band's 5-second
+  tick or its 30-second GitHub poll.
 - **The tool's schema.** With `isDeferred: false`, the schema rides in
   every request: a name, two sentences of description, and three
   properties.
@@ -250,8 +228,9 @@ main-screen row by hand under tmux.
   to `Button`s, as questions use, would fix it but loses the ctrl-click that
   opens the Projector summary. Owner: ninjudd, after trying question lines
   on the main screen.
-- **Questions from a session that has ended.** Nobody delivers their
-  answers, so they stay until dismissed. The line shows its age, so a stale
-  one is visible. Deferred until stale questions turn out to be common.
-- **Codex.** Codex has no band and no hooks module. A `project questions`
-  command over the same directory could list and answer them. Deferred.
+- **A resumed session.** Whether Claude Code restores a plugin's `$.state`
+  when you resume a session is undocumented. If it does not, the questions
+  are gone from the band, while each asking agent's tool call stays in its
+  transcript. Deferred until it is observed.
+- **Codex.** Codex has no band and no hooks module, so its agents ask in
+  the transcript as they do today. Deferred.
