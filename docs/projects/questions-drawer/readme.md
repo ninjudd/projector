@@ -13,7 +13,9 @@ The band is the Claude Code hooks module in `hooks/`, which lists the open
 pull requests of your fix and review loops one line each and opens a drawer
 under a line when you click it ([#267](https://github.com/ninjudd/projector/pull/267),
 documented in `docs/plugins.md`). This project adds questions to the same
-band, above the pull requests.
+band, above the pull requests. Its implementation waits for #267 to merge,
+because `hooks/` and the band's section of `docs/plugins.md` exist only on
+that pull request's branch until then.
 
 ## 1. Problem
 
@@ -80,12 +82,22 @@ subagent has ended, and removes the file.
    Enter, or by pressing **dismiss**. The answering session re-reads the
    file, and writes `answer` into it only when it holds none yet.
 7. On its next tick, the session that asked finds the answer in its own
-   question. It sends the answer to the subagent that asked with
-   `$.session.send({ to: { agentId } })` when `$.agent.list()` still lists
-   that subagent. Otherwise it queues the answer for its main loop with
-   `$.prompt.submit`, naming the subagent so the main loop relays it as the
-   loop skills already do. Then it removes the file with
-   `$.process.run(['rm', '-f', path])`, because `$.fs` has no delete.
+   question and delivers it once:
+   - When the question has an `agentId` and `$.agent.list()` reports that
+     subagent `pending`, `running`, `waiting`, or `idle`, the session sends
+     the answer with `$.session.send({ to: { agentId } })`. The list keeps
+     an ended subagent too, as `completed`, `failed`, or `killed`, so the
+     status decides, not the listing.
+   - Otherwise, or when the send resolves `{ isDelivered: false }`, the
+     session queues the answer for its main loop with `$.prompt.submit`,
+     naming the subagent when one asked, so the main loop relays it as the
+     loop skills already do.
+   - The session removes the file with `$.process.run(['rm', '-f', path])`,
+     because `$.fs` has no delete, and only once the send resolved
+     `{ isDelivered: true }` or the submit resolved. Until then the answer
+     stays in the file and a later tick tries again. The session skips a
+     question it is already delivering, so a submit that waits for the main
+     loop's turn is not sent twice.
 8. Each band drops the question on its next tick.
 
 A dismissed question is delivered the same way, as `You dismissed question
@@ -105,7 +117,7 @@ is the base `project review` uses for its own state, in `state_dir` in
 | `askedAt` | When the agent asked, in milliseconds |
 | `sessionId` | The asking session's id, from `$.session.id()` |
 | `agentId` | The asking subagent's id, from the `tool.call` input; absent for the main loop |
-| `repo` | The session's repository as `owner/name`, from `$.session.repo()`; null outside one |
+| `repo` | The session's repository as `owner/name`, parsed from the `remote` URL that `$.session.repo()` returns, `https://github.com/owner/name.git` or `git@github.com:owner/name.git`; null when the session has no repository, no remote, or one of another shape. Its `name` field holds `owner/name` only for repositories on Claude Code's own allowlist, so the plan does not read it. |
 | `question` | The question, as Markdown |
 | `options` | Up to six short answers, in order; empty for a free answer only |
 | `pr` | The pull request it is about, as `owner/repo#number`; null when none |
@@ -137,15 +149,20 @@ truncated, then `pr` or `repo` and its age, dim:
 ? Decline the finding about the retry budget?   projector#267 · 5m
   The review asks for a retry budget per host. The loop already caps
   retries at three in total. Decline it, or add the budget?
-  1: decline   2: add the budget   [ Answer…                      ]   dismiss
+  [ decline ]  [ add the budget ]  [ Answer…                    ]  [ dismiss ]
 #267 draft List a loop's open pull requests above the Claude Code prompt
 ```
 
-The drawer holds the question as `Markdown`, then a row of option buttons
-with hotkeys `1` to `6`, an `Input` keyed `answer` whose `onSubmit` sends
-its text, and a **dismiss** button. The drawer's open/closed state is the
-band's `loopDrawer`, keyed `q:<id>` for a question, so one drawer is open at
-a time across questions and pull requests.
+The drawer holds the question as `Markdown`, then a row of option buttons,
+an `Input` keyed `answer` whose `onSubmit` sends its text, and a **dismiss**
+button. The option buttons have no hotkeys. Claude Code presses a band
+`Button` whose hotkey is a digit when that digit is typed first in an empty
+prompt, the way a survey takes its answer, so a prompt such as `2 things
+first:` would answer the question. Without hotkeys, only a click, or Enter
+on a button while the band holds the keyboard, picks an option. The
+drawer's open/closed state is the band's `loopDrawer`, keyed `q:<id>` for a
+question, so one drawer is open at a time across questions and pull
+requests.
 
 ### 2.5 Files
 
@@ -153,9 +170,9 @@ a time across questions and pull requests.
 | --- | --- |
 | `hooks/questions.ts` | New: the question file's type check, the id, the directory from the environment, the order, and the text each delivery sends |
 | `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; list and deliver questions in `tick`, even while the band is hidden; draw the questions and their drawer, and the count in the divider |
-| `hooks/types.d.ts` | The `Question` type, and the questions in `loopSnapshot` |
-| `hooks/questions.test.ts` | New: parsing, ignoring bad files, delivery routing, and a second answer that finds the first |
-| `hooks/band.test.tsx` | Asking, listing from another session's file, answering by option, field, and dismiss, the main-screen press, and the divider's count |
+| `hooks/types.d.ts` | The `Question` type; the questions in `loopSnapshot`; and `seenQuestions`, the ids of the questions this session has shown, so a new one shows the band once (§ 2.1 step 3) |
+| `hooks/questions.test.ts` | New: parsing, ignoring bad files, the repository from a remote URL, delivery routing by the subagent's status and after a send that is not delivered, and a second answer that finds the first |
+| `hooks/band.test.tsx` | Asking, listing from another session's file, answering by option, field, and dismiss, a digit typed in the empty prompt answering nothing, the main-screen press, and the divider's count |
 | `docs/plugins.md` | A section on questions in the band |
 
 No skill changes. The tool exists only where Claude Code loads the hooks
@@ -200,7 +217,10 @@ skills keep working in Codex and without the module.
 | A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; its file exists with that subagent's `agentId`; the band shows the question and the divider counts it |
 | Another session on the machine has its band shown | It lists the question within one tick |
 | Press an option, or type an answer and press Enter | The file gets `answer`; within one tick the subagent receives the answer through `$.session.send`, the file is gone, and every band drops the question |
-| Answer after the subagent has ended | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
+| Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
+| `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the answer through `$.prompt.submit`, and the file stays until the submit resolves |
+| A question's drawer is open, and you type `2 things first:` in the empty prompt | The question stays unanswered, and the prompt holds what you typed |
+| A question asked in a repository whose remote is `git@github.com:owner/name.git` | Its file's `repo` is `owner/name`, and its line shows it |
 | Press **dismiss** | The agent receives `You dismissed question <id>`, and the file is gone |
 | Two sessions answer the same question | The second sees the first answer and writes nothing; the agent receives one answer |
 | A malformed file, or one whose `id` does not match its name, is in the directory | The band ignores it and draws the rest |
