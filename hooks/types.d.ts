@@ -26,6 +26,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    projector: { seenLoops: SeenLoop[]; loopSnapshot: Snapshot; loopNow: number }
+    projector: { seenLoops: SeenLoop[]; loopSnapshot: Snapshot; loopNow: number; isLoopBandShown: boolean }
   }
 }

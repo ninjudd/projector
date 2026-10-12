@@ -8,8 +8,6 @@ import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr
 type Engine = EngineInterface
 type Loop = { kind: LoopKind; tracked: string }
 
-const PANE = 'loop-prs'
-const TITLE = 'Loop PRs'
 const TICK_MS = 5_000
 const POLL_MS = 30_000
 const EMPTY: Snapshot = { watching: [], reviewing: [], fetchedAt: null, error: null }
@@ -22,6 +20,7 @@ const SECTIONS: { kind: LoopKind; title: string }[] = [
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
+const isShown = atom({ plugin: 'projector', key: 'isLoopBandShown' } as const, false)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -71,7 +70,7 @@ async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
 
 /**
  * Records the tracked file of each watcher a command starts, and opens the
- * pane when one is new. A loop restarts its watcher with the same command,
+ * band when one is new. A loop restarts its watcher with the same command,
  * as a Monitor does each time it expires, so a known one opens nothing and
  * a path it cannot read is said once.
  */
@@ -180,10 +179,8 @@ async function load($: Engine): Promise<void> {
   await update($, now, () => time)
 }
 
-const isOpen = async ($: Engine) => (await $.ui.panes()).some(pane => pane.id === PANE)
-
 /**
- * Reloads the loops and their pull requests, only while the pane is open
+ * Reloads the loops and their pull requests, only while the band is shown
  * unless forced. A request that arrives mid-load runs once more after it,
  * so a change it was told about is never missed.
  */
@@ -194,7 +191,7 @@ function refresh($: Engine, isForced = false): Promise<void> {
   }
   inFlight = (async () => {
     try {
-      if (isForced || (await isOpen($))) {
+      if (isForced || (await read($, isShown))) {
         attemptedAt = await $.clock.now()
         await load($)
       }
@@ -212,29 +209,42 @@ function refresh($: Engine, isForced = false): Promise<void> {
   return inFlight
 }
 
-/** Moves the pane's clock on, and polls GitHub once the last load is old enough. */
+/** Moves the band's clock on, and polls GitHub once the last load is old enough. */
 async function tick($: Engine): Promise<void> {
-  if (!(await isOpen($))) return
+  if (!(await read($, isShown))) return
   const time = await $.clock.now()
   await update($, now, () => time)
   if (time - attemptedAt >= POLL_MS) await refresh($)
 }
 
-/** Opens the pane and loads it, from a timer so no hook waits on GitHub. */
+/** Shows the band and loads it, from a timer so no hook waits on GitHub. */
 function show($: Engine): void {
   $.clock.after(1, () => {
-    $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
-    void refresh($, true)
+    void update($, isShown, () => true).then(() => refresh($, true))
   })
 }
 
 /** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
 const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
 
+type Note = { text: string; color: 'error' | 'warning' | 'success' }
+
+/** What a row says after the title: what holds the pull request back, or its approval. */
+function notesOf(pr: PullRequest): Note[] {
+  const notes: Note[] = []
+  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+  if (pr.openThreads > 0) {
+    notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
+  }
+  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+  return notes
+}
+
 const ago = (seconds: number) =>
   seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`
 
-/** Labels a pull request `#12` when the pane shows one repository, else by its repository's name. */
+/** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
 function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   const repos = [...new Set(prs.map(pr => pr.repo))]
   if (repos.length <= 1) return pr => `#${pr.number}`
@@ -282,6 +292,8 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // `/loop-prs` shows or hides the band; `/loop-prs <tracked file>` adds a
+  // loop and shows it.
   on('command.run', { command: 'loop-prs' }, async ($, e) => {
     const written = (e.args ?? '').trim()
     if (written !== '') {
@@ -289,78 +301,91 @@ export const register: Register = on => {
       const tracked = expanded === undefined ? undefined : await canonical($, expanded)
       if (tracked === undefined) return { text: `loop-prs: no tracked file at ${written}.` }
       await remember($, { tracked })
+    } else if (await read($, isShown)) {
+      await update($, isShown, () => false)
+      return { text: 'Hid the loop PRs band.' }
     }
     show($)
-    return { text: 'Opened the Loop PRs pane.' }
+    return { text: 'Showing the loop PRs band above the prompt.' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  // The band above the prompt spans the terminal and is as tall as its rows,
+  // so each pull request takes one line.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+
     const { Box, Link, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
     const time = await read($, now)
-    const all = [...shown.watching, ...shown.reviewing]
-    const label = labeler(all)
-    const labelWidth = Math.max(0, ...all.map(pr => label(pr).length))
+    const rows = SECTIONS.flatMap(section =>
+      shown[section.kind].map((pr, index) => ({ pr, section, isFirst: index === 0, notes: notesOf(pr) })),
+    )
+    const label = labeler(rows.map(row => row.pr))
+    const labelWidth = Math.max(0, ...rows.map(row => label(row.pr).length))
+    const sectionWidth = Math.max(...SECTIONS.map(section => section.title.length))
+    const updated =
+      shown.fetchedAt === null ? '' : ` updated ${ago(Math.max(0, Math.round((time - shown.fetchedAt) / 1000)))}`
+    const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
 
-    const drawPr = (pr: PullRequest) => {
-      const notes: { text: string; color: 'error' | 'warning' | 'success' }[] = []
-      if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
-      if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
-      if (pr.openThreads > 0) {
-        notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
-      }
-      if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+    // The engine draws the band's `[-]` just past `bodyColumns` on the first
+    // row, so a divider that fills the body ends at the mark.
+    const divider = (
+      <Text dimColor>
+        {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
+        {updated}
+      </Text>
+    )
 
-      // Only the title gives way to a narrow pane; the label column is as
-      // wide as the longest label, so every title starts in one column.
+    if (rows.length === 0) {
       return (
-        <Box key={keyOf(pr)} flexDirection="column">
+        <Box flexDirection="column">
+          {divider}
           <Box flexDirection="row" columnGap={1}>
+            <Text dimColor wrap="truncate-end">
+              {shown.fetchedAt === null && failure === undefined
+                ? 'Looking for pull requests…'
+                : 'No open pull requests are being watched or reviewed.'}
+            </Text>
+            {failure !== undefined && <Text color="error">{failure}</Text>}
+          </Box>
+        </Box>
+      )
+    }
+
+    // Only the title gives way when the line is short. The section and
+    // label columns are fixed, so every title starts in one column.
+    return (
+      <Box flexDirection="column">
+        {divider}
+        {rows.map(({ pr, section, isFirst, notes }) => (
+          <Box key={`${section.kind}:${keyOf(pr)}`} flexDirection="row" columnGap={1}>
+            <Box flexShrink={0} width={sectionWidth}>
+              {isFirst && <Text bold>{section.title}</Text>}
+            </Box>
             <Box flexShrink={0} width={labelWidth}>
               <Link href={pr.url} label={label(pr)} />
             </Box>
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
             </Box>
-            <Text wrap="truncate-end">{pr.title}</Text>
-          </Box>
-          {notes.length > 0 && (
-            <Box marginLeft={labelWidth + 1}>
-              <Text>
-                {notes.map((note, index) => (
-                  <Text color={note.color}>
-                    {index > 0 ? ' · ' : ''}
-                    {note.text}
-                  </Text>
-                ))}
-              </Text>
+            <Box flexShrink={1}>
+              <Text wrap="truncate-end">{pr.title}</Text>
             </Box>
-          )}
-        </Box>
-      )
-    }
-
-    const sections = SECTIONS.filter(section => shown[section.kind].length > 0)
-
-    return (
-      <Box flexDirection="column">
-        {sections.map(section => (
-          <Box key={section.kind} flexDirection="column" marginBottom={1}>
-            <Text bold>{section.title}</Text>
-            {shown[section.kind].map(drawPr)}
+            {notes.length > 0 && (
+              <Box flexShrink={0}>
+                <Text>
+                  {notes.map((note, at) => (
+                    <Text color={note.color}>
+                      {at > 0 ? ' · ' : ''}
+                      {note.text}
+                    </Text>
+                  ))}
+                </Text>
+              </Box>
+            )}
           </Box>
         ))}
-        {sections.length === 0 && (
-          <Text dimColor>
-            {shown.fetchedAt === null && shown.error === null
-              ? 'Looking for pull requests…'
-              : 'No open pull requests are being watched or reviewed.'}
-          </Text>
-        )}
-        {shown.error !== null && <Text color="error">GitHub: {shown.error}</Text>}
-        {shown.fetchedAt !== null && (
-          <Text dimColor>updated {ago(Math.max(0, Math.round((time - shown.fetchedAt) / 1000)))}</Text>
-        )}
+        {failure !== undefined && <Text color="error">{failure}</Text>}
       </Box>
     )
   })

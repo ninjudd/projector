@@ -173,25 +173,33 @@ claude plugin validate skills
 claude plugin test .
 ```
 
-### See a loop's pull requests in a pane
+### See a loop's pull requests above the prompt
 
-In Claude Code, the plugin also ships a hooks module in `hooks/` that draws
-the open pull requests your loops track in a pane. Run `/loop-prs` to open
-it. It opens by itself when the session starts a loop's watcher for the
-first time.
+In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+the open pull requests your loops track in the band above the prompt, one
+line each. Run `/loop-prs` to show or hide the band. It also appears when the
+session starts a loop's watcher for the first time.
 
-The pane has two sections, each hidden while it has no open pull request:
+```text
+───────────────────────────────────────────────── updated 12s ago [-]
+Watching  #267 draft Show a loop's open pull requests above the prompt
+Reviewing #258 draft Name the reviewed head in a review's signature line  conflict
+```
+
+The band has two sections, each left out while it has no open pull request:
 
 - **Watching** lists the pull requests a `start-fix-loop` watcher,
   `watch-threads.sh`, tracks.
 - **Reviewing** lists the pull requests a `start-review-loop` watcher,
   `watch-prs.sh`, tracks.
 
-Each row is a link, `draft` or `ready`, and the title, with a second line
-when the pull request has a merge conflict, a change request, or unresolved
-review threads.
+Each line is a link, `draft` or `ready`, the title, and, when the pull
+request has them, a merge conflict, a change request, or unresolved review
+threads. Only the title shortens on a narrow terminal. The divider says how
+long ago the band reloaded, and Claude Code's `[-]` at its end collapses the
+band.
 
-The pane finds a loop by the `--tracked` file its watcher reads. It learns
+The band finds a loop by the `--tracked` file its watcher reads. It learns
 that file when the session runs the watcher, and it also finds watchers
 already running on the machine, such as a loop another session started. To
 show a tracked file by hand, name it:
@@ -200,11 +208,10 @@ show a tracked file by hand, name it:
 /loop-prs ~/loops/review/tracked
 ```
 
-The pane reloads when one of the session's watchers reports a change and
+The band reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
-for every pull request in one `gh api graphql` call, and only while the pane
-is open. Its last line says how long ago it reloaded. The skills never
-depend on the pane, and Codex has no equivalent.
+for every pull request in one `gh api graphql` call, and only while the band
+is shown. The skills never depend on the band, and Codex has no equivalent.
 
 ## Install for Codex
 

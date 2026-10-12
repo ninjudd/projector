@@ -15,19 +15,25 @@ const PS = [
   '',
 ].join('\n')
 
-const PANE = {
+const BAND = {
   plugin: 'projector',
   surface: 'terminal',
-  component: 'Pane',
-  requestId: 'loop-prs',
+  component: 'AbovePrompt',
   props: {
-    title: 'Loop PRs',
-    isFocused: false,
-    bodyColumns: 60,
-    placement: 'dock',
-    scroll: { offset: 0, bodyRows: 30 },
+    hasSurvey: false,
+    isWorking: false,
+    maxRows: 12,
+    bodyColumns: 120,
+    scroll: { offset: 0, bodyRows: 12 },
     view: {},
   },
+} as const
+
+const COMMAND = {
+  command: 'loop-prs',
+  args: '',
+  origin: { kind: 'composer' },
+  presentation: { isFullscreen: true, columns: 120 },
 } as const
 
 const pr = (number: number, title: string, fields: Record<string, unknown> = {}) => ({
@@ -67,10 +73,9 @@ const ran = (stdout: string) => ({
   isStderrTruncated: false,
 })
 
-/** Answers the files, processes, panes and Bash calls beneath the plugin. */
+/** Answers the files, processes and Bash calls beneath the plugin. */
 function world(on: On, files: Record<string, string>, ps = PS) {
   const commands: string[][] = []
-  const opened: string[] = []
   on('fs.stat', ($, e) => ({
     value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false, realPath: e.path },
   }))
@@ -79,32 +84,34 @@ function world(on: On, files: Record<string, string>, ps = PS) {
     commands.push([...e.argv])
     return { value: ran(e.argv[0] === 'ps' ? ps : JSON.stringify(GITHUB)) }
   })
-  on('ui.open', ($, e) => {
-    opened.push(e.id)
-    return { value: { isPlaced: true as const } }
-  })
   on('tool.call', { tool: 'Bash' }, () => ({
     result: { stdout: '', stderr: '', interrupted: false },
     text: '',
   }))
-  return { commands, opened }
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{ENGINE_BAND}</Text>
+  })
+  return { commands }
 }
 
-test('draws the open pull requests in a Watching and a Reviewing section', async ($, on) => {
+/** What the engine draws in the band when the plugin hands it on. */
+const ENGINE_BAND = 'the engine’s own band'
+
+test('draws one row per open pull request, under a Watching and a Reviewing label', async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 12, 12, 0) })
   mock.env(on, { HOME })
-  const { commands, opened } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
+  const { commands } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
 
-  expect(opened).toEqual(['loop-prs'])
   const gh = commands.filter(argv => argv[0] === 'gh')
   expect(gh.length).toBe(1)
   expect(gh[0]?.join(' ')).toContain('r1: repository(owner: "x", name: "y") { p7: pullRequest(number: 7)')
 
-  const ui = await $.ui.mount(PANE)
+  const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Watching' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Reviewing' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
@@ -112,10 +119,9 @@ test('draws the open pull requests in a Watching and a Reviewing section', async
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '2 open threads' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^updated / })).toBeDefined()
+  const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /merged or closed/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /tracked|session|Refresh/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -129,24 +135,42 @@ test('hides a section with no open pull requests', async ($, on) => {
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(PANE)
+  const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Watching' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Reviewing' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('opens the pane once for a watcher the session starts again', async ($, on) => {
+test('stays hidden until the session starts a watcher or asks for it', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  const { opened } = world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
+
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Reviewing' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('keeps a band you hid hidden when a known watcher starts again', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
+  await $.command.run(COMMAND)
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
 
-  expect(opened).toEqual(['loop-prs'])
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Reviewing' })).toBeUndefined()
+  await ui.unmount()
 })
 
 test('draws over a snapshot an earlier version left in the session', async ($, on) => {
@@ -162,7 +186,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(PANE)
+  const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
   await ui.unmount()
 })
@@ -171,18 +195,12 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {}, '')
-  on('ui.panes', () => ({ value: [] }))
 
-  await $.command.run({
-    command: 'loop-prs',
-    args: '',
-    origin: { kind: 'composer' },
-    presentation: { isFullscreen: true, columns: 120 },
-  })
+  await $.command.run(COMMAND)
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'inline' } })
+  const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
   await ui.unmount()
 })
