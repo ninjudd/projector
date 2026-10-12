@@ -124,7 +124,7 @@ verdict on the head, whichever model gave it, as
 describes. **A review with findings marks it draft; a clean review marks it
 ready.** The one exception is a hold: while the author is building a change
 no review has read, `fix-pr` keeps the pull request a draft with a hold
-comment, and a clean review leaves it a draft until the author lifts the
+comment, and a clean review leaves it a draft until the author ends the
 hold.
 Nothing else enters into it — not when a review first saw the pull request,
 not who last changed the state, not whether it was ever a draft. Never set

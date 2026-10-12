@@ -158,7 +158,7 @@ the recurrence it is instead of as new work.
   when it carried a change up a stack, the merge commit if it made one, the
   fix commits, the declined findings, the suggestions it implemented, each
   one it deferred with its reason, any hold it posted, added to, dropped
-  from, or lifted, and the validation results. A question for the user
+  from, or ended, and the validation results. A question for the user
   comes back to the main loop to ask, and the subagent goes on with the
   pull request's unrelated work meanwhile.
 - When a pull request merges or closes, delete its line from the tracked

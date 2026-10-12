@@ -1107,7 +1107,7 @@ project review release 66
 project review gate 66
 project review status 66
 project review hold 66 --add "Skip fenced code blocks when looking for headings"
-project review hold 66 --lift
+project review hold 66 --drop
 project review rules
 ```
 
@@ -1242,22 +1242,21 @@ it cannot read the pull request. With `--json` it prints one object:
 | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
 
 `hold` holds your pull request in draft while you build changes no review has
-read, as the `fix-pr` skill does, and lifts the hold once a push carries them.
-Pass exactly one of `--add`, `--drop`, and `--lift`; `--add` and `--drop`
-repeat, one change each:
+read, as the `fix-pr` skill does, and ends the hold once a push carries them.
+Pass `--add` or `--drop`. Each repeats, one change each, and `--drop` with no
+change ends the hold:
 
 ```sh
 project review hold 66 --add "Skip fenced code blocks when looking for headings" --add "Rename the flag"
 project review hold 66 --drop "Rename the flag"
-project review hold 66 --lift
+project review hold 66 --drop
 ```
 
 A hold is an issue comment by the pull request's author whose last line is
-`<!-- projector-hold v=1 -->`. `hold` writes it in this shape, with the head
-the hold waits on in its opening line:
+`<!-- projector-hold v=1 -->`. `hold` writes it in this shape:
 
 ```markdown
-Held in draft at `4f2a9c1` while the following changes are implemented:
+Held in draft while the following changes are implemented:
 
 - Skip fenced code blocks when looking for headings
 - Rename the flag
@@ -1266,28 +1265,26 @@ Held in draft at `4f2a9c1` while the following changes are implemented:
 ```
 
 - `--add` posts the comment when you have no hold open on the pull request.
-  Otherwise it edits your newest hold comment: it adds each change the
-  comment does not already list, comparing the text after trimming, and moves
-  the head in the opening line to the current head, because the new change is
-  not pushed yet. It reads the comment back and confirms that the marker is
-  its last line. Only then does it mark a pull request that is not a draft as
-  one, with `gh pr ready --undo`, and confirm it. The comment comes first
-  because, to the review loop, a pull request that turns draft on an
-  unchanged head with no hold open is an author who answered without
-  pushing. It refuses a pull request that is not open.
-- `--drop` removes each change you name from every one of your hold comments
-  that lists it, and leaves the head each records alone. It refuses a change
-  no hold comment lists, and names the ones they do. It deletes a comment left
-  with no change. Once no hold comment is left, the hold ends on a head no
-  push changed, so the review loop re-reviews that head.
-- `--lift` deletes your hold comments once a push carries their changes. It
-  refuses while the pull request's head is still the one a comment records,
-  because lifting the hold before that push would let a clean review of the
-  old head mark the pull request ready while the changes are still local.
-  Push first, or `--drop` the changes that will not be built. A comment whose
-  opening line records no head is lifted, and `hold` says it could not check
-  the head. With no hold open, `--lift` says so and exits 0. It leaves the
-  draft state as it is.
+  Otherwise it edits your newest hold comment, adding each change the
+  comment does not already list, comparing the text after trimming. It reads
+  the comment back and confirms that the marker is its last line. Only then
+  does it mark a pull request that is not a draft as one, with
+  `gh pr ready --undo`, and confirm it. The comment comes first because, to
+  the review loop, a pull request that turns draft on an unchanged head with
+  no hold open is an author who answered without pushing. It refuses a pull
+  request that is not open.
+- `--drop TEXT` removes each change you name from every one of your hold
+  comments that lists it. It refuses a change no hold comment lists, and
+  names the ones they do. It deletes a comment left with no change. Once no
+  hold comment is left, the hold ends on a head no push changed, so the
+  review loop re-reviews that head.
+- `--drop` with no change ends the hold: it deletes every hold comment you
+  have open on the pull request and leaves the draft state as it is. Run it
+  once the push that carries every listed change succeeds. Ending the hold
+  before that push would let a clean review of the unchanged head mark the
+  pull request ready while the changes are still local, and `hold` does not
+  check for it: it trusts you to run it after the push. With no hold open, it
+  says so and exits 0. It cannot be combined with `--drop TEXT` in one run.
 
 Each mode first checks that `gh` is signed in as the pull request's author,
 and refuses otherwise, because only the author's comment holds a pull
@@ -1303,7 +1300,7 @@ the draft state:
 
 ```
 $ project review hold 66 --add "Skip fenced code blocks when looking for headings"
-posted hold comment 4411 on example/app#66 at 4f2a9c1: https://github.com/example/app/pull/66#issuecomment-4411
+posted hold comment 4411 on example/app#66: https://github.com/example/app/pull/66#issuecomment-4411
 held in draft while 1 change is implemented: Skip fenced code blocks when looking for headings
 ```
 
@@ -1313,10 +1310,9 @@ object:
 | Field | Value |
 | --- | --- |
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
-| `action` | `posted` or `added` for `--add`; `dropped` for `--drop`, or `ended` when it removed the last change and deleted the last hold comment; `lifted` for `--lift`, or `none` when no hold was open. |
-| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `dropped` it is the newest comment that still holds the pull request, and for `ended` and `lifted` the newest comment deleted. |
-| `changes` | The changes the hold lists after the command. For `lifted`, the changes the lifted comments listed. |
-| `held_at` | The short head SHA the comment's opening line records, or `null` when it records none. |
+| `action` | `posted` or `added` for `--add`; `dropped` for `--drop TEXT` while a hold comment is left; `ended` once the hold ends, from a bare `--drop` or a `--drop TEXT` that removed the last change; or `none` when a bare `--drop` found no hold open. |
+| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `dropped` it is the newest comment that still holds the pull request, and for `ended` the newest comment deleted. |
+| `changes` | The changes the hold lists after the command. For `ended`, the changes the deleted comments listed. |
 | `draft` | Whether the pull request is a draft after the command. |
 
 `interdiff` decides whether the head may have an incremental review: a short

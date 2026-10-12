@@ -42,7 +42,7 @@ prefix_rule(
 prefix_rule(
     pattern = ["project", "review", "hold"],
     decision = "allow",
-    justification = "Holds the user's own pull request in draft while changes are built, or lifts the hold.",
+    justification = "Holds the user's own pull request in draft while changes are built, or ends the hold.",
 )
 """
 
@@ -141,7 +141,7 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
     if not apply:
         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
                                         "mode can refuse a review loop's clean review of your own pull request, "
-                                        "the lifting of a hold on it, or the publish of a summary, unless the "
+                                        "the end of a hold on it, or the publish of a summary, unless the "
                                         "repository's own settings allow it"
                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
                                            "add them" if hint else ""))

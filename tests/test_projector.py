@@ -1217,8 +1217,8 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
-        self.assertEqual("allow", decision("project", "review", "hold", "12", "--lift"))
-        self.assertEqual("none", decision("project", "summary", "hold", "12", "--lift"))
+        self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
+        self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
         self.assertEqual("none", decision("project", "review", "release", "12"))
         self.assertEqual("none", decision("project", "site", "serve"))
         self.assertEqual("none", decision("project", "summary", "init"))

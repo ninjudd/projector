@@ -472,7 +472,7 @@ def parser() -> argparse.ArgumentParser:
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
     review_hold = review_commands.add_parser(
-        "hold", help="hold your pull request in draft while changes for it are built, and lift the hold once they "
+        "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
                      "are pushed"
     )
     review_status.add_argument("pr", type=int, help="the pull request number")
@@ -490,12 +490,11 @@ def parser() -> argparse.ArgumentParser:
     hold_mode.add_argument("--add", action="append", metavar="TEXT",
                            help="a change about to be built: post the hold listing it, or add it to the open hold, "
                                 "then mark the pull request draft (repeatable)")
-    hold_mode.add_argument("--drop", action="append", metavar="TEXT",
+    # A bare --drop appends None, so the default is a list: None alone would read as --drop never given.
+    hold_mode.add_argument("--drop", action="append", nargs="?", default=[], metavar="TEXT",
                            help="a listed change that will not be built: remove it, and end the hold when none is "
-                                "left (repeatable)")
-    hold_mode.add_argument("--lift", action="store_true",
-                           help="delete the hold once a push carries its changes; refused while the head is the one "
-                                "the hold records")
+                                "left (repeatable); with no TEXT, end the hold, which you do once the push that "
+                                "carries every listed change succeeds, since the command does not check it")
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
                     review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -901,10 +900,10 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
 
 
 def review_hold(arguments: argparse.Namespace) -> int:
-    """`review hold`: post, extend, shrink, or lift your hold on a pull request in `--repo`, or else in the
+    """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
     repository of the checkout it runs in."""
     repo = review.hold_repo(arguments.repo, Path.cwd())
-    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [], arguments.lift)
+    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
     return 0
 

@@ -42,7 +42,7 @@ such as a
 suggestion it implements or a change you ask for, it holds the pull request
 in draft with a comment that lists the changes, so the pull request never
 looks ready to merge while the changes are coming. It posts and removes that
-comment with `project review hold`, and lifts the hold once the changes are
+comment with `project review hold`, and ends the hold once the changes are
 pushed, so a clean review of that push marks the pull request ready. The
 reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved

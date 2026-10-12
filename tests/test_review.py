@@ -1033,13 +1033,9 @@ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
 
 
 # The comment `project review hold --add` posts for fix-pr while it builds a change for the pull request.
-HOLD = ("Held in draft at `4f2a9c1` while the following changes are implemented:\n\n"
+HOLD = ("Held in draft while the following changes are implemented:\n\n"
         "- Skip fenced code blocks when looking for headings\n\n"
         "<!-- projector-hold v=1 -->\n")
-# A hold fix-pr posted by hand before the opening line named the head.
-LEGACY_HOLD = ("Held in draft while the following changes are implemented:\n\n"
-               "- Skip fenced code blocks when looking for headings\n\n"
-               "<!-- projector-hold v=1 -->\n")
 
 
 class ModelTests(PublishCase):
@@ -1643,23 +1639,22 @@ class StatusTests(LatestWinsCase):
         fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
         watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
 
-        self.assertEqual(HOLD, review.hold_body("4f2a9c1" + "0" * 33,
-                                                ["Skip fenced code blocks when looking for headings"]))
+        self.assertEqual(HOLD, review.hold_body(["Skip fenced code blocks when looking for headings"]))
         self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
-        opening = next((line for line in fix_pr if line.startswith("Held in draft")), "")
-        self.assertIsNotNone(review.HOLD_AT.match(opening), "fix-pr shows the opening line the command writes")
+        self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr shows the opening line the command writes")
         self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr shows the marker the command writes")
         self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
 
-    def test_fix_pr_holds_and_lifts_through_the_command_alone(self) -> None:
-        # The command posts the hold before it drafts the pull request, and refuses a lift on the head the
-        # hold records, so fix-pr must not take either step by hand. A raw comment deletion is also what
-        # Claude Code's auto mode refuses, where one narrow rule allows the command.
+    def test_fix_pr_holds_and_ends_the_hold_through_the_command_alone(self) -> None:
+        # The command posts the hold before it drafts the pull request, so fix-pr must not take either step by
+        # hand. A raw comment deletion is also what Claude Code's auto mode refuses, where one narrow rule
+        # allows the command.
         fix_pr = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
 
-        for mode in ("--add", "--drop", "--lift"):
-            self.assertTrue(re.search(rf"project review hold <number> --repo <owner>/<repo> \\?\s*{mode}", fix_pr),
+        for mode, shown in (("--add", r'\\?\s*--add "'), ("--drop TEXT", r'--drop "'), ("--drop", r"--drop$")):
+            self.assertTrue(re.search(rf"project review hold <number> --repo <owner>/<repo> {shown}", fix_pr, re.M),
                             f"fix-pr shows hold {mode}, naming the repository")
+        self.assertFalse("--lift" in fix_pr, "a bare --drop ends the hold")
         self.assertFalse("issues/comments" in fix_pr, "fix-pr posts, edits, finds, and deletes no hold by hand")
         self.assertFalse("gh pr ready" in fix_pr, "fix-pr drafts no pull request apart from the hold")
 
@@ -1709,11 +1704,6 @@ class HoldTests(ReviewCase):
         """Each comment that carries the hold marker, by id."""
         return {i: body for i, body in self.github.comments.items() if review.HOLD_MARKER in body}
 
-    def move_head(self) -> str:
-        """Point the pull request at a new head, as the push that carries a change does."""
-        self.github.pr["head"]["sha"] = "c0ffee5" + "0" * 33
-        return self.github.pr["head"]["sha"]
-
     def call_index(self, match) -> int:
         return next(i for i, (args, _) in enumerate(self.github.calls) if match(args))
 
@@ -1727,7 +1717,7 @@ class HoldTests(ReviewCase):
 
         self.assertEqual(0, code, err)
         [(comment, body)] = self.held().items()
-        self.assertEqual(f"Held in draft at `{self.head[:7]}` while the following changes are implemented:\n\n"
+        self.assertEqual("Held in draft while the following changes are implemented:\n\n"
                          f"- {self.CHANGE}\n- {self.OTHER}\n\n<!-- projector-hold v=1 -->\n", body)
         self.assertEqual("operator", self.github.comment_info[comment]["login"], "posted as the signed-in author")
         self.assertTrue(self.github.pr["draft"])
@@ -1737,8 +1727,7 @@ class HoldTests(ReviewCase):
         drafted = self.call_index(lambda args: args[:2] == ["pr", "ready"])
         self.assertLess(posted, read_back)
         self.assertLess(read_back, drafted, "the pull request turns draft only once the hold reads back")
-        self.assertEqual([f"posted hold comment {comment} on {REPO}#1 at {self.head[:7]}: "
-                          f"{FakeGitHub.comment_url(comment)}",
+        self.assertEqual([f"posted hold comment {comment} on {REPO}#1: {FakeGitHub.comment_url(comment)}",
                           f"held in draft while 2 changes are implemented: {self.CHANGE}; {self.OTHER}"],
                          out.splitlines())
 
@@ -1755,7 +1744,7 @@ class HoldTests(ReviewCase):
         self.github.pr["draft"] = False
         mangled = f"{review.HOLD_MARKER}\n\n- {self.CHANGE}\n"
 
-        with mock.patch.object(review, "hold_body", lambda head, changes: mangled):
+        with mock.patch.object(review, "hold_body", lambda changes: mangled):
             code, _, err = self.hold("--add", self.CHANGE)
 
         self.assertEqual(1, code)
@@ -1763,34 +1752,26 @@ class HoldTests(ReviewCase):
         self.assertEqual([], self.drafts())
         self.assertFalse(self.github.pr["draft"])
 
-    def test_extends_the_open_hold_skipping_listed_changes_and_moving_its_head(self) -> None:
-        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
-        [comment] = self.held()
-        head = self.move_head()
+    def test_extends_the_open_hold_skipping_listed_changes(self) -> None:
+        comment = self.github.comment(HOLD)
 
         code, out, err = self.hold("--add", f" {self.CHANGE} ", "--add", self.OTHER)
 
         self.assertEqual(0, code, err)
-        self.assertEqual({comment: f"Held in draft at `{head[:7]}` while the following changes are implemented:\n\n"
+        self.assertEqual({comment: "Held in draft while the following changes are implemented:\n\n"
                                    f"- {self.CHANGE}\n- {self.OTHER}\n\n<!-- projector-hold v=1 -->\n"},
-                         self.held(), "one comment, each change once, the marker last, at the head it waits on")
-        self.assertEqual(1, sum(args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]
-                                for args, _ in self.github.calls), "the hold is edited, never posted twice")
-        self.assertEqual(f"added hold comment {comment} on {REPO}#1 at {head[:7]}: {FakeGitHub.comment_url(comment)}",
+                         self.held(), "one comment, each change once, the marker last")
+        self.assertEqual([], [args for args, _ in self.github.calls
+                              if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"]],
+                         "the hold is edited, never posted twice")
+        self.assertEqual(f"added hold comment {comment} on {REPO}#1: {FakeGitHub.comment_url(comment)}",
                          out.splitlines()[0])
-
-    def test_extending_a_legacy_hold_records_the_head(self) -> None:
-        comment = self.github.comment(LEGACY_HOLD)
-
-        self.assertEqual(0, self.hold("--add", self.OTHER)[0])
-
-        self.assertEqual(review.hold_body(self.head, [self.CHANGE, self.OTHER]), self.github.comments[comment])
 
     def test_refuses_anyone_but_the_author(self) -> None:
         self.github.pr["user"] = {"login": "teammate"}
         theirs = self.github.comment(HOLD, login="teammate")
-        for args in (["--add", self.CHANGE], ["--drop", self.CHANGE], ["--lift"]):
-            with self.subTest(args[0]):
+        for args in (["--add", self.CHANGE], ["--drop", self.CHANGE], ["--drop"]):
+            with self.subTest(" ".join(args)):
                 code, _, err = self.hold(*args)
 
                 self.assertEqual(1, code)
@@ -1800,58 +1781,54 @@ class HoldTests(ReviewCase):
         self.assertEqual([], [args for args, _ in self.github.calls if args[:2] == ["api", "-X"]])
         self.assertEqual([], self.drafts())
 
-    def test_drops_one_change_and_keeps_the_recorded_head(self) -> None:
-        self.assertEqual(0, self.hold("--add", self.CHANGE, "--add", self.OTHER)[0])
-        [comment] = self.held()
-        self.move_head()
+    def test_drops_one_change(self) -> None:
+        comment = self.github.comment(review.hold_body([self.CHANGE, self.OTHER]))
 
         code, out, err = self.hold("--drop", self.OTHER, "--json")
 
         self.assertEqual(0, code, err)
-        self.assertEqual({comment: review.hold_body(self.head, [self.CHANGE])}, self.held(),
-                         "the head stays the one the hold began at, since no push carried the change it keeps")
-        self.assertEqual(("dropped", [self.CHANGE], self.head[:7]),
-                         (json.loads(out)["action"], json.loads(out)["changes"], json.loads(out)["held_at"]))
+        self.assertEqual({comment: review.hold_body([self.CHANGE])}, self.held())
+        self.assertEqual(("dropped", [self.CHANGE]), (json.loads(out)["action"], json.loads(out)["changes"]))
+        self.assertEqual([], self.drafts())
 
     def test_dropping_the_last_change_ends_the_hold(self) -> None:
-        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
-        [comment] = self.held()
+        comment = self.github.comment(HOLD)
 
         code, out, err = self.hold("--drop", self.CHANGE)
 
         self.assertEqual(0, code, err)
         self.assertEqual({}, self.held())
-        self.assertEqual([f"deleted hold comment {comment} on {REPO}#1, since no change is left in the hold",
-                          f"the hold ended on {self.head[:7]}, so the review loop re-reviews {self.head[:7]} as it "
-                          "stands; it is a draft"], out.splitlines())
+        self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed {self.CHANGE}",
+                          f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; it is a "
+                          "draft"], out.splitlines())
         self.assertEqual([], self.drafts())
 
     def test_drop_works_across_every_hold_comment_and_ends_the_hold_only_when_none_is_left(self) -> None:
         # An older hold, as one posted by hand or by a second --add racing the first, holds the pull request too.
-        older = self.github.comment(LEGACY_HOLD)
-        newest = self.github.comment(review.hold_body(self.head, [self.OTHER]))
+        older = self.github.comment(HOLD)
+        newest = self.github.comment(review.hold_body([self.OTHER]))
 
         code, out, err = self.hold("--drop", self.OTHER)
 
         self.assertEqual(0, code, err)
-        self.assertEqual({older: LEGACY_HOLD}, self.held(), "the older hold still holds the pull request")
+        self.assertEqual({older: HOLD}, self.held(), "the older hold still holds the pull request")
         self.assertEqual([f"still held by comment {older} on {REPO}#1: {FakeGitHub.comment_url(older)}",
                           f"1 change still listed: {self.CHANGE}; it is a draft"], out.splitlines())
 
-        self.github.comments[newest] = review.hold_body(self.head, [self.OTHER])
+        self.github.comments[newest] = review.hold_body([self.OTHER])
         code, out, err = self.hold("--drop", self.CHANGE, "--json")
 
         self.assertEqual(0, code, err)
-        self.assertEqual({newest: review.hold_body(self.head, [self.OTHER])}, self.held(),
+        self.assertEqual({newest: review.hold_body([self.OTHER])}, self.held(),
                          "a change only the older comment lists is dropped from it")
         self.assertEqual(("dropped", [self.OTHER]), (json.loads(out)["action"], json.loads(out)["changes"]))
 
-        self.github.comments[older] = review.hold_body(None, [self.CHANGE, self.OTHER])
+        self.github.comments[older] = review.hold_body([self.CHANGE, self.OTHER])
         code, out, err = self.hold("--drop", self.OTHER, "--drop", self.CHANGE, "--json")
 
         self.assertEqual(0, code, err)
         self.assertEqual({}, self.held())
-        self.assertEqual(("ended", []), (json.loads(out)["action"], json.loads(out)["changes"]))
+        self.assertEqual(("ended", [self.OTHER, self.CHANGE]), (json.loads(out)["action"], json.loads(out)["changes"]))
 
     def test_refuses_a_drop_that_matches_no_change_and_changes_nothing(self) -> None:
         self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
@@ -1868,57 +1845,58 @@ class HoldTests(ReviewCase):
         self.assertEqual(1, code)
         self.assertIn("has no hold open, so there is no change to drop", err)
 
-    def test_lift_is_refused_on_the_head_the_hold_records(self) -> None:
-        self.assertEqual(0, self.hold("--add", self.CHANGE)[0])
-        before = self.held()
-
-        code, _, err = self.hold("--lift")
-
-        self.assertEqual(1, code)
-        self.assertIn(f"which is still the head of {REPO}#1", err)
-        self.assertIn("mark the pull request ready while the changes are still local", err)
-        self.assertIn("Push them first, or remove a change that will not be built with --drop", err)
-        self.assertEqual(before, self.held())
-
-    def test_lift_after_the_head_moved_deletes_the_hold_and_leaves_draft_state_alone(self) -> None:
+    def test_a_bare_drop_ends_the_hold_on_any_head_and_leaves_draft_state_alone(self) -> None:
+        # The caller ends the hold once the push that carries its changes is done; the command trusts it, so an
+        # unchanged head ends the hold too.
         for draft in (True, False):
             with self.subTest(draft=draft):
                 self.github.comments.clear()
-                self.github.pr["head"]["sha"] = self.head
                 self.assertEqual(0, self.hold("--add", self.CHANGE, "--add", self.OTHER)[0])
                 [comment] = self.held()
-                head = self.move_head()
                 self.github.pr["draft"] = draft
                 drafts = len(self.drafts())
 
-                code, out, err = self.hold("--lift")
+                code, out, err = self.hold("--drop")
 
                 self.assertEqual(0, code, err)
                 self.assertEqual({}, self.held())
-                self.assertEqual((draft, drafts), (self.github.pr["draft"], len(self.drafts())))
-                self.assertEqual([f"lifted hold comment {comment} on {REPO}#1, which listed: "
+                self.assertEqual((draft, drafts), (self.github.pr["draft"], len(self.drafts())),
+                                 "ending the hold never marks the pull request ready")
+                self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed "
                                   f"{self.CHANGE}; {self.OTHER}",
-                                  f"the head moved from {self.head[:7]} to {head[:7]}, so a review of {head[:7]} "
-                                  f"signs it off; it is {'a draft' if draft else 'not a draft'}"], out.splitlines())
+                                  f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; "
+                                  f"it is {'a draft' if draft else 'not a draft'}"], out.splitlines())
 
-    def test_lifts_a_hold_that_records_no_head_and_says_so(self) -> None:
-        comment = self.github.comment(LEGACY_HOLD)
-
-        code, out, err = self.hold("--lift")
-
-        self.assertEqual(0, code, err)
-        self.assertEqual({}, self.held())
-        self.assertEqual(f"comment {comment} records no head, so whether a push carried its changes could not be "
-                         "checked; it is a draft", out.splitlines()[1])
-
-    def test_lift_with_no_hold_open_exits_0(self) -> None:
+    def test_a_bare_drop_deletes_every_hold_comment_by_the_author(self) -> None:
+        self.github.comment(HOLD)
+        self.github.comment(review.hold_body([self.OTHER, self.CHANGE]))
         planted = self.github.comment(HOLD, login="passerby")
 
-        code, out, err = self.hold("--lift")
+        code, out, err = self.hold("--drop", "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({planted: HOLD}, self.held(), "a comment by anyone but the author is not the author's hold")
+        self.assertEqual(("ended", [self.CHANGE, self.OTHER]), (json.loads(out)["action"], json.loads(out)["changes"]))
+
+    def test_a_bare_drop_with_no_hold_open_exits_0(self) -> None:
+        planted = self.github.comment(HOLD, login="passerby")
+
+        code, out, err = self.hold("--drop")
 
         self.assertEqual(0, code, err)
         self.assertEqual([f"no hold is open on {REPO}#1; it is a draft"], out.splitlines())
         self.assertIn(planted, self.github.comments, "a comment by anyone but the author is not the author's hold")
+
+    def test_refuses_a_bare_drop_beside_drop_text_before_asking_github(self) -> None:
+        comment = self.github.comment(review.hold_body([self.CHANGE, self.OTHER]))
+        for args in (["--drop", "--drop", self.CHANGE], ["--drop", self.CHANGE, "--drop"]):
+            with self.subTest(args=args):
+                code, _, err = self.hold(*args)
+
+                self.assertEqual(1, code)
+                self.assertIn("a bare --drop ends the whole hold, so it cannot be combined with --drop TEXT", err)
+        self.assertEqual({comment: review.hold_body([self.CHANGE, self.OTHER])}, self.held())
+        self.assertEqual([], self.github.calls)
 
     def test_json_reports_each_action(self) -> None:
         def run(*args: str) -> dict:
@@ -1928,17 +1906,17 @@ class HoldTests(ReviewCase):
 
         posted = run("--add", self.CHANGE)
         [comment] = self.held()
-        head = self.move_head()
-        lifted = run("--lift")
+        added = run("--add", self.OTHER)
+        dropped = run("--drop", self.CHANGE)
+        ended = run("--drop")
 
-        self.assertEqual({"repo": REPO, "number": 1, "head": self.head, "action": "posted",
-                          "comment": {"id": comment, "url": FakeGitHub.comment_url(comment)},
-                          "changes": [self.CHANGE], "held_at": self.head[:7], "draft": True}, posted)
-        self.assertEqual({"repo": REPO, "number": 1, "head": head, "action": "lifted",
-                          "comment": {"id": comment, "url": FakeGitHub.comment_url(comment)},
-                          "changes": [self.CHANGE], "held_at": self.head[:7], "draft": True}, lifted)
-        self.assertEqual({"repo": REPO, "number": 1, "head": head, "action": "none", "comment": None, "changes": [],
-                          "held_at": None, "draft": True}, run("--lift"))
+        pull = {"repo": REPO, "number": 1, "head": self.head}
+        url = {"id": comment, "url": FakeGitHub.comment_url(comment)}
+        self.assertEqual(dict(pull, action="posted", comment=url, changes=[self.CHANGE], draft=True), posted)
+        self.assertEqual(dict(pull, action="added", comment=url, changes=[self.CHANGE, self.OTHER], draft=True), added)
+        self.assertEqual(dict(pull, action="dropped", comment=url, changes=[self.OTHER], draft=True), dropped)
+        self.assertEqual(dict(pull, action="ended", comment=url, changes=[self.OTHER], draft=True), ended)
+        self.assertEqual(dict(pull, action="none", comment=None, changes=[], draft=True), run("--drop"))
 
     def test_repo_wins_over_the_checkout_it_runs_in(self) -> None:
         elsewhere = self.checkout_of("other/app")
@@ -1956,7 +1934,7 @@ class HoldTests(ReviewCase):
         self.assertEqual(0, code, err)
         self.assertEqual(1, len(self.held()))
         self.assertEqual({REPO}, self.repos_called())
-        self.assertTrue(out.startswith("posted hold comment 101 on acme/app#1 "), out)
+        self.assertTrue(out.startswith("posted hold comment 101 on acme/app#1: "), out)
 
     def test_a_review_set_up_for_the_same_number_in_another_repository_is_ignored(self) -> None:
         xdg = Path(tempfile.mkdtemp())
@@ -1976,7 +1954,7 @@ class HoldTests(ReviewCase):
         cases = {"outside a checkout": Path(tempfile.mkdtemp()), "a checkout with no origin": self.checkout_of(None)}
         for name, cwd in cases.items():
             with self.subTest(name):
-                code, _, err = self.hold("--lift", cwd=cwd)
+                code, _, err = self.hold("--drop", cwd=cwd)
 
                 self.assertEqual(1, code)
                 self.assertIn("is not in a checkout whose origin is on GitHub", err)
@@ -2001,8 +1979,8 @@ class HoldTests(ReviewCase):
         self.assertIn(f"{REPO}#1 is closed; only an open pull request is held", err)
         self.assertEqual({}, self.held())
 
-    def test_takes_exactly_one_of_add_drop_and_lift(self) -> None:
-        for args in ([], ["--add", self.CHANGE, "--lift"], ["--add", self.CHANGE, "--drop", self.OTHER]):
+    def test_takes_add_or_drop_but_not_both_and_no_lift(self) -> None:
+        for args in ([], ["--add", self.CHANGE, "--drop"], ["--add", self.CHANGE, "--drop", self.OTHER], ["--lift"]):
             with self.subTest(args=args), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
                 cli.main(["review", "hold", "1", *args])
             self.assertEqual(2, raised.exception.code)

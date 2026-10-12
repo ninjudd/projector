@@ -114,9 +114,9 @@ The author's hold comment, which `fix-pr` posts with `project review hold`
 while it builds a change, as `../fix-pr/SKILL.md` describes under "Hold the
 pull request while changes are built", silences `RESPONDED`: the head waits
 on the author's push, not on a re-review, and `publish` keeps the pull
-request a draft while the hold is open however clean the review. Lifting a
+request a draft while the hold is open however clean the review. Ending a
 hold the watcher saw on the current head is an answer, so it asks for a
-re-review once the author lifts the hold, in case a review of that head ran
+re-review once the author ends the hold, in case a review of that head ran
 while the hold kept it a draft. A `RESPONDED` that reaches a subagent after
 a review has marked the pull request ready, with no change request
 standing, needs nothing: that review already signed the head off.
