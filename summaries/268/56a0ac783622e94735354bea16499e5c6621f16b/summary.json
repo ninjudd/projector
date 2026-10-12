@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Questions from agents",
+ "project": "questions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 268,
+  "title": "Plan answering an agent's questions from any host",
+  "head": "56a0ac783622e94735354bea16499e5c6621f16b",
+  "headRef": "questions-drawer-spec",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops run subagents that sometimes need a decision only the person can make. Today a subagent hands its question to the main loop, which asks it as a line of text in the transcript. That line scrolls away, nothing lists which questions are still open, and nothing carries the answer back to the subagent.",
+   "This pull request adds one plan, <code>docs/projects/questions/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It changes no code. Earlier heads planned the feature inside Claude Code's band alone, under <code>questions-drawer</code>. This head moves the core into the <code>project</code> CLI so that every host reaches the same questions, and keeps the band as Claude Code's view.",
+   "<ol><li><b>An agent asks through the CLI.</b> <code>project question ask</code> checks a one-line question with a required recommendation, numbers it, and writes it to the session's directory under Projector's state directory. Each question gets a fixed reference: <code>#337.3</code> for the third question on #337, <code>owner/repo#337.3</code> for another repository, or <code>q2</code>. In Claude Code, the <code>mcp__projector__ask</code> tool runs this command.</li><li><b>You answer from the band or the CLI.</b> Answers are lettered: <code>a</code> is always the recommendation, then the other options, and the last letter is a typed answer. The band shows each question under its pull request with a drawer of lettered choices, and <code>project question answer #337.3.a</code> answers from a terminal.</li><li><b>The answer reaches the agent.</b> The band delivers an answer you press at once, by sending it to a live subagent or queueing it for the main loop. <code>project question watch</code> prints every other answer as one event line for a host's watcher. A reference typed in a prompt gets its question attached as context.</li></ol>",
+   "The rollout is two stacked pull requests: the CLI with its tests and docs first, then Claude Code's band and tool."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Projector's band</b>: the strip above the Claude Code prompt that #267 added and <code>/projector</code> shows or hides.</li><li><b>Drawer</b>: the extra lines that open under a band line when you press it.</li><li><b>Reference</b>: a question's fixed name, <code>#337.3</code>, <code>owner/repo#337.3</code>, or <code>q2</code>, and an answer's, with its letter, <code>#337.3.a</code>.</li><li><b>Store</b>: one directory per session under Projector's state directory, one JSON file per question, written under a lock.</li><li><b><code>watch</code></b>: <code>project question watch</code>, which prints each undelivered answer as one line, the way Projector's loop watchers report GitHub events.</li></ul>"
+   },
+   {
+    "id": "readiness",
+    "title": "Readiness",
+    "html": "<p>The plan is new at <code>ready</code> and owns every open question. Section 7 lists five: a session's id outside Claude Code (owned, with an interim answer), the loop skills asking through the CLI (deferred), opening a pull request's drawer on the main screen (owned), views for Codex and Paseo (deferred), and old session directories (deferred). None blocks the two pull requests in the rollout.</p>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>2b3a0ed</code>: changes requested, three findings on the delivery route, the repository name, and the option hotkeys.</li><li><code>9445f99</code>: all three fixed. Clean, with a suggestion about a submit that a hook drops.</li><li><code>b74f1b3</code>: questions move from shared files to each session's own state, and a dropped submit now reopens the question. Clean, with a suggestion about a reload during a delivery.</li><li><code>623d52f</code>: the band and its state keys take the names #269 gives them. Clean.</li><li><code>12990cb</code>: every question carries a recommendation and draws as a one-line checklist entry beside its pull request. Changes requested on two paragraphs whose wrapping does not match the plan's.</li><li><code>b017061</code>: choices become numbered lines that can hold a sentence, the chosen answer carries its number, and the wrapping is fixed. Clean.</li><li><code>a13ba48</code>: questions and answers get typed references, and every delivered answer carries its question. Changes requested: a bare-number reference matches ordinary numbers in a prompt, and a pull request's reference changes form with the band's repositories. The author holds the pull request for more changes.</li><li><code>d380cf9</code>: every reference takes one fixed form, and § 2.2 states exactly what the hook matches. Changes requested: a reference followed by a sentence's closing period matches nothing.</li><li><code>b4b0d31</code>: a <code>.</code> followed by a space, a line break, or the end of the prompt now ends a reference, so a reference can close a sentence. Clean.</li><li><code>56a0ac7</code>: the plan is rebuilt around the <code>project</code> CLI and renamed <code>questions</code>. Changes requested: in Claude Code, an answer given from the CLI is never delivered, because nothing there runs <code>watch</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The questions plan",
+   "kicker": "One CLI that every host asks and answers through, with Claude Code's band as one view",
+   "intro": [
+    "Sections 2.1 to 2.4 define the CLI: its commands, the store, the reference and letter scheme with the checks a question must pass, and how references are found in prompt text. Sections 2.5 to 2.7 define Claude Code's side: the <code>ask</code> tool that runs the CLI, what the band draws, and how the band delivers answers and attaches typed references.",
+    "Read § 2.7 with § 2.1's <code>watch</code> in mind. Together they decide which component delivers each answer."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>main</code> now carries #267 and #269. Its <code>hooks/types.d.ts</code> declares <code>bandDrawer</code> beside the other <code>band</code> keys, and its <code>hooks/register.tsx</code> registers <code>/projector</code> and has the <code>prompt.submit</code> hook § 2.7 extends."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> passes at this head. No file outside the plan refers to the old <code>questions-drawer</code> name."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/questions/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the CLI, its store and references, Claude Code's tool and band, the design reasons, acceptance tests, a two-step rollout, and open questions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 84,
+       "text": "Exit <code>65</code> for a refused question or a second answer, and <code>66</code> for an unknown reference, match the meanings in <code>docs/cli.md</code>'s exit-code table."
+      },
+      {
+       "kind": "verify",
+       "line": 104,
+       "text": "Writing to a temporary name and renaming, under a lock taken with <code>O_EXCL</code>, matches how <code>src/projector/core.py</code> and <code>src/projector/review.py</code> already write and lock with the standard library alone."
+      },
+      {
+       "kind": "verify",
+       "line": 157,
+       "text": "The matching rule lets a reference close a sentence, and rejects <code>#337.3.4</code>, <code>q2.4</code>, and a bare <code>2</code>, as the earlier review threads settled."
+      },
+      {
+       "kind": "context",
+       "line": 184,
+       "text": "The tool handles exit <code>0</code> and <code>65</code>. A <code>project</code> older than the plugin exits <code>2</code> for the unknown <code>question</code> command, and the plan does not say what the tool returns then."
+      },
+      {
+       "kind": "context",
+       "line": 236,
+       "text": "On <code>main</code>, the band's tick returns at once while the band is hidden, so a question asked from the shell would not show a hidden band unless the tick checks the store first."
+      },
+      {
+       "kind": "verify",
+       "line": 245,
+       "text": "The live statuses here, <code>pending</code>, <code>running</code>, <code>waiting</code>, and <code>idle</code>, and the ended ones, <code>completed</code>, <code>failed</code>, and <code>killed</code>, are exactly the <code>AgentStatus</code> values in Claude Code 2.1.296's plugin API."
+      },
+      {
+       "kind": "flag",
+       "line": 259,
+       "text": "An answer given from the CLI is delivered only by <code>watch</code>, and nothing in Claude Code runs <code>watch</code>: no skill changes, and the band delivers only what you press in it. Have the band deliver any answer in its session's store that has no <code>deliveredAt</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
