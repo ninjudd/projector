@@ -60,13 +60,16 @@ what it did to each:
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
 - `~/.claude/settings.json`, your own Claude Code settings, gains the
-  permission rules `Bash(project review publish *)` and
-  `Bash(project summary publish *)` in `permissions.allow`. When
-  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
-  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
-  review of your own pull request as self-approval, although the review is a
-  `COMMENT` that moves no `reviewDecision` and a person still merges, and it
-  can refuse the publish of a summary you asked for. An allow rule resolves
+  permission rules `Bash(project review publish *)`,
+  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
+  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
+  `settings.json` in that directory instead. Claude Code's auto mode
+  otherwise can refuse a review loop's clean review of your own pull request
+  as self-approval, although the review is a `COMMENT` that moves no
+  `reviewDecision` and a person still merges. It can refuse the deletion of
+  the comment that holds your pull request in draft, as a write to an
+  external system, which leaves a clean pull request stuck in draft. It can
+  also refuse the publish of a summary you asked for. An allow rule resolves
   the command before the classifier runs. The rules go in your settings rather
   than the repository's, so they hold in every repository, clone, and worktree
   you open, whether or not the repository commits or ignores `.claude/`, and
@@ -86,7 +89,7 @@ what it did to each:
   cannot be written, as one linked into a read-only directory such as the Nix
   store cannot, and says on stderr how to add the rules yourself. `init`
   still exits 0.
-- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same two
+- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same three
   commands, for Codex's approval reviewer, which otherwise can refuse
   `project summary publish` as sending repository content to another host.
   When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
@@ -96,20 +99,24 @@ what it did to each:
   grant to `default.rules`, so `init` rewrites `projector.rules` whole and
   leaves your other rules alone. The terminal, `--publish-rule`, and
   `review.publish_rule` decide it exactly as they decide the Claude Code
-  rules. The file holds one rule:
+  rules. The file holds two rules:
 
   ```text
   prefix_rule(
       pattern = ["project", ["review", "summary"], "publish"],
       decision = "allow",
   )
+  prefix_rule(
+      pattern = ["project", "review", "hold"],
+      decision = "allow",
+  )
   ```
 
   Codex runs a command that an `allow` rule matches without asking, and
   outside its sandbox, so a publish reaches GitHub and the site. To see what
-  the rule allows, run
+  the rules allow, run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
-  `init` keeps the file, and says on stderr how to add the rule yourself, when
+  `init` keeps the file, and says on stderr how to add the rules yourself, when
   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
   a read-only directory cannot, or when `rules` is not a directory. `init`
   still exits 0.
@@ -518,7 +525,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish` and `project summary publish` to your Claude Code settings and Codex rules |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
@@ -1099,6 +1106,8 @@ project review publish 66 --incremental --body body.md
 project review release 66
 project review gate 66
 project review status 66
+project review hold 66 --add "Skip fenced code blocks when looking for headings"
+project review hold 66 --drop
 project review rules
 ```
 
@@ -1175,8 +1184,8 @@ and keeps the pull request a draft while any is open, whatever the newest
 verdict, so a finding another model posts after this review's census still
 holds it. It also keeps the pull request a draft while its author has a hold
 comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
-`fix-pr` posts while it builds a change for the pull request. Only the
-author's comment counts. It counts the reviewer's verdicts, the one it just
+`hold` posts for `fix-pr` while it builds a change for the pull request. Only
+the author's comment counts. It counts the reviewer's verdicts, the one it just
 posted included, and those of any account that owns the repository, belongs
 to its organization, or collaborates on it. On another author's pull request
 it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
@@ -1231,6 +1240,80 @@ it cannot read the pull request. With `--json` it prints one object:
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
 | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+
+`hold` holds your pull request in draft while you build changes no review has
+read, as the `fix-pr` skill does, and ends the hold once a push carries them.
+Pass `--add` or `--drop`. Each repeats, one change each, and `--drop` with no
+change ends the hold:
+
+```sh
+project review hold 66 --add "Skip fenced code blocks when looking for headings" --add "Rename the flag"
+project review hold 66 --drop "Rename the flag"
+project review hold 66 --drop
+```
+
+A hold is an issue comment by the pull request's author whose last line is
+`<!-- projector-hold v=1 -->`. `hold` writes it in this shape:
+
+```markdown
+Held in draft while the following changes are implemented:
+
+- Skip fenced code blocks when looking for headings
+- Rename the flag
+
+<!-- projector-hold v=1 -->
+```
+
+- `--add` posts the comment when you have no hold open on the pull request.
+  Otherwise it edits your newest hold comment, adding each change the
+  comment does not already list, comparing the text after trimming. It reads
+  the comment back and confirms that the marker is its last line. Only then
+  does it mark a pull request that is not a draft as one, with
+  `gh pr ready --undo`, and confirm it. The comment comes first because, to
+  the review loop, a pull request that turns draft on an unchanged head with
+  no hold open is an author who answered without pushing. It refuses a pull
+  request that is not open.
+- `--drop TEXT` removes each change you name from every one of your hold
+  comments that lists it. It refuses a change no hold comment lists, and
+  names the ones they do. It deletes a comment left with no change. Once no
+  hold comment is left, the hold ends on a head no push changed, so the
+  review loop re-reviews that head.
+- `--drop` with no change ends the hold: it deletes every hold comment you
+  have open on the pull request and leaves the draft state as it is. Run it
+  once the push that carries every listed change succeeds. Ending the hold
+  before that push would let a clean review of the unchanged head mark the
+  pull request ready while the changes are still local, and `hold` does not
+  check for it: it trusts you to run it after the push. With no hold open, it
+  says so and exits 0. It cannot be combined with `--drop TEXT` in one run.
+
+Each mode first checks that `gh` is signed in as the pull request's author,
+and refuses otherwise, because only the author's comment holds a pull
+request. No mode marks the pull request ready: a clean review of the head you
+push does that. `hold` posts as the signed-in account. It acts on the
+repository `--repo` names, or else on the `origin` of the checkout you run it
+in, and refuses outside a checkout whose `origin` is on GitHub unless you pass
+`--repo`. Unlike `status` and the commands that follow a review, it never
+takes the repository from a review set up on this machine, because a command
+that posts and deletes comments must not act on a repository it guessed. It
+prints what it did, the comment's id and URL, the changes the hold lists, and
+the draft state:
+
+```
+$ project review hold 66 --add "Skip fenced code blocks when looking for headings"
+posted hold comment 4411 on example/app#66: https://github.com/example/app/pull/66#issuecomment-4411
+held in draft while 1 change is implemented: Skip fenced code blocks when looking for headings
+```
+
+Every refusal exits 1 and says what to do. With `--json` it prints one
+object:
+
+| Field | Value |
+| --- | --- |
+| `repo`, `number`, `head` | The pull request and its current head SHA. |
+| `action` | `posted` or `added` for `--add`; `dropped` for `--drop TEXT` while a hold comment is left; `ended` once the hold ends, from a bare `--drop` or a `--drop TEXT` that removed the last change; or `none` when a bare `--drop` found no hold open. |
+| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `dropped` it is the newest comment that still holds the pull request, and for `ended` the newest comment deleted. |
+| `changes` | The changes the hold lists after the command. For `ended`, the changes the deleted comments listed. |
+| `draft` | Whether the pull request is a draft after the command. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review
@@ -1302,9 +1385,10 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `setup` recorded as untrusted, whether or not `review.gate` is set, and when
 `review.gate` is unset.
 
-`rules` checks whether your own settings allow `project review publish` and
-`project summary publish`: the rules `init` adds to `~/.claude/settings.json`,
-and to `~/.codex/rules/projector.rules` where Codex is installed. It prints
+`rules` checks whether your own settings allow `project review publish`,
+`project review hold`, and `project summary publish`: the rules `init` adds to
+`~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
+is installed. It prints
 each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
 whole check and for each file. It writes nothing, takes no pull request, and
 runs from any directory. It exits 0 when every file has the rules. It exits 1
@@ -1325,10 +1409,11 @@ number, and by `--model` or the one model with a review of the pull request
 set up on this machine, so it runs from any directory. With several models
 set up, it refuses, naming them, until `--model` picks one. State an earlier
 release wrote is not read, so a review set up before an upgrade runs `setup`
-again. A command that posts runs `gh` as the
+again. A command that posts a review or a start comment runs `gh` as the
 reviewer, `--reviewer` or `review.username` or else the authenticated user,
 with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
-so the account the rest of the session uses is left alone.
+so the account the rest of the session uses is left alone. `hold` posts as
+the authenticated user, who must be the pull request's author.
 
 A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a

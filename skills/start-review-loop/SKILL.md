@@ -38,7 +38,8 @@ nothing open.
    review or GitHub workflow skills.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
-   rules that allow `project review publish` and `project summary publish`.
+   rules that allow `project review publish`, `project review hold`, and
+   `project summary publish`.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
    reviewer, can refuse the loop's publishes, a summary on another author's
@@ -109,16 +110,16 @@ one. It prevents a response without a push from deadlocking both loops. A `TRACK
 a problem with the tracked file itself, announced once; fix the file. Keep the
 loop silent while no event needs action.
 
-The author's hold comment, which `fix-pr` posts while it builds a change, as
-`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
-are built", silences `RESPONDED`: the head waits on the author's push, not
-on a re-review, and `publish` keeps the pull request a draft while the hold
-is open however clean the review. Lifting a hold the watcher saw on the
-current head is an answer, so it asks for a re-review once the author
-deletes the hold, in case a review of that head ran while the hold kept it a
-draft. A `RESPONDED` that reaches a subagent after a review has marked the
-pull request ready, with no change request standing, needs nothing: that
-review already signed the head off.
+The author's hold comment, which `fix-pr` posts with `project review hold`
+while it builds a change, as `../fix-pr/SKILL.md` describes under "Hold the
+pull request while changes are built", silences `RESPONDED`: the head waits
+on the author's push, not on a re-review, and `publish` keeps the pull
+request a draft while the hold is open however clean the review. Ending a
+hold the watcher saw on the current head is an answer, so it asks for a
+re-review once the author ends the hold, in case a review of that head ran
+while the hold kept it a draft. A `RESPONDED` that reaches a subagent after
+a review has marked the pull request ready, with no change request
+standing, needs nothing: that review already signed the head off.
 
 If adopting an existing watcher, fetch unresolved state first, confirm it runs
 with the adoption flags for this repository and operator and reads the tracked

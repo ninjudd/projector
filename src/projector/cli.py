@@ -335,8 +335,8 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help="add the rules allowing `project review publish` and `project summary publish` to your Claude Code "
-        "settings and Codex rules even without a terminal (default: add them when run at a terminal)",
+        help=f"add the rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules even "
+        "without a terminal (default: add them when run at a terminal)",
     )
     rule_choice.add_argument(
         "--no-publish-rule", action="store_false", dest="publish_rule",
@@ -466,10 +466,14 @@ def parser() -> argparse.ArgumentParser:
                           "have an incremental review"
     )
     add_output(review_commands.add_parser(
-        "rules", help="report whether your settings allow `project review publish` and `project summary publish`"
+        "rules", help=f"report whether your settings allow {permissions.COMMANDS}"
     ))
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
+    )
+    review_hold = review_commands.add_parser(
+        "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
+                     "are pushed"
     )
     review_status.add_argument("pr", type=int, help="the pull request number")
     review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
@@ -479,6 +483,18 @@ def parser() -> argparse.ArgumentParser:
     review_status.add_argument("--state-dir", type=Path,
                                help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
     add_output(review_status)
+    review_hold.add_argument("pr", type=int, help="the pull request number")
+    review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
+    add_output(review_hold)
+    hold_mode = review_hold.add_mutually_exclusive_group(required=True)
+    hold_mode.add_argument("--add", action="append", metavar="TEXT",
+                           help="a change about to be built: post the hold listing it, or add it to the open hold, "
+                                "then mark the pull request draft (repeatable)")
+    # A bare --drop appends None, so the default is a list: None alone would read as --drop never given.
+    hold_mode.add_argument("--drop", action="append", nargs="?", default=[], metavar="TEXT",
+                           help="a listed change that will not be built: remove it, and end the hold when none is "
+                                "left (repeatable); with no TEXT, end the hold, which you do once the push that "
+                                "carries every listed change succeeds, since the command does not check it")
     for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
                     review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -823,7 +839,8 @@ NOT_HOSTED = 3
 
 
 def review_rules(json_output: bool) -> int:
-    """`review rules`: whether the user's settings allow both publish commands, exiting 1 when one may not.
+    """`review rules`: whether the user's settings allow every command Projector's permission rules name,
+    exiting 1 when one may not.
 
     It asks `allow_publish` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
@@ -882,9 +899,20 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
+def review_hold(arguments: argparse.Namespace) -> int:
+    """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
+    repository of the checkout it runs in."""
+    repo = review.hold_repo(arguments.repo, Path.cwd())
+    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
+    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
+    return 0
+
+
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
+    if arguments.review_command == "hold":
+        return review_hold(arguments)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
@@ -1403,9 +1431,10 @@ def publish_rule_enabled(root: Path) -> bool:
 
 
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
-    """Whether `init` adds the publish rules ("add"), only reports them ("report"), or leaves them (None).
+    """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
+    (None).
 
-    The rules exempt two commands from each host's automatic approval in the
+    The rules exempt three commands from each host's automatic approval in the
     person's own settings, so `init` adds them only when a person runs it at a
     terminal or names --publish-rule; an agent refreshing the instructions gets
     a note instead. Configuration can only turn them off.
@@ -1419,7 +1448,7 @@ def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[st
 
 
 def init_permissions_only(arguments: argparse.Namespace) -> int:
-    """`init` outside a Git repository: set up the user's publish rules, which belong to no repository."""
+    """`init` outside a Git repository: set up the user's permission rules, which belong to no repository."""
 
     if arguments.site or arguments.url:
         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
