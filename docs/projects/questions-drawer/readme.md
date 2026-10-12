@@ -52,7 +52,7 @@ tool records the question in the session's own plugin state and returns at
 once, so the agent keeps working. The session's band lists its questions as
 a checklist, each on the line after the pull request it is about and each
 open one marked `[ ]`, with the open count in the divider. Clicking a
-question opens its drawer: its detail, then each choice as a bulleted line
+question opens its drawer: its detail, then each choice as a numbered line
 with the recommended one marked, a field for any other answer, and
 **dismiss**. When you answer, the module delivers the answer at once, to the
 subagent that asked or, when that subagent has ended, to the session's main
@@ -85,9 +85,11 @@ its own agents asked, and you answer them only in that session.
    pressing Enter on the line. Opening any drawer closes any other, a pull
    request's included.
 5. You answer by pressing the recommended answer, another option, by typing
-   in the field and pressing Enter, or by pressing **dismiss**. The module
-   records the answer on the question, so its line reads `sending` and a
-   second press does nothing, and delivers it:
+   in the field and pressing Enter, or by pressing **dismiss**. A chosen
+   answer names its number and its text, such as `2. Add a budget of two
+   retries per host`, so you and the agent refer to the same choice. The
+   module records the answer on the question, so its line reads `sending`
+   and a second press does nothing, and delivers it:
    - When the question has an `agentId` and `$.agent.list()` reports that
      subagent `pending`, `running`, `waiting`, or `idle`, the module sends
      the answer with `$.session.send({ to: { agentId } })`. The list keeps
@@ -155,38 +157,40 @@ question, and the answer, or `dismissed`.
 [ ] Decline the finding about the retry budget?        5m
     The review asks for a retry budget per host. The loop already caps
     retries at three in total, which covers the case the finding names.
-    - Decline it: the total cap already bounds retries to one host (recommended)
-    - Add a budget of two retries per host, as the review asks, and keep the
-      total cap of three
+    1. Decline it: the total cap already bounds retries to one host
+       (recommended)
+    2. Add a budget of two retries per host, as the review asks, and keep
+       the total cap of three
     [ Answer…                                                          ]
     [ dismiss ]
 #258 ready Name the reviewed head in a review's signature line
 ```
 
-The drawer holds what the line has no room for: `detail` as `Markdown`,
-then the answers, each choice a line of its own. Each choice is a `Button`
-with `plain` whose text starts `- `, and a long one wraps onto further
-lines under its own text. The recommended choice ends `(recommended)`, in
-the accent color. A question without options draws one choice, its
-recommendation, so you accept the recommendation the way you pick any
-choice. After the choices come an `Input` keyed `answer`, which takes any
-other answer through its `onSubmit`, and a **dismiss** button, each on a
-line of its own.
+The drawer holds what the line has no room for: `detail` as `Markdown`, then
+the answers, each choice a line of its own. Each choice is a `Button` with
+`plain` whose text starts with its number, `1.`, `2.`, and so on, in the
+order the agent gave them, so you can name a choice when you discuss the
+question. A long one wraps onto further lines under its own text. The
+recommended choice ends `(recommended)`, in the accent color. A question
+without options draws one choice, its recommendation, so you accept the
+recommendation the way you pick any choice. After the choices come an
+`Input` keyed `answer`, which takes any other answer through its `onSubmit`,
+and a **dismiss** button, each on a line of its own.
 
-The choices have no hotkeys. Claude Code presses a band `Button` whose
-hotkey is a digit when that digit is typed first in an empty prompt, the
-way a survey takes its answer, so a prompt such as `2 things first:` would
-answer the question. Without hotkeys, only a click, or Enter on a choice
-while the band holds the keyboard, picks an answer. The drawer's
-open/closed state is the band's `bandDrawer`, keyed `q:<id>` for a
-question, so one drawer is open at a time across questions and pull
-requests.
+The choices have no hotkeys; their numbers are only labels. Claude Code
+presses a band `Button` whose hotkey is a digit when that digit is typed
+first in an empty prompt, the way a survey takes its answer, so a prompt
+such as `2 things first:` would answer the question. Without hotkeys, only a
+click, or Enter on a choice while the band holds the keyboard, picks an
+answer. The drawer's open/closed state is the band's `bandDrawer`, keyed
+`q:<id>` for a question, so one drawer is open at a time across questions
+and pull requests.
 
 ### 2.5 Files
 
 | File | Change |
 | --- | --- |
-| `hooks/questions.ts` | New: the question's id and type check, the checks a question must pass (one line, a recommendation, one of the options), the order, the route an answer takes from the subagent's status, and the text each delivery sends |
+| `hooks/questions.ts` | New: the question's id and type check, the checks a question must pass (one line, a recommendation, one of the options), the order, the route an answer takes from the subagent's status, and the text each delivery sends, which names a choice by its number |
 | `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; deliver an answer, then resolve or reopen its question; remove a resolved question a minute later on the tick; draw the checklist, its drawer, and the open count in the divider |
 | `hooks/types.d.ts` | The `Question` type, and `bandQuestions` under the `projector` plugin's state |
 | `hooks/questions.test.ts` | New: the id, each check a question must pass, the order, and the route by the subagent's status |
@@ -210,11 +214,13 @@ skills keep working in Codex and without the module.
   by accepting the agent's answer, and an agent that must name one has
   thought the decision through before it asks. Requiring the recommendation
   to be one of the options, when there are options, lets the drawer mark it.
-- **Choices as bulleted lines, not a row of buttons.** A choice worth
+- **Choices as numbered lines, not a row of buttons.** A choice worth
   offering often needs a sentence to say what it does, which a button label
-  cannot hold, and a line each lets it say that in full. The recommendation
-  is a choice too, so a question without options still answers the same
-  way, with one press on one line.
+  cannot hold, and a line each lets it say that in full. The number lets
+  you name a choice when you talk the question over, as in "2, but keep the
+  cap at two", and the delivered answer carries the same number. The
+  recommendation is a choice too, so a question without options still
+  answers the same way, with one press on one line.
 - **One line, then the drawer.** A checklist of one line each shows every
   open question at a glance and keeps the band short, while `detail` holds
   whatever the decision needs, out of the way until you open it.
@@ -254,7 +260,8 @@ skills keep working in Codex and without the module.
 | Ask about a pull request the band lists | The question's line comes right after that pull request's line, at the same left edge, without the pull request's number; two questions about it follow it oldest first |
 | Ask with no `pr`, or about a pull request the band does not list | The question's line comes above the pull requests, naming its `pr` when it has one |
 | A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `isError` with the reason, and no question is added |
-| Open a question with options | Its drawer shows `detail`, then each option as its own line starting `- `, a long one wrapping under its text, and the recommended one ending `(recommended)` |
+| Open a question with options | Its drawer shows `detail`, then each option as its own line numbered `1.`, `2.`, and so on in the agent's order, a long one wrapping under its text, and the recommended one ending `(recommended)` |
+| Press choice 2 | The agent receives `2.` and that choice's text |
 | Open a question without options, and press its one choice | The choice is the recommendation, marked `(recommended)`, and the agent receives it as the answer |
 | Press an option, or type an answer and press Enter | The subagent receives the answer through `$.session.send`; the line reads `[x]` and the answer, the divider no longer counts it, and it leaves the band one minute later |
 | Press a resolved question's line | Nothing happens |
