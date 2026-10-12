@@ -220,7 +220,10 @@ passing `--session` from `$.session.id()` and `--agent` from the call's
 reason }`, which the model reads as an error result. When the command exits
 `65`, the reason is the check that failed. On any other exit, such as `2`
 from a `project` too old to know `question`, the reason is the command's
-error and `run project upgrade`. It also shows the band and raises one
+error and `run project upgrade`. When `project` cannot start, or is still
+running when `$.process.run` gives up after 15 seconds, the reason says it
+did not finish and tells the agent to ask in the conversation instead. When
+the command succeeds, the hook also shows the band and raises one
 `$.ui.notify`. An agent can run `project question ask` itself from the shell
 too, which reaches the same store.
 

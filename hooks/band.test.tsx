@@ -102,7 +102,13 @@ const ENGINE_BAND = 'the engine’s own band'
 type Ran = ReturnType<typeof ran>
 
 /** Answers the files, processes, prompt and Bash calls beneath the plugin, and `project` when given. */
-function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Ran) {
+/**
+ * What a `project` command comes to: its output, or `{ deny }` for a call that
+ * rejects, as one still running at its timeout does.
+ */
+type Outcome = Ran | { deny: string }
+
+function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Outcome) {
   const commands: string[][] = []
   const filled: string[] = []
   on('fs.stat', ($, e) => ({
@@ -111,7 +117,10 @@ function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: 
   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
   on('process.run', ($, e) => {
     commands.push([...e.argv])
-    if (e.argv[0] === 'project' && project !== undefined) return { value: project([...e.argv], e.init?.stdin ?? '') }
+    if (e.argv[0] === 'project' && project !== undefined) {
+      const outcome = project([...e.argv], e.init?.stdin ?? '')
+      return 'deny' in outcome ? outcome : { value: outcome }
+    }
     return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
   })
   on('prompt.fill', ($, e) => {
@@ -311,7 +320,8 @@ const reopened = (question: Held): Held =>
 function questionStore(clock: Clock, seed: readonly Held[]) {
   const store = new Map<string, Held>()
   const times = new Map<string, number>()
-  const refusal: { code?: number; message?: string } = {}
+  /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
+  const refusal: { code?: number; message?: string; rejection?: string } = {}
   /** How many of the next `list` commands fail. */
   const failing = { lists: 0 }
   let writes = 0
@@ -338,7 +348,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.question} → ${question.answer.text}`
       : `DISMISSED ${question.ref} ${question.question}`
 
-  const run = (argv: string[], stdin: string): Ran => {
+  const run = (argv: string[], stdin: string): Outcome => {
     const [, , command = '', ...args] = argv
     const time = clock.now()
     if (command === 'list') {
@@ -350,6 +360,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return ran(JSON.stringify({ schema_version: 2, questions }))
     }
     if (command === 'ask') {
+      if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
       const pr = flag(args, 'pr') ?? null
       asked += 1
@@ -502,7 +513,7 @@ test('asks through the tool, and the band shows the question after its pull requ
   await ui.unmount()
 })
 
-test('refuses a call the CLI refuses, and asks for an upgrade when the CLI is too old', async ($, on) => {
+test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -516,6 +527,12 @@ test('refuses a call the CLI refuses, and asks for an upgrade when the CLI is to
   Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'question'" })
   const old = await $.tool.call(ask)
   expect(old.deny ?? old.text).toBe("error: argument command: invalid choice: 'question'; run project upgrade")
+
+  Object.assign(session.store.refusal, { rejection: 'project timed out after 15000 ms' })
+  const hung = await $.tool.call(ask)
+  expect(hung.deny ?? hung.text).toMatch(
+    /^project did not finish \(.*project timed out after 15000 ms\); ask in the conversation instead$/,
+  )
 })
 
 test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {

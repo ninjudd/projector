@@ -94,7 +94,7 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
   }
 }
 
-/** Runs the `project` CLI; rejects only when it cannot start. */
+/** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
 const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
   $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
 
@@ -544,7 +544,7 @@ export const register: Register = on => {
     try {
       ran = await project($, args)
     } catch (error) {
-      return { deny: `project did not run (${messageOf(error)}); run project upgrade` }
+      return { deny: `project did not finish (${messageOf(error)}); ask in the conversation instead` }
     }
     if (ran.exitCode === 65) return { deny: errorOf(ran) }
     if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
