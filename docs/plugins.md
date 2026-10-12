@@ -211,6 +211,13 @@ author, branch, size, checks, and when it last changed. Below that:
 A ctrl, alt, or cmd click on the number skips the drawer and opens the
 Projector summary, or the pull request on GitHub when it has no summary.
 
+The drawer needs Claude Code's fullscreen layout, the only one that reports
+a click to the band. On the main screen, which Claude Code uses under tmux
+and when `CLAUDE_CODE_NO_FLICKER=0` is set, the band still lists your pull
+requests, but a click opens no drawer. Each number stays a link to the
+Projector summary or the pull request, which the terminal opens the way it
+opens any other link.
+
 The band finds a loop by the `--tracked` file its watcher reads. It learns
 that file when the session runs the watcher, and it also finds watchers
 already running on the machine, such as a loop another session started. To
