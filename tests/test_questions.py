@@ -12,6 +12,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -22,6 +23,18 @@ from typing import Callable
 from unittest import mock
 
 from projector import cli, questions
+
+HOLD_LOCK = """
+import os, sys
+from pathlib import Path
+from projector import questions
+
+with questions.locked(Path(sys.argv[1])):
+    print("held", flush=True)
+    if sys.argv[2] == "exit":
+        os._exit(0)
+    sys.stdin.read()
+"""
 
 
 def at_once(*calls: Callable[[], object]) -> list[str]:
@@ -190,12 +203,35 @@ class AnswerTests(QuestionCase):
                                                       lambda: questions.answer("s1", "#337.1", "b")))
         self.assertIn(json.loads((self.folder() / "%23337.1.json").read_text())["answer"]["letter"], "ab")
 
-    def test_a_stale_lock_is_cleared(self) -> None:
-        lock = self.folder() / ".lock"
-        lock.mkdir()
-        old = time.time() - questions.LOCK_STALE_SECONDS - 1
-        os.utime(lock, (old, old))
+    def hold_lock(self, then: str) -> subprocess.Popen:
+        """Start a process that takes the session's lock and, once it holds it, either waits for its
+        standard input to close (`wait`) or exits without unlocking (`exit`)."""
+        holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                  env={**os.environ, "PYTHONPATH": str(Path(questions.__file__).parents[1])})
+        self.addCleanup(holder.stdout.close)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.stdin.close)
+        self.assertEqual("held\n", holder.stdout.readline())
+        return holder
+
+    def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) -> None:
+        holder = self.hold_lock("wait")
+        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0.3):
+            started = time.monotonic()
+            code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
+        self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assertEqual(65, code)
+        self.assertIn("another command holds", err)
+        holder.stdin.close()
+        self.assertEqual(0, holder.wait())
         self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
+
+    def test_a_holder_that_exits_without_unlocking_leaves_the_lock_free_at_once(self) -> None:
+        holder = self.hold_lock("exit")
+        self.assertEqual(0, holder.wait())
+        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0):
+            self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
 
 
 class DeliveryTests(QuestionCase):

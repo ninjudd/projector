@@ -115,10 +115,14 @@ A session's questions live in
 `project review`'s `reviews/` (`state_dir` in `src/projector/review.py`).
 The directory holds one JSON file per question, `counts.json`, the last
 number given in each count, and `session.json`, the session's repository
-once it has one (§ 2.3). A command that writes takes the directory's
-lock first and writes each file to a temporary name before renaming it into
-place, so two writers never lose each other's change and a reader never
-sees half a file.
+once it has one (§ 2.3). A command that writes first takes the session's
+lock, the operating system's exclusive lock on the directory's `.lock` file
+(`flock` on Linux and macOS, `msvcrt.locking` on Windows). It then writes
+each file to a temporary name before renaming it into place, so two writers
+never lose each other's change and a reader never sees half a file. The
+system releases the lock when its holder exits, so a command that dies
+holding it blocks no other command. A command that finds the lock held
+retries for 5 seconds, then exits `65`.
 
 | Field | Value |
 | --- | --- |
@@ -336,7 +340,10 @@ settled.
   its own, and no view shows another session's questions. Files outlast a
   hot reload, a resume, and a restarted runner, where state kept in a
   process does not. The lock and the rename keep two writers, such as a
-  band and a `watch`, from losing each other's change.
+  band and a `watch`, from losing each other's change. The lock is the
+  operating system's, so it ends with its holder: a lock directory that a
+  crashed command left behind would need an age at which it counts as
+  stale, and two waiters that judged that age at once could both take it.
 - **Asking without waiting.** `AskUserQuestion` waits for an answer in a
   dialog. A loop must keep fixing and reviewing what the question does not
   block, so `ask` prints the reference and returns.

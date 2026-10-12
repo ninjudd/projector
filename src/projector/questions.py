@@ -3,8 +3,9 @@
 Each session's questions are JSON files in their own directory, one per question, with
 `counts.json` holding the last number given in each count and `session.json` the session's
 repository, once an `ask` from a checkout has recorded one. Every write happens under the
-directory's lock and lands by renaming a temporary file into place, so two writers never
-lose each other's change and a reader never sees half a file.
+directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a
+temporary file into place, so two writers never lose each other's change and a reader never
+sees half a file.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ MAX_OPTIONS = 5
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
 LOCK_WAIT_SECONDS = 5.0
-LOCK_STALE_SECONDS = 30.0
 
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
@@ -77,29 +77,55 @@ def question_file(folder: Path, ref: str) -> Path:
     return folder / f"{quote(ref, safe='')}.json"
 
 
+if os.name == "nt":
+    import msvcrt
+
+    # `msvcrt.locking` locks bytes from the file's current position, so both calls seek to
+    # byte 0 first and lock and unlock the same byte.
+    def try_lock(descriptor: int) -> bool:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def unlock(descriptor: int) -> None:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def try_lock(descriptor: int) -> bool:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+    def unlock(descriptor: int) -> None:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
 @contextlib.contextmanager
 def locked(folder: Path) -> Iterator[None]:
-    """Hold the session's lock, a directory whose creation is atomic on every platform."""
+    """Hold the session's lock: the operating system's exclusive lock on its `.lock` file, which
+    the system releases when the holder exits, so a command that dies holding it strands nothing."""
     folder.mkdir(parents=True, exist_ok=True)
     lock = folder / ".lock"
-    deadline = time.monotonic() + LOCK_WAIT_SECONDS
-    while True:
-        try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            with contextlib.suppress(FileNotFoundError):
-                if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
-                    lock.rmdir()
-                    continue
-            if time.monotonic() > deadline:
-                raise QuestionError(f"another command holds {lock}; try again, or remove it if none is running")
-            time.sleep(0.05)
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        yield
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        while not try_lock(descriptor):
+            if time.monotonic() > deadline:
+                raise QuestionError(f"another command holds {lock}; try again once it finishes")
+            time.sleep(0.05)
+        try:
+            yield
+        finally:
+            unlock(descriptor)
     finally:
-        with contextlib.suppress(FileNotFoundError):
-            lock.rmdir()
+        os.close(descriptor)
 
 
 def write_json(path: Path, value: object) -> None:
