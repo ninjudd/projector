@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -84,7 +84,7 @@ the rest of the CLI does.
 | `project question claim <reference> [--renew <token>]` | Claims a recorded, undelivered answer for delivery and prints a token and the text to deliver; with `--renew`, keeps that claim live (§ 2.2) |
 | `project question delivered <reference> --claim <token>` | Marks a claimed answer delivered |
 | `project question reopen <reference> --claim <token>` | Clears a claimed answer whose delivery failed, so the question is open again |
-| `project question watch [--interval <seconds>]` | Claims each undelivered answer, prints one line for it, marks it delivered, and keeps watching |
+| `project question watch [--interval <seconds>] [--once]` | Claims each undelivered answer, prints one line for it, marks it delivered, and keeps watching, or with `--once` makes one pass and exits; with `--json`, prints one JSON object a line |
 | `project question context` | Reads prompt text on standard input and prints the context for each reference in it (§ 2.4) |
 
 `ask` exits `65` with the reason when a check fails, so the agent asks

@@ -1441,11 +1441,98 @@ such as `a/b` and `a-b`, cannot both be set up for one pull request on one
 machine: the second `setup` refuses. Every refusal exits 1 and says what to
 do.
 
+## Ask and answer questions
+
+`project question` keeps the questions an agent asks you, so the agent can
+keep working while it waits and you can answer from any host. Each session's
+questions live in their own directory under
+`$XDG_STATE_HOME/projector/questions/`, or under
+`~/.local/state/projector/questions/` when `XDG_STATE_HOME` is unset, and
+every command reaches them the same way from Claude Code, Codex, or a
+terminal.
+
+An agent asks with one line, the answer it recommends, and any other options:
+
+```console
+$ project question ask "Decline the finding about the retry budget?" \
+    --recommend "Decline it: the total cap already bounds retries" \
+    --option "Add a budget of two retries per host" \
+    --pr acme/app#337 --session "$SESSION"
+#337.3
+```
+
+The command prints the question's reference at once. A question about a pull
+request in the repository you run it in is `#337.3`, the third question on
+#337 this session; one about another repository spells it out, as
+`octo/web#337.1`; one about no pull request takes the session's own count, as
+`q2`. `ask` refuses, with exit code 65, a question longer than one line or
+120 characters, a missing recommendation, more than five other options, or an
+option that repeats the recommendation. Put what you need to decide in
+`--detail`, or `--detail-file`.
+
+Every command names the asking session with `--session`, or reads
+`PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+every session's open questions, and `show`, `answer`, and `dismiss` find the
+session that holds the reference.
+
+The answers are lettered. `a` is always the recommendation, the other options
+follow as `b`, `c`, and on, and the last letter is a typed answer:
+
+```console
+$ project question show '#337.3'
+#337.3 Decline the finding about the retry budget?
+about acme/app#337
+a. Decline it: the total cap already bounds retries (recommended)
+b. Add a budget of two retries per host
+c. type an answer with --text
+open
+$ project question answer '#337.3.a'
+answered #337.3.a
+```
+
+To give an answer of your own instead, use the last letter with `--text`, as
+in `project question answer '#337.3.c' --text "keep the cap, but log each
+retry"`. A question takes one answer; a second exits 65. `dismiss` answers it
+with no letter.
+
+An answer reaches its agent through one deliverer, which claims it, sends it,
+and marks it delivered. `watch` is the deliverer for any host that can run a
+watcher: it prints one line for each answer and marks it delivered, so the
+loop running it hears the answer:
+
+```console
+$ project question watch --session "$SESSION"
+ANSWER #337.3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
+DISMISSED q2 Run project init to add the publish rule?
+```
+
+`watch --once` makes one pass and exits. A view that delivers answers itself,
+such as Projector's band in Claude Code, uses the steps `watch` takes:
+
+| Command | What it does |
+| --- | --- |
+| `claim <reference>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
+| `claim <reference> --renew <token>` | Keeps that claim live while its delivery is pending |
+| `delivered <reference> --claim <token>` | Marks the claimed answer delivered |
+| `reopen <reference> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+
+A claim that is not renewed for a minute lapses, so a deliverer that stops
+halfway leaves the answer for the next one. Each session keeps its 100 most
+recently delivered questions.
+
+`project question context` reads text on standard input and prints what each
+question reference in it means, for the questions the session holds, so a
+prompt such as `go with #337.3.b.` can carry its question along. It matches a
+reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
+of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
+failing tests` do not.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, or `check`. Responses use stdout only for JSON and include
-`"schema_version": 2`.
+`priority`, `done`, `check`, or any `question` command. Responses use stdout
+only for JSON and include `"schema_version": 2`. `question watch --json`
+prints one JSON object a line, as a watcher reads it.
 
 `init --json` keeps the `action` and `path` of the projects README at the top
 level, as it always has, and adds `files` with every file it manages:
@@ -1492,8 +1579,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid or a mutation is unsafe. |
-| `66` | The requested project or the projects directory does not exist. |
-| `67` | The requested project is ambiguous. |
+| `65` | Project data is invalid, a mutation is unsafe, or a question or answer is refused. |
+| `66` | The requested project, the projects directory, or the question does not exist. |
+| `67` | The requested project is ambiguous, or a question reference names questions in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `78` | A `.projector.toml` file is not valid TOML. |
