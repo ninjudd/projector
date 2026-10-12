@@ -1322,12 +1322,13 @@ class PrStatusTests(unittest.TestCase):
                  "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
         second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
                   "at": "2026-10-02T10:00:00Z", "association": "NONE"}
-        pages = [{"state": "MERGED", "base": "main", "fork": False, "reviews": [first]},
-                 {"state": "MERGED", "base": "main", "fork": False, "reviews": [second]}]
+        pages = [{"state": "MERGED", "base": "main", "fork": False, "visibility": "PUBLIC", "reviews": [first]},
+                 {"state": "MERGED", "base": "main", "fork": False, "visibility": "PUBLIC", "reviews": [second]}]
         with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
             status = summary.pr_status("owner/example", 7)
 
-        self.assertEqual({"state": "merged", "base": "main", "fork": False, "reviews": [first, second]}, status)
+        self.assertEqual({"state": "merged", "base": "main", "fork": False, "visibility": "public",
+                          "reviews": [first, second]}, status)
         args = gh.call_args.args
         self.assertEqual(("api", "graphql", "--paginate"), args[:3])
         self.assertIn("owner=owner", args)
@@ -1337,10 +1338,24 @@ class PrStatusTests(unittest.TestCase):
         self.assertIn("association: .authorAssociation", args[-1], "the site trusts a verdict by who wrote it")
         self.assertIn("baseRef { name }", " ".join(args), "the same query asks whether the base branch still exists")
 
+    def test_the_same_query_reads_the_repositorys_visibility(self) -> None:
+        # In a private or internal repository every review counts, so the site needs to know which this is.
+        for given, visibility in (("PUBLIC", "public"), ("PRIVATE", "private"), ("INTERNAL", "internal"),
+                                  (None, None)):
+            with self.subTest(visibility=given):
+                page = {"state": "OPEN", "base": "main", "fork": False, "visibility": given, "reviews": []}
+                with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n") as gh:
+                    status = summary.pr_status("owner/example", 7)
+
+                self.assertEqual(visibility, status["visibility"])
+                self.assertRegex(" ".join(gh.call_args.args),
+                                 r"repository\(owner: \$owner, name: \$name\) \{\s+visibility\b")
+                self.assertIn("visibility: $visibility", gh.call_args.args[-1])
+
     def test_a_deleted_base_branch_reads_as_none(self) -> None:
-        page = {"state": "MERGED", "base": None, "fork": False, "reviews": []}
+        page = {"state": "MERGED", "base": None, "fork": False, "visibility": "PUBLIC", "reviews": []}
         with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n"):
-            self.assertEqual({"state": "merged", "base": None, "fork": False, "reviews": []},
+            self.assertEqual({"state": "merged", "base": None, "fork": False, "visibility": "public", "reviews": []},
                              summary.pr_status("owner/example", 7))
 
     def test_the_same_query_says_whether_the_head_branch_is_in_a_fork(self) -> None:

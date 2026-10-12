@@ -715,6 +715,7 @@ def base_pr(repo: str, base_ref: str) -> int | None:
 
 PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
+    visibility
     pullRequest(number: $number) {
       state
       isCrossRepository
@@ -730,25 +731,30 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
 
 def pr_status(repo: str, number: int) -> dict:
     """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, whether it is a `fork`'s,
-    and its submitted `reviews`.
+    its repository's `visibility`, and its submitted `reviews`.
 
     `base` is the name of the branch the pull request targets, or merged into,
     or None once that branch is deleted. `fork` is True when its head branch
-    is in another repository, GitHub's `isCrossRepository`. Each review has
-    its `body`, its page as `url`, its time as `at`, and its author's relation
-    to the repository as `association`, GitHub's `authorAssociation`. One query
-    answers them all, a page of reviews at a time.
+    is in another repository, GitHub's `isCrossRepository`. `visibility` is
+    `public`, `private`, or `internal`, or None when GitHub does not say. Each
+    review has its `body`, its page as `url`, its time as `at`, and its
+    author's relation to the repository as `association`, GitHub's
+    `authorAssociation`. One query answers them all, a page of reviews at a
+    time.
     """
     owner, name = repo.split("/", 1)
     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
                "-f", f"name={name}", "-F", f"number={number}",
-               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, fork: .isCrossRepository, "
+               "--jq", ".data.repository | .visibility as $visibility | .pullRequest "
+                       "| {state, base: .baseRef.name, fork: .isCrossRepository, visibility: $visibility, "
                        "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
                        "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
     if not found or not found[0].get("state"):
         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
+    visibility = found[0].get("visibility")
     return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"), "fork": found[0].get("fork") is True,
+            "visibility": str(visibility).lower() if visibility else None,
             "reviews": [r for page in found for r in page["reviews"]]}
 
 

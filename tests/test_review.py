@@ -1330,6 +1330,24 @@ class LatestWinsTests(LatestWinsCase):
 
         self.assertEqual(("claude-opus-5-5", False), (result["newest"]["model"], self.github.pr["draft"]))
 
+    def test_in_a_private_or_internal_repository_every_verdict_counts(self) -> None:
+        # Only an account that can see the repository can review there, and GitHub hides a private organization
+        # membership from a token that cannot see it, reporting a lower association.
+        for visibility, association, newest, draft in (
+                ("private", "CONTRIBUTOR", "gpt-5.5", True), ("internal", "NONE", "gpt-5.5", True),
+                ("public", "CONTRIBUTOR", "claude-opus-5-5", False), ("public", "NONE", "claude-opus-5-5", False)):
+            with self.subTest(visibility=visibility, association=association):
+                self.setUp()
+                self.github.pr["base"]["repo"]["visibility"] = visibility
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                self.github.after_post = lambda: self.add_verdict(
+                    "gpt-5.5", verdict="changes-requested", login="teammate", association=association,
+                    at=iso(self.clock + timedelta(seconds=1)))
+
+                result = self.json_publish("clean")
+
+                self.assertEqual((newest, draft), (result["newest"]["model"], self.github.pr["draft"]))
+
     def test_the_authors_hold_keeps_a_clean_newest_verdict_a_draft(self) -> None:
         # fix-pr holds a pull request while it builds a change no review has read.
         for draft in (True, False):
@@ -1667,6 +1685,24 @@ class StatusTests(LatestWinsCase):
         self.assertEqual(("unreviewed", None, []), (mine["verdict"], mine["newest"], mine["models"]))
         self.assertEqual(["#1 at " + self.head[:7] + ": unreviewed"], self.status()[1].splitlines())
         self.assertEqual("changes-requested", bot["verdict"])
+
+    def test_in_a_private_or_internal_repository_every_account_counts(self) -> None:
+        for visibility in ("private", "internal", "public"):
+            with self.subTest(visibility=visibility):
+                self.setUp()
+                self.github.pr["base"]["repo"]["visibility"] = visibility
+                older = self.add_verdict("claude-opus-5-5", login="teammate", association="CONTRIBUTOR",
+                                         at="2026-09-27T14:02:00Z")
+                newest = self.add_verdict("gpt-5.5", login="review-bot", association="NONE",
+                                          verdict="changes-requested", at="2026-09-27T14:20:00Z")
+
+                result = json.loads(self.status("--json")[1])
+
+                if visibility == "public":
+                    self.assertEqual(("unreviewed", []), (result["verdict"], result["models"]))
+                else:
+                    self.assertEqual(("changes-requested", [newest, older]),
+                                     (result["verdict"], [m["review"] for m in result["models"]]))
 
     def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
         self.github.missing = True
@@ -2642,6 +2678,24 @@ class IdentityTests(unittest.TestCase):
 
     def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
         self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
+
+
+class ReviewCountsTests(unittest.TestCase):
+    def test_every_review_counts_in_a_private_or_internal_repository_in_either_case(self) -> None:
+        # GraphQL gives a repository's visibility in capitals and REST in lowercase. A visibility GitHub does
+        # not give counts as public.
+        for visibility, counts in (("PRIVATE", True), ("private", True), ("INTERNAL", True), ("internal", True),
+                                   ("PUBLIC", False), ("public", False), (None, False), ("", False)):
+            with self.subTest(visibility=visibility):
+                self.assertIs(counts, review.review_counts("CONTRIBUTOR", visibility))
+                self.assertIs(counts, review.review_counts(None, visibility))
+                for association in review.TRUSTED:
+                    self.assertTrue(review.review_counts(association, visibility), f"{association} counts everywhere")
+
+    def test_the_visibility_comes_from_the_pull_requests_base_repository(self) -> None:
+        self.assertEqual("internal", review.repo_visibility({"base": {"repo": {"visibility": "internal"}}}))
+        self.assertIsNone(review.repo_visibility({"base": {"repo": {"full_name": "owner/example"}}}))
+        self.assertIsNone(review.repo_visibility({}))
 
 
 class ArgumentTests(unittest.TestCase):
