@@ -1,0 +1,455 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 03a59d9..f51def7 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -786,10 +786,16 @@ decides the draft state. When that review is incremental, the header reads
+ the head of the full review it builds on, by the same model, and links that
+ review, while the row on Reviews shows **Clean** alone. Models are told apart
+ by their model ID, lowercased and without a trailing bracketed variant such as
+-`[1m]`. A review counts only when its author owns the repository, belongs to
+-its organization, or collaborates on it, because anyone can review a public
+-repository's pull request. The build reads the pull request's state and
+-reviews through `gh` and shows no status when `gh` cannot answer. **Docs**
++`[1m]`. In a public repository a review counts only when its author owns the
++repository, belongs to its organization, or collaborates on it, because anyone
++can review a public repository's pull request. In a private or internal
++repository every review counts, because only an account that can see the
++repository can review there. That keeps a verdict counting when its author
++keeps their organization membership private, which the token the deploy
++workflow runs with cannot see. A repository whose visibility GitHub does not
++report counts as public. The build reads the pull request's state, its
++reviews, and the repository's visibility through `gh` and shows no status
++when `gh` cannot answer. **Docs**
+ renders `README.md`
+ beside a sidebar of every other document under `docs/`, leaving out the
+ projects directory, which Projects covers. The Docs sidebar lists its readme
+@@ -1186,8 +1192,10 @@ holds it. It also keeps the pull request a draft while its author has a hold
+ comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
+ `hold` posts for `fix-pr` while it builds a change for the pull request. Only
+ the author's comment counts. It counts the reviewer's verdicts, the one it just
+-posted included, and those of any account that owns the repository, belongs
+-to its organization, or collaborates on it. On another author's pull request
++posted included, and those of the accounts the site's status counts: in a
++public repository, any account that owns the repository, belongs to its
++organization, or collaborates on it, and in a private or internal repository,
++every account. On another author's pull request
+ it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
+ verdict where `review.allow_approve` is `true` and the author has no hold
+ comment open, and leaves draft state alone. A `COMMENT` leaves the account's
+@@ -1225,8 +1233,9 @@ held; clean from …`, and a line such as `held in draft by comment 4411 until
+ the changes it lists are pushed` names the comment. `status` counts the
+ verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
+ from `--reviewer`, then `review.username`, then the authenticated user, and
+-those of any account that owns the repository, belongs to its organization, or
+-collaborates on it. It reads the pull request, its reviews, its issue
++in a public repository those of any account that owns the repository, belongs
++to its organization, or collaborates on it, or in a private or internal
++repository those of every account. It reads the pull request, its reviews, its issue
+ comments, and its threads, and runs from any directory. It exits 0 whatever the verdict, and 1 only when
+ it cannot read the pull request. With `--json` it prints one object:
+ 
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 233a9dc..49bf827 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -164,8 +164,9 @@ The newest verdict on the head signs it off. After it submits, `publish`
+ reads the Projector verdicts on the head, its own included, and on your own
+ pull request sets draft state by the newest one, whichever model gave it:
+ draft when it requests changes, ready when it is clean. The verdicts it reads
+-are the reviewer account's and those of any account that owns the
+-repository, belongs to its organization, or collaborates on it, the same
++are the reviewer account's and, in a public repository, those of any account
++that owns the repository, belongs to its organization, or collaborates on it,
++or, in a private or internal repository, those of every account, the same
+ ones the site's status reads. So a clean verdict from one model after
+ another model's change request marks the pull request ready, and a change
+ request after a clean verdict drafts it again. That is safe because a clean
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 42849ef..00e1076 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1345,22 +1345,39 @@ def same_model(body: str) -> bool:
+ 
+ # The newest verdict
+ 
+-# Anyone can review a public repository's pull request, so beside the reviewer's own, a verdict counts
+-# only from an account the repository lets in. The site's status reads the same tuple.
++# Anyone can review a public repository's pull request, so there, beside the reviewer's own, a verdict
++# counts only from an account the repository lets in. Only an account that can see a private or internal
++# repository can review its pull requests, so there every review counts. That matters because GitHub hides
++# a private organization membership from a token that cannot see it, such as a workflow's GITHUB_TOKEN, and
++# reports that member's reviews with a lower association.
+ TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
++CLOSED = ("private", "internal")
+ 
+ 
+-def verdicts(repo: str, number: int, reviewer: str) -> list[dict]:
++def review_counts(association: Optional[str], visibility: Optional[str]) -> bool:
++    """Whether a review whose author has `association` can sign a pull request off or set its status on the
++    site, in a repository of `visibility`: GitHub's `public`, `private`, or `internal`, in either case, or
++    None when it is unknown. An unknown visibility counts as public."""
++    return (visibility or "").lower() in CLOSED or association in TRUSTED
++
++
++def repo_visibility(pr: dict) -> Optional[str]:
++    """The visibility of the repository that `pr`, a pull request as GitHub's REST API returns it, targets,
++    or None when it does not say."""
++    return ((pr.get("base") or {}).get("repo") or {}).get("visibility")
++
++
++def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -> list[dict]:
+     """Every Projector review on the pull request that can be its head's newest verdict, from every page:
+-    the reviewer's, and any whose author owns the repository, belongs to its organization, or
+-    collaborates on it. Each has its `id`, `url`, `at`, `login`, and `body`."""
++    the reviewer's, and any other that `review_counts` counts in a repository of `visibility`. Each has its
++    `id`, `url`, `at`, `login`, and `body`."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                    "--jq", '.[] | select(.body // "" | contains("projector-review")) '
+                            '| {id, url: .html_url, at: .submitted_at, login: .user.login, '
+                            'association: .author_association, body} | @json']).splitlines()
+     found = [json.loads(row) for row in rows if row.strip()]
+     return [r for r in found
+-            if (r.get("login") or "").lower() == reviewer.lower() or r.get("association") in TRUSTED]
++            if (r.get("login") or "").lower() == reviewer.lower() or review_counts(r.get("association"), visibility)]
+ 
+ 
+ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
+@@ -1402,7 +1419,7 @@ def status(repo: str, number: int, reviewer: str) -> dict:
+     except NotFound as exc:
+         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+     head = pr["head"]["sha"]
+-    models = newest_verdicts(head, verdicts(repo, number, reviewer))
++    models = newest_verdicts(head, verdicts(repo, number, reviewer, repo_visibility(pr)))
+     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+     held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
+     newest = models[0] if models else None
+@@ -1650,10 +1667,10 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+         # author is building changes no review has read.
+         posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+                   "login": reviewer, "body": read["body"]}
+-        others = [r for r in verdicts(repo, number, reviewer) if r.get("id") != review_id]
++        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
++        others = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
+         newest = newest_verdicts(sha, others + [posted])[0]
+         open_threads = census(repo, number)["open"]
+-        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+         held = bool(holds(repo, number, (current.get("user") or {}).get("login") or ""))
+     if standing and newest["verdict"] == "clean" and not open_threads and not held:
+         dismissed = dismiss(repo, number, reviewer, standing,
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index 80e5c48..a49146f 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -30,7 +30,7 @@
+ from pathlib import Path
+ 
+ from ..core import Project, ProjectorError, project_from_text, title_from_text
+-from ..review import TRUSTED, identity, verdict_marker
++from ..review import identity, review_counts, verdict_marker
+ from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
+                        new_file_text, prepare_page, stored_attributes)
+ 
+@@ -143,13 +143,16 @@ def summary_time(path: Path) -> int:
+     return int(path.stat().st_mtime)
+ 
+ 
+-def review_statuses(reviews: list[dict]) -> dict[str, dict]:
++def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[str, dict]:
+     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
+ 
+     A review is Projector's when a line of its body is the marker a Projector
+     review carries, which names the verdict, the head it reviewed, and the
+-    model, and its author owns the repository, belongs to its organization, or
+-    collaborates on it. The newest review decides, whichever model wrote it.
++    model, and `review.review_counts` counts its author in a repository of
++    `visibility`: any author in a private or internal repository, and in a
++    public one, or one whose visibility is None, only an author who owns the
++    repository, belongs to its organization, or collaborates on it. The newest
++    review decides, whichever model wrote it.
+     When it is a clean incremental review, the status also carries
+     `incrementalFrom`: the head of the full review it builds on, and that
+     model's newest full review of that head as `url`, or None when none is
+@@ -165,8 +168,8 @@ def keep(found_by: dict, key, found: dict) -> None:
+ 
+     for review in reviews:
+         # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
+-        # only a review by someone the repository let in can set a status, as it can sign a head off.
+-        if review.get("association") not in TRUSTED:
++        # there only a review by someone the repository let in can set a status, as it can sign a head off.
++        if not review_counts(review.get("association"), visibility):
+             continue
+         marker = verdict_marker(review.get("body") or "")
+         if marker is None:
+@@ -312,10 +315,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
+     says, or, for a summary without one, as the checkout at `repo_root` reads
+     its .gitattributes. A file whose head copy `publish` stored beside its
+     summary carries the `context` its page expands, as `add_context`
+-    describes. `status_lookup` returns a pull request's state and
+-    reviews, as `summary.pr_status` does, or None when it cannot ask. From
+-    them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
+-    GitHub reports, or None once that branch is deleted, and `review`, the
++    describes. `status_lookup` returns a pull request's state, reviews,
++    and repository visibility, as `summary.pr_status` does, or None when it
++    cannot ask. From them each page carries `pr.state`, `pr.currentBaseRef`,
++    the base branch GitHub reports, or None once that branch is deleted, and
++    `review`, the
+     newest Projector review of its head, as `review_statuses` gives it, or,
+     when none names the head, `pending` or `unreviewed`, as `head_status`
+     decides given the pull request's heads with newer summaries. A page has
+@@ -403,7 +407,7 @@ def skip(path: Path, reason: object) -> None:
+         segments = segmented[tuple(members[pull])]
+         header = next(s["header"] for s in segments if pull in s["members"])
+         status = asked[number]
+-        statuses = review_statuses(status["reviews"]) if status is not None else None
++        statuses = review_statuses(status["reviews"], status.get("visibility")) if status is not None else None
+         for i, (_, payload, _) in enumerate(versions):
+             head = payload["pr"]["head"]
+             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
+@@ -1039,8 +1043,9 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     `stacks_lookup` returns GitHub's stacks, or None when it cannot ask, and
+     `lookup` finds the pull request whose head is a branch, for a summary in
+     no GitHub stack that did not record the one it is stacked on.
+-    `status_lookup` returns a pull request's state, reviews, and whether it
+-    is a fork's, or None when it cannot ask, for each summary's file links and
++    `status_lookup` returns a pull request's state, reviews, whether it is
++    a fork's, and its repository's visibility, which decides whose reviews
++    count, or None when it cannot ask, for each summary's file links and
+     review status and for the projects open pull requests propose.
+     `projects_dir` is the configured projects directory, which a pull request
+     can propose the first plan of. Each project, proposed ones included,
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index fd5b693..0b0fd30 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -715,6 +715,7 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+ 
+ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+   repository(owner: $owner, name: $name) {
++    visibility
+     pullRequest(number: $number) {
+       state
+       isCrossRepository
+@@ -730,25 +731,30 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+ 
+ def pr_status(repo: str, number: int) -> dict:
+     """Pull request `number`'s `state`, `open`, `merged` or `closed`, its `base` branch, whether it is a `fork`'s,
+-    and its submitted `reviews`.
++    its repository's `visibility`, and its submitted `reviews`.
+ 
+     `base` is the name of the branch the pull request targets, or merged into,
+     or None once that branch is deleted. `fork` is True when its head branch
+-    is in another repository, GitHub's `isCrossRepository`. Each review has
+-    its `body`, its page as `url`, its time as `at`, and its author's relation
+-    to the repository as `association`, GitHub's `authorAssociation`. One query
+-    answers them all, a page of reviews at a time.
++    is in another repository, GitHub's `isCrossRepository`. `visibility` is
++    `public`, `private`, or `internal`, or None when GitHub does not say. Each
++    review has its `body`, its page as `url`, its time as `at`, and its
++    author's relation to the repository as `association`, GitHub's
++    `authorAssociation`. One query answers them all, a page of reviews at a
++    time.
+     """
+     owner, name = repo.split("/", 1)
+     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
+                "-f", f"name={name}", "-F", f"number={number}",
+-               "--jq", ".data.repository.pullRequest | {state, base: .baseRef.name, fork: .isCrossRepository, "
++               "--jq", ".data.repository | .visibility as $visibility | .pullRequest "
++                       "| {state, base: .baseRef.name, fork: .isCrossRepository, visibility: $visibility, "
+                        "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
+                        "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
+     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
+     if not found or not found[0].get("state"):
+         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
++    visibility = found[0].get("visibility")
+     return {"state": str(found[0]["state"]).lower(), "base": found[0].get("base"), "fork": found[0].get("fork") is True,
++            "visibility": str(visibility).lower() if visibility else None,
+             "reviews": [r for page in found for r in page["reviews"]]}
+ 
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index ea2e773..d60a706 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1330,6 +1330,24 @@ def test_a_verdict_from_an_account_the_repository_does_not_let_in_does_not_count
+ 
+         self.assertEqual(("claude-opus-5-5", False), (result["newest"]["model"], self.github.pr["draft"]))
+ 
++    def test_in_a_private_or_internal_repository_every_verdict_counts(self) -> None:
++        # Only an account that can see the repository can review there, and GitHub hides a private organization
++        # membership from a token that cannot see it, reporting a lower association.
++        for visibility, association, newest, draft in (
++                ("private", "CONTRIBUTOR", "gpt-5.5", True), ("internal", "NONE", "gpt-5.5", True),
++                ("public", "CONTRIBUTOR", "claude-opus-5-5", False), ("public", "NONE", "claude-opus-5-5", False)):
++            with self.subTest(visibility=visibility, association=association):
++                self.setUp()
++                self.github.pr["base"]["repo"]["visibility"] = visibility
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                self.github.after_post = lambda: self.add_verdict(
++                    "gpt-5.5", verdict="changes-requested", login="teammate", association=association,
++                    at=iso(self.clock + timedelta(seconds=1)))
++
++                result = self.json_publish("clean")
++
++                self.assertEqual((newest, draft), (result["newest"]["model"], self.github.pr["draft"]))
++
+     def test_the_authors_hold_keeps_a_clean_newest_verdict_a_draft(self) -> None:
+         # fix-pr holds a pull request while it builds a change no review has read.
+         for draft in (True, False):
+@@ -1668,6 +1686,24 @@ def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(s
+         self.assertEqual(["#1 at " + self.head[:7] + ": unreviewed"], self.status()[1].splitlines())
+         self.assertEqual("changes-requested", bot["verdict"])
+ 
++    def test_in_a_private_or_internal_repository_every_account_counts(self) -> None:
++        for visibility in ("private", "internal", "public"):
++            with self.subTest(visibility=visibility):
++                self.setUp()
++                self.github.pr["base"]["repo"]["visibility"] = visibility
++                older = self.add_verdict("claude-opus-5-5", login="teammate", association="CONTRIBUTOR",
++                                         at="2026-09-27T14:02:00Z")
++                newest = self.add_verdict("gpt-5.5", login="review-bot", association="NONE",
++                                          verdict="changes-requested", at="2026-09-27T14:20:00Z")
++
++                result = json.loads(self.status("--json")[1])
++
++                if visibility == "public":
++                    self.assertEqual(("unreviewed", []), (result["verdict"], result["models"]))
++                else:
++                    self.assertEqual(("changes-requested", [newest, older]),
++                                     (result["verdict"], [m["review"] for m in result["models"]]))
++
+     def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+         self.github.missing = True
+ 
+@@ -2644,6 +2680,24 @@ def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
+         self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
+ 
+ 
++class ReviewCountsTests(unittest.TestCase):
++    def test_every_review_counts_in_a_private_or_internal_repository_in_either_case(self) -> None:
++        # GraphQL gives a repository's visibility in capitals and REST in lowercase. A visibility GitHub does
++        # not give counts as public.
++        for visibility, counts in (("PRIVATE", True), ("private", True), ("INTERNAL", True), ("internal", True),
++                                   ("PUBLIC", False), ("public", False), (None, False), ("", False)):
++            with self.subTest(visibility=visibility):
++                self.assertIs(counts, review.review_counts("CONTRIBUTOR", visibility))
++                self.assertIs(counts, review.review_counts(None, visibility))
++                for association in review.TRUSTED:
++                    self.assertTrue(review.review_counts(association, visibility), f"{association} counts everywhere")
++
++    def test_the_visibility_comes_from_the_pull_requests_base_repository(self) -> None:
++        self.assertEqual("internal", review.repo_visibility({"base": {"repo": {"visibility": "internal"}}}))
++        self.assertIsNone(review.repo_visibility({"base": {"repo": {"full_name": "owner/example"}}}))
++        self.assertIsNone(review.repo_visibility({}))
++
++
+ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 0b4ade8..8ba5983 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -422,16 +422,17 @@ def test_the_default_branch_comes_from_origin_not_the_branch_checked_out(self) -
+ 
+         self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
+ 
+-    def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
+-        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None.
+-        Head c's summary is older than head d's, so d is the newest head."""
++    def statuses(self, reviews: list[dict] | None, visibility: str | None = "public") -> dict[str, dict | None]:
++        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None, in
++        a repository GitHub reports as `visibility`. Head c's summary is older than head d's, so d is the newest
++        head."""
+         asked: list[tuple[str, int]] = []
+ 
+         def pr_status(repo: str, number: int) -> dict:
+             asked.append((repo, number))
+             if reviews is None:
+                 raise summary.SummaryError("gh api failed: offline")
+-            return {"state": "open", "reviews": reviews}
++            return {"state": "open", "visibility": visibility, "reviews": reviews}
+ 
+         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_100, "d" * 40)):
+             self.publish(9, head)
+@@ -475,6 +476,24 @@ def test_a_marker_from_outside_the_repository_sets_no_status(self) -> None:
+                                 "last": {"status": "changes-requested", "head": "c" * 40, "url": review_url(1)}}},
+                          statuses, "d is pending on c's trusted change request, not the forged clean verdicts")
+ 
++    def test_in_a_private_or_internal_repository_every_review_sets_the_status(self) -> None:
++        # Only an account that can see the repository can review there. GitHub hides a private organization
++        # membership from a token that cannot see it, as the deploy's cannot, and reports a lower association.
++        reviews = [projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1,
++                                    association="CONTRIBUTOR"),
++                   projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE")]
++        for visibility in ("private", "internal"):
++            with self.subTest(visibility=visibility):
++                self.reset()
++                self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
++                                  "d": {"status": "clean", "url": review_url(2)}}, self.statuses(reviews, visibility))
++        for visibility in ("public", None):
++            with self.subTest(visibility=visibility):
++                self.reset()
++                self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}},
++                                 self.statuses(reviews, visibility),
++                                 "a public repository, or one GitHub gives no visibility for, still ignores them")
++
+     def test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them(self) -> None:
+         statuses = self.statuses([
+             projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
+@@ -650,7 +669,7 @@ def test_the_reviews_index_carries_each_pull_requests_state_and_its_newest_verdi
+                     11: [projector_review("changes-requested", "a" * 40, "2026-10-01T10:00:00Z", 2)]}
+ 
+         def pr_status(repo: str, number: int) -> dict:
+-            return {"state": states[number], "reviews": reviewed[number]}
++            return {"state": states[number], "visibility": "public", "reviews": reviewed[number]}
+ 
+         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
+             reviews = self.build()["reviews"]
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index bd33f60..c3339ab 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1322,12 +1322,13 @@ def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
+                  "at": "2026-10-01T10:00:00Z", "association": "OWNER"}
+         second = {"body": None, "url": "https://github.com/owner/example/pull/7#pullrequestreview-2",
+                   "at": "2026-10-02T10:00:00Z", "association": "NONE"}
+-        pages = [{"state": "MERGED", "base": "main", "fork": False, "reviews": [first]},
+-                 {"state": "MERGED", "base": "main", "fork": False, "reviews": [second]}]
++        pages = [{"state": "MERGED", "base": "main", "fork": False, "visibility": "PUBLIC", "reviews": [first]},
++                 {"state": "MERGED", "base": "main", "fork": False, "visibility": "PUBLIC", "reviews": [second]}]
+         with mock.patch.object(summary, "gh", return_value="".join(json.dumps(p) + "\n" for p in pages)) as gh:
+             status = summary.pr_status("owner/example", 7)
+ 
+-        self.assertEqual({"state": "merged", "base": "main", "fork": False, "reviews": [first, second]}, status)
++        self.assertEqual({"state": "merged", "base": "main", "fork": False, "visibility": "public",
++                          "reviews": [first, second]}, status)
+         args = gh.call_args.args
+         self.assertEqual(("api", "graphql", "--paginate"), args[:3])
+         self.assertIn("owner=owner", args)
+@@ -1337,10 +1338,24 @@ def test_reads_the_state_and_every_page_of_reviews_in_one_query(self) -> None:
+         self.assertIn("association: .authorAssociation", args[-1], "the site trusts a verdict by who wrote it")
+         self.assertIn("baseRef { name }", " ".join(args), "the same query asks whether the base branch still exists")
+ 
++    def test_the_same_query_reads_the_repositorys_visibility(self) -> None:
++        # In a private or internal repository every review counts, so the site needs to know which this is.
++        for given, visibility in (("PUBLIC", "public"), ("PRIVATE", "private"), ("INTERNAL", "internal"),
++                                  (None, None)):
++            with self.subTest(visibility=given):
++                page = {"state": "OPEN", "base": "main", "fork": False, "visibility": given, "reviews": []}
++                with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n") as gh:
++                    status = summary.pr_status("owner/example", 7)
++
++                self.assertEqual(visibility, status["visibility"])
++                self.assertRegex(" ".join(gh.call_args.args),
++                                 r"repository\(owner: \$owner, name: \$name\) \{\s+visibility\b")
++                self.assertIn("visibility: $visibility", gh.call_args.args[-1])
++
+     def test_a_deleted_base_branch_reads_as_none(self) -> None:
+-        page = {"state": "MERGED", "base": None, "fork": False, "reviews": []}
++        page = {"state": "MERGED", "base": None, "fork": False, "visibility": "PUBLIC", "reviews": []}
+         with mock.patch.object(summary, "gh", return_value=json.dumps(page) + "\n"):
+-            self.assertEqual({"state": "merged", "base": None, "fork": False, "reviews": []},
++            self.assertEqual({"state": "merged", "base": None, "fork": False, "visibility": "public", "reviews": []},
+                              summary.pr_status("owner/example", 7))
+ 
+     def test_the_same_query_says_whether_the_head_branch_is_in_a_fork(self) -> None:

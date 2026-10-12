@@ -1,0 +1,136 @@
+{
+ "version": 1,
+ "name": "Private repository review counting",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 264,
+  "title": "Count every review in a private repository",
+  "head": "808eb63c4a9303b72a58cd346e0db6c69894236f",
+  "headRef": "count-every-review-in-private-repositories",
+  "base": "a7a7e87b92c5cb2756e7879d21119b6a734a0c1a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector decides whether a pull request is signed off from the newest <b>Projector review</b> on its head: a GitHub review whose body carries a hidden marker naming the verdict, the head it read, and the model that wrote it. Two places read those reviews. The CLI's <code>project review status</code> and the draft-state step of <code>project review publish</code> read them through <code>verdicts</code>, and the Projector site's deploy reads them through <code>review_statuses</code> to show each pull request as <b>Clean</b>, <b>Changes requested</b>, or <b>Unreviewed</b>.",
+   "Until now both counted a review only when GitHub reported its author's <b>association</b>, GitHub's <code>author_association</code>, as <code>OWNER</code>, <code>MEMBER</code>, or <code>COLLABORATOR</code>, because anyone can review a public repository's pull request. The site's deploy asks GitHub with the workflow's <code>GITHUB_TOKEN</code>, which cannot see a private organization membership, so in a company's private repository GitHub reported members' reviews to that token with a lower association. The site dropped every verdict and showed every pull request as <b>Unreviewed</b>.",
+   "This change counts every review in a private or internal repository, where only an account that can see the repository can review at all, and keeps the association check in a public repository. One helper, <code>review_counts</code>, holds the rule, and both readers ask GitHub for the repository's <b>visibility</b>, <code>public</code>, <code>private</code>, or <code>internal</code>, in a request they already make."
+  ],
+  "cards": [
+   {
+    "id": "rule",
+    "title": "Which reviews count",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Repository visibility</th><th>Reviews that count</th></tr></thead><tbody><tr><td><code>private</code> or <code>internal</code></td><td class=\"r\">Every review</td></tr><tr><td><code>public</code></td><td class=\"r\"><code>OWNER</code>, <code>MEMBER</code>, <code>COLLABORATOR</code></td></tr><tr><td>Not reported</td><td class=\"r\"><code>OWNER</code>, <code>MEMBER</code>, <code>COLLABORATOR</code></td></tr></tbody></table></div><p class=\"note\">The CLI also counts the reviewer's own reviews by login, whatever the visibility.</p>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Reviewed at <code>808eb63</code> with a clean verdict and no finding threads.</li><li>One suggestion: drop the unused <code>= None</code> default on <code>review_statuses</code>'s <code>visibility</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rule",
+   "title": "One rule for whose reviews count",
+   "kicker": "A helper that decides from the association and the repository's visibility",
+   "intro": [
+    "Before this change, <code>verdicts</code> in the CLI and <code>review_statuses</code> on the site each tested the association against the <code>TRUSTED</code> tuple themselves. The new <code>review_counts(association, visibility)</code> answers for both: it counts any review when the visibility is <code>private</code> or <code>internal</code>, in either letter case, and otherwise falls back to the association test.",
+    "GraphQL reports visibility in capitals and REST in lowercase, which is why the helper lowercases it. A missing visibility counts as public, so a repository GitHub says nothing about keeps the strict rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>review_counts</code> and <code>repo_visibility</code>, threads the visibility into <code>verdicts</code>, and moves <code>publish</code>'s pull request fetch ahead of the verdict read so one response serves both.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1357,
+       "text": "Reverting this line to <code>association in TRUSTED</code> makes the six new tests fail with ten subtest failures; at the head the full suite passes, 835 tests with one skip."
+      },
+      {
+       "kind": "context",
+       "line": 1364,
+       "text": "The CLI reads the base repository's visibility from the REST pull request it already fetches, <code>base.repo.visibility</code>. For this repository GitHub returns <code>public</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 1670,
+       "text": "Fetching <code>current</code> before the verdicts rather than after leaves the hold lookup and the draft comparison below reading the same response as before."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Covers <code>publish</code>'s draft state and <code>status</code> in private, internal, and public repositories, and the helper's case handling."
+    }
+   ]
+  },
+  {
+   "id": "site",
+   "title": "The site reads the visibility with the reviews",
+   "kicker": "The status query asks for the repository's visibility and passes it to the rule",
+   "intro": [
+    "The site gets each pull request's state and reviews from <code>summary.pr_status</code>, one paged GraphQL query. The query now also asks for <code>repository.visibility</code>, returns it lowercased as <code>visibility</code>, and <code>build_summaries</code> hands it to <code>review_statuses</code>, so a private repository's deploy counts its members' reviews again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>visibility</code> to the status query and its result.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 748,
+       "text": "Running <code>pr_status</code> against this repository's pull request 260 through <code>gh</code> printed <code>public ['OWNER']</code>, so the query and its <code>jq</code> filter return the visibility."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Passes the visibility from the status lookup to <code>review_statuses</code>, which calls <code>review_counts</code> in place of its own <code>TRUSTED</code> test.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 146,
+       "text": "The <code>= None</code> default is unused: the one caller always passes the value, and leaving it out silently gives the strict public rule."
+      },
+      {
+       "kind": "verify",
+       "line": 410,
+       "text": "A status without <code>visibility</code>, as from an older lookup, reads as <code>None</code> and keeps the association check."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Shows a <code>CONTRIBUTOR</code> and a <code>NONE</code> review setting the status in a private or internal repository and being ignored in a public one."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Checks the query asks for the visibility and lowercases it."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation states the rule for both kinds of repository",
+   "kicker": "The CLI reference and the review-pr skill",
+   "intro": [
+    "<code>docs/cli.md</code> describes whose verdicts the site, <code>publish</code>, and <code>status</code> count, and the <code>review-pr</code> skill says the same for the draft-state step. Each now gives the public rule and the private or internal rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Agents read this file as instructions, so its wording of the rule matters as much as the code's."
+    }
+   ]
+  }
+ ]
+}
