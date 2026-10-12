@@ -170,7 +170,32 @@ Validate a checkout before publishing it:
 ```sh
 claude plugin validate .
 claude plugin validate skills
+claude plugin test .
 ```
+
+### See a loop's pull requests in a pane
+
+In Claude Code, the plugin also ships a hooks module in `hooks/` that draws
+the open pull requests of each fix or review loop in a pane. Run
+`/loop-prs` to open it. It opens by itself when the session starts a loop's
+watcher.
+
+The pane finds a loop by the tracked file its watcher reads: the
+`--tracked` argument of `watch-prs.sh` for a review loop or
+`watch-threads.sh` for a fix loop. It learns that file when the session runs
+the watcher, and it also finds watchers already running on the machine, such
+as a loop another session started. To show a tracked file by hand, name it:
+
+```text
+/loop-prs ~/loops/review/tracked
+```
+
+Each loop lists its open pull requests with a link, `draft` or `ready`, and
+the title, and a second line when a pull request has a merge conflict, a
+change request, or unresolved review threads. The pane asks GitHub for every
+pull request in one `gh api graphql` call each minute while it is open, and
+`r` refreshes it at once. The skills never depend on the pane, and Codex has
+no equivalent.
 
 ## Install for Codex
 
