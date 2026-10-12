@@ -1008,8 +1008,9 @@ def gate_passed(state: dict) -> bool:
     return record.get("sha") == state["sha"] and record.get("exit_code") == 0
 
 
-def producer(version: str, model: str, effort: Optional[str]) -> str:
-    return f"Projector {version}, model {model}, " + (f"effort {effort}" if effort else "no effort")
+def producer(version: Optional[str], model: str, effort: Optional[str]) -> str:
+    """What produced a review, for a refusal to name: a marker that names no version reads as `unknown`."""
+    return f"Projector {version or 'unknown'}, model {model}, " + (f"effort {effort}" if effort else "no effort")
 
 
 def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
@@ -1129,9 +1130,11 @@ SIGNATURE = re.compile(
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
+# A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
+# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives.
 MARKER = re.compile(
-    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=(\S+) model=(\S+) (?:effort=(\S+) )?"
-    r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+    r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
+    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 # How a head moved since the full review, by kind: `interdiff` prints the phrase, and an incremental
 # review's lead names every kind but a push as "across a <phrase>".
@@ -1151,11 +1154,12 @@ INCREMENTAL_BODY_LIMIT = 600
 @dataclass(frozen=True)
 class Verdict:
     """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
-    incremental review, the head of the full review it builds on."""
+    incremental review, the head of the full review it builds on. `projector` is None for a marker
+    that names no version."""
 
     verdict: str
     sha: str
-    projector: str
+    projector: Optional[str]
     model: str
     effort: Optional[str]
     incremental_from: Optional[str]
@@ -1164,8 +1168,9 @@ class Verdict:
 def verdict_marker(body: str) -> Optional[Verdict]:
     """The verdict a review body's marker line carries, or None when no line is a marker.
 
-    An incremental review's line counts only directly after the marker, where
-    publish writes it."""
+    The verdict is `clean` or `changes-requested`, so a marker that spells a
+    clean verdict `approved` reads as `clean`. An incremental review's line
+    counts only directly after the marker, where publish writes it."""
     lines = [line.strip() for line in body.splitlines()]
     for i, line in enumerate(lines):
         marker = MARKER.match(line)
@@ -1173,7 +1178,7 @@ def verdict_marker(body: str) -> Optional[Verdict]:
             continue
         verdict, projector, model, effort, sha = marker.groups()
         incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
-        return Verdict(verdict, sha, projector, model, effort,
+        return Verdict("clean" if verdict == "approved" else verdict, sha, projector, model, effort,
                        incremental.group(1) if incremental else None)
     return None
 

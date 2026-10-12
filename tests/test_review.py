@@ -1489,6 +1489,16 @@ class DismissalTests(LatestWinsCase):
                          {i: self.review_state(i)
                           for i in (self.request, standing, by_hand, naming_the_loop, colleague)})
 
+    def test_dismisses_a_change_request_whose_marker_names_no_version(self) -> None:
+        older = next(r for r in self.github.reviews if r["id"] == self.request)
+        older["body"] = older["body"].replace(" projector=1.2.3 ", " ")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        result = self.json_publish("clean")
+
+        self.assertEqual([self.request], result["dismissed"])
+        self.assertEqual("DISMISSED", self.review_state(self.request))
+
     def test_dismisses_an_older_models_change_request_on_the_head_without_waiting_for_its_review(self) -> None:
         peer = self.change_request("gpt-5.5", sha=self.head)
         self.github.comment(review.start_comment("gpt-5.5", self.head))
@@ -1617,6 +1627,19 @@ class StatusTests(LatestWinsCase):
 
         self.assertEqual(("changes-requested", "gpt-5.5", newest),
                          (result["verdict"], result["newest"]["model"], result["newest"]["review"]))
+
+    def test_a_verdict_whose_marker_names_no_version_or_spells_clean_approved_counts(self) -> None:
+        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
+        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
+        for found in self.github.reviews:
+            body = found["body"].replace("verdict=clean projector=1.2.3 ", "verdict=approved ")
+            found["body"] = body.replace(" projector=1.2.3 ", " ")
+
+        result = json.loads(self.status("--json")[1])
+
+        self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
+                         [(m["model"], m["verdict"], m["review"]) for m in result["models"]])
+        self.assertEqual("clean", result["verdict"])
 
     def test_one_model_prints_one_line(self) -> None:
         newest = self.add_verdict("claude-opus-5-5")
@@ -2382,6 +2405,14 @@ class InterdiffRuleTests(IncrementalCase):
         with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
             self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")
 
+    def test_a_full_review_whose_marker_names_no_version_is_not_built_on(self) -> None:
+        full = self.github.reviews[-1]
+        full["body"] = full["body"].replace(" projector=1.2.3 ", " ")
+        self.pushed()
+
+        self.refused("was made by Projector unknown, model claude-opus-5-5, no effort, and this run is "
+                     "Projector 1.2.3, model claude-opus-5-5, no effort")
+
     def test_a_full_review_missing_from_github_is_not_built_on(self) -> None:
         self.github.reviews.clear()
         self.pushed()
@@ -2666,6 +2697,29 @@ class VerdictMarkerTests(unittest.TestCase):
     def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
         self.assertIsNone(review.verdict_marker(f"Body.\n{self.INCREMENTAL}\n"))
         self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
+
+    def test_a_marker_that_names_no_version_reads_with_none(self) -> None:
+        older = ("<!-- projector-review v=1 verdict=clean model=claude-opus-5-5[1m] effort=high "
+                 "sha=8f1ec500248ff566848d88e8f4fae6e6ed85d256 findings=0 seconds=66 covered=1/1 -->")
+
+        self.assertEqual(review.Verdict("clean", "8f1ec500248ff566848d88e8f4fae6e6ed85d256", None,
+                                        "claude-opus-5-5[1m]", "high", None),
+                         review.verdict_marker(f"Signature\n\n{older}\n\nBody.\n"))
+
+    def test_a_clean_verdict_spelled_approved_reads_as_clean(self) -> None:
+        older = (f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low sha={self.SHA} "
+                 "findings=0 seconds=60 covered=1/1 -->")
+
+        self.assertEqual(review.Verdict("clean", self.SHA, None, "claude-opus-5-5", "low", None),
+                         review.verdict_marker(older))
+
+    def test_a_marker_still_needs_its_verdict_model_and_head(self) -> None:
+        for broken in (self.MARKER.replace("verdict=clean", "verdict=lgtm"),
+                       self.MARKER.replace("model=claude-opus-5-5 ", ""),
+                       self.MARKER.replace(f"sha={self.SHA}", f"sha={self.SHA[:7]}"),
+                       self.MARKER.replace("projector=0.7.2 ", "projector= ")):
+            with self.subTest(broken):
+                self.assertIsNone(review.verdict_marker(broken))
 
 
 class IdentityTests(unittest.TestCase):
