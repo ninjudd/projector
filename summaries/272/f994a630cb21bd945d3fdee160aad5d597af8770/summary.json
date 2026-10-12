@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Implement rule in generated instructions",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 272,
+  "title": "Tell agents with the Projector plugin to build every change with implement",
+  "head": "f994a630cb21bd945d3fdee160aad5d597af8770",
+  "headRef": "agents-block-implement",
+  "base": "184f82c14e920a48c906bce10aa6721b7ee72441",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a repository adopts Projector, <code>project init</code> writes a section into its <code>AGENTS.md</code>, the instructions file Codex reads (and Claude Code reads through <code>CLAUDE.md</code>, which links to it). The section sits between two HTML-comment markers, carries a version number, and comes from a template that ships with the CLI. When the template changes, <code>project check</code> warns that a repository's copy is outdated, and <code>project init</code> rewrites only the text between the markers.",
+   "Before this change, that section mentioned the <code>implement</code> skill only for stacked pull requests. A session that built a change some other way still opened a draft pull request, but it skipped <code>implement</code>'s hand-over, the last step where <code>implement</code> opens the pull request and starts a fix loop that answers review findings as they arrive. Findings then sat until someone noticed, as happened on #270.",
+   "Version 5 of the template does two things:",
+   "<ol><li><b>It adds the <code>implement</code> rule.</b> Build every change you will open a pull request for with <code>implement</code>, whether it follows a plan or only a description, however small.</li><li><b>It makes the plugin-dependent rules conditional.</b> The new rule and the existing rule to open every pull request as a draft move into a <code>### Projector skills</code> subsection that applies only when the Projector plugin's skills are available. A contributor without the plugin has no review loop of their own to mark a draft ready, so following the draft rule would leave every pull request in draft.</li></ol>",
+   "The rules about where plans live, the <code>project</code> command, the writing style, and stacks stay unconditional. The note saying Projector generates the section moves to its top, so it no longer reads as part of the new subsection."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Block</b>: the generated section between <code>&lt;!-- projector:begin N --&gt;</code> and <code>&lt;!-- projector:end --&gt;</code>, where N is the template's version.</li><li><b>Hand-over</b>: <code>implement</code>'s last step, which opens a draft pull request and starts or joins a fix loop on it.</li><li><b>Fix loop</b>: <code>start-fix-loop</code>, which runs <code>fix-pr</code> on each pull request it watches whenever a review leaves findings.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One review, of <code>f994a63</code>: clean, with no finding threads. It suggests rewrapping one short line in <code>docs/cli.md</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The version 5 template",
+   "kicker": "The text project init writes into every adopting repository",
+   "intro": [
+    "This is the source of the change. <code>project init</code> renders it by replacing <code>{projects_dir}</code> with the repository's plans directory, usually <code>docs/projects</code>, and the first line's version number tells <code>project check</code> whether a repository's copy is current.",
+    "The diff moves the draft paragraph, unchanged, from the unconditional part into the new subsection, and adds the plugin condition and the <code>implement</code> paragraph above it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template itself: version bumped to 5, generation note moved to the top, and a new <code>### Projector skills</code> subsection at the end.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 40,
+       "text": "The rule agrees with <code>skills/implement/SKILL.md</code>: <code>implement</code> accepts a plan or a plain description, ends at <code>gh pr create --draft</code>, and starts or joins a fix loop from the top-level conversation unless <code>fix.auto_start</code> is <code>false</code>. Checked by reading its \"Start from a description\" and \"Hand the work over\" sections."
+      },
+      {
+       "kind": "verify",
+       "line": 41,
+       "text": "Both invocations match how <code>docs/plugins.md</code> and <code>README.md</code> say each host calls a plugin skill: <code>/projector:&lt;skill&gt;</code> in Claude Code and <code>$&lt;skill&gt;</code> in Codex."
+      },
+      {
+       "kind": "context",
+       "line": 36,
+       "text": "An agent decides whether this subsection applies by whether it can see Projector's skills. Without them, everything above the heading still applies."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the SHA-256 of the version 5 template, so a later edit that forgets to bump the version fails the test.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>test_the_template_text_is_pinned_to_its_version</code> passed on this head as part of the full suite: 843 tests, <code>OK (skipped=1)</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "copies",
+   "title": "Projector's own copy and its documentation",
+   "kicker": "This repository's AGENTS.md and the CLI reference follow the template",
+   "intro": [
+    "Projector uses its own convention, so its <code>AGENTS.md</code> carries the same block, refreshed by <code>project init</code>. <code>CLAUDE.md</code> is a symlink to it, so Claude Code reads the same text. <code>docs/cli.md</code> describes what <code>init</code> writes, and now says which part of the block depends on the plugin."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "The rendered version 5 block, with <code>{projects_dir}</code> filled in as <code>docs/projects</code>. Everything outside the markers is unchanged.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "In a temporary Git repository holding the version 4 block between text of its own, <code>project init</code> from this head replaced only the block, and the block it wrote is identical to this file's. <code>project check</code> on this head prints no instructions warning."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>AGENTS.md</code> bullet now lists the unconditional rules first and the plugin-only ones last, and the sample <code>check</code> warning shows version 4 to 5.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 403,
+       "text": "The temporary repository's <code>project check</code> printed exactly this warning line before <code>init</code> ran."
+      },
+      {
+       "kind": "context",
+       "line": 49,
+       "text": "This line wraps about 15 characters short of its neighbours. The review lists rewrapping it as a suggestion; it changes nothing a reader sees once rendered."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

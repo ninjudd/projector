@@ -1,0 +1,160 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 2dd0b2d..9045bf0 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -120,9 +120,12 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 4 -->
++<!-- projector:begin 5 -->
+ ## Projector conventions
+ 
++Projector generates this section. To change it, change the template in
++Projector and run `project init`.
++
+ This repository keeps its project plans in Git with
+ [Projector](https://github.com/ninjudd/projector). Read
+ `docs/projects/README.md` before you change a plan. Use the `project` command
+@@ -142,12 +145,6 @@ it the commit message. Match the line wrapping already used around a Markdown
+ edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
+ line breaks.
+ 
+-Open every pull request as a draft, each layer of a stack included. A review
+-loop marks a pull request ready when its head reviews clean, so a draft says
+-the work has not been signed off yet. Never mark your own draft ready, even
+-once the reason you drafted it is resolved, because only a clean review
+-clears it.
+-
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+@@ -156,6 +153,22 @@ above, so each layer stays on the current head of the one below and the
+ stack can merge as a unit. Chain pull requests by base branch, and update
+ them by merging, only where `gh stack` is unavailable.
+ 
+-Projector generates this section. To change it, change the template in
+-Projector and run `project init`.
++### Projector skills
++
++Follow these rules only when the Projector plugin is installed, which you can
++tell because its skills, such as `implement`, are available to you. Without
++the plugin, the rest of this section still applies.
++
++Build each change you will open a pull request for with the `implement`
++skill, `/projector:implement` in Claude Code or `$implement` in Codex,
++whether it follows a plan under `docs/projects` or only a description,
++however small. Its hand-over opens the pull request and starts a fix loop on
++it, so review findings are fixed as they arrive rather than waiting for
++someone to notice that nothing is fixing them.
++
++Open every pull request as a draft, each layer of a stack included. A review
++loop marks a pull request ready when its head reviews clean, so a draft says
++the work has not been signed off yet. Never mark your own draft ready, even
++once the reason you drafted it is resolved, because only a clean review
++clears it.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index f51def7..489f8af 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -38,15 +38,18 @@ what it did to each:
+   `docs/projects/` in another repository knows where the `project` command
+   comes from. `init` creates it once and never rewrites it.
+ - `AGENTS.md` carries a section Projector generates between two HTML-comment
+-  markers: where plans live, how to use `project`, the writing style for
+-  documentation and GitHub prose, that every pull request opens as a draft
+-  until a clean review marks it ready, and how to open dependent work as a
++  markers. It says where plans live, how to use `project`, the writing style
++  for documentation and GitHub prose, and how to open dependent work as a
+   stack with `gh stack`, or as pull requests chained by base branch where
+   `gh stack` is unavailable, and keep every layer on the current head of the
+-  one below so the stack can merge as a unit. `init` appends the section to
+-  an existing file or creates the file with only that section, and refreshes
+-  the section when it falls behind the template this command ships.
+-  Everything outside the markers is yours and is never changed.
++  one below so the stack can merge as a unit. Its last part applies only
++  where the Projector plugin is installed: build every change with the
++  `implement` skill, so a fix loop starts on its pull request, and open every
++  pull request as a draft until a clean review marks it ready. `init`
++  appends the section to an existing file or creates the file
++  with only that section, and refreshes the section when it falls behind the
++  template this command ships. Everything outside the markers is yours and
++  is never changed.
+ - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
+   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
+   creates the link when `CLAUDE.md` is absent, or a file containing the import
+@@ -397,7 +400,7 @@ collaborator on an older CLI is told what to do without a failing gate.
+ 
+ ```console
+ $ project check
+-warning: AGENTS.md: Projector section is version 3; this command ships version 4 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
++warning: AGENTS.md: Projector section is version 4; this command ships version 5 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+ Project plans are valid.
+ ```
+ 
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index dc134de..ade89ac 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,6 +1,9 @@
+-<!-- projector:begin 4 -->
++<!-- projector:begin 5 -->
+ ## Projector conventions
+ 
++Projector generates this section. To change it, change the template in
++Projector and run `project init`.
++
+ This repository keeps its project plans in Git with
+ [Projector](https://github.com/ninjudd/projector). Read
+ `{projects_dir}/README.md` before you change a plan. Use the `project` command
+@@ -20,12 +23,6 @@ it the commit message. Match the line wrapping already used around a Markdown
+ edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
+ line breaks.
+ 
+-Open every pull request as a draft, each layer of a stack included. A review
+-loop marks a pull request ready when its head reviews clean, so a draft says
+-the work has not been signed off yet. Never mark your own draft ready, even
+-once the reason you drafted it is resolved, because only a clean review
+-clears it.
+-
+ Open dependent work that is too large to review as one pull request as a
+ GitHub stack with `gh stack`, as Projector's `implement` skill describes
+ under "Stack dependent work". Fix stacked code on the branch that introduced
+@@ -34,6 +31,22 @@ above, so each layer stays on the current head of the one below and the
+ stack can merge as a unit. Chain pull requests by base branch, and update
+ them by merging, only where `gh stack` is unavailable.
+ 
+-Projector generates this section. To change it, change the template in
+-Projector and run `project init`.
++### Projector skills
++
++Follow these rules only when the Projector plugin is installed, which you can
++tell because its skills, such as `implement`, are available to you. Without
++the plugin, the rest of this section still applies.
++
++Build each change you will open a pull request for with the `implement`
++skill, `/projector:implement` in Claude Code or `$implement` in Codex,
++whether it follows a plan under `{projects_dir}` or only a description,
++however small. Its hand-over opens the pull request and starts a fix loop on
++it, so review findings are fixed as they arrive rather than waiting for
++someone to notice that nothing is fixing them.
++
++Open every pull request as a draft, each layer of a stack included. A review
++loop marks a pull request ready when its head reviews clean, so a draft says
++the work has not been signed off yet. Never mark your own draft ready, even
++once the reason you drafted it is resolved, because only a clean review
++clears it.
+ <!-- projector:end -->
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 4d3290d..69c28d2 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -16,6 +16,7 @@
+     2: "3037e13c821131396c4fa069607e37535d64a48ab8dba063ee337260deac4ae0",
+     3: "29fe4f2f6610598f250a55c91dee55226555b92c6c71b0fc9c16d245073182fa",
+     4: "8a5be21b0a353027b2193aa0eafc1f89ff4c619f9340ed7edf24795217771445",
++    5: "b149c63490732eae4ea0f70ef4985642828298910c16070079ff07f0933af74a",
+ }
+ 
+ 
