@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "name": "Older review markers",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 266,
+  "title": "Count the verdicts of reviews earlier releases published",
+  "head": "5eeb454c034bf60b47693408c73b4feb96a362df",
+  "headRef": "read-older-review-markers",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every Projector review ends its signature with a hidden HTML comment, the <b>review marker</b>, which records the verdict, the head commit it judged, the model that wrote it, and since release 0.6.10 the Projector version, as <code>projector=</code>. Several parts of Projector read a head's verdict back from that marker: the site's review status, <code>project review status</code>, and <code>project review publish</code> when it sets draft state or dismisses change requests.",
+   "Those readers share one strict pattern, <code>MARKER</code>, which required <code>projector=</code>. Reviews published by 0.6.9 and earlier have no such field, so they parsed as no verdict at all, and a pull request whose newest review predates 0.6.10 read as unreviewed. Reviews from 0.6.0 and earlier also spell a clean verdict <code>approved</code>, which the pattern rejected too.",
+   "This change makes <code>projector=</code> optional and accepts <code>approved</code>. <code>verdict_marker</code>, the one function that applies the pattern, reports <code>approved</code> as <code>clean</code>, so every reader sees one vocabulary. What publish writes does not change.",
+   "<p class=\"note\">Projector's own review of this head found it clean, with no finding threads.</p>"
+  ],
+  "cards": [
+   {
+    "id": "shapes",
+    "title": "Marker shapes by release",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Releases</th><th>Clean verdict</th><th><code>projector=</code></th><th>Read at the base</th><th>Read at this head</th></tr></thead><tbody><tr><td>0.6.0 and earlier</td><td><code>approved</code></td><td>absent</td><td class=\"r\">no</td><td class=\"r\">yes, as <code>clean</code></td></tr><tr><td>0.6.1 to 0.6.9</td><td><code>clean</code></td><td>absent</td><td class=\"r\">no</td><td class=\"r\">yes</td></tr><tr><td>0.6.10 and later</td><td><code>clean</code></td><td>present</td><td class=\"r\">yes</td><td class=\"r\">yes</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "readers",
+    "title": "Who reads the marker",
+    "html": "<ul class=\"tight\"><li><b>Site status:</b> <code>review_statuses</code> in <code>src/projector/site/__init__.py</code>.</li><li><b>Status and draft state:</b> <code>newest_verdicts</code>, used by <code>project review status</code> and by publish.</li><li><b>Dismissal:</b> <code>standing_change_requests</code>, which decides which change requests count as Projector's.</li><li><b>Start comments:</b> <code>is_live</code>, which treats a start comment as finished once its model has a verdict on that head.</li><li><b>Incremental rule:</b> the only reader of the version, through <code>Verdict.projector</code>.</li></ul><p class=\"note\">The collision check uses its own loose match on <code>sha=</code> and is unaffected.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "pattern",
+   "title": "Reading older markers",
+   "kicker": "The marker pattern accepts the shapes earlier releases wrote",
+   "intro": [
+    "All the change's behavior sits in <code>src/projector/review.py</code>. The <code>MARKER</code> regular expression now makes the <code>projector=</code> field optional and accepts <code>verdict=approved</code>. <code>verdict_marker</code>, which turns a review body into a <code>Verdict</code> record, maps <code>approved</code> to <code>clean</code>, so no caller ever sees the old word.",
+    "<code>Verdict.projector</code>, the version the marker names, becomes optional. Its one reader is the incremental-review rule. An incremental review is the short verdict a review loop posts on a small push, and it may build only on a full review made by this run's Projector version, model, and effort. A full review whose marker names no version still fails that rule. <code>producer</code> now names the missing version <code>unknown</code> in the refusal, where before the rule refused because the marker did not parse."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each release tag's marker template, from v0.5.0 through v0.6.10, keeps the field order the new pattern expects: <code>verdict</code>, optional <code>projector</code>, <code>model</code>, optional <code>effort</code>, then <code>sha</code>, <code>findings</code>, <code>seconds</code>, and <code>covered</code>. Checked with <code>git grep</code> at each tag."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The pattern, the <code>Verdict</code> type, the parser, and the refusal text the incremental rule prints.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1136,
+       "text": "A marker with an empty <code>projector=</code>, a seven-character SHA, or no <code>model=</code> still fails to parse. Publish's self-check on the marker it writes therefore still refuses an empty version. Checked by running <code>verdict_marker</code> on each shape and by the new <code>test_a_marker_still_needs_its_verdict_model_and_head</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1181,
+       "text": "Mapping <code>approved</code> to <code>clean</code> here, rather than in each reader, is what keeps the site, status, and dismissal code unchanged: each of them compares the verdict against <code>clean</code> or <code>changes-requested</code> only."
+      },
+      {
+       "kind": "context",
+       "line": 1012,
+       "text": "Only the incremental rule calls <code>producer</code> with a marker's version. The other call passes this run's version from <code>distribution_version</code>, which is always a string and is itself <code>unknown</code> when no installed release is found."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "One test per reader, plus the parser itself",
+   "intro": [
+    "Each reader the bug affected gets a test that strips <code>projector=</code> from a fixture's marker, and where it matters rewrites <code>clean</code> as <code>approved</code>. The site's fixture helper <code>projector_review</code> gains a <code>version</code> argument so a test can write a marker with no version.",
+    "The site test also parses a verbatim marker copied from a real pre-0.6.10 review, so the fixture shape is not the only evidence."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With the head's tests run against the base's <code>review.py</code>, the four new behavior tests fail: dismissal, status, the interdiff rule, and site status. So a test cannot pass because its <code>replace</code> call matched nothing. With the head's code, the full suite runs 842 tests and passes, with one expected skip."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "note": "Parser tests in <code>VerdictMarkerTests</code>, and one test each for dismissal, status, and the incremental rule.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1635,
+       "text": "The status test rewrites both fixtures. Only the newest, clean one is affected by the <code>approved</code> rewrite, and it is the verdict the test asserts."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "A site status test for older markers, and a <code>version</code> argument on the <code>projector_review</code> fixture helper."
+    }
+   ]
+  }
+ ]
+}

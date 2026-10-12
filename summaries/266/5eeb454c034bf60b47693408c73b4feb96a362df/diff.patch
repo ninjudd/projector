@@ -1,0 +1,199 @@
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 00e1076..b8fa4e3 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1008,8 +1008,9 @@ def gate_passed(state: dict) -> bool:
+     return record.get("sha") == state["sha"] and record.get("exit_code") == 0
+ 
+ 
+-def producer(version: str, model: str, effort: Optional[str]) -> str:
+-    return f"Projector {version}, model {model}, " + (f"effort {effort}" if effort else "no effort")
++def producer(version: Optional[str], model: str, effort: Optional[str]) -> str:
++    """What produced a review, for a refusal to name: a marker that names no version reads as `unknown`."""
++    return f"Projector {version or 'unknown'}, model {model}, " + (f"effort {effort}" if effort else "no effort")
+ 
+ 
+ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: bool,
+@@ -1129,9 +1130,11 @@ def change_size(result: dict) -> str:
+     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
+     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+ )
++# A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
++# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives.
+ MARKER = re.compile(
+-    r"^<!-- projector-review v=1 verdict=(clean|changes-requested) projector=(\S+) model=(\S+) (?:effort=(\S+) )?"
+-    r"sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
++    r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
++    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+ )
+ # How a head moved since the full review, by kind: `interdiff` prints the phrase, and an incremental
+ # review's lead names every kind but a push as "across a <phrase>".
+@@ -1151,11 +1154,12 @@ def change_size(result: dict) -> str:
+ @dataclass(frozen=True)
+ class Verdict:
+     """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
+-    incremental review, the head of the full review it builds on."""
++    incremental review, the head of the full review it builds on. `projector` is None for a marker
++    that names no version."""
+ 
+     verdict: str
+     sha: str
+-    projector: str
++    projector: Optional[str]
+     model: str
+     effort: Optional[str]
+     incremental_from: Optional[str]
+@@ -1164,8 +1168,9 @@ class Verdict:
+ def verdict_marker(body: str) -> Optional[Verdict]:
+     """The verdict a review body's marker line carries, or None when no line is a marker.
+ 
+-    An incremental review's line counts only directly after the marker, where
+-    publish writes it."""
++    The verdict is `clean` or `changes-requested`, so a marker that spells a
++    clean verdict `approved` reads as `clean`. An incremental review's line
++    counts only directly after the marker, where publish writes it."""
+     lines = [line.strip() for line in body.splitlines()]
+     for i, line in enumerate(lines):
+         marker = MARKER.match(line)
+@@ -1173,7 +1178,7 @@ def verdict_marker(body: str) -> Optional[Verdict]:
+             continue
+         verdict, projector, model, effort, sha = marker.groups()
+         incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
+-        return Verdict(verdict, sha, projector, model, effort,
++        return Verdict("clean" if verdict == "approved" else verdict, sha, projector, model, effort,
+                        incremental.group(1) if incremental else None)
+     return None
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index d60a706..062085b 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1489,6 +1489,16 @@ def test_dismisses_only_the_reviewers_projector_change_requests_since_its_last_a
+                          {i: self.review_state(i)
+                           for i in (self.request, standing, by_hand, naming_the_loop, colleague)})
+ 
++    def test_dismisses_a_change_request_whose_marker_names_no_version(self) -> None:
++        older = next(r for r in self.github.reviews if r["id"] == self.request)
++        older["body"] = older["body"].replace(" projector=1.2.3 ", " ")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        result = self.json_publish("clean")
++
++        self.assertEqual([self.request], result["dismissed"])
++        self.assertEqual("DISMISSED", self.review_state(self.request))
++
+     def test_dismisses_an_older_models_change_request_on_the_head_without_waiting_for_its_review(self) -> None:
+         peer = self.change_request("gpt-5.5", sha=self.head)
+         self.github.comment(review.start_comment("gpt-5.5", self.head))
+@@ -1618,6 +1628,19 @@ def test_a_newer_change_request_is_the_newest_verdict(self) -> None:
+         self.assertEqual(("changes-requested", "gpt-5.5", newest),
+                          (result["verdict"], result["newest"]["model"], result["newest"]["review"]))
+ 
++    def test_a_verdict_whose_marker_names_no_version_or_spells_clean_approved_counts(self) -> None:
++        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
++        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
++        for found in self.github.reviews:
++            body = found["body"].replace("verdict=clean projector=1.2.3 ", "verdict=approved ")
++            found["body"] = body.replace(" projector=1.2.3 ", " ")
++
++        result = json.loads(self.status("--json")[1])
++
++        self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
++                         [(m["model"], m["verdict"], m["review"]) for m in result["models"]])
++        self.assertEqual("clean", result["verdict"])
++
+     def test_one_model_prints_one_line(self) -> None:
+         newest = self.add_verdict("claude-opus-5-5")
+ 
+@@ -2382,6 +2405,14 @@ def test_a_full_review_by_another_version_model_or_effort_is_not_built_on(self)
+         with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
+             self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")
+ 
++    def test_a_full_review_whose_marker_names_no_version_is_not_built_on(self) -> None:
++        full = self.github.reviews[-1]
++        full["body"] = full["body"].replace(" projector=1.2.3 ", " ")
++        self.pushed()
++
++        self.refused("was made by Projector unknown, model claude-opus-5-5, no effort, and this run is "
++                     "Projector 1.2.3, model claude-opus-5-5, no effort")
++
+     def test_a_full_review_missing_from_github_is_not_built_on(self) -> None:
+         self.github.reviews.clear()
+         self.pushed()
+@@ -2667,6 +2698,29 @@ def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
+         self.assertIsNone(review.verdict_marker(f"Body.\n{self.INCREMENTAL}\n"))
+         self.assertIsNone(review.verdict_marker(f"{self.MARKER}\n\n{self.INCREMENTAL}\n").incremental_from)
+ 
++    def test_a_marker_that_names_no_version_reads_with_none(self) -> None:
++        older = ("<!-- projector-review v=1 verdict=clean model=claude-opus-5-5[1m] effort=high "
++                 "sha=8f1ec500248ff566848d88e8f4fae6e6ed85d256 findings=0 seconds=66 covered=1/1 -->")
++
++        self.assertEqual(review.Verdict("clean", "8f1ec500248ff566848d88e8f4fae6e6ed85d256", None,
++                                        "claude-opus-5-5[1m]", "high", None),
++                         review.verdict_marker(f"Signature\n\n{older}\n\nBody.\n"))
++
++    def test_a_clean_verdict_spelled_approved_reads_as_clean(self) -> None:
++        older = (f"<!-- projector-review v=1 verdict=approved model=claude-opus-5-5 effort=low sha={self.SHA} "
++                 "findings=0 seconds=60 covered=1/1 -->")
++
++        self.assertEqual(review.Verdict("clean", self.SHA, None, "claude-opus-5-5", "low", None),
++                         review.verdict_marker(older))
++
++    def test_a_marker_still_needs_its_verdict_model_and_head(self) -> None:
++        for broken in (self.MARKER.replace("verdict=clean", "verdict=lgtm"),
++                       self.MARKER.replace("model=claude-opus-5-5 ", ""),
++                       self.MARKER.replace(f"sha={self.SHA}", f"sha={self.SHA[:7]}"),
++                       self.MARKER.replace("projector=0.7.2 ", "projector= ")):
++            with self.subTest(broken):
++                self.assertIsNone(review.verdict_marker(broken))
++
+ 
+ class IdentityTests(unittest.TestCase):
+     def test_a_model_is_one_reviewer_in_any_case_and_at_any_context_window(self) -> None:
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 8ba5983..4acaea2 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -450,6 +450,22 @@ def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self)
+         self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
+                           "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
+ 
++    def test_a_review_whose_marker_names_no_version_sets_its_heads_status(self) -> None:
++        statuses = self.statuses([
++            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1, version=None),
++            projector_review("approved", "d" * 40, "2026-10-02T10:00:00Z", 2, version=None),
++        ])
++
++        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
++                          "d": {"status": "clean", "url": review_url(2)}}, statuses,
++                         "a clean verdict spelled approved shows as clean")
++        head = "8f1ec500248ff566848d88e8f4fae6e6ed85d256"
++        older = {"body": ("**Projector review** · model `claude-opus-5-5[1m]`\n\n"
++                          "<!-- projector-review v=1 verdict=clean model=claude-opus-5-5[1m] effort=high "
++                          f"sha={head} findings=0 seconds=66 covered=1/1 -->\n\nWhat the review found."),
++                 "url": review_url(3), "at": "2026-10-03T10:00:00Z", "association": "OWNER"}
++        self.assertEqual({head: {"status": "clean", "url": review_url(3)}}, site_build.review_statuses([older]))
++
+     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
+         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
+         statuses = self.statuses([
+@@ -3415,13 +3431,16 @@ def review_url(review_id: int) -> str:
+ 
+ 
+ def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER",
+-                     model: str = "claude-opus") -> dict:
++                     model: str = "claude-opus", version: str | None = "0.6.13") -> dict:
+     """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
+ 
+     `association` is the author's relation to the repository, as GitHub's
+-    `author_association` gives it, and `model` the model its marker names.
++    `author_association` gives it, `model` the model its marker names, and
++    `version` the Projector version it names, or None for a marker that names
++    none.
+     """
+-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model={model} effort=high "
++    named = f"projector={version} " if version else ""
++    marker = (f"<!-- projector-review v=1 verdict={verdict} {named}model={model} effort=high "
+               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
+     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
+             "url": review_url(review_id), "at": at, "association": association}
