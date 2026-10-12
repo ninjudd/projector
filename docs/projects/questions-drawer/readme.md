@@ -53,7 +53,7 @@ plugin state, and returns its number at once, so the agent keeps working. A
 question about a pull request is numbered after it, `#337.3` for the third
 question on #337, and sits on the line after that pull request in the
 session's band. Any other question takes the next number in the session's
-own count, such as `1`, and sits above the pull requests. Clicking a
+own count, such as `q1`, and sits above the pull requests. Clicking a
 question's number opens its drawer: its detail, then its answers lettered
 `a`, `b`, `c`, the recommended one marked, and a last letter where you type
 any other answer. Clicking a letter answers with it. The module delivers
@@ -112,21 +112,25 @@ asked, and you answer them only in that session.
    again, and raises a toast with the reason. You can answer it again.
 7. When you type a reference in the prompt, as in `go with #337.3.b, but
    keep the cap at two`, the module's `prompt.submit` hook finds each
-   reference to a question the session holds, open or resolved, and adds
-   that question and, for an answer's reference, that choice to the
-   prompt's `context`. The agent reads what the reference means even when a
-   subagent asked the question.
+   reference that names a question the session holds, open or resolved,
+   matching only the forms § 2.2 gives. It adds that question and, for an
+   answer's reference, that choice to the prompt's `context`. The agent
+   reads what the reference means even when a subagent asked the question.
 
 ### 2.2 Numbers, letters, and a question
 
-A question's number is its reference, and an answer's letter extends it:
+A question's number is its reference, and an answer's letter extends it.
+Each reference takes one form when the agent asks, and keeps it:
 
-- **A question about a pull request** is the pull request, as the band
-  labels it, then `.` and its count among that pull request's questions in
-  the session: `#337.1`, `#337.2`, or `projector#337.3` when the band shows
-  more than one repository.
-- **Any other question** takes the next number in the session's own count:
-  `1`, `2`, `3`. The missing `#` keeps it from reading as a pull request.
+- **A question about a pull request in the session's repository** is `#`,
+  the pull request's number, `.`, and its count among that pull request's
+  questions in the session: `#337.1`, `#337.2`. The session's repository is
+  the `owner/name` in the remote URL that `$.session.repo()` returns.
+- **A question about a pull request in another repository** spells the
+  repository out: `owner/repo#337.3`. Two repositories that each have a
+  #337 never share a reference.
+- **Any other question** takes the next number in the session's own count,
+  after a `q`: `q1`, `q2`, `q3`.
 - **An answer** is the question's reference, `.`, and its letter:
   `#337.3.a`. The options take `a`, `b`, `c`, and on in the agent's order.
   A question without options has one, `a`, the recommendation. The last
@@ -137,12 +141,27 @@ A count never goes back, so a reference names one question for the whole
 session, even after its line has left the band. The counts start over only
 in a new session.
 
+The `prompt.submit` hook matches exactly these forms, each standing alone:
+not touching a letter, a digit, `/`, `#`, or `.` on its left, and ending
+at a space, punctuation other than `.`, or the end of the prompt.
+
+| Form | Matches | Does not match |
+| --- | --- | --- |
+| `#<pr>.<n>`, with an optional `.<letter>` | `#337.3`, `#337.3.b` | `#337`, `#337.3.4`, `x#337.3` |
+| `<owner>/<repo>#<pr>.<n>`, with an optional `.<letter>` | `octo/app#337.3.b` | `app#337.3` |
+| `q<n>`, with an optional `.<letter>` | `q2`, `q2.a` | `2`, `Q2`, `eq2`, `q2.4` |
+
+It attaches context only for a reference that names a question the session
+holds, and an answer's letter only when that question has the letter. Any
+other text that looks like a reference passes through unchanged.
+
 Each question is one entry in `bandQuestions`, a list in the session's
 `$.state` under the `projector` plugin, and `bandQuestionCounts` keeps the
 last number given in each count.
 
 | Field | Value |
 | --- | --- |
+| `ref` | Its reference, fixed when the agent asks: `#337.3`, `owner/repo#337.3`, or `q2` |
 | `number` | Its count, the last part of its reference |
 | `pr` | The pull request it is about, as `owner/repo#number`; null when none |
 | `askedAt` | When the agent asked, in milliseconds |
@@ -181,7 +200,7 @@ The module registers the tool in `session.start` with `$.tool.register`.
 
 ```text
 ──────────────────────────────────────── 2 questions · updated 12s ago [-]
-1 Run project init to add the publish rule?                          2m
+q1 Run project init to add the publish rule?                         2m
 #337 draft Retry failed webhook deliveries with backoff
 #337.3 Decline the finding about the retry budget?                   5m
        The review asks for a retry budget per host. The loop caps retries
@@ -263,6 +282,13 @@ skills keep working in Codex and without the module.
   resolved line. Counting each pull request's questions makes the number
   read as part of the pull request it sits under. A count that never goes
   back keeps every reference meaning one question for the session.
+- **One fixed form for each reference.** The hook reads references out of
+  ordinary prompt text, so a reference must not look like anything else. A
+  bare `2` would match "rerun the 2 failing tests", so a question without a
+  pull request is `q2`. A reference taken from the band's label would
+  change when the band's repositories change, so the form is fixed when the
+  agent asks, short for the session's own repository and spelled out for
+  any other.
 - **A last choice to type.** A field that is itself the last letter gives a
   typed answer a reference like any choice, and keeps every answer on one
   list.
@@ -304,7 +330,10 @@ skills keep working in Codex and without the module.
 | Do | Expect |
 | --- | --- |
 | A subagent calls `mcp__projector__ask` about #337, the third such question this session | The call returns at once naming `#337.3`; `bandQuestions` holds it with that subagent's `agentId`; its line follows #337's line, at the same left edge; the divider counts it |
-| A call with no `pr` | Its number is the next in the session's own count, such as `1`, and its line sits above the pull requests |
+| A call with no `pr` | Its reference is the next in the session's own count, such as `q1`, and its line sits above the pull requests |
+| A call about #12 in a repository other than the session's | Its reference is `owner/repo#12.1`, and stays so however the band labels pull requests |
+| Type `rerun the 2 failing tests` while `q2` is open | The prompt reaches the agent with no question attached |
+| Type `go with octo/app#12.1.a` | The prompt reaches the agent with that question and its choice `a` in its `context` |
 | A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `{ deny }` with the reason, and no question is added or numbered |
 | Open a question with two options | Its drawer shows `detail`, then `a.` and `b.` with the recommended one ending `(recommended)`, a long choice wrapping under its own text, then `c.` with a `Type something` field, then **dismiss** |
 | Open a question without options | Its drawer shows `a.`, the recommendation, then `b.` with the field |
