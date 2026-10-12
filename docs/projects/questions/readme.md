@@ -81,17 +81,19 @@ the rest of the CLI does.
 | `project question show <reference>` | Prints one question with its detail and lettered answers |
 | `project question answer <reference>.<letter> [--text <answer>]` | Records an answer: a letter, or the last letter with `--text` |
 | `project question dismiss <reference>` | Records that you dismissed it |
-| `project question claim <reference>` | Claims a recorded, undelivered answer for delivery and prints the text to deliver (§ 2.2) |
-| `project question delivered <reference>` | Marks a claimed answer delivered |
-| `project question reopen <reference>` | Clears a claimed answer whose delivery failed, so the question is open again |
+| `project question claim <reference> [--renew <token>]` | Claims a recorded, undelivered answer for delivery and prints a token and the text to deliver; with `--renew`, keeps that claim live (§ 2.2) |
+| `project question delivered <reference> --claim <token>` | Marks a claimed answer delivered |
+| `project question reopen <reference> --claim <token>` | Clears a claimed answer whose delivery failed, so the question is open again |
 | `project question watch [--interval <seconds>]` | Claims each undelivered answer, prints one line for it, marks it delivered, and keeps watching |
 | `project question context` | Reads prompt text on standard input and prints the context for each reference in it (§ 2.4) |
 
 `ask` exits `65` with the reason when a check fails, so the agent asks
 again. `answer` and `dismiss` exit `65` when the question already has an
-answer, `claim` exits `65` when the answer is already claimed or delivered,
-a command exits `66` when the reference names no question, and `67` when,
-without a session, it names questions in more than one session.
+answer. `claim` exits `65` when the answer has a live claim or is
+delivered, and `claim --renew`, `delivered`, and `reopen` exit `65` when
+the token is not the answer's live claim. A command exits `66` when the
+reference names no question, and `67` when, without a session, it names
+questions in more than one session.
 
 `watch` prints each answer as one line an event, the shape
 `watch-threads.sh` uses, so Claude Code's Monitor, a Codex loop, or a Paseo
@@ -126,18 +128,21 @@ sees half a file.
 | `detail` | What you need to answer it, as Markdown; empty when the line says it all |
 | `choices` | The answers in letter order: the recommendation first, then the other options in the agent's order |
 | `answer` | Absent while open; then `{ letter, text, answeredAt }` or `{ dismissed: true, answeredAt }` |
-| `claimedAt` | Absent until a view claims the answer to deliver it; then when, in milliseconds |
+| `claim` | Absent until a deliverer claims the answer; then `{ token, renewedAt }`, the claim's random token and when it was last renewed, in milliseconds |
 | `deliveredAt` | Absent until the answer reached the agent; then when, in milliseconds |
 
 Every answer reaches its agent the same way, wherever you gave it. It is
 recorded first, by `answer` or `dismiss` from a terminal or from a view.
-Then one deliverer claims it: `claim` sets `claimedAt` under the lock only
-when the answer has neither a live claim nor `deliveredAt`, so two
-deliverers never both send it. The deliverer sends the text and runs
-`delivered`, or runs `reopen` when the send failed. A claim older than one
-minute counts as abandoned, so a deliverer that stops halfway leaves the
-answer for the next one. In Claude Code the band is the deliverer (§ 2.7);
-anywhere else, `watch` is, for whichever host runs it.
+Then one deliverer claims it: `claim` writes a new token and `renewedAt`
+under the lock only when the answer has neither a live claim nor
+`deliveredAt`, and prints the token with the text to deliver, so two
+deliverers never both send it. Only that token renews the claim, marks it
+`delivered`, or `reopen`s it when the send failed. While a send or submit
+is pending, which can take minutes behind a busy main loop, the deliverer
+renews the claim every 5 seconds with `claim --renew <token>`. A claim not
+renewed for one minute counts as abandoned, so only a deliverer that
+stopped leaves the answer for the next one. In Claude Code the band is the
+deliverer (§ 2.7); anywhere else, `watch` is, for whichever host runs it.
 
 A session keeps its 100 most recently delivered questions, so a reference
 to one still resolves after it leaves every view, and drops older ones as it
@@ -269,8 +274,11 @@ q1 Run project init to add the publish rule?                         2m
    second press finds it answered and does nothing.
 3. **The band delivers every recorded answer.** Whenever the store holds an
    answer in its session with no `deliveredAt`, whether you gave it in the
-   band or from a terminal, the band runs `project question claim` and
-   delivers the text it prints:
+   band or from a terminal, and the band is not already delivering it, the
+   band runs `project question claim` and delivers the text it prints. It
+   keeps the claim's token, and on each tick while the delivery is pending
+   it renews the claim with `claim --renew`, so a submit waiting behind a
+   long turn keeps the answer its own:
    - When the question has an `agentId` and `$.agent.list()` reports that
      subagent `pending`, `running`, `waiting`, or `idle`, the band sends
      the text with `$.session.send({ to: { agentId } })`. The list keeps an
@@ -282,10 +290,10 @@ q1 Run project init to add the publish rule?                         2m
      skills already do. The submit starts a turn once the session is idle.
 
    When the send resolves `{ isDelivered: true }` or the submit resolves
-   without `drop`, the band runs `project question delivered`. When the
-   submit resolves `{ drop }` or either call rejects, it runs `project
-   question reopen` and raises a toast with the reason, and the question is
-   open to answer again.
+   without `drop`, the band runs `project question delivered` with the
+   token. When the submit resolves `{ drop }` or either call rejects, it
+   runs `project question reopen` with the token and raises a toast with
+   the reason, and the question is open to answer again.
 4. **Typed references get their context.** The `prompt.submit` hook the band
    already has tests your prompt for anything shaped like a reference. When
    one is, it runs `project question context` on the prompt and adds what
@@ -341,8 +349,10 @@ settled.
   or from a view, and the agent can be in any host, so every answer takes
   one path: the store records it, one deliverer claims it under the lock,
   and the deliverer marks it delivered or reopens it. The claim keeps the
-  band and a `watch` from both sending one answer, and its expiry keeps a
-  stopped deliverer from stranding it. Claude Code's band is that
+  band and a `watch` from both sending one answer. Renewing it while a
+  delivery waits, and letting it expire only once renewals stop, keeps a
+  slow delivery from being sent twice while a stopped deliverer still
+  strands nothing. Claude Code's band is that
   deliverer in Claude Code because it runs in every session there; `watch`
   is the deliverer anywhere else, in the shape Projector's loops already
   use to hear GitHub.
@@ -362,7 +372,8 @@ settled.
 | A question of two lines or 121 characters, an empty recommendation, six other options, or an option equal to the recommendation | Exits `65` with the reason, and writes nothing |
 | `project question answer '#337.3.a' --session s1` | Records `a`; a second answer exits `65`; an unknown reference exits `66` |
 | `project question answer '#337.3.a'` with no session, when only `s1` has `#337.3` | Records `a` in `s1`; when two sessions have `#337.3`, exits `67` naming both |
-| Two `claim` commands on one answered question at once | One prints the text, the other exits `65`; a claim left for over a minute lets a new `claim` take it |
+| Two `claim` commands on one answered question at once | One prints a token and the text, the other exits `65`; a claim not renewed for over a minute lets a new `claim` take it, and the old token then exits `65` |
+| In Claude Code, answer a question whose subagent has ended while the main loop runs a five-minute turn | The band's submit waits for the turn, renewing its claim on each tick; no tick and no `watch` claims the answer again; the main loop receives it once |
 | `project question answer '#337.3.c' --text "keep the cap" --session s1` | Records a typed answer under the last letter |
 | `project question watch --session s1` with one undelivered answer | Claims it, prints its `ANSWER` line once, marks it delivered, and prints nothing more for it |
 | Two `answer` commands on one question at once | One records, the other exits `65`, and the file is whole |
@@ -393,7 +404,8 @@ from memory. Check the main-screen row by hand under tmux.
 - **The band.** Its tick stats one directory, shown or hidden, and starts
   `project question list` only when it changed, which is when a question
   is asked or answered. Each answer then starts a process to record it, one
-  to claim it, and one to mark it delivered.
+  to claim it, and one to mark it delivered, and one more each 5 seconds to
+  renew the claim while a submit waits for the main loop.
 - **Typed references.** The `prompt.submit` hook already runs on every
   prompt. It starts `project question context` only for a prompt with
   reference-shaped text.
