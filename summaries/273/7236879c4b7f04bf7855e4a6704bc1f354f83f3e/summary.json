@@ -1,0 +1,199 @@
+{
+ "version": 1,
+ "name": "Questions for the person",
+ "project": "questions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 273,
+  "title": "Answer an agent's questions from Projector's band",
+  "head": "7236879c4b7f04bf7855e4a6704bc1f354f83f3e",
+  "headRef": "questions-band",
+  "base": "3f6fbe23aaeb0f1562b091d7dbd81a394b5c8f8c",
+  "baseRef": "questions-cli",
+  "basePr": 271
+ },
+ "overview": {
+  "summary": [
+   "When a review or fix loop's subagent needs a decision from you, it can only hand the question to the main loop, which asks it as a line in the transcript. That line scrolls away, and your answer has no route back to the subagent. The <code>questions</code> plan fixes this in two pull requests. The first, #271, added <code>project question</code>, a command any host can run to ask, list, answer, and deliver questions. This second one builds Claude Code's view on top of that command, in <i>Projector's band</i>, the strip above the prompt that lists the pull requests your loops track.",
+   "The change gives Claude Code three things:",
+   "<ol><li><b>An <code>ask</code> tool.</b> The model sees it as <code>mcp__projector__ask</code> from the first turn. The hooks module serves it by running <code>project question ask</code>, so a question asked through the tool and one asked from the shell land in the same store. The tool returns the question's reference, such as <code>#337.3</code>, at once, and the agent keeps working.</li><li><b>Questions in the band.</b> Each question sits on the line after the pull request it is about. Clicking its reference opens a drawer with the detail, the lettered answers (<code>a</code> is always the agent's recommendation), a field for a typed answer, and <b>dismiss</b>.</li><li><b>Delivery.</b> The band records your answer through the CLI, then <i>claims</i> it and sends it: straight to the asking subagent while that subagent is still live, or otherwise to the main loop as a prompt of its own. A reference you type in the prompt, such as <code>go with #337.3.b</code>, reaches the agent with its question attached.</li></ol>",
+   "The plan stays <code>in-progress</code>. One acceptance row, opening a question's drawer on the main screen with ctrl+x tab and Enter, is a check by hand under tmux that has not been done."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>The store</b>: <code>project question</code>'s files for one session, one JSON file per question under <code>$XDG_STATE_HOME/projector/questions/&lt;session&gt;/</code>.</li><li><b>Reference</b>: a question's fixed name, <code>#337.3</code>, <code>owner/repo#337.3</code>, or <code>q2</code>; an answer adds its letter, as <code>#337.3.a</code>.</li><li><b>Claim</b>: a random token a deliverer takes on a recorded answer, so only one deliverer sends it. A claim lapses after a minute without renewal.</li><li><b>Route</b>: <code>send</code>, a message to a live subagent through <code>$.session.send</code>, or <code>submit</code>, a prompt for the main loop through <code>$.prompt.submit</code>, which waits until the session is idle.</li><li><b>Signature</b>: a string built from the store directory's file names, sizes and times, which the band compares on each tick to decide whether to read the store again.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>f1229f3</code>, opened one P2 finding: the band records a new signature before its store read runs, so a read that fails is never retried until the directory changes again. The flag on <code>hooks/register.tsx</code> marks it.</li><li>At <code>7236879</code> the commit is rebased, unchanged, onto #271's new head, which locks the store with an operating-system lock on a <code>.lock</code> file. The band's signature skips dot-files, so the lock never triggers a read. The finding is still open: the same failing-<code>list</code> test still fails at this head.</li><li>The gate passed at this head: 877 Python tests, <code>project check</code>, both <code>claude plugin validate</code> runs, and 43 hook tests under <code>claude plugin test</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "The state and the pure helpers",
+   "kicker": "The types the band keeps and the logic that needs no engine",
+   "intro": [
+    "Two files hold everything that can be tested without the engine. <code>hooks/types.d.ts</code> declares a <code>Question</code> as <code>project question list --json</code> prints it, and the two pieces of session state the band adds: <code>bandQuestions</code>, the band's last read of the store, and <code>bandSending</code>, each delivery in flight.",
+    "<code>hooks/questions.ts</code> holds the decisions: which text might hold a reference, which letter is the typed answer, whether an answer still needs a deliverer, which route an answer takes, where the store lives, the directory signature, the order the band draws questions in, and the <code>ask</code> tool's description, schema, and arguments."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Session state survives a hot reload of the hooks module, while module variables do not. That is why each delivery's token, route, and text live in <code>bandSending</code>: a reloaded module can keep renewing a submit an earlier copy made, and recognize its prompt when it arrives."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>Question</code>, <code>Answer</code>, and <code>Sending</code>, and the <code>bandQuestions</code> and <code>bandSending</code> state keys.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>bandSending</code> is keyed by reference alone. That holds because the band only delivers questions from its own session's store.",
+       "line": 87
+      }
+     ]
+    },
+    {
+     "path": "hooks/questions.ts",
+     "note": "The engine-free helpers: reference detection, letters, delivery need, routing, the store path and signature, ordering, and the tool's schema and argument vector.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "These statuses match the engine's <code>AgentStatus</code> in the 2.1.296 plugin-authoring declarations, which lists <code>completed</code>, <code>failed</code>, and <code>killed</code> as the ended states.",
+       "line": 12
+      },
+      {
+       "kind": "context",
+       "text": "A file whose claim the band itself renews counts by name alone, so the band's renewal every 5 seconds does not make it run <code>project question list</code> again. Any other change to the directory does.",
+       "line": 66
+      },
+      {
+       "kind": "verify",
+       "text": "I ran the vector this builds against the CLI in a temporary state directory: a question and a recommendation that start with <code>-</code> stay text, a <code>--detail</code> value keeps its line break, and the store records each value as given.",
+       "line": 150
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The tool, the store read, and delivery",
+   "kicker": "How the hooks module asks, reads, records, and delivers",
+   "intro": [
+    "<code>hooks/register.tsx</code> wires the helpers into the engine. At <code>session.start</code> it registers the <code>ask</code> tool with <code>isDeferred: false</code>, so its schema is in the model's tool list from the first turn. Its <code>tool.call</code> hook runs <code>project question ask</code> and answers with the reference, or refuses with <code>{ deny }</code>: the check that failed for exit <code>65</code>, or the error and <code>run project upgrade</code> for any other exit.",
+    "Every 5-second tick, shown or hidden, the band lists the store's directory and runs <code>project question list</code> only when the signature changed. A question it has not shown before shows the band. Then the band renews each claim it holds and starts delivering each recorded answer nobody is delivering:",
+    "<ol><li><b>Claim.</b> <code>project question claim</code> prints a token and the text to send. A non-zero exit means another deliverer holds it.</li><li><b>Send or submit.</b> A subagent that <code>$.agent.list()</code> reports as live gets the text through <code>$.session.send</code>. Otherwise, or when the send is not delivered, the main loop gets it through <code>$.prompt.submit</code>, with a line naming the subagent that asked.</li><li><b>Settle.</b> A delivered send or an entered submit runs <code>project question delivered</code>. A dropped submit, or a call that fails, runs <code>reopen</code> and raises a toast, so the question is open again.</li></ol>",
+    "The band's own <code>prompt.submit</code> hook also settles a submit when it arrives, so a submit made by a copy of the module that a hot reload replaced still settles. The same hook attaches <code>project question context</code>'s output to a prompt that types a reference. The rest of the file draws each question's line and drawer."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "I checked each engine call against the 2.1.296 plugin-authoring declarations: <code>$.tool.register</code> with <code>isDeferred</code>, the <code>tool.call</code> answer as <code>{ result }</code> or <code>{ deny }</code>, <code>SessionSendResult.isDelivered</code>, <code>PromptSubmitResult.drop</code>, <code>$.fs.list</code>'s entries, and a mobile surface without <code>Input</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers and serves <code>ask</code>, reads the store on every tick, records answers from the drawer, claims and delivers them, attaches typed references, and draws the questions.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "<code>readStore</code> records the new signature here, before <code>project question list</code> runs. When that list fails, later ticks see the same signature and never read again, so an answer recorded from a terminal is not claimed or delivered until something else changes the directory. A band test whose first <code>list</code> exits 1 confirmed it. Recording the signature only after a successful read fixes it.",
+       "line": 298
+      },
+      {
+       "kind": "context",
+       "text": "Settling takes the entry out of <code>bandSending</code> in one state update before it runs the CLI. Whichever of the submit's own result and the <code>prompt.submit</code> hook comes second finds the entry gone and does nothing.",
+       "line": 314
+      },
+      {
+       "kind": "context",
+       "text": "A <code>send</code> that a replaced copy of the module left is dropped here, so its claim lapses and the band delivers the answer again a minute later. A <code>submit</code> keeps being renewed, because it still waits in the session's queue.",
+       "line": 372
+      },
+      {
+       "kind": "context",
+       "text": "A prompt from this plugin is the band's own submit arriving. The hook matches it to a <code>bandSending</code> entry by its text and marks it delivered.",
+       "line": 577
+      },
+      {
+       "kind": "context",
+       "text": "Letters and references are <code>Button</code>s with no <code>hotkey</code>: Claude Code presses a band button whose hotkey is a digit when that digit is typed first in an empty prompt, so a hotkey would let <code>2 things first:</code> answer a question.",
+       "line": 673
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The helpers alone, and the band driven through the engine's test kit",
+   "intro": [
+    "<code>hooks/questions.test.ts</code> covers the helpers directly. <code>hooks/band.test.tsx</code> drives the whole module through the engine's test kit, over an in-memory stand-in for <code>project question</code> that keeps questions, claims, and tokens the way the CLI does."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passed all 43 tests at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/questions.test.ts",
+     "note": "Reference detection, letters, the minute a delivered question stays, claim lapse, routing by status, the store path, the signature, ordering, and the tool's arguments."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Asking through the tool, both refusals, a hidden band shown by a shell question, an idle session starting no process, each answer kind and route, a dropped submit, a renewed claim through a long turn, a reload's leftover submit, and a typed reference.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "No test makes <code>project question list</code> fail, which is how the flagged stale-signature path went unnoticed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "What users read about the band, and what the plan now records",
+   "intro": [
+    "<code>docs/plugins.md</code> gains a section on answering questions in the band. The plan's § 2.6, § 2.7, § 2.8, and § 5 now record two decisions this layer made: the <code>Input</code> is keyed by its answer's reference and left out on mobile, and each delivery lives in <code>bandSending</code> so a hot reload cannot send a second copy."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "A new section: asking, where a question sits, the drawer, delivery, typed references, and what the tick costs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The link to <code>cli.md#ask-and-answer-questions</code> resolves to the <code>## Ask and answer questions</code> heading at this head.",
+       "line": 239
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "§ 2.6 keys the typed-answer field by reference; § 2.7 describes the signature and <code>bandSending</code>; § 2.8 and § 5 follow.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "§ 2.7 item 3: this paragraph is the plan's record of why deliveries live in session state rather than in the module.",
+       "line": 308
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
