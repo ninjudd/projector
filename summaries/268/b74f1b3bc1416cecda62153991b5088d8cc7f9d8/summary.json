@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Questions in the loop band",
+ "project": "questions-drawer",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 268,
+  "title": "Plan answering an agent's questions in the loop band",
+  "head": "b74f1b3bc1416cecda62153991b5088d8cc7f9d8",
+  "headRef": "questions-drawer-spec",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops run subagents that sometimes need a decision only the person can make. Today a subagent hands its question to the main loop, which asks it as a line of text in the transcript. That line scrolls away, nothing lists which questions are still open, and nothing carries the answer back to the subagent.",
+   "This pull request adds one plan, <code>docs/projects/questions-drawer/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It changes no code. The plan builds on the <b>loop band</b> from #267: a Claude Code hooks module that draws a strip above the prompt listing the pull requests the loops track. Its implementation waits for #267 to merge.",
+   "<ol><li><b>An agent posts a question.</b> The module registers a tool, <code>mcp__projector__ask</code>, that adds the question to the session's own plugin state, <code>loopQuestions</code>, and returns at once, so the agent keeps working.</li><li><b>The session's band lists it.</b> Open questions sit above the pull requests, and a question's drawer offers the agent's options, a free-text field, and dismiss. Other sessions do not see it.</li><li><b>The answer goes straight back.</b> When you answer, the module sends it to the subagent if that subagent is still live, or queues it for the main loop otherwise. The question stays until a delivery takes the answer, and a refused delivery reopens it.</li></ol>",
+   "Earlier heads stored questions in shared files that every session's band read. This head keeps each question in the session that asked it, which removes the files, the per-tick reads, and the cross-session handoff."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Loop band</b>: the strip above the Claude Code prompt that #267 adds, one line per tracked pull request.</li><li><b>Drawer</b>: the extra lines that open under a band line when you press it.</li><li><b><code>$.state</code></b>: values Claude Code holds for one session on a plugin's behalf; they survive a hot reload of the module, and writing one redraws the band.</li><li><b>Main screen</b>: Claude Code's non-fullscreen layout, used under tmux, where only a <code>Button</code> takes a press.</li></ul>"
+   },
+   {
+    "id": "readiness",
+    "title": "Readiness",
+    "html": "<p>The plan owns every open question at <code>ready</code>. Section 6 lists three: opening a pull request's drawer on the main screen (owned, outside this plan's questions), whether a resumed session keeps <code>$.state</code> (deferred until observed), and Codex (deferred). None blocks implementation.</p>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>2b3a0ed</code>: changes requested, three findings on the delivery route, the repository name, and the option hotkeys.</li><li><code>9445f99</code>: all three fixed. Clean, with a suggestion about a submit that a hook drops.</li><li><code>b74f1b3</code>: questions move from shared files to each session's own state, and a dropped submit now reopens the question. Clean, with a suggestion about a reload during a delivery.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The questions-drawer plan",
+   "kicker": "How an agent's question reaches the person and how the answer gets back",
+   "intro": [
+    "The plan covers the whole round trip: the <code>ask</code> tool and the question it records (sections 2.1 to 2.3), what the band draws (2.4), the files the implementation touches (2.5), the reasons for each choice (3), and the acceptance tests (4).",
+    "Read section 2.1 first. Its numbered steps are the design, and the later sections fill in each step's data and drawing."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The API calls the plan names exist as described in Claude Code 2.1.296's plugin declarations: <code>$.tool.register</code> with <code>isDeferred</code>, <code>$.ui.notify</code>, <code>$.session.send({ to: { agentId } })</code>, <code>$.agent.list()</code> with its statuses, <code>$.prompt.submit</code> and its <code>drop</code> result, <code>$.state</code>, <code>Button</code> with <code>plain</code>, <code>Input</code> with <code>onSubmit</code>, and ctrl+x tab to focus the band."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> passes at this head, and the plan's frontmatter reads <code>status: ready</code> and <code>priority: now</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/questions-drawer/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the problem, the <code>ask</code> tool and the question it records, the band's drawing, the design reasons, and the acceptance tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 80,
+       "text": "The live statuses here, <code>pending</code>, <code>running</code>, <code>waiting</code>, and <code>idle</code>, and the ended ones, <code>completed</code>, <code>failed</code>, and <code>killed</code>, are exactly the <code>AgentStatus</code> values in the 2.1.296 plugin API."
+      },
+      {
+       "kind": "verify",
+       "line": 89,
+       "text": "<code>$.prompt.submit</code> resolves <code>{ drop: reason }</code> when a hook refuses the prompt, so this step reopens the question in every case where nobody took the answer."
+      },
+      {
+       "kind": "context",
+       "line": 89,
+       "text": "The plugin API says a hot reload cancels the module's timers. If it also drops a pending delivery's continuation, which the review infers but did not test, a question can read <code>sending</code> for the rest of the session. The review suggests reopening such a question when <code>session.start</code> runs again."
+      },
+      {
+       "kind": "verify",
+       "line": 99,
+       "text": "The 2.1.296 plugin API describes <code>$.state</code> as values held for the session that survive a hot reload, with a write redrawing every site that read the value."
+      },
+      {
+       "kind": "verify",
+       "line": 141,
+       "text": "In the 2.1.296 API, a bare digit typed into an empty prompt presses only a band <code>Button</code> with that digit as its <code>hotkey</code>, so buttons with no hotkey cannot be pressed from the prompt."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
