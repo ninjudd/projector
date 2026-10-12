@@ -1074,7 +1074,7 @@ def question_session(arguments: argparse.Namespace, required: bool) -> Optional[
     return session
 
 
-def session_repo(checkout: Path) -> Optional[str]:
+def checkout_repo(checkout: Path) -> Optional[str]:
     try:
         return review.origin_repo(checkout)
     except ProjectorError:
@@ -1110,7 +1110,7 @@ def run_question(arguments: argparse.Namespace) -> int:
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         question = questions.ask(question_session(arguments, True), arguments.question, arguments.recommend,
                                  arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
-                                 repo=session_repo(Path.cwd()))
+                                 repo=checkout_repo(Path.cwd()))
         print(json_text({"question": question}) if json_output else question["ref"])
     elif command == "list":
         session = question_session(arguments, False)

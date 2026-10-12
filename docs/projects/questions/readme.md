@@ -111,8 +111,9 @@ A session's questions live in
 `$XDG_STATE_HOME/projector/questions/<session>/`, or under
 `~/.local/state/projector/questions/` when `XDG_STATE_HOME` is unset, beside
 `project review`'s `reviews/` (`state_dir` in `src/projector/review.py`).
-The directory holds one JSON file per question and `counts.json`, the last
-number given in each count. A command that writes takes the directory's
+The directory holds one JSON file per question, `counts.json`, the last
+number given in each count, and `session.json`, the session's repository
+once it has one (§ 2.3). A command that writes takes the directory's
 lock first and writes each file to a temporary name before renaming it into
 place, so two writers never lose each other's change and a reader never
 sees half a file.
@@ -158,7 +159,9 @@ Each reference takes one form when the agent asks, and keeps it:
   the pull request's number, `.`, and its count among that pull request's
   questions in the session: `#337.1`, `#337.2`. The session's repository is
   the `owner/name` in the `origin` remote of the working directory where
-  `ask` runs.
+  the session's first `ask` from a Git checkout runs. The session records
+  it then and keeps it, so a later `ask` from another repository's
+  checkout cannot give that repository's #337 the same short reference.
 - **A question about a pull request in another repository** spells the
   repository out: `owner/repo#337.3`. Two repositories that each have a
   #337 never share a reference.

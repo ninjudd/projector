@@ -1,7 +1,8 @@
 """Questions an agent asks the person, kept per session under Projector's state directory.
 
 Each session's questions are JSON files in their own directory, one per question, with
-`counts.json` holding the last number given in each count. Every write happens under the
+`counts.json` holding the last number given in each count and `session.json` the session's
+repository, once an `ask` from a checkout has recorded one. Every write happens under the
 directory's lock and lands by renaming a temporary file into place, so two writers never
 lose each other's change and a reader never sees half a file.
 """
@@ -170,19 +171,34 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) 
         raise QuestionError(f"{pr!r} is not a pull request; write it as owner/repo#number")
 
 
+def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+    """The session's repository, recording `repo` as it when the session has none yet. Only that
+    repository's pull requests take the short `#<number>` form, so two repositories never share a
+    reference."""
+    path = folder / "session.json"
+    recorded = (read_json(path) or {}).get("repo")
+    if isinstance(recorded, str):
+        return recorded
+    if repo:
+        write_json(path, {"repo": repo})
+    return repo
+
+
 def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
         pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Check, number, and record a question; returns it."""
+    """Check, number, and record a question; returns it. `repo` is the repository of the checkout
+    `ask` runs in, which becomes the session's repository when the session has none yet."""
     check(question, recommend, options, pr)
     folder = session_dir(session)
     pull = PULL.match(pr) if pr else None
     key = f"{pull['repo'].lower()}#{pull['number']}" if pull else "q"
     with locked(folder):
+        home = session_repo(folder, repo)
         counts_path = folder / "counts.json"
         counts = read_json(counts_path) or {}
         count = int(counts.get(key, 0)) + 1
         record = {
-            "ref": reference(pull, count, repo),
+            "ref": reference(pull, count, home),
             "number": count,
             "pr": pr,
             "askedAt": now_ms(),

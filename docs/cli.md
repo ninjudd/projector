@@ -1462,12 +1462,15 @@ $ project question ask "Decline the finding about the retry budget?" \
 ```
 
 The command prints the question's reference at once. A question about a pull
-request in the repository you run it in is `#337.3`, the third question on
-#337 this session; one about another repository spells it out, as
+request in the session's repository is `#337.3`, the third question on #337
+this session; one about another repository spells it out, as
 `octo/web#337.1`; one about no pull request takes the session's own count, as
-`q2`. `ask` refuses, with exit code 65, a question longer than one line or
-120 characters, a missing recommendation, more than five other options, or an
-option that repeats the recommendation. Put what you need to decide in
+`q2`. The session's repository is the `origin` of the first checkout the
+session runs `ask` in, and it stays the same when later questions come
+from other repositories' checkouts, so two repositories never share a
+reference. `ask` refuses, with exit code 65, a question longer than one line
+or 120 characters, a missing recommendation, more than five other options, or
+an option that repeats the recommendation. Put what you need to decide in
 `--detail`, or `--detail-file`.
 
 Every command names the asking session with `--session`, or reads

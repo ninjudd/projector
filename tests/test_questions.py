@@ -27,26 +27,32 @@ class QuestionCase(unittest.TestCase):
     def setUp(self) -> None:
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
-        self.state = Path(scratch.name) / "state"
-        self.checkout = Path(scratch.name) / "app"
-        self.checkout.mkdir()
-        subprocess.run(["git", "init", "-q"], cwd=self.checkout, check=True)
-        subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/app.git"], cwd=self.checkout,
-                       check=True)
+        self.scratch = Path(scratch.name)
+        self.state = self.scratch / "state"
+        self.checkout = self.repository("app", "acme/app")
         environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)})
         environ.start()
         self.addCleanup(environ.stop)
         os.environ.pop("PROJECTOR_SESSION", None)
 
-    def run_cli(self, *args: str, stdin: str = "") -> tuple[int, str, str]:
+    def repository(self, name: str, origin: str) -> Path:
+        checkout = self.scratch / name
+        checkout.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+        subprocess.run(["git", "remote", "add", "origin", f"https://github.com/{origin}.git"], cwd=checkout,
+                       check=True)
+        return checkout
+
+    def run_cli(self, *args: str, stdin: str = "", cwd: Path | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.chdir(self.checkout), mock.patch("sys.stdin", io.StringIO(stdin)), \
+        with contextlib.chdir(cwd or self.checkout), mock.patch("sys.stdin", io.StringIO(stdin)), \
                 redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["question", *args])
         return code, out.getvalue(), err.getvalue()
 
-    def ask(self, question: str = "Decline the finding?", *args: str, session: str = "s1") -> str:
-        code, out, err = self.run_cli("ask", question, "--session", session, *args)
+    def ask(self, question: str = "Decline the finding?", *args: str, session: str = "s1",
+            cwd: Path | None = None) -> str:
+        code, out, err = self.run_cli("ask", question, "--session", session, *args, cwd=cwd)
         self.assertEqual(0, code, err)
         return out.strip()
 
@@ -64,6 +70,15 @@ class AskTests(QuestionCase):
         self.assertEqual("q1", self.ask("No pull?", *recommend))
         self.assertEqual("q2", self.ask("Another?", *recommend))
         self.assertEqual("q1", self.ask("Other session?", *recommend, session="s2"))
+
+    def test_shortens_only_the_repository_of_the_sessions_first_ask(self) -> None:
+        web = self.repository("web", "octo/web")
+        recommend = ["--recommend", "x"]
+        self.assertEqual("#271.1", self.ask("About app?", *recommend, "--pr", "acme/app#271"))
+        self.assertEqual("octo/web#271.1", self.ask("About web?", *recommend, "--pr", "octo/web#271", cwd=web))
+        self.assertEqual("#271.2", self.ask("App again?", *recommend, "--pr", "acme/app#271", cwd=web))
+        self.assertCountEqual(["#271.1\topen\tAbout app?", "octo/web#271.1\topen\tAbout web?",
+                               "#271.2\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
 
     def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
