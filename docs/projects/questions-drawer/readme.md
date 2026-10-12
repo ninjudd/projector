@@ -46,87 +46,125 @@ hours, because a loop finishes everything else it can and then waits.
 ## 2. Solution
 
 The hooks module registers a tool, `ask`, that the model calls as
-`mcp__projector__ask`. Every question carries the agent's recommended
-answer, and may offer choices, of which the recommendation must be one. The
-tool records the question in the session's own plugin state and returns at
-once, so the agent keeps working. The session's band lists its questions as
-a checklist, each on the line after the pull request it is about and each
-open one marked `[ ]`, with the open count in the divider. Clicking a
-question opens its drawer: its detail, then each choice as a numbered line
-with the recommended one marked, a field for any other answer, and
-**dismiss**. When you answer, the module delivers the answer at once, to the
-subagent that asked or, when that subagent has ended, to the session's main
-loop. Once the answer was taken, the line reads `[x]` with the answer for
-one minute, then leaves the band. An answer that was not taken reopens the
-question, so an answer is never lost. Each session has only the questions
-its own agents asked, and you answer them only in that session.
+`mcp__projector__ask`. A question is one line, carries the agent's
+recommended answer, and may offer choices, of which the recommendation must
+be one. The tool numbers the question, records it in the session's own
+plugin state, and returns its number at once, so the agent keeps working. A
+question about a pull request is numbered after it, `#337.3` for the third
+question on #337, and sits on the line after that pull request in the
+session's band. Any other question takes the next number in the session's
+own count, such as `1`, and sits above the pull requests. Clicking a
+question's number opens its drawer: its detail, then its answers lettered
+`a`, `b`, `c`, the recommended one marked, and a last letter where you type
+any other answer. Clicking a letter answers with it. The module delivers
+the answer at once, with the question and the choice, to the subagent that
+asked or, when that subagent has ended, to the session's main loop. Once
+the answer was taken, the line shows the chosen answer's reference, such as
+`#337.3.a`, for one minute, then leaves the band. An answer that was not
+taken reopens the question, so an answer is never lost. A reference you
+type in the prompt, such as `#337.3.b`, reaches the agent with its question
+and choice attached. Each session has only the questions its own agents
+asked, and you answer them only in that session.
 
 ### 2.1 What happens when an agent asks
 
 1. An agent, the main loop or a subagent, calls `mcp__projector__ask` with
-   `question` and `recommendation`, and optionally `options` and `pr`.
+   `question` and `recommendation`, and optionally `detail`, `options`, and
+   `pr`.
 2. The module's `tool.call` hook answers the call itself. It refuses the
-   call with `isError` and the reason, so the agent asks again, when
-   `question` is more than one line or longer than 120 characters, when
-   `recommendation` is empty, or when `options` are given and
-   `recommendation` is not one of them. Otherwise it adds the question
-   (§ 2.2) to the session's `bandQuestions` state, with the calling
-   subagent's `agentId` when there is one. It shows the band, raises one
-   `$.ui.notify` through your notification channel, and returns `Posted
-   question <id>. Keep working; the answer arrives as a message.`
+   call with `{ deny: reason }`, which the model reads as an error result,
+   when `question` is more than one line or longer than 120 characters,
+   when `recommendation` is empty, or when `options` are given and
+   `recommendation` is not one of them. Otherwise it numbers the question
+   (§ 2.2) and adds it to the session's `bandQuestions` state, with the
+   calling subagent's `agentId` when there is one. It shows the band,
+   raises one `$.ui.notify` through your notification channel, and returns
+   `Posted question #337.3. Keep working; the answer arrives as a message
+   that names #337.3.`
 3. The band puts each question on the line after the pull request its `pr`
-   names, oldest first when a pull request has several, and starts it at
-   the same left edge as the pull request lines. A question with no `pr`,
-   or one about a pull request the band does not list, goes above the pull
-   requests. An open question's line starts `[ ]`. The divider counts the
-   open questions: `──── 2 questions · updated 12s ago [-]`.
-4. You open a question's drawer by clicking its line in the fullscreen
+   names, in number order, starting at the same left edge as the pull
+   request lines. A question with no `pr`, or about a pull request the band
+   does not list, goes above the pull requests. The divider counts the open
+   questions: `──── 2 questions · updated 12s ago [-]`.
+4. You open a question's drawer by clicking its number in the fullscreen
    layout, or on the main screen by focusing the band with ctrl+x tab and
-   pressing Enter on the line. Opening any drawer closes any other, a pull
+   pressing Enter on the number. Opening any drawer closes any other, a pull
    request's included.
-5. You answer by pressing the recommended answer, another option, by typing
-   in the field and pressing Enter, or by pressing **dismiss**. A chosen
-   answer names its number and its text, such as `2. Add a budget of two
-   retries per host`, so you and the agent refer to the same choice. The
-   module records the answer on the question, so its line reads `sending`
-   and a second press does nothing, and delivers it:
+5. You answer by clicking a choice's letter, by typing in the last choice's
+   field and pressing Enter, or by pressing **dismiss**. The module records
+   the answer on the question, so its line reads `sending` and a second
+   press does nothing, and delivers the answer's message (§ 2.2):
    - When the question has an `agentId` and `$.agent.list()` reports that
      subagent `pending`, `running`, `waiting`, or `idle`, the module sends
-     the answer with `$.session.send({ to: { agentId } })`. The list keeps
+     the message with `$.session.send({ to: { agentId } })`. The list keeps
      an ended subagent too, as `completed`, `failed`, or `killed`, so the
      status decides, not the listing.
    - Otherwise, or when the send resolves `{ isDelivered: false }`, the
-     module queues the answer for the main loop with `$.prompt.submit`,
+     module queues the message for the main loop with `$.prompt.submit`,
      naming the subagent when one asked, so the main loop relays it as the
      loop skills already do.
 6. When the send resolves `{ isDelivered: true }`, or the submit resolves
    without `drop`, the module sets the question's `resolvedAt` and closes
-   its drawer. Its line then reads `[x]` and the answer, and the band's
-   5-second tick removes it one minute after `resolvedAt`. When the submit
-   resolves `{ drop }` or either call rejects, the module clears the
-   recorded answer, so the question is open again, and raises a toast with
-   the reason. You can answer it again.
+   its drawer. The question's line then shows the answer's reference, and
+   the band's 5-second tick takes the line out of the band one minute after
+   `resolvedAt`. When the submit resolves `{ drop }` or either call
+   rejects, the module clears the recorded answer, so the question is open
+   again, and raises a toast with the reason. You can answer it again.
+7. When you type a reference in the prompt, as in `go with #337.3.b, but
+   keep the cap at two`, the module's `prompt.submit` hook finds each
+   reference to a question the session holds, open or resolved, and adds
+   that question and, for an answer's reference, that choice to the
+   prompt's `context`. The agent reads what the reference means even when a
+   subagent asked the question.
 
-A dismissed question is delivered the same way, as `You dismissed question
-<id>`, so the agent stops waiting for it.
+### 2.2 Numbers, letters, and a question
 
-### 2.2 A question
+A question's number is its reference, and an answer's letter extends it:
+
+- **A question about a pull request** is the pull request, as the band
+  labels it, then `.` and its count among that pull request's questions in
+  the session: `#337.1`, `#337.2`, or `projector#337.3` when the band shows
+  more than one repository.
+- **Any other question** takes the next number in the session's own count:
+  `1`, `2`, `3`. The missing `#` keeps it from reading as a pull request.
+- **An answer** is the question's reference, `.`, and its letter:
+  `#337.3.a`. The options take `a`, `b`, `c`, and on in the agent's order.
+  A question without options has one, `a`, the recommendation. The last
+  letter is always **Type something**, a field for any other answer, so a
+  question with two options has `c` for a typed answer.
+
+A count never goes back, so a reference names one question for the whole
+session, even after its line has left the band. The counts start over only
+in a new session.
 
 Each question is one entry in `bandQuestions`, a list in the session's
-`$.state` under the `projector` plugin.
+`$.state` under the `projector` plugin, and `bandQuestionCounts` keeps the
+last number given in each count.
 
 | Field | Value |
 | --- | --- |
-| `id` | `q-` and the time in base 36, then four random base-36 characters |
+| `number` | Its count, the last part of its reference |
+| `pr` | The pull request it is about, as `owner/repo#number`; null when none |
 | `askedAt` | When the agent asked, in milliseconds |
 | `agentId` | The asking subagent's id, from the `tool.call` input; absent for the main loop |
-| `question` | The question in one line of at most 120 characters, the checklist line's text |
+| `question` | The question in one line of at most 120 characters |
 | `detail` | What you need to answer it, as Markdown, shown only in the drawer; empty when the line says it all |
 | `recommendation` | The answer the agent recommends; one of `options` when it has them |
 | `options` | Up to six answers, in order, each a sentence or more when it needs one; empty when the recommendation is the only choice |
-| `pr` | The pull request it is about, as `owner/repo#number`; null when none |
-| `answer` | Absent while open; `{ text }` or `{ dismissed: true }` from the moment you answer, kept after delivery for the `[x]` line |
+| `answer` | Absent while open; from the moment you answer, `{ letter, text }` or `{ dismissed: true }` |
 | `resolvedAt` | Absent until the answer was taken; then when, in milliseconds |
+
+A question stays in `bandQuestions` after its line leaves the band, so a
+reference to it still resolves. The session keeps the 100 most recently
+resolved.
+
+The message an answer delivers carries the question with it:
+
+| Answer | Message |
+| --- | --- |
+| A choice | `#337.3.a: Decline the finding about the retry budget? Answer: Decline it: the total cap already bounds retries to one host` |
+| A typed answer | `#337.3.c: Decline the finding about the retry budget? Answer: keep the cap, but log each retry` |
+| Dismissed | `#337.3: Decline the finding about the retry budget? You dismissed it.` |
 
 ### 2.3 The `ask` tool
 
@@ -135,66 +173,68 @@ The module registers the tool in `session.start` with `$.tool.register`.
 | Field | Value |
 | --- | --- |
 | `name` | `ask`, which the model sees as `mcp__projector__ask` |
-| `description` | Post a question for the person without stopping your work. Use it when you need a decision you cannot make, such as declining a finding or running a command you are not allowed to run. Ask in one short line, put what the person needs to decide in `detail`, and always give the answer you recommend; when you offer options, write each as a full answer the person can pick as it stands, and recommend one of them. Keep working on anything the answer does not block; the answer arrives later as a message. |
+| `description` | Post a question for the person without stopping your work. Use it when you need a decision you cannot make, such as declining a finding or running a command you are not allowed to run. Ask in one short line, put what the person needs to decide in `detail`, and always give the answer you recommend; when you offer options, write each as a full answer the person can pick as it stands, and recommend one of them. Keep working on anything the answer does not block; the answer arrives later as a message that names the question's number. |
 | `inputSchema` | `question` and `recommendation`, required strings; `detail`, a string; `options`, an array of at most six strings; `pr`, a string matching `owner/repo#number` |
 | `isDeferred` | `false`, so the tool is in the model's tool list from the start rather than behind ToolSearch |
 
 ### 2.4 What the band draws
 
-The questions are a checklist with one line each. An open question's line
-is a `Button` with `plain`, so it is a press target in both layouts: a click
-in fullscreen, and Enter once the band has the keyboard on the main screen.
-It reads `[ ]`, the question, truncated only on a narrow terminal, then its
-age, dim. A question above the pull requests also names its `pr`, when it
-has one, before its age; one under its pull request does not repeat it. A
-resolved question's line is plain dim text that takes no press: `[x]`, the
-question, and the answer, or `dismissed`.
-
 ```text
-──────────────────────────────────────── 1 question · updated 12s ago [-]
-[x] Run project init to add the publish rule?          → done · 40s
-#267 draft List a loop's open pull requests above the Claude Code prompt
-[ ] Decline the finding about the retry budget?        5m
-    The review asks for a retry budget per host. The loop already caps
-    retries at three in total, which covers the case the finding names.
-    1. Decline it: the total cap already bounds retries to one host
-       (recommended)
-    2. Add a budget of two retries per host, as the review asks, and keep
-       the total cap of three
-    [ Answer…                                                          ]
-    [ dismiss ]
+──────────────────────────────────────── 2 questions · updated 12s ago [-]
+1 Run project init to add the publish rule?                          2m
+#337 draft Retry failed webhook deliveries with backoff
+#337.3 Decline the finding about the retry budget?                   5m
+       The review asks for a retry budget per host. The loop caps retries
+       at three in total, which covers the case the finding names.
+       a. Decline it: the total cap already bounds retries to one host
+          (recommended)
+       b. Add a budget of two retries per host, and keep the total cap
+       c. [ Type something                                            ]
+       [ dismiss ]
+#337.2.a Rebase onto main before the fix?                            40s
 #258 ready Name the reviewed head in a review's signature line
 ```
 
-The drawer holds what the line has no room for: `detail` as `Markdown`, then
-the answers, each choice a line of its own. Each choice is a `Button` with
-`plain` whose text starts with its number, `1.`, `2.`, and so on, in the
-order the agent gave them, so you can name a choice when you discuss the
-question. A long one wraps onto further lines under its own text. The
-recommended choice ends `(recommended)`, in the accent color. A question
-without options draws one choice, its recommendation, so you accept the
-recommendation the way you pick any choice. After the choices come an
-`Input` keyed `answer`, which takes any other answer through its `onSubmit`,
-and a **dismiss** button, each on a line of its own.
+An open question's line starts with its number, a `Button` with `plain`
+whose label is underlined in the `suggestion` color so it reads as a link.
+A `Button` is a press target in both layouts: a click in fullscreen, and
+Enter once the band has the keyboard on the main screen. The question
+follows, truncated only on a narrow terminal, then its age, dim. A question
+above the pull requests also names its `pr`, when it has one, before its
+age.
 
-The choices have no hotkeys; their numbers are only labels. Claude Code
-presses a band `Button` whose hotkey is a digit when that digit is typed
-first in an empty prompt, the way a survey takes its answer, so a prompt
-such as `2 things first:` would answer the question. Without hotkeys, only a
-click, or Enter on a choice while the band holds the keyboard, picks an
-answer. The drawer's open/closed state is the band's `bandDrawer`, keyed
-`q:<id>` for a question, so one drawer is open at a time across questions
+The drawer holds what the line has no room for: `detail` as `Markdown`,
+then the choices, one line each. Each choice's letter, such as `a.`, is a
+`Button` styled like the question's number, in a column of its own, and
+the choice's text sits beside it in a `Text` that wraps under itself, not
+under the letter. The recommended choice ends `(recommended)` in the
+`success` color. The last letter holds an `Input` keyed `answer` with the
+placeholder `Type something`, whose `onSubmit` answers with that letter and
+the text. A **dismiss** button follows on a line of its own.
+
+The letters have no hotkeys; they are only labels. Claude Code presses a
+band `Button` whose hotkey is a digit when that digit is typed first in an
+empty prompt, the way a survey takes its answer, so a hotkey would let a
+prompt such as `2 things first:` answer the question. Without hotkeys, only
+a click, or Enter on a letter while the band holds the keyboard, picks an
+answer. The drawer's open/closed state is the band's `bandDrawer`, keyed by
+the question's reference, so one drawer is open at a time across questions
 and pull requests.
+
+A resolved question's line is plain dim text that takes no press: the
+chosen answer's reference, such as `#337.2.a`, the question, and its age. A
+dismissed question's line shows the question's own reference and the
+question struck through.
 
 ### 2.5 Files
 
 | File | Change |
 | --- | --- |
-| `hooks/questions.ts` | New: the question's id and type check, the checks a question must pass (one line, a recommendation, one of the options), the order, the route an answer takes from the subagent's status, and the text each delivery sends, which names a choice by its number |
-| `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; deliver an answer, then resolve or reopen its question; remove a resolved question a minute later on the tick; draw the checklist, its drawer, and the open count in the divider |
-| `hooks/types.d.ts` | The `Question` type, and `bandQuestions` under the `projector` plugin's state |
-| `hooks/questions.test.ts` | New: the id, each check a question must pass, the order, and the route by the subagent's status |
-| `hooks/band.test.tsx` | Asking, each refused question, answering by the recommendation, an option, the field, and dismiss, each delivery route and each failure, a second press while sending, the `[x]` line for a minute, a digit typed in the empty prompt answering nothing, and the divider's open count |
+| `hooks/questions.ts` | New: numbering and references, finding a reference in prompt text, the checks a question must pass (one line, a recommendation, one of the options), the order on the band, the route an answer takes from the subagent's status, and each message's text |
+| `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; deliver an answer, then resolve or reopen its question; take a resolved line out of the band a minute later on the tick; attach typed references in the `prompt.submit` hook it already has; draw the questions, their drawers, and the open count in the divider |
+| `hooks/types.d.ts` | The `Question` type, and `bandQuestions` and `bandQuestionCounts` under the `projector` plugin's state |
+| `hooks/questions.test.ts` | New: numbering, references and finding them in text, each check a question must pass, the order, the route by the subagent's status, and each message |
+| `hooks/band.test.tsx` | Asking, each refused question, the numbers on the band, answering by a letter, the typed choice, and dismiss, each delivery route and each failure, a second press while sending, the resolved reference for a minute, a typed reference's context, a digit typed in the empty prompt answering nothing, and the divider's open count |
 | `docs/plugins.md` | A section on questions in the band |
 
 No skill changes. The tool exists only where Claude Code loads the hooks
@@ -214,66 +254,73 @@ skills keep working in Codex and without the module.
   by accepting the agent's answer, and an agent that must name one has
   thought the decision through before it asks. Requiring the recommendation
   to be one of the options, when there are options, lets the drawer mark it.
-- **Choices as numbered lines, not a row of buttons.** A choice worth
+- **One line, then the drawer.** One line per question shows every open
+  question at a glance and keeps the band short, while `detail` and the
+  choices wait in the drawer until you open it.
+- **Numbers and letters, not checkboxes.** A reference lets you name a
+  question or an answer when you talk it over, as in "go with #337.3.b",
+  and the same reference names it in the delivered answer and on the
+  resolved line. Counting each pull request's questions makes the number
+  read as part of the pull request it sits under. A count that never goes
+  back keeps every reference meaning one question for the session.
+- **A last choice to type.** A field that is itself the last letter gives a
+  typed answer a reference like any choice, and keeps every answer on one
+  list.
+- **Context with every answer.** The agent reading an answer may be the main
+  loop relaying for a subagent, or may have moved on to other work, so each
+  message, and each reference you type, carries the question and the
+  choice rather than a bare letter.
+- **Choices as lettered lines, not a row of buttons.** A choice worth
   offering often needs a sentence to say what it does, which a button label
-  cannot hold, and a line each lets it say that in full. The number lets
-  you name a choice when you talk the question over, as in "2, but keep the
-  cap at two", and the delivered answer carries the same number. The
-  recommendation is a choice too, so a question without options still
-  answers the same way, with one press on one line.
-- **One line, then the drawer.** A checklist of one line each shows every
-  open question at a glance and keeps the band short, while `detail` holds
-  whatever the decision needs, out of the way until you open it.
-- **Resolved lines stay a minute.** The `[x]` line shows that the answer
-  went through, and what it was, without the list growing.
+  cannot hold. A letter in its own column lets a long choice wrap under its
+  own text.
+- **Resolved lines stay a minute.** The resolved line shows that the answer
+  went through, and which one it was, without the list growing.
+- **Beside its pull request, at the same edge.** A question about a pull
+  request reads best right after that pull request's line, and its number
+  already names the pull request. A question with no listed pull request
+  has no line to follow, so it goes above them all.
 - **Each session's own questions.** A question belongs to the session whose
   agent asked it, and an `agentId` means something only in that session. So
   the questions live in the session's `$.state`, which survives a hot
   reload of the module and redraws the band whenever it is written, and
   nothing crosses to another session's band.
-- **Delivered when answered.** You answer in the session that asked, which
-  knows whether its subagent still runs, so the module delivers at once
-  rather than leaving the answer for a later pass to find.
-- **Kept until taken.** A send can come back undelivered and a submit can
-  be dropped by a hook, so the question stays until one of them took the
-  answer, and a failure reopens it.
-- **Beside its pull request, at the same edge.** A question about a pull
-  request is about something on that pull request's line, so it reads best
-  right after it, without repeating the number. Starting it at the same left
-  edge keeps every line's `[ ]` or number in one column, and the `[ ]` alone
-  marks it as a question. A question with no listed pull request has no
-  line to follow, so it goes above them all.
-- **Buttons, not links, for a question's line.** The pull requests' numbers
-  are `Markdown` links, which take a click only in the fullscreen layout,
-  as `docs/plugins.md` says. A `Button` also takes Enter when the band has
-  the keyboard, so questions work on the main screen too.
+- **Delivered when answered, and kept until taken.** You answer in the
+  session that asked, which knows whether its subagent still runs, so the
+  module delivers at once. A send can come back undelivered and a submit
+  can be dropped by a hook, so the question stays until one of them took
+  the answer, and a failure reopens it.
+- **Buttons styled as links, not `Markdown` links.** The pull requests'
+  numbers are `Markdown` links, which take a click only in the fullscreen
+  layout, as `docs/plugins.md` says. A `Button` also takes Enter when the
+  band has the keyboard, so questions work on the main screen too.
 - **Built on the band, not beside it.** The band above the prompt has one
   slot, which the first hook that draws there fills, so a second band cannot
-  sit beside it. Questions reuse the band's divider and its `bandDrawer`
-  state.
+  sit beside it. Questions reuse the band's divider, its tick, its
+  `prompt.submit` hook, and its `bandDrawer` state.
 
 ## 4. Acceptance criteria
 
 | Do | Expect |
 | --- | --- |
-| A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; `bandQuestions` holds the question with that subagent's `agentId`; the band shows it as a `[ ]` line and the divider counts it |
-| Ask about a pull request the band lists | The question's line comes right after that pull request's line, at the same left edge, without the pull request's number; two questions about it follow it oldest first |
-| Ask with no `pr`, or about a pull request the band does not list | The question's line comes above the pull requests, naming its `pr` when it has one |
-| A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `isError` with the reason, and no question is added |
-| Open a question with options | Its drawer shows `detail`, then each option as its own line numbered `1.`, `2.`, and so on in the agent's order, a long one wrapping under its text, and the recommended one ending `(recommended)` |
-| Press choice 2 | The agent receives `2.` and that choice's text |
-| Open a question without options, and press its one choice | The choice is the recommendation, marked `(recommended)`, and the agent receives it as the answer |
-| Press an option, or type an answer and press Enter | The subagent receives the answer through `$.session.send`; the line reads `[x]` and the answer, the divider no longer counts it, and it leaves the band one minute later |
-| Press a resolved question's line | Nothing happens |
-| Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
-| `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the answer through `$.prompt.submit` |
+| A subagent calls `mcp__projector__ask` about #337, the third such question this session | The call returns at once naming `#337.3`; `bandQuestions` holds it with that subagent's `agentId`; its line follows #337's line, at the same left edge; the divider counts it |
+| A call with no `pr` | Its number is the next in the session's own count, such as `1`, and its line sits above the pull requests |
+| A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `{ deny }` with the reason, and no question is added or numbered |
+| Open a question with two options | Its drawer shows `detail`, then `a.` and `b.` with the recommended one ending `(recommended)`, a long choice wrapping under its own text, then `c.` with a `Type something` field, then **dismiss** |
+| Open a question without options | Its drawer shows `a.`, the recommendation, then `b.` with the field |
+| Click `a.` | The subagent receives `#337.3.a:`, the question, and the choice's text through `$.session.send`; the line becomes `#337.3.a`, the question, and its age, dim, and leaves the band one minute later |
+| Type in the last choice and press Enter | The agent receives `#337.3.c:`, the question, and the typed text |
+| Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the message through `$.prompt.submit`, naming the subagent |
+| `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the message through `$.prompt.submit` |
 | `$.prompt.submit` resolves `{ drop }`, or rejects | The question is open again, a toast gives the reason, and answering again delivers |
-| Press an option twice before the first delivery settles | The agent receives one answer |
-| Press **dismiss** | The agent receives `You dismissed question <id>`; the line reads `[x]` and `dismissed`, and leaves the band one minute later |
+| Click a letter twice before the first delivery settles | The agent receives one answer |
+| Press **dismiss** | The agent receives `#337.3:`, the question, and that you dismissed it; the line shows `#337.3` and the question struck through for a minute |
+| Type `go with #337.3.b` in the prompt after #337.3's line has left the band | The prompt reaches the agent with #337.3's question and choice `b` in its `context` |
 | A question's drawer is open, and you type `2 things first:` in the empty prompt | The question stays unanswered, and the prompt holds what you typed |
+| Press a resolved question's line | Nothing happens |
 | The band is hidden when a question arrives | The band appears |
 | Another session's band | Shows none of this session's questions |
-| On the main screen, press ctrl+x tab and Enter on a question | Its drawer opens, and typing reaches the answer field |
+| On the main screen, press ctrl+x tab and Enter on a question's number | Its drawer opens, and typing reaches the `Type something` field |
 | No questions | The band and its divider look as they do today |
 
 `hooks/questions.test.ts` and `hooks/band.test.tsx` cover every row but the
@@ -284,9 +331,12 @@ from memory. Check the main-screen row by hand under tmux.
 
 - **The band.** A question adds one write to the session's state when it is
   asked, one when it is answered, one when it resolves, and one when the
-  band's 5-second tick removes it a minute later. The tick already runs, and
-  the check is a comparison of times; the 30-second GitHub poll is
-  unchanged.
+  band's 5-second tick takes its line out a minute later. The tick already
+  runs, and the check is a comparison of times; the 30-second GitHub poll
+  is unchanged.
+- **Typed references.** The `prompt.submit` hook already runs on every
+  prompt. Finding references is one regular expression over the prompt's
+  text, and it adds context only for a reference the session holds.
 - **The tool's schema.** With `isDeferred: false`, the schema rides in
   every request: a name, a short paragraph of description, and five
   properties.
@@ -300,7 +350,7 @@ from memory. Check the main-screen row by hand under tmux.
   on the main screen.
 - **A resumed session.** Whether Claude Code restores a plugin's `$.state`
   when you resume a session is undocumented. If it does not, the questions
-  are gone from the band, while each asking agent's tool call stays in its
-  transcript. Deferred until it is observed.
+  and their counts are gone, while each asking agent's tool call stays in
+  its transcript. Deferred until it is observed.
 - **Codex.** Codex has no band and no hooks module, so its agents ask in
   the transcript as they do today. Deferred.
