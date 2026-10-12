@@ -1,0 +1,116 @@
+{
+ "version": 1,
+ "name": "Projector band command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 269,
+  "title": "Rename the loop band's command to /projector",
+  "head": "b90b2975a003286514849d3138622c7eb8e3fa0e",
+  "headRef": "projector-command",
+  "base": "34cd08935baa4d4e62532427f1b11e6f33e11f1f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Claude Code plugin ships a hooks module, <code>hooks/register.tsx</code>, that draws a <b>band</b> above the prompt: one line for each open pull request that your review and fix loops track. Until now you showed or hid it with the slash command <code>/loop-prs</code>, and the module kept its session state under keys named for loops.",
+   "The band is about to hold more than loops. Pull request #268 plans to show an agent's questions there too, so this change renames the command to <code>/projector</code>, after the plugin that owns the band. The name is unlikely to clash with another plugin's command, and <code>/status</code>, the obvious general name, already belongs to Claude Code.",
+   "The four session state keys lose their <code>loop</code> prefix in the same way. <code>seenLoops</code> keeps its name, because it really does record loops. A session that already had the band open starts the renamed keys empty after it reloads the plugin, so the band stays hidden there until you run <code>/projector</code> or the session starts a loop's watcher."
+  ],
+  "cards": [
+   {
+    "id": "renames",
+    "title": "What was renamed",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Before</th><th>After</th></tr></thead><tbody><tr><td><code>/loop-prs</code></td><td class=\"r\"><code>/projector</code></td></tr><tr><td><code>loopSnapshot</code></td><td class=\"r\"><code>bandSnapshot</code></td></tr><tr><td><code>loopNow</code></td><td class=\"r\"><code>bandNow</code></td></tr><tr><td><code>isLoopBandShown</code></td><td class=\"r\"><code>isBandShown</code></td></tr><tr><td><code>loopDrawer</code></td><td class=\"r\"><code>bandDrawer</code></td></tr><tr><td><code>seenLoops</code></td><td class=\"r\"><code>seenLoops</code> (unchanged)</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>b90b297</code>, found the head clean and opened no finding threads.</li><li>On that head the unit tests, <code>project check</code>, both <code>claude plugin validate</code> commands, <code>claude plugin test .</code>, and <code>git diff --check</code> all passed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "module",
+   "title": "The command and its state keys",
+   "kicker": "The hooks module registers /projector and stores the band's state under band-named keys",
+   "intro": [
+    "A Claude Code hooks module declares a slash command with <code>$.command.register</code> and answers it with a <code>command.run</code> hook that names the same command. Both now say <code>projector</code>, and the command's description, its replies, and the toast it shows for an unreadable watcher say <b>Projector's band</b> instead of <b>loop PRs</b>.",
+    "The module keeps the band's state in Claude Code's per-session plugin state, read and written through <code>atom</code> handles keyed by name. <code>hooks/types.d.ts</code> declares the shape of each key for the type checker, so the declaration and the four <code>atom</code> keys must agree."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>git grep</code> at the head finds no <code>loop-prs</code>, <code>loopSnapshot</code>, <code>loopNow</code>, <code>isLoopBandShown</code>, <code>loopDrawer</code>, or <code>loop PRs</code> anywhere in the repository, skills and plans included."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the renamed keys in the plugin's session state.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "These keys match the four <code>atom</code> keys in <code>hooks/register.tsx</code>. <code>claude plugin validate .</code> reports state reads and writes of only the <code>band*</code> keys and <code>seenLoops</code>.",
+       "line": 45
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers and answers <code>/projector</code>, and reads the band's state under the renamed keys.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A session that had the band open before it reloads the plugin finds the new keys empty, so <code>isBandShown</code> reads <code>false</code> and the band stays hidden until you run <code>/projector</code> or a watcher starts. The old keys stay in the session's state, unread.",
+       "line": 28
+      },
+      {
+       "kind": "verify",
+       "text": "The registered name and the <code>command.run</code> matcher below agree: <code>claude plugin validate .</code> lists <code>command.run{command=projector}</code> and reports that the module answers its own command.",
+       "line": 296
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.ts",
+     "note": "A docstring example now names <code>/projector</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Test and documentation",
+   "kicker": "The band's test and the plugin guide use the new names",
+   "intro": [
+    "The band's test runs the command and seeds an earlier version's snapshot under the state key the module reads, so both had to follow the rename. <code>docs/plugins.md</code> tells you how to show and hide the band and how to name a tracked file by hand."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Runs <code>/projector</code> and seeds the snapshot under <code>bandSnapshot</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>claude plugin test .</code> passes 21 tests with none failing at this head.",
+       "line": 33
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Renames the section heading and both command examples.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The heading's anchor changes with it. No link in the repository pointed at the old anchor.",
+       "line": 176
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

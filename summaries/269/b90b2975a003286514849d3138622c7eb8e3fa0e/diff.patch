@@ -1,0 +1,148 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index c67cb14..10b66ee 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -173,11 +173,11 @@ claude plugin validate skills
+ claude plugin test .
+ ```
+ 
+-### See a loop's pull requests above the prompt
++### See your loops' pull requests in Projector's band
+ 
+ In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+ the open pull requests your loops track in the band above the prompt, one
+-line each. Run `/loop-prs` to show or hide the band. It also appears when the
++line each. Run `/projector` to show or hide the band. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+@@ -224,7 +224,7 @@ already running on the machine, such as a loop another session started. To
+ show a tracked file by hand, name it:
+ 
+ ```text
+-/loop-prs ~/loops/review/tracked
++/projector ~/loops/review/tracked
+ ```
+ 
+ The band reloads when one of the session's watchers reports a change and
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index c09a995..a3fad23 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -30,7 +30,7 @@ const BAND = {
+ } as const
+ 
+ const COMMAND = {
+-  command: 'loop-prs',
++  command: 'projector',
+   args: '',
+   origin: { kind: 'composer' },
+   presentation: { isFullscreen: true, columns: 120 },
+@@ -253,7 +253,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
+-  on('state.get', { plugin: 'projector', key: 'loopSnapshot' }, () => ({
++  on('state.get', { plugin: 'projector', key: 'bandSnapshot' }, () => ({
+     value: { value: earlier as never, version: 1 },
+   }))
+ 
+diff --git a/hooks/parse.ts b/hooks/parse.ts
+index 7f7000b..6f66fcd 100644
+--- a/hooks/parse.ts
++++ b/hooks/parse.ts
+@@ -130,7 +130,7 @@ export function expand(parts: readonly Part[], env: Env): string | undefined {
+   return out
+ }
+ 
+-/** Expands a path typed as one shell word, such as `/loop-prs ~/loop/tracked`. */
++/** Expands a path typed as one shell word, such as `/projector ~/loop/tracked`. */
+ export function expandPath(text: string, env: Env): string | undefined {
+   const tokens = tokenize(text.trim())
+   const [word] = tokens
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 2f5629f..6863de2 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -23,10 +23,10 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+ }
+ 
+ const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
+-const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
+-const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
+-const isShown = atom({ plugin: 'projector', key: 'isLoopBandShown' } as const, false)
+-const drawer = atom({ plugin: 'projector', key: 'loopDrawer' } as const, null)
++const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
++const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
++const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
++const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
+ 
+ // The session keeps its state across a reload or an update of the plugin,
+ // so a value an earlier version wrote can have another shape.
+@@ -87,7 +87,7 @@ async function adopt($: Engine, command: string): Promise<void> {
+     if (watcher.tracked === undefined) {
+       if (!unreadable.has(watcher.written)) {
+         unreadable.add(watcher.written)
+-        $.ui.toast(`loop-prs: cannot tell which file ${watcher.written} names; run /loop-prs <tracked file>`)
++        $.ui.toast(`projector: cannot tell which file ${watcher.written} names; run /projector <tracked file>`)
+       }
+       continue
+     }
+@@ -293,8 +293,8 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+ export const register: Register = on => {
+   on('session.start', async ($, e, next) => {
+     await $.command.register({
+-      name: 'loop-prs',
+-      description: 'Show the open pull requests your watch and review loops track',
++      name: 'projector',
++      description: 'Show or hide Projector’s band of the pull requests your loops track',
+       argumentHint: '[tracked file]',
+     })
+     $.clock.every(TICK_MS, () => void tick($))
+@@ -329,21 +329,21 @@ export const register: Register = on => {
+     return next(e)
+   })
+ 
+-  // `/loop-prs` shows or hides the band; `/loop-prs <tracked file>` adds a
++  // `/projector` shows or hides the band; `/projector <tracked file>` adds a
+   // loop and shows it.
+-  on('command.run', { command: 'loop-prs' }, async ($, e) => {
++  on('command.run', { command: 'projector' }, async ($, e) => {
+     const written = (e.args ?? '').trim()
+     if (written !== '') {
+       const expanded = expandPath(written, await envOf($))
+       const tracked = expanded === undefined ? undefined : await canonical($, expanded)
+-      if (tracked === undefined) return { text: `loop-prs: no tracked file at ${written}.` }
++      if (tracked === undefined) return { text: `projector: no tracked file at ${written}.` }
+       await remember($, { tracked })
+     } else if (await read($, isShown)) {
+       await update($, isShown, () => false)
+-      return { text: 'Hid the loop PRs band.' }
++      return { text: 'Hid Projector’s band.' }
+     }
+     show($)
+-    return { text: 'Showing the loop PRs band above the prompt.' }
++    return { text: 'Showing Projector’s band above the prompt.' }
+   })
+ 
+   // The band above the prompt spans the terminal and is as tall as its rows,
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index cfd8676..a875d91 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -42,11 +42,11 @@ declare module 'claude-code' {
+   interface PluginState {
+     projector: {
+       seenLoops: SeenLoop[]
+-      loopSnapshot: Snapshot
+-      loopNow: number
+-      isLoopBandShown: boolean
++      bandSnapshot: Snapshot
++      bandNow: number
++      isBandShown: boolean
+       /** The pull request whose drawer is open, by `keyOf`. */
+-      loopDrawer: string | null
++      bandDrawer: string | null
+     }
+   }
+ }
