@@ -1,0 +1,172 @@
+{
+ "version": 1,
+ "name": "Hold command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 260,
+  "title": "Post and lift a pull request's hold with one Projector command",
+  "head": "3badd7c898d40410a347a23ce596489bd1142e24",
+  "headRef": "review-hold-command",
+  "base": "b8e4f20c453073084c8000327339601696bfe929",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop marks a pull request ready when a review of its current head finds nothing open. The fix loop, <code>fix-pr</code>, sometimes builds a change that no review has read yet, such as a suggestion it decided to implement. While it does, it <b>holds</b> the pull request: it posts an issue comment by the pull request's author whose last line is <code>&lt;!-- projector-hold v=1 --&gt;</code>, and keeps the pull request a draft. <code>project review publish</code>, <code>project review status</code>, and the review watcher all read that comment and keep a held pull request in draft however clean its review is.",
+   "Until now <code>fix-pr</code> posted, edited, and deleted that comment with raw <code>gh api</code> calls. Claude Code's auto mode refused the deletion as a write to an external system, so a clean pull request stayed stuck in draft. This pull request moves the hold into one CLI command, <code>project review hold</code>, and adds one narrow permission rule for it, as Projector already does for the two publish commands.",
+   "<ul><li><b><code>--add TEXT</code></b> posts the hold, or adds changes to the open one, reads the comment back, and only then marks the pull request draft.</li><li><b><code>--drop TEXT</code></b> removes changes the owner will not build from every hold comment that lists them, and deletes a comment left with none. The hold ends only once no hold comment is left.</li><li><b>A bare <code>--drop</code></b> ends the hold: it deletes every hold comment by the author. The command does not check that the push carrying the changes has happened; <code>fix-pr</code> runs it only after that push.</li></ul>",
+   "Every mode refuses unless the signed-in <code>gh</code> account is the pull request's author, and no mode marks a pull request ready. The command acts on the repository <code>--repo</code> names, or else on the <code>origin</code> of the checkout it runs in; unlike <code>review status</code>, it never takes a repository from review state on this machine. The readers of the hold are unchanged."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Hold</b>: an issue comment by the pull request's author ending in the hold marker. While one is open, a clean review leaves the pull request a draft.</li><li><b>Operator</b>: the account whose pull requests the loops work on, and the one <code>gh</code> is signed in as.</li><li><b>Allow rule</b>: an entry in the user's Claude Code settings or Codex rules that lets a command run without the host's automatic approval check.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>0a3b69b</code></b>: one finding. Without <code>--repo</code>, <code>hold</code> took the repository from any review of the same pull request number set up on this machine before the checkout's <code>origin</code>, so it could hold or lift a pull request in another repository.</li><li><b><code>126bf8e</code></b>: the finding is fixed. <code>hold</code> now acts only on <code>--repo</code> or the checkout's <code>origin</code>. Clean, with four suggestions in the review body.</li><li><b><code>6ce8bcb</code></b>: the author held the pull request and carried out all four suggestions. Clean. The pull request stays a draft until the author lifts the hold.</li><li><b><code>3badd7c</code></b>: at the owner's request, <code>--lift</code> became a bare <code>--drop</code>, and the head check and the recorded head were removed. Clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The hold command",
+   "kicker": "<code>project review hold</code>: post, extend, shrink, or end a hold",
+   "intro": [
+    "The command lives in <code>review.py</code> beside <code>holds()</code>, the function every reader already uses to find a hold. <code>cli.py</code> adds the subcommand, with <code>--add</code> and <code>--drop</code> as a required, mutually exclusive pair; <code>--drop</code> takes an optional value, and a bare <code>--drop</code> ends the hold, and shares the <code>pr</code>, <code>--repo</code>, <code>--state-dir</code>, and <code>--json</code> arguments with <code>review status</code>.",
+    "The order inside <code>--add</code> is the point of the design. To the review watcher, a pull request that turns draft on an unchanged head with no hold open looks like an author who answered without pushing, so it asks for a re-review. The comment must therefore land, and read back with the marker on its last line, before the pull request is drafted."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A hold is still found by the marker alone, through <code>holds()</code>, which keeps only the author's comments. The command parses the bullets of a comment it edits, so a hold posted by hand before this change can be extended or dropped from as well."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The command: <code>hold</code> checks the author and dispatches to <code>hold_add</code>, <code>hold_drop</code>, and <code>hold_end</code>; <code>write_hold</code> and <code>read_hold</code> write and verify the comment.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 557,
+       "text": "Every mode compares the signed-in login with the pull request's author before it reads or writes a comment. <code>test_refuses_anyone_but_the_author</code> runs all three modes as a non-author and checks that nothing is written, edited, deleted, or drafted."
+      },
+      {
+       "kind": "verify",
+       "line": 605,
+       "text": "The draft call comes only after the comment is written, read back with the marker last, and found to record the current head. <code>test_posts_the_hold_then_drafts_the_pull_request</code> checks the call order, and <code>test_a_hold_that_does_not_read_back_drafts_nothing</code> checks that a mangled comment drafts nothing."
+      },
+      {
+       "kind": "context",
+       "line": 641,
+       "text": "A bare <code>--drop</code> ends the hold through <code>hold_end</code>, which deletes every hold comment by the author with no check of the head. The owner chose to trust the caller: <code>fix-pr</code> step 5 and <code>docs/cli.md</code> say to run it only after the push that carries every listed change, because a hold ended on the unchanged head lets a clean review of that head mark the pull request ready while the changes are still local."
+      },
+      {
+       "kind": "verify",
+       "line": 514,
+       "text": "<code>hold_repo</code> takes <code>--repo</code>, else the checkout's <code>origin</code>, and never reads review state. With review state for another repository's pull request of the same number present, the review confirmed that <code>find_repo</code> still returns that repository for <code>status</code> while <code>hold_repo</code> returns the checkout's own. <code>test_a_review_set_up_for_the_same_number_in_another_repository_is_ignored</code> covers it."
+      },
+      {
+       "kind": "verify",
+       "line": 634,
+       "text": "<code>--drop</code> now works across every hold comment by the author: it refuses a change none lists, rewrites each comment that lists a dropped change, deletes one left empty, and reports <code>ended</code> only when no hold comment is left. <code>test_drop_works_across_every_hold_comment_and_ends_the_hold_only_when_none_is_left</code> covers an older hand-written hold beside a newer one."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>hold</code> subcommand, which takes no <code>--state-dir</code> and is dispatched before the state directory is read, and reuses <code>permissions.COMMANDS</code> in two help strings. The rules docstrings now call the set Projector's permission rules.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 905,
+       "text": "The first review flagged that <code>hold</code> resolved its repository through <code>find_repo</code>, which reads review state. This line now calls <code>hold_repo</code>, which does not."
+      },
+      {
+       "kind": "verify",
+       "line": 494,
+       "text": "A bare <code>--drop</code> appends <code>None</code>, which differs from the default <code>[]</code>, so argparse counts it as given: it satisfies the required group, and <code>--add x --drop</code> exits 2. The review ran both, and <code>--drop</code> beside <code>--drop TEXT</code> in either order is refused before any GitHub call."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rules",
+   "title": "The allow rule",
+   "kicker": "One more rule in the user's Claude Code settings and Codex rules",
+   "intro": [
+    "<code>project init</code>, run by a person at a terminal, adds allow rules to the user's own settings so the host's automatic approval does not refuse a Projector command the user asked for. This change adds <code>Bash(project review hold *)</code> to the Claude Code rules and a second <code>prefix_rule</code> for <code>[\"project\", \"review\", \"hold\"]</code> to Projector's Codex rules file. <code>project review rules</code> now reports a settings file that lacks the new rule, so a user with only the two publish rules is asked to run <code>init</code> again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds the hold rule to <code>RULES</code>, <code>CODEX_PREFIX_RULES</code>, the Codex rules file, and <code>COMMANDS</code>, and updates the messages that name them.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 43,
+       "text": "The Codex rule allows only <code>project review hold</code>. <code>test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules</code> ran <code>codex execpolicy check</code> during the review and found no allowance for <code>project summary hold</code> or <code>project review release</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Init and rules tests for the third rule, including the Codex policy check."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills and documentation",
+   "kicker": "fix-pr uses the command; the other skills and docs say so",
+   "intro": [
+    "<code>fix-pr</code>'s section \"Hold the pull request while changes are built\" now runs <code>project review hold</code> for every step, passing <code>--repo</code> each time, and tells a session not to fall back to a raw <code>gh api</code> call when the host refuses the command. <code>review-pr</code>, <code>start-review-loop</code>, <code>start-fix-loop</code>, and <code>docs/plugins.md</code> now say the hold is ended through the command. <code>docs/cli.md</code> documents the command, its output, its <code>--json</code> fields, and the new rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The hold procedure rewritten around <code>--add</code>, <code>--drop TEXT</code>, and a bare <code>--drop</code> that ends the hold after the push.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 176,
+       "text": "<code>fix-pr</code> still passes <code>--repo</code> every time, now so the command works from any directory. Without it, the command acts on the checkout's <code>origin</code>."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Says the author ends the hold with the command."
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "The rules check now names the hold command, and the hold paragraph names the command and is rewrapped to the file's width."
+    },
+    {
+     "path": "skills/start-fix-loop/SKILL.md",
+     "note": "The subagent reports a hold it posted, added to, dropped from, or ended, in <code>fix-pr</code>'s words."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>project review hold</code> and the third allow rule."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says <code>fix-pr</code> posts and ends the hold with the command."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "<code>HoldTests</code> against the fake GitHub, covering the order of posting and drafting, where the command finds the repository, <code>--drop</code> across several hold comments, and a bare <code>--drop</code>; and updated skill-text tests."
+    }
+   ]
+  }
+ ]
+}
