@@ -69,13 +69,15 @@ PYTHONPATH=src python3 -m unittest discover -v
 PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
+claude plugin test .
 git diff --check
 ```
 
 The packaging tests validate both plugin manifests and their exact published
-skill set. `claude plugin validate .` validates the marketplace, while
-`claude plugin validate skills` validates the skill tree. Codex has no separate
-public validation command.
+skill set. `claude plugin validate .` validates the marketplace and the Claude
+Code hooks module in `hooks/`, while `claude plugin validate skills` validates
+the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
+and `*.test.tsx` files. Codex has no separate public validation command.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under

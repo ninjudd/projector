@@ -93,6 +93,7 @@ PYTHONPATH=src python3 -m unittest discover -v
 PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
+claude plugin test .
 git diff --check
 ```
 

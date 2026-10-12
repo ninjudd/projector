@@ -101,6 +101,17 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(claude["source"], codex["source"])
         self.assertEqual(claude["version"], codex["version"])
 
+    def test_only_claude_code_loads_the_hooks_module(self) -> None:
+        # Claude Code finds hooks/hooks.json at the plugin root by itself; the
+        # manifest names the module's state contract. Codex has no hooks module.
+        hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+        [module] = hooks["modules"]
+        self.assertTrue((ROOT / "hooks" / module).is_file())
+        self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
+        self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
+        self.assertNotIn("types", self.manifest("codex"))
+        self.assertNotIn("hooks", self.manifest("codex"))
+
     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
         # Codex has no plugin dependencies; install.sh adds gh-stack there.
         self.assertEqual(["gh-stack"], self.manifest("claude")["dependencies"])

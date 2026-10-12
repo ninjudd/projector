@@ -12,5 +12,6 @@
   "license": "MIT",
   "keywords": ["projects", "planning", "git", "agents", "code-review"],
   "dependencies": ["gh-stack"],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "types": "./hooks/types.d.ts"
 }

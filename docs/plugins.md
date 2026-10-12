@@ -170,7 +170,67 @@ Validate a checkout before publishing it:
 ```sh
 claude plugin validate .
 claude plugin validate skills
+claude plugin test .
 ```
+
+### See a loop's pull requests above the prompt
+
+In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+the open pull requests your loops track in the band above the prompt, one
+line each. Run `/loop-prs` to show or hide the band. It also appears when the
+session starts a loop's watcher for the first time.
+
+```text
+───────────────────────────────────────────────── updated 12s ago [-]
+#267 draft List a loop's open pull requests above the Claude Code prompt
+#258 draft Name the reviewed head in a review's signature line  conflict
+           reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
+           discuss  github  projector
+```
+
+Each line is the pull request's number, `draft` or `ready`, the title, and,
+when the pull request has them, a merge conflict, a change request, or
+unresolved review threads. A pull request that both a `start-fix-loop`
+watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
+`watch-prs.sh`, track is listed once. Only the title shortens on a narrow
+terminal. The divider says how long ago the band reloaded, and Claude Code's
+`[-]` at its end collapses the band.
+
+Click a pull request's number to open a drawer under it, and click it again
+to close the drawer; opening one drawer closes any other. The drawer says
+whether your loops are watching or reviewing the pull request, then its
+author, branch, size, checks, and when it last changed. Below that:
+
+- **discuss** puts the pull request's number in the prompt at the cursor,
+  as `#258`, or as `owner/repo#258` when the band lists more than one
+  repository.
+- **github** opens the pull request on GitHub.
+- **projector** opens its Projector summary, when the pull request's
+  description links one.
+
+A ctrl, alt, or cmd click on the number skips the drawer and opens the
+Projector summary, or the pull request on GitHub when it has no summary.
+
+The drawer needs Claude Code's fullscreen layout, the only one that reports
+a click to the band. On the main screen, which Claude Code uses under tmux
+and when `CLAUDE_CODE_NO_FLICKER=0` is set, the band still lists your pull
+requests, but a click opens no drawer. Each number stays a link to the
+Projector summary or the pull request, which the terminal opens the way it
+opens any other link.
+
+The band finds a loop by the `--tracked` file its watcher reads. It learns
+that file when the session runs the watcher, and it also finds watchers
+already running on the machine, such as a loop another session started. To
+show a tracked file by hand, name it:
+
+```text
+/loop-prs ~/loops/review/tracked
+```
+
+The band reloads when one of the session's watchers reports a change and
+when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
+for every pull request in one `gh api graphql` call, and only while the band
+is shown. The skills never depend on the band, and Codex has no equivalent.
 
 ## Install for Codex
 
