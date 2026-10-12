@@ -285,8 +285,9 @@ async function setQuestions($: Engine, list: Question[]): Promise<void> {
 
 /**
  * Reads the session's questions when the store's directory changed since the
- * last read. Listing a directory starts no process, so an idle session, band
- * shown or hidden, starts none.
+ * last read that succeeded. Listing a directory starts no process, so an idle
+ * session, band shown or hidden, starts none. The signature is recorded only
+ * once the read succeeds, so a read that fails runs again on the next tick.
  */
 async function readStore($: Engine, session: string): Promise<void> {
   const store = storeOf(await envOf($), session)
@@ -295,12 +296,15 @@ async function readStore($: Engine, session: string): Promise<void> {
   const files = signatureOf(entries, new Set(Object.keys(await read($, sending))))
   const signature = `${session}\n${files}`
   if (signature === listed) return
+  if (files === '') {
+    await setQuestions($, [])
+  } else {
+    const ran = await project($, ['question', 'list', '--all', '--json', '--session', session])
+    if (ran.exitCode !== 0) return
+    const { questions: list } = JSON.parse(ran.stdout) as { questions: Question[] }
+    await setQuestions($, list)
+  }
   listed = signature
-  if (files === '') return setQuestions($, [])
-  const ran = await project($, ['question', 'list', '--all', '--json', '--session', session])
-  if (ran.exitCode !== 0) return
-  const { questions: list } = JSON.parse(ran.stdout) as { questions: Question[] }
-  await setQuestions($, list)
 }
 
 /** Remembers an answer the band is delivering, in the session's state so a reloaded module finds it. */

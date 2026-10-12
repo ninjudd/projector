@@ -281,8 +281,9 @@ To talk a question over, type its reference in the prompt, such as `go with
 answer beside your prompt.
 
 Shown or hidden, the band lists the session's question directory every 5
-seconds and runs `project question` only when the directory changed or an
-answer is on its way, so a session with no questions starts no process.
+seconds and runs `project question` only when the directory changed since
+its last successful read or an answer is on its way, so a session with no
+questions starts no process. A read that fails runs again 5 seconds later.
 
 ## Install for Codex
 

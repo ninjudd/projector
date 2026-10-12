@@ -276,12 +276,13 @@ q1 Run project init to add the publish rule?                         2m
 1. **The band reads the store when it changes, shown or hidden.** On its
    5-second tick it lists the session's question directory with `$.fs.list`,
    whether the band is shown or not, and runs `project question list --all
-   --json` only when a file's name, size, or time changed, so an
-   idle session starts no process. A file whose claim the band itself is
-   renewing counts by its name alone, so the band's own renewals never make
-   it read the store again. A question it has not shown before shows the
-   band, so one asked from the shell appears as surely as one asked through
-   the tool.
+   --json` only when a file's name, size, or time changed since the last
+   read that succeeded, so an idle session starts no process and a read
+   that fails runs again on the next tick. A file whose claim the band
+   itself is renewing counts by its name alone, so the band's own renewals
+   never make it read the store again. A question it has not shown before
+   shows the band, so one asked from the shell appears as surely as one
+   asked through the tool.
 2. **Answering records the answer.** When you click a letter, type an
    answer, or press **dismiss**, the band runs `project question answer` or
    `dismiss`, so the store holds the answer before anything is sent, and a
@@ -429,7 +430,8 @@ from memory. Check the main-screen row by hand under tmux.
   interval, 5 seconds by default.
 - **The band.** Its tick lists one directory, shown or hidden, which starts
   no process, and starts `project question list` only when it changed,
-  which is when a question is asked, answered, claimed, or delivered. Each
+  which is when a question is asked, answered, claimed, or delivered, and
+  once more each tick while that read fails. Each
   answer then starts a process to record it, one to claim it, and one to
   mark it delivered, and one more each 5 seconds to renew the claim while a
   submit waits for the main loop; a renewal starts no `list`.

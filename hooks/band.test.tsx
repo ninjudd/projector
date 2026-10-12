@@ -312,6 +312,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   const store = new Map<string, Held>()
   const times = new Map<string, number>()
   const refusal: { code?: number; message?: string } = {}
+  /** How many of the next `list` commands fail. */
+  const failing = { lists: 0 }
   let writes = 0
   let asked = 0
   const put = (question: Held) => {
@@ -340,6 +342,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const [, , command = '', ...args] = argv
     const time = clock.now()
     if (command === 'list') {
+      if (failing.lists > 0) {
+        failing.lists -= 1
+        return failed(1, 'the store could not be read')
+      }
       const questions = [...store.values()].map(one => ({ ...one, session: SESSION }))
       return ran(JSON.stringify({ schema_version: 2, questions }))
     }
@@ -406,7 +412,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       isLink: false,
     }))
 
-  return { run, files, store, refusal }
+  return { run, files, store, refusal, failing }
 }
 
 type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
@@ -657,6 +663,21 @@ test('an answer from a terminal waits behind a long turn on one claim, renewed w
   await clock.settle()
   expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
   expect(session.submitted).toHaveLength(1)
+})
+
+test('a store read that fails runs again on the next tick', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer })])
+  session.store.failing.lists = 1
+  await startSession($, clock, false)
+  for (let at = 0; at < 3; at += 1) await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.project().filter(command => command.startsWith('question list')).length).toBeGreaterThanOrEqual(2)
+  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
 })
 
 test('a submit an earlier copy of the module left keeps its claim and settles when its prompt arrives', async ($, on) => {
