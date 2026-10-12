@@ -29,8 +29,10 @@ FAKE_GH = r"""#!/usr/bin/env bash
 # Serves fixtures from $FAKE_GH_DIR:
 #   <owner>/<repo>/<n>.json          the GraphQL pullRequest node; absent means NOT_FOUND
 #   <owner>/<repo>/<n>.reviews.json  the REST reviews array; absent means []
+#   <owner>/<repo>/visibility        the repository's GraphQL visibility; absent means null
 # `pr list --repo <owner>/<repo> --author <login>` lists the open fixtures whose
-# node names that author.
+# node names that author, and `--search user-review-requested:<login>` the open
+# fixtures whose node requests that login's review.
 # Logs one line per call to $FAKE_GH_DIR/calls.log. With FAKE_GH_DOWN_AFTER set,
 # every call past that many already-logged calls fails like a network error.
 # With FAKE_GH_LATE_LINE set, the first call appends it to $FAKE_GH_TRACKED, so
@@ -47,13 +49,17 @@ if [ -n "${FAKE_GH_DOWN_AFTER:-}" ] && [ "$count" -ge "$FAKE_GH_DOWN_AFTER" ]; t
   echo 'Post "https://api.github.com/graphql": dial tcp 127.0.0.1:9: connect: connection refused' >&2
   exit 1
 fi
-mode=""; owner=""; repo=""; num=""; jq_expr="."; path=""; slug=""; author=""
+mode=""; owner=""; repo=""; num=""; jq_expr="."; path=""; slug=""; author=""; requested=""
 while [ $# -gt 0 ]; do
   case "$1" in
     api) shift ;;
     pr) mode=list; shift 2 ;;
     --repo) slug="$2"; shift 2 ;;
     --author) author="$2"; shift 2 ;;
+    --search)
+      case "$2" in user-review-requested:*) requested="${2#user-review-requested:}" ;;
+        *) echo "fake gh: unsupported search: $2" >&2; exit 3 ;; esac
+      shift 2 ;;
     --state|--limit|--json) shift 2 ;;
     graphql) mode=graphql; shift ;;
     -f) case "$2" in o=*) owner="${2#o=}" ;; r=*) repo="${2#r=}" ;; esac; shift 2 ;;
@@ -69,8 +75,11 @@ case "$mode" in
     [ -d "$FAKE_GH_DIR/$slug" ] || { echo "GraphQL: Could not resolve to a Repository" >&2; exit 1; }
     for f in "$FAKE_GH_DIR/$slug"/*.json; do
       case "$f" in *.reviews.json|*'*'*) continue ;; esac
-      jq -c --arg a "$author" --argjson n "$(basename "$f" .json)" \
-        'select(.state == "OPEN" and .author.login == $a) | {number: $n}' < "$f"
+      jq -c --arg a "$author" --arg r "$requested" --argjson n "$(basename "$f" .json)" \
+        'select(.state == "OPEN")
+         | select(if $r != "" then any(.reviewRequests.nodes[]; .requestedReviewer.login == $r)
+                  else .author.login == $a end)
+         | {number: $n}' < "$f"
     done | jq -s 'sort_by(.number)' | jq -r "$jq_expr"
     ;;
   graphql)
@@ -85,7 +94,9 @@ case "$mode" in
       echo "gh: Could not resolve to a PullRequest with the number of $num." >&2
       exit 1
     fi
-    printf '{"data":{"repository":{"pullRequest":%s}}}' "$(cat "$f")" | jq -r "$jq_expr"
+    visibility=null
+    [ -f "$FAKE_GH_DIR/$owner/$repo/visibility" ] && visibility="\"$(cat "$FAKE_GH_DIR/$owner/$repo/visibility")\""
+    printf '{"data":{"repository":{"visibility":%s,"pullRequest":%s}}}' "$visibility" "$(cat "$f")" | jq -r "$jq_expr"
     ;;
   rest)
     rest="${path#repos/}"; owner="${rest%%/*}"; rest="${rest#*/}"
@@ -111,6 +122,13 @@ def thread(thread_id, *, path="src/x.py", line=3, who="bugbot", body="P1 nil der
 
 def review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state="COMMENTED"):
     return {"id": review_id, "state": state, "user": {"login": who}, "body": body, "commit_id": sha}
+
+
+def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR"):
+    """A GraphQL review node whose body carries the marker line `project review publish` writes."""
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 model=claude-opus-5-5 effort=high "
+              f"sha={sha} findings=1 seconds=60 covered=1/1 -->")
+    return {"authorAssociation": association, "submittedAt": at, "body": f"Projector review\n\n{marker}\n\nSummary"}
 
 
 @unittest.skipUnless(shutil.which("jq") and shutil.which("bash"), "the watcher tests need bash and jq")
@@ -147,7 +165,9 @@ class WatcherCase(unittest.TestCase):
         base="main",
         mergeable="MERGEABLE",
         author="operator",
+        requested=(),
         verdict=None,
+        verdicts=(),
         threads=(),
         reviews=(),
         comments=(),
@@ -163,7 +183,8 @@ class WatcherCase(unittest.TestCase):
             "baseRefName": base,
             "mergeable": mergeable,
             "author": {"login": author},
-            "reviews": {"nodes": [verdict] if verdict else []},
+            "reviewRequests": {"nodes": [{"requestedReviewer": {"login": login}} for login in requested]},
+            "reviews": {"nodes": ([verdict] if verdict else []) + list(verdicts)},
             "reviewThreads": {"nodes": list(threads)},
             "comments": {"nodes": list(comments)},
         }
@@ -546,10 +567,10 @@ class WatchPrsTests(WatcherCase):
         responded = self.run_watcher(PRS)
         quiet = self.run_watcher(PRS)
         # A cross-author changes request answered the same way.
-        self.pull_request(1, head=SHA_A, decision="CHANGES_REQUESTED", threads=[thread("T2")])
+        self.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)], threads=[thread("T2")])
         reopened = self.run_watcher(PRS)
         after_reopened = self.state_rows()
-        self.pull_request(1, head=SHA_A, decision="CHANGES_REQUESTED", threads=[thread("T2", resolved=True)])
+        self.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)], threads=[thread("T2", resolved=True)])
         cross_author = self.run_watcher(PRS)
 
         self.assert_ok(moved)
@@ -806,6 +827,8 @@ class WatchPrsTests(WatcherCase):
         self.track("acme/app#1")
         unreachable = self.run_watcher(PRS, down_after=0)
         author = self.run_watcher(PRS, "--author", "someone")
+        repo_alone = self.run_watcher(PRS, "--repo", "acme/app")
+        not_a_login = self.run_watcher(PRS, "--repo", "acme/app", "--review-requested", "ada is:merged")
 
         self.assertEqual(2, malformed.returncode)
         self.assertIn(f"{self.tracked}:2 is not owner/repo#number: acme/app 2", malformed.stderr)
@@ -816,8 +839,11 @@ class WatchPrsTests(WatcherCase):
         self.assertNotIn("could not verify", misspelled.stderr)
         self.assertEqual(2, unreachable.returncode)
         self.assertIn("could not verify — network or auth error", unreachable.stderr)
-        self.assertEqual(2, author.returncode)
-        self.assertIn("--repo and --author go together", author.stderr)
+        for alone in (author, repo_alone):
+            self.assertEqual(2, alone.returncode)
+            self.assertIn("--repo goes with --author, --review-requested, or both", alone.stderr)
+        self.assertEqual(2, not_a_login.returncode)
+        self.assertIn("--review-requested is not a GitHub login: ada is:merged", not_a_login.stderr)
 
     def test_adopts_the_authors_open_pull_requests(self) -> None:
         self.pull_request(1, ref="mine")
@@ -846,6 +872,161 @@ class WatchPrsTests(WatcherCase):
         self.assert_ok(second)
         self.assertEqual("", second.stdout)
         self.assertEqual(4, len(self.tracked.read_text().splitlines()))
+
+    def test_adopts_the_pull_requests_that_request_the_logins_review(self) -> None:
+        self.pull_request(1, ref="mine")
+        self.pull_request(2, ref="asked", author="teammate", requested=("ada", "operator"))
+        self.pull_request(3, ref="asked-elsewhere", author="teammate", requested=("ada",))
+        self.pull_request(4, ref="merged", author="teammate", requested=("operator",), state="MERGED")
+        self.pull_request(5, ref="unasked", author="teammate")
+
+        requested = self.run_watcher(PRS, "--repo", "acme/app", "--review-requested", "operator")
+        requested_calls = self.calls()
+        both = self.run_watcher(PRS, "--repo", "acme/app", "--author", "operator", "--review-requested", "operator")
+        # The operator reviewed, which drops the request, and the author pushed.
+        self.pull_request(2, ref="asked", author="teammate", head=SHA_B)
+        after_review = self.run_watcher(PRS, "--repo", "acme/app", "--author", "operator", "--review-requested", "operator")
+
+        self.assert_ok(requested)
+        self.assertEqual(
+            ["NEW PR acme/app#2 (asked) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            requested.stdout.splitlines(),
+        )
+        self.assertIn("--search user-review-requested:operator", requested_calls)
+        self.assertNotIn("--author", requested_calls)
+        self.assert_ok(both)
+        self.assertEqual(
+            ["NEW PR acme/app#1 (mine) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            both.stdout.splitlines(),
+        )
+        self.assert_ok(after_review)
+        self.assertEqual(
+            ["NEW HEAD acme/app#2 (asked): aaaaaaa -> bbbbbbb — needs an exact-head review"],
+            after_review.stdout.splitlines(),
+        )
+        self.assertEqual("acme/app#2\nacme/app#1\n", self.tracked.read_text())
+
+    def test_only_the_authors_own_draft_waits_on_a_clean_review(self) -> None:
+        # A review never moves another author's draft state, so that draft stays
+        # a draft after a clean review dismisses the change request it settled.
+        adopt = ("--repo", "acme/app", "--author", "operator", "--review-requested", "operator")
+
+        def both(**node):
+            self.pull_request(1, ref="mine", draft=True, **node)
+            self.pull_request(2, ref="asked", author="teammate", draft=True, **node)
+
+        both(requested=("operator",))
+        adopted = self.run_watcher(PRS, *adopt)
+        # The review requests changes, the authors push a fix, and that head's
+        # review starts with the finding still open.
+        changes = projector_verdict(SHA_A)
+        both(verdicts=[changes], threads=[thread("T1")])
+        reviewed = self.run_watcher(PRS, *adopt)
+        both(head=SHA_B, verdicts=[changes], threads=[thread("T1")])
+        pushed = self.run_watcher(PRS, *adopt)
+        under_review = self.run_watcher(PRS, *adopt)
+        # It resolves the finding and gives a clean verdict.
+        clean = projector_verdict(SHA_B, "clean", at="2026-10-12T11:00:00Z")
+        both(head=SHA_B, verdicts=[changes, clean], threads=[thread("T1", resolved=True)])
+        settled = self.run_watcher(PRS, *adopt)
+
+        self.assert_ok(adopted)
+        self.assertEqual(2, len(adopted.stdout.splitlines()), adopted.stdout)
+        self.assert_ok(reviewed)
+        self.assertEqual("", reviewed.stdout)
+        self.assert_ok(pushed)
+        self.assertEqual(2, len(pushed.stdout.splitlines()), pushed.stdout)
+        self.assert_ok(under_review)
+        self.assertEqual("", under_review.stdout)
+        self.assert_ok(settled)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (mine) head=bbbbbbb — still a draft with every thread resolved; "
+             "re-review this head and sign off if clean"],
+            settled.stdout.splitlines(),
+        )
+
+    def test_another_authors_answer_without_a_push_asks_for_a_re_review(self) -> None:
+        # GitHub leaves reviewDecision null where the base branch requires no
+        # reviews, so the verdict marker is what says the head waits on an answer.
+        finding = {"databaseId": 11, "body": "<!-- projector-finding v=1 priority=P2 --> A nil deref"}
+        reply = {"databaseId": 12, "body": "<!-- projector-reply v=1 --> Declined: the caller checks for nil."}
+
+        def finding_thread(*replies, resolved=False):
+            node = thread("T1", body=finding["body"], resolved=resolved)
+            node["comments"]["nodes"] = [finding, *replies]
+            return node
+
+        def teammates(threads, outsider_threads):
+            changes = projector_verdict(SHA_A)
+            self.pull_request(2, ref="draft", author="teammate", draft=True, verdicts=[changes], threads=threads)
+            self.pull_request(3, ref="ready", author="teammate", verdicts=[changes], threads=outsider_threads)
+            # Anyone can review a public repository, so a passerby's marker is no verdict there.
+            self.pull_request(4, ref="passerby", author="teammate", threads=outsider_threads,
+                              verdicts=[projector_verdict(SHA_A, association="NONE")])
+            # In a private one, every review counts.
+            self.pull_request(5, repo="acme/secret", ref="private", author="teammate", threads=outsider_threads,
+                              verdicts=[projector_verdict(SHA_A, association="NONE")])
+
+        (self.fixtures / "acme/secret").mkdir(parents=True)
+        (self.fixtures / "acme/secret/visibility").write_text("PRIVATE")
+        self.track("acme/app#2", "acme/app#3", "acme/app#4", "acme/secret#5")
+        self.state.write_text("".join(f"{slug} {n} {SHA_A} {ref} -\n" for slug, n, ref in (
+            ("acme/app", 2, "draft"), ("acme/app", 3, "ready"), ("acme/app", 4, "passerby"),
+            ("acme/secret", 5, "private"))))
+        teammates([finding_thread()], [finding_thread()])
+        reviewed = self.run_watcher(PRS, "--repo", "acme/app", "--author", "operator")
+        # Without a push, one author replies on the finding and the others resolve it.
+        teammates([finding_thread(reply)], [finding_thread(resolved=True)])
+        answered = self.run_watcher(PRS, "--repo", "acme/app", "--author", "operator")
+
+        self.assert_ok(reviewed)
+        self.assertEqual("", reviewed.stdout)
+        self.assert_ok(answered)
+        cross_author = "re-review this head, and a clean one is a COMMENT, never an approval"
+        self.assertEqual(
+            [
+                f"RESPONDED acme/app#2 (draft) head=aaaaaaa — changes requested and the author replied on an "
+                f"open finding; {cross_author}",
+                f"RESPONDED acme/app#3 (ready) head=aaaaaaa — changes requested with every thread resolved; "
+                f"{cross_author}",
+                f"RESPONDED acme/secret#5 (private) head=aaaaaaa — changes requested with every thread resolved; "
+                f"{cross_author}",
+            ],
+            answered.stdout.splitlines(),
+        )
+
+    def test_a_review_that_settles_findings_before_it_publishes_is_no_answer(self) -> None:
+        # The review of a pushed head resolves the findings it verifies before
+        # it gives its verdict, and on a branch that requires reviews the change
+        # request stands until that verdict dismisses it. The verdict on the
+        # earlier head is no longer the head's, so a pass in between does not
+        # take the author to have answered.
+        changes = projector_verdict(SHA_A)
+
+        def asked(head, verdicts, threads, decision="CHANGES_REQUESTED"):
+            self.pull_request(2, ref="asked", author="teammate", head=head, decision=decision,
+                              verdicts=verdicts, threads=threads)
+
+        asked(SHA_A, [changes], [thread("T1")])
+        self.track("acme/app#2")
+        self.state.write_text(f"acme/app 2 {SHA_A} asked -\n")
+
+        asked(SHA_B, [changes], [thread("T1")])
+        pushed = self.run_watcher(PRS)
+        under_review = self.run_watcher(PRS)
+        resolved = [thread("T1", resolved=True)]
+        asked(SHA_B, [changes], resolved)
+        settled = self.run_watcher(PRS)
+        clean = projector_verdict(SHA_B, "clean", at="2026-10-12T11:00:00Z")
+        asked(SHA_B, [changes, clean], resolved, decision="REVIEW_REQUIRED")
+        published = self.run_watcher(PRS)
+
+        self.assert_ok(pushed)
+        self.assertEqual(["NEW HEAD acme/app#2 (asked): aaaaaaa -> bbbbbbb — needs an exact-head review"],
+                         pushed.stdout.splitlines())
+        for quiet in (under_review, settled, published):
+            self.assert_ok(quiet)
+            self.assertEqual("", quiet.stdout)
 
     def test_an_exclusion_holds_after_adoption_and_in_any_letter_case(self) -> None:
         self.pull_request(4, ref="excluded")

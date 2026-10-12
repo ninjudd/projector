@@ -1,6 +1,6 @@
 ---
 name: start-review-loop
-description: Monitor the operator's pull requests in the current GitHub repository and run review-pr on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
+description: Monitor the operator's pull requests, and those that request the operator's review, in the current GitHub repository and run review-pr on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
 ---
 
 # Start Review Loop
@@ -15,20 +15,28 @@ the loop around it.
 ## Resolve the operator and scope
 
 Resolve the reviewer and the operator as `../review-pr/SKILL.md`
-describes; the watcher needs the operator's login for `--author`.
+describes; the watcher needs the operator's login for `--author` and
+`--review-requested`.
 
 Watch only the repository containing the current working directory. The loop
 reviews every open pull request the operator authors there, from whichever
-session opened it, plus any the user explicitly assigns. The tracked set lives
-in the tracked file the watcher reads, one `owner/repo#number` per line, and
-the watcher sees nothing outside it. Run the watcher with `--repo <owner/repo>
---author <operator>` and it appends each operator pull request it finds open
-to that file, so a new one reports as `NEW PR` without anyone adopting it. A
-line `!owner/repo#number` keeps one pull request out when the user asks. Hold
-validated logins literally in every query you run yourself; never use `@me`.
-Under the default the two roles coincide and `@me` looks harmless, but its
-value follows whichever token is live, so under a reviewer override it
-resolves to the reviewer — an account that authors nothing here — and a
+session opened it, every one that requests the operator's review, and any the
+user explicitly assigns. The tracked set lives in the tracked file the watcher
+reads, one `owner/repo#number` per line, and the watcher sees nothing outside
+it. Run the watcher with `--repo <owner/repo> --author <operator>
+--review-requested <operator>` and it appends each open pull request the
+operator wrote or was asked to review to that file, so a new one reports as
+`NEW PR` without anyone adopting it. A request counts whoever made it,
+whether the author, a CODEOWNERS rule, or a bot, but only when it names the
+operator rather than a team the operator belongs to. A requested pull request
+is someone else's, so `review-pr` reviews it in the cross-author mode and
+never moves its draft state. Adoption only adds lines, so it stays tracked
+after the request is answered, and every later push gets a review until it
+closes. A line `!owner/repo#number` keeps one pull request out when the user
+asks. Hold validated logins literally in every query you run yourself; never
+use `@me`. Under the default the two roles coincide and `@me` looks harmless,
+but its value follows whichever token is live, so under a reviewer override
+it resolves to the reviewer — an account that authors nothing here — and a
 listing by `@me` comes back empty, indistinguishable from a repository with
 nothing open.
 
@@ -49,15 +57,17 @@ nothing open.
    settings can still allow the commands, so a missing rule means a publish
    can be refused, not that it will be.
 3. Resolve the repository, checked-out branch, the operator's open pull
-   requests, any the user assigned, and the total open count:
+   requests, the open pull requests that request the operator's review, any
+   the user assigned, and the total open count:
 
    ```sh
    gh pr list --author <operator> --state open --limit 200
+   gh pr list --search "user-review-requested:<operator>" --state open --limit 200
    ```
 
 4. Fetch each pull request's base SHA, head SHA, state, reviews, and
-   thread-aware review threads. Say how many operator pull requests are tracked
-   out of the repository total.
+   thread-aware review threads. Say how many pull requests are tracked, the
+   operator's and the requested ones, out of the repository total.
 5. Determine the last reviewed SHA from durable GitHub state or the current
    conversation: the newest head that a Projector verdict by this loop's
    model names. Another model's verdict on a head is that model's review,
@@ -66,15 +76,15 @@ nothing open.
 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
    is the watcher's whole scope and the record of the set. The watcher
-   appends the operator's pull requests itself; append one the user assigns,
-   and delete a line when its pull request closes. Start or reuse a
-   persistent recurring goal that records the repository, operator, the
-   tracked file's path, the model ID the host reports for this session, and
-   this loop's id: a name chosen once for this model, such as
-   `<repo>-review-<model-key>`, where the model key is the model ID
-   lowercased, without a trailing bracketed variant such as `[1m]`, and with
-   every character but a letter, a digit, `.`, `_`, and `-` made `-`. The
-   loop passes `--loop <id>` and `--model <model-id>` to each
+   appends the operator's pull requests and the requested ones itself;
+   append one the user assigns, and delete a line when its pull request
+   closes. Start or reuse a persistent recurring goal that records the
+   repository, operator, the tracked file's path, the model ID the host
+   reports for this session, and this loop's id: a name chosen once for this
+   model, such as `<repo>-review-<model-key>`, where the model key is the
+   model ID lowercased, without a trailing bracketed variant such as `[1m]`,
+   and with every character but a letter, a digit, `.`, `_`, and `-` made
+   `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
    `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
    which reviews this loop published lives under that id in the review state
@@ -86,7 +96,7 @@ nothing open.
 
    ```sh
    scripts/watch-prs.sh --tracked <file> --state <seeded-file> \
-     --repo <owner/repo> --author <operator> --once
+     --repo <owner/repo> --author <operator> --review-requested <operator> --once
    ```
 
    It refuses to start, naming the line, on an entry that is not
@@ -122,10 +132,10 @@ a review has marked the pull request ready, with no change request
 standing, needs nothing: that review already signed the head off.
 
 If adopting an existing watcher, fetch unresolved state first, confirm it runs
-with the adoption flags for this repository and operator and reads the tracked
-file this loop records, and verify its state file contains every expected row.
-Restart it when the script changed after the process started. Silence alone
-proves nothing.
+with both adoption flags, `--author` and `--review-requested`, for this
+repository and operator and reads the tracked file this loop records, and
+verify its state file contains every expected row. Restart it when the script
+changed after the process started. Silence alone proves nothing.
 
 ## Give each pull request its own subagent
 
@@ -207,5 +217,6 @@ which: a head that changed little since this loop's last full review can get
 an incremental review, and every other head gets a full one. Green CI and
 resolved threads are evidence about state, not substitutes for review. When a
 pull request closes or merges, close its subagent and delete its line from the
-tracked file. The watcher adopts the operator's new pull requests itself;
-append one the user assigns, and continue until the user stops the loop.
+tracked file. The watcher adopts the operator's new pull requests and new
+requests for the operator's review itself; append one the user assigns, and
+continue until the user stops the loop.

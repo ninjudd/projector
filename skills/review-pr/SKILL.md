@@ -60,11 +60,11 @@ gh api user --jq .login
 ```
 
 The **operator** is the other role these instructions name: the account whose
-checkout the review runs beside, and under `start-review-loop` the author of
-the pull requests the loop tracks. By default it is that same authenticated
-user, which is why neither role needs configuring. A reviewer override is
-what separates them, and every `<operator>` below means this login, never the
-reviewer's.
+checkout the review runs beside, and under `start-review-loop` the account
+the loop tracks pull requests for: those it wrote and those that request its
+review. By default it is that same authenticated user, which is why neither
+role needs configuring. A reviewer override is what separates them, and every
+`<operator>` below means this login, never the reviewer's.
 
 The operator is deliberately not a setting. It is whoever the token says you
 are, and a key that disagreed with the token could only mislabel who did the

@@ -6,9 +6,11 @@
 #   NEW PR     a tracked pull request the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
 #   RESPONDED  the author answered without pushing on a pull request still
-#              waiting for a review: a draft (self-review, where the verdict
-#              never moves) or one at CHANGES_REQUESTED (cross-author, where
-#              draft state is never touched). Answered means every thread is
+#              waiting for a review: a draft by the --author login, or any
+#              draft without one (self-review, which signs off by draft
+#              state), or one whose newest Projector verdict on its head
+#              requests changes (cross-author, where draft state is never
+#              touched). Answered means every thread is
 #              resolved, or the newest comment on an open Projector finding
 #              thread is the author's rather than the reviewer's. No head
 #              event is coming, so this asks for a re-review of the same
@@ -25,7 +27,7 @@
 #
 # Usage:
 #   watch-prs.sh --tracked <file> --state <path>
-#                [--repo <owner/repo> --author <login>]
+#                [--repo <owner/repo> [--author <login>] [--review-requested <login>]]
 #                [--interval 60] [--worktree <dir>] [--once]
 #
 # --tracked names the file holding the tracked set: one `owner/repo#number`
@@ -41,12 +43,19 @@
 # watch that starts cleanly and never mentions the pull request it was meant
 # for; a bad line that appears later is announced once.
 #
-# --repo and --author, given together, adopt that author's pull requests: each
-# cycle lists the author's open pull requests in the repository and appends
-# every one the file does not name yet, which then reports as NEW PR. Adoption
-# only ever adds lines, so the file stays the scope. A line of the form
-# `!owner/repo#number` keeps that pull request out of both the watch and
-# adoption. A failed listing adopts nothing that cycle and is tried again.
+# --repo with --author adopts that author's pull requests: each cycle lists
+# the author's open pull requests in the repository and appends every one the
+# file does not name yet, which then reports as NEW PR. --repo with
+# --review-requested adopts the open pull requests that request that login's
+# review, the same way, whoever made the request: the author, a CODEOWNERS
+# rule, or a bot. Only a request to the login itself counts, not one to a team
+# it belongs to, since a team that CODEOWNERS requests can be asked on nearly
+# every pull request in a repository. GitHub drops a request once that login
+# reviews, so a pull request is adopted while its request stands and stays
+# tracked after. Give either flag or both. Adoption only ever adds lines, so
+# the file stays the scope. A line of the form `!owner/repo#number` keeps
+# that pull request out of both the watch and adoption. A failed listing
+# adopts nothing that cycle and is tried again.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
@@ -61,13 +70,14 @@
 
 set -uo pipefail
 
-TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""
+TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --tracked)  TRACKED="${2:-}"; shift 2 ;;
     --repo)     REPO="${2:-}"; shift 2 ;;
     --author)   AUTHOR="${2:-}"; shift 2 ;;
+    --review-requested) REQUESTED="${2:-}"; shift 2 ;;
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
@@ -79,9 +89,11 @@ done
 [ -n "$TRACKED" ] || { echo "watch-prs.sh: --tracked is required" >&2; exit 2; }
 [ -n "$STATE" ] || { echo "watch-prs.sh: --state is required" >&2; exit 2; }
 touch "$STATE" 2>/dev/null || { echo "watch-prs.sh: cannot write state file: $STATE" >&2; exit 2; }
-if [ -n "$REPO$AUTHOR" ]; then
-  [ -n "$REPO" ] && [ -n "$AUTHOR" ] || { echo "watch-prs.sh: --repo and --author go together" >&2; exit 2; }
+if [ -n "$REPO$AUTHOR$REQUESTED" ]; then
+  [ -n "$REPO" ] && [ -n "$AUTHOR$REQUESTED" ] || { echo "watch-prs.sh: --repo goes with --author, --review-requested, or both" >&2; exit 2; }
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "watch-prs.sh: --repo is not owner/repo: $REPO" >&2; exit 2; }
+  # The login lands inside a search query, where a space would add a term.
+  [ -z "$REQUESTED" ] || [[ $REQUESTED =~ ^[A-Za-z0-9-]+$ ]] || { echo "watch-prs.sh: --review-requested is not a GitHub login: $REQUESTED" >&2; exit 2; }
   # An adopting watch may start from nothing; adoption fills the file.
   touch "$TRACKED" 2>/dev/null || { echo "watch-prs.sh: cannot write tracked file: $TRACKED" >&2; exit 2; }
 fi
@@ -131,32 +143,53 @@ EOF
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
-# One row per pull request: state, draft flag, review decision, head SHA,
-# head ref, how many threads are unresolved, and the newest unanswered author
-# reply on an open Projector finding thread ("-" when there is none): the id of
-# a last comment that carries neither the finding marker nor the reviewer's
-# verify marker, so the author spoke last. The draft flag and review decision
-# are what RESPONDED needs to know a head is waiting, and both signals are
-# needed because the two review
-# modes record the wait in different places and neither covers the other.
-# Draft state carries a self-review: GitHub allows only a COMMENT review on
-# your own pull request, so reviewDecision never leaves NONE. reviewDecision
-# carries a cross-author review, where REQUEST_CHANGES works and draft state
-# is untouched — the skill forbids drafting another author's pull request.
+# One row per pull request: state, draft flag, verdict, head SHA, head ref,
+# how many threads are unresolved, and the newest unanswered author reply on
+# an open Projector finding thread ("-" when there is none): the id of a last
+# comment that carries neither the finding marker nor the reviewer's verify
+# marker, so the author spoke last. The draft flag and verdict are what
+# RESPONDED needs to know a head is waiting, and both signals are needed
+# because the two review modes record the wait in different places and
+# neither covers the other. Draft state carries a self-review: GitHub allows
+# only a COMMENT review on your own pull request. The verdict carries a
+# cross-author review, where draft state is untouched — the skill forbids
+# drafting another author's pull request.
 #
-# The last field is "held" while the pull request's author has a hold comment
+# The verdict is the newest Projector verdict on the head, read from the
+# marker line its review body carries, or "-" when the head has none. It is
+# not reviewDecision, which GitHub sets only where the base branch requires
+# reviews. A verdict on an earlier head does not count: after a push the head
+# waits on its own review, even once that review resolves the threads it
+# settles and before it publishes. A verdict counts as `project review status`
+# counts another account's: in a public repository only from an owner, a
+# member, or a collaborator, since anyone can review there. Each thread reply
+# files a review too, but a head waiting on its author gathers few, so its
+# verdict is among the newest 100.
+#
+# The next field is "held" while the pull request's author has a hold comment
 # open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
 # otherwise. Only the author's comment counts, because anyone can comment. A
 # hold lives only while its changes are built, so it is among the newest 100
-# comments.
+# comments. The last field is the author's login.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+  visibility
   pullRequest(number:$n){
-    state isDraft reviewDecision headRefOid headRefName author{login}
+    state isDraft headRefOid headRefName author{login}
     comments(last:100){ nodes{ author{login} body } }
+    reviews(last:100){ nodes{ authorAssociation submittedAt body } }
     reviewThreads(first:100){ nodes{ isResolved
       comments(first:1){ nodes{ databaseId body } }
       lastComment: comments(last:1){ nodes{ databaseId body } } } } } } }'
-PR_JQ='.data.repository.pullRequest
+PR_JQ='(.data.repository.visibility | IN("PRIVATE", "INTERNAL")) as $closed
+  | .data.repository.pullRequest
+  | .headRefOid as $head
+  | ([.reviews.nodes[]
+      | select($closed or (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))
+      | .submittedAt as $at
+      | .body // ""
+      | capture("(?m)^<!-- projector-review v=1 verdict=(?<verdict>[a-z-]+) [^>]*?sha=(?<sha>[0-9a-f]{40}) ")
+      | select(.sha == $head) | {at: $at, verdict}]
+     | sort_by(.at) | last | .verdict // "-") as $verdict
   | ([.reviewThreads.nodes[]
       | select(.isResolved == false)
       | select(.comments.nodes[0].body | test("projector-finding"))
@@ -167,7 +200,7 @@ PR_JQ='.data.repository.pullRequest
   | (if $author != "" and any(.comments.nodes[];
          (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
      then "held" else "-" end) as $held
-  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held)"'
+  | "\(.state) \(.isDraft) \($verdict) \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($author)"'
 
 # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
 # can be told apart from a pull request that does not exist.
@@ -188,16 +221,23 @@ not_found() {
   return 1
 }
 
-# Append every open pull request by $AUTHOR in $REPO that the tracked file
-# does not name yet, as an entry or as a `!` exclusion, in any letter case.
-# It prints nothing:
-# each appended line reports as NEW PR on this same pass.
+# Print the number of every open pull request in $REPO that $AUTHOR wrote or
+# that requests $REQUESTED's review. A listing that fails prints nothing, so
+# the other one still adopts this cycle.
+listed() {
+  [ -z "$AUTHOR" ] || gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
+    --json number --jq '.[].number' 2>"$STATE.err"
+  [ -z "$REQUESTED" ] || gh pr list --repo "$REPO" --search "user-review-requested:$REQUESTED" \
+    --state open --limit 200 --json number --jq '.[].number' 2>"$STATE.err"
+}
+
+# Append every pull request `listed` prints that the tracked file does not
+# name yet, as an entry or as a `!` exclusion, in any letter case. It prints
+# nothing: each appended line reports as NEW PR on this same pass.
 adopt() {
-  [ -n "$AUTHOR" ] || return 0
-  local numbers n
-  numbers=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
-    --json number --jq '.[].number' 2>"$STATE.err") || return 0
-  for n in $numbers; do
+  [ -n "$REPO" ] || return 0
+  local n
+  for n in $(listed); do
     awk -v a="$(lower "$REPO#$n")" \
       '{ gsub(/^[ \t]+|[ \t]+$/, ""); sub(/^!/, "") } tolower($0) == a { found = 1 } END { exit !found }' \
       "$TRACKED" 2>/dev/null && continue
@@ -294,7 +334,7 @@ EOF
 "
       continue
     fi
-    read -r pstate pdraft pdecision sha ref unresolved answer held <<EOF
+    read -r pstate pdraft pverdict sha ref unresolved answer held pauthor <<EOF
 $row
 EOF
     [ -n "${answer:-}" ] || answer="-"
@@ -321,15 +361,19 @@ EOF
 
     # Only when the head is known and unchanged — that is, when neither of
     # the two events above fired. RESPONDED exists for the case where nothing
-    # was pushed: a draft, or a pull request at CHANGES_REQUESTED, whose
-    # author resolved every thread or replied on an open finding is waiting on
-    # *us*. The author answered, and a fix that produced no push — a body
-    # correction, a reply, a declined finding — creates no new head to notice. Nothing else will ever arrive, so
-    # watching heads alone deadlocks. Which signal matched decides the
-    # wording, and they call for opposite actions: a clean re-review marks a
-    # self-reviewed draft ready, while on a cross-author changes request
-    # marking it ready is forbidden and a clean re-review is a COMMENT
-    # recommending a human approval.
+    # was pushed: a draft, or a pull request whose verdict requests changes,
+    # whose author resolved every thread or replied on an open finding is
+    # waiting on *us*. The author answered, and a fix that produced no push —
+    # a body correction, a reply, a declined finding — creates no new head to
+    # notice. Nothing else will ever arrive, so watching heads alone
+    # deadlocks. Which signal matched decides the wording, and they call for
+    # opposite actions: a clean re-review marks a self-reviewed draft ready,
+    # while on a cross-author changes request marking it ready is forbidden
+    # and a clean re-review is a COMMENT recommending a human approval. So
+    # with --author, only that author's draft waits on a review: a review
+    # never moves another author's draft, which stays a draft after a clean
+    # one. The draft is tested first because a self-review that requests
+    # changes gives that verdict too, and drafts the pull request.
     #
     # An open hold says the author is building changes, so the head waits on
     # the author and nothing is a response; the flag records that a hold was
@@ -342,10 +386,10 @@ EOF
     elif [ -n "$known" ] && [ "$known" = "$sha" ]; then
       rstate=""
       if [ "$unresolved" = "0" ] || [ "$answer" != "-" ]; then
-        if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
-          rstate="changes-requested"
-        elif [ "$pdraft" = "true" ]; then
+        if [ "$pdraft" = "true" ] && { [ -z "$AUTHOR" ] || [ "$(lower "$pauthor")" = "$(lower "$AUTHOR")" ]; }; then
           rstate="draft"
+        elif [ "$pverdict" = "changes-requested" ]; then
+          rstate="changes-requested"
         fi
       fi
       if [ -n "$rstate" ]; then

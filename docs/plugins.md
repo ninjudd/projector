@@ -23,12 +23,13 @@ enough to need no spec, such as `/projector:implement fix the typo in the
 install docs`.
 `review-pr` reviews a pull request's current head once, by the method in
 `skills/review-pr/method.md`, and publishes one labeled review;
-`start-review-loop` runs it on every new head of your pull requests. `fix-pr`
-answers one pull request's findings, verifying each by the same protocol, and
-merges the base into a branch that conflicts with it; `start-fix-loop` runs
-it, one subagent per pull request, whenever its watcher reports work on one
-this conversation owns. `implement` starts that loop on every pull request it
-opens, or adds the pull request to the loop the conversation already runs,
+`start-review-loop` runs it on every new head of your pull requests and of
+those that request your review. `fix-pr` answers one pull request's
+findings, verifying each by the same protocol, and merges the base into a
+branch that conflicts with it; `start-fix-loop` runs it, one subagent per
+pull request, whenever its watcher reports work on one this conversation
+owns. `implement` starts that loop on every pull request it opens, or adds
+the pull request to the loop the conversation already runs,
 and a loop it starts ends once every pull request it watches has merged or
 closed. Only the conversation you talk to runs the loop. An `implement`
 running as a subagent hands its pull request up, through every subagent
