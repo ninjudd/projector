@@ -233,6 +233,57 @@ when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
 for every pull request in one `gh api graphql` call, and only while the band
 is shown. The skills never depend on the band, and Codex has no equivalent.
 
+### Answer your agents' questions in Projector's band
+
+An agent in Claude Code asks you a question with Projector's `ask` tool,
+which the model sees as `mcp__projector__ask`, and keeps working. An agent
+that runs `project question ask` from the shell reaches the same questions,
+as [Ask and answer questions](cli.md#ask-and-answer-questions) describes.
+Each question appears in the band on the line after the pull request it is
+about, or above the pull requests when it is about none the band lists. The
+band appears when a question arrives, even after you hid it, and the divider
+counts the questions still open.
+
+```text
+──────────────────────────────────────── 2 questions · updated 12s ago [-]
+q1 Run project init to add the publish rule?                          2m
+#337 draft Retry failed webhook deliveries with backoff
+#337.3 Decline the finding about the retry budget?                    5m
+       The review asks for a retry budget per host. The loop caps retries
+       at three in total, which covers the case the finding names.
+       a. Decline it: the total cap already bounds retries to one host
+          (recommended)
+       b. Add a budget of two retries per host, and keep the total cap
+       c. [ Type something                                             ]
+       [ dismiss ]
+#337.2.a Rebase onto main before the fix?                             40s
+```
+
+Click a question's reference to open its drawer: what you need to decide,
+then the answers, lettered. `a` is always the agent's recommendation, and the
+last letter takes an answer you type. Click a letter, or type an answer and
+press Enter. **dismiss** sets the question aside without an answer. On the
+main screen, press ctrl+x tab to move into the band, then Enter on a
+reference or a letter. The letters have no hotkeys, so a digit you type in an
+empty prompt never answers a question.
+
+The band sends your answer to the agent that asked, as a message that starts
+`ANSWER #337.3.a`, or `DISMISSED #337.3` for a dismissal. A subagent that is
+still running receives it directly. Otherwise the main loop receives it as a
+prompt of its own once its turn ends, with the name of the subagent that
+asked. While the answer is on its way, `sending` follows its reference; then
+the line stays dim for a minute. An answer you give from a terminal with
+`project question answer` reaches the agent the same way, through the band of
+the session that asked.
+
+To talk a question over, type its reference in the prompt, such as `go with
+#337.3.b, but log each retry`. The agent receives the question and that
+answer beside your prompt.
+
+Shown or hidden, the band lists the session's question directory every 5
+seconds and runs `project question` only when the directory changed or an
+answer is on its way, so a session with no questions starts no process.
+
 ## Install for Codex
 
 Add the same repository as a Codex marketplace and install the plugin:

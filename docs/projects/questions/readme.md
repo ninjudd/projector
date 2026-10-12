@@ -258,8 +258,10 @@ q1 Run project init to add the publish rule?                         2m
   Each letter, such as `a.`, is a `Button` styled like the reference, in a
   column of its own, and the choice's text sits beside it in a `Text` that
   wraps under itself. `a` ends `(recommended)` in the `success` color. The
-  last letter holds an `Input` keyed `answer` with the placeholder `Type
-  something`. A **dismiss** button follows on a line of its own. The
+  last letter holds an `Input` keyed by its answer's reference, such as
+  `answer:#337.3.c`, with the placeholder `Type something`; the mobile app
+  draws no `Input`, so there the drawer leaves that line out. A
+  **dismiss** button follows on a line of its own. The
   letters have no hotkeys: Claude Code presses a band `Button` whose hotkey
   is a digit when that digit is typed first in an empty prompt, so a hotkey
   would let `2 things first:` answer the question.
@@ -272,11 +274,14 @@ q1 Run project init to add the publish rule?                         2m
 ### 2.7 Claude Code: answers and references
 
 1. **The band reads the store when it changes, shown or hidden.** On its
-   5-second tick it stats the session's question directory, whether the
-   band is shown or not, and runs `project question list --all --json` only
-   when the directory changed, so an idle session starts no process. A
-   question it has not shown before shows the band, so one asked from the
-   shell appears as surely as one asked through the tool.
+   5-second tick it lists the session's question directory with `$.fs.list`,
+   whether the band is shown or not, and runs `project question list --all
+   --json` only when a file's name, size, or time changed, so an
+   idle session starts no process. A file whose claim the band itself is
+   renewing counts by its name alone, so the band's own renewals never make
+   it read the store again. A question it has not shown before shows the
+   band, so one asked from the shell appears as surely as one asked through
+   the tool.
 2. **Answering records the answer.** When you click a letter, type an
    answer, or press **dismiss**, the band runs `project question answer` or
    `dismiss`, so the store holds the answer before anything is sent, and a
@@ -303,6 +308,16 @@ q1 Run project init to add the publish rule?                         2m
    token. When the submit resolves `{ drop }` or either call rejects, it
    runs `project question reopen` with the token and raises a toast with
    the reason, and the question is open to answer again.
+
+   The band keeps each delivery's token, route, and text in the session's
+   `bandSending` state rather than in the module, because a hot reload
+   drops what the module holds while a submit it made still waits in the
+   session's queue. The band's own `prompt.submit` hook sees that submit
+   arrive, finds its text in `bandSending`, and marks it delivered, so the
+   submit settles whichever copy of the module is loaded, and a reloaded
+   copy keeps renewing each submit it finds there. A send settles at once,
+   so one that an earlier copy left is let go: its claim lapses, and the
+   band delivers the answer again a minute later.
 4. **Typed references get their context.** The `prompt.submit` hook the band
    already has tests your prompt for anything shaped like a reference. When
    one is, it runs `project question context` on the prompt and adds what
@@ -317,9 +332,9 @@ q1 Run project init to add the publish rule?                         2m
 | `src/projector/cli.py` | The `question` command and its subcommands, `--session`, and `PROJECTOR_SESSION` |
 | `tests/test_questions.py` | New: each subcommand in a temporary state directory, each check, each reference form and non-form, a second answer, a reference in two sessions, two claims at once, an abandoned claim, retention, and `watch`'s lines |
 | `docs/cli.md` | A section on asking and answering questions, and `65`, `66`, and `67` for the question commands |
-| `hooks/questions.ts` | New: the quick test for reference-shaped text, the route an answer takes, and the band's order |
+| `hooks/questions.ts` | New: the quick test for reference-shaped text, the route an answer takes, the store's directory and its signature, the band's order, and the `ask` tool's description, schema, and arguments |
 | `hooks/register.tsx` | Register `ask`; answer its `tool.call` through the CLI; read the store on the tick, shown or hidden; record answers, then claim and deliver every recorded answer; attach typed references; draw the questions, their drawers, and the open count |
-| `hooks/types.d.ts` | The `Question` type, and the band's `bandQuestions` snapshot and sending marks under the `projector` plugin's state |
+| `hooks/types.d.ts` | The `Question` and `Sending` types, and the band's `bandQuestions` snapshot and `bandSending` deliveries under the `projector` plugin's state |
 | `hooks/questions.test.ts`, `hooks/band.test.tsx` | The route by the subagent's status, the band's placement and drawer, each delivery and failure, the resolved line for a minute, and a digit typed in the empty prompt answering nothing, answering `process.run` from memory |
 | `docs/plugins.md` | A section on questions in Projector's band |
 
@@ -412,11 +427,12 @@ from memory. Check the main-screen row by hand under tmux.
 - **The CLI.** Each command reads one session's directory, a few small
   files, and writes one under a lock. `watch` reads the directory once an
   interval, 5 seconds by default.
-- **The band.** Its tick stats one directory, shown or hidden, and starts
-  `project question list` only when it changed, which is when a question
-  is asked or answered. Each answer then starts a process to record it, one
-  to claim it, and one to mark it delivered, and one more each 5 seconds to
-  renew the claim while a submit waits for the main loop.
+- **The band.** Its tick lists one directory, shown or hidden, which starts
+  no process, and starts `project question list` only when it changed,
+  which is when a question is asked, answered, claimed, or delivered. Each
+  answer then starts a process to record it, one to claim it, and one to
+  mark it delivered, and one more each 5 seconds to renew the claim while a
+  submit waits for the main loop; a renewal starts no `list`.
 - **Typed references.** The `prompt.submit` hook already runs on every
   prompt. It starts `project question context` only for a prompt with
   reference-shaped text.

@@ -1,5 +1,7 @@
-import type { On } from 'claude-code'
-import { expect, mock, test } from 'claude-code/testing'
+import type { AgentInfo, FsEntry, On } from 'claude-code'
+import { expect, mock, test, type Engine } from 'claude-code/testing'
+
+import type { Question } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -97,8 +99,10 @@ const ran = (stdout: string) => ({
 /** What the engine draws in the band when the plugin hands it on. */
 const ENGINE_BAND = 'the engine’s own band'
 
-/** Answers the files, processes, prompt and Bash calls beneath the plugin. */
-function world(on: On, files: Record<string, string>, ps = PS) {
+type Ran = ReturnType<typeof ran>
+
+/** Answers the files, processes, prompt and Bash calls beneath the plugin, and `project` when given. */
+function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Ran) {
   const commands: string[][] = []
   const filled: string[] = []
   on('fs.stat', ($, e) => ({
@@ -107,6 +111,7 @@ function world(on: On, files: Record<string, string>, ps = PS) {
   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
   on('process.run', ($, e) => {
     commands.push([...e.argv])
+    if (e.argv[0] === 'project' && project !== undefined) return { value: project([...e.argv], e.init?.stdin ?? '') }
     return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
   })
   on('prompt.fill', ($, e) => {
@@ -278,4 +283,420 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
   await ui.unmount()
+})
+
+const SESSION = 's1'
+const STORE = `${HOME}/.local/state/projector/questions/${SESSION}`
+const TICK = 5_000
+
+type Held = Omit<Question, 'session'>
+type Clock = ReturnType<typeof mock.clock>
+
+const held = (fields: Partial<Held> = {}): Held => ({
+  ref: '#7.1',
+  number: 1,
+  pr: 'x/y#7',
+  askedAt: NOW - 120_000,
+  question: 'Decline the finding?',
+  detail: 'The loop caps retries at three.',
+  choices: ['Decline it', 'Add a budget'],
+  ...fields,
+})
+
+/** A question with its answer and claim cleared, as `reopen` leaves it. */
+const reopened = (question: Held): Held =>
+  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as Held
+
+/** `project question`, answered from questions held in memory the way the CLI keeps them. */
+function questionStore(clock: Clock, seed: readonly Held[]) {
+  const store = new Map<string, Held>()
+  const times = new Map<string, number>()
+  const refusal: { code?: number; message?: string } = {}
+  let writes = 0
+  let asked = 0
+  const put = (question: Held) => {
+    writes += 1
+    store.set(question.ref, question)
+    times.set(question.ref, writes)
+    return question
+  }
+  for (const question of seed) put(question)
+
+  const failed = (exitCode: number, message: string): Ran => ({ ...ran(''), exitCode, stderr: `project: ${message}\n` })
+  const printed = (question: Held, extra: Record<string, unknown> = {}) =>
+    ran(JSON.stringify({ schema_version: 2, ...extra, question }))
+  const flag = (args: readonly string[], name: string) => {
+    const joined = args.find(arg => arg.startsWith(`--${name}=`))
+    if (joined !== undefined) return joined.slice(name.length + 3)
+    const at = args.indexOf(`--${name}`)
+    return at === -1 ? undefined : args[at + 1]
+  }
+  const textOf = (question: Held) =>
+    question.answer !== undefined && 'letter' in question.answer
+      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.question} → ${question.answer.text}`
+      : `DISMISSED ${question.ref} ${question.question}`
+
+  const run = (argv: string[], stdin: string): Ran => {
+    const [, , command = '', ...args] = argv
+    const time = clock.now()
+    if (command === 'list') {
+      const questions = [...store.values()].map(one => ({ ...one, session: SESSION }))
+      return ran(JSON.stringify({ schema_version: 2, questions }))
+    }
+    if (command === 'ask') {
+      if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+      const pr = flag(args, 'pr') ?? null
+      asked += 1
+      const ref = pr === null ? `q${asked}` : `#${pr.split('#')[1] ?? ''}.${asked}`
+      const agentId = flag(args, 'agent')
+      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+      put({
+        ref,
+        number: asked,
+        pr,
+        askedAt: time,
+        question: args[args.indexOf('--') + 1] ?? '',
+        detail: flag(args, 'detail') ?? '',
+        choices: [flag(args, 'recommend') ?? '', ...options],
+        ...(agentId === undefined ? {} : { agentId }),
+      })
+      return ran(`${ref}\n`)
+    }
+    if (command === 'context') {
+      return ran(stdin.includes('#7.1.b') ? '#7.1.b answers Decline the finding? with Add a budget\n' : '')
+    }
+
+    const written = args[0] ?? ''
+    const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
+    const question = store.get(ref)
+    if (question === undefined) return failed(66, `no question ${ref}`)
+    if (command === 'answer' || command === 'dismiss') {
+      if (question.answer !== undefined) return failed(65, `${ref} is already answered`)
+      const letter = written.slice(written.lastIndexOf('.') + 1)
+      const text = flag(args, 'text') ?? question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
+      const answer =
+        command === 'dismiss' ? { dismissed: true as const, answeredAt: time } : { letter, text, answeredAt: time }
+      return printed(put({ ...question, answer }))
+    }
+    if (command === 'claim') {
+      if (question.answer === undefined || question.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
+      const renew = flag(args, 'renew')
+      if (renew !== undefined) {
+        if (question.claim?.token !== renew) return failed(65, 'not claimed with that token')
+        put({ ...question, claim: { token: renew, renewedAt: time } })
+        return ran('')
+      }
+      if (question.claim !== undefined && time - question.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+      const claim = { token: `token-${writes}`, renewedAt: time }
+      return printed(put({ ...question, claim }), { token: claim.token, text: textOf(question) })
+    }
+    if (command === 'delivered' || command === 'reopen') {
+      if (question.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      return printed(put(command === 'delivered' ? { ...question, deliveredAt: time } : reopened(question)))
+    }
+    return failed(2, `invalid choice: '${command}'`)
+  }
+
+  const files = (): FsEntry[] =>
+    [...store.keys()].map(ref => ({
+      name: `${encodeURIComponent(ref)}.json`,
+      kind: 'file' as const,
+      size: 100,
+      mtimeMs: times.get(ref) ?? 0,
+      isLink: false,
+    }))
+
+  return { run, files, store, refusal }
+}
+
+type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
+
+/** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
+function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
+  const store = questionStore(clock, seed)
+  const { commands } = world(on, { [REVIEW]: 'x/y#7\n' }, PS, store.run)
+  const registered: unknown[] = []
+  const notified: string[] = []
+  const toasts: string[] = []
+  const sent: { to: string; text: string }[] = []
+  const submitted: { text: string; context: readonly string[] }[] = []
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: SESSION }))
+  on('command.register', () => ({ value: { command: 'projector' } }))
+  on('tool.register', ($, e) => {
+    registered.push(e)
+    return { value: { tool: `mcp__projector__${e.name}` } }
+  })
+  on('fs.list', ($, e) => ({ value: e.path === STORE ? store.files() : [] }))
+  on('agent.list', () => ({ value: options.agents ?? [] }))
+  on('session.send', ($, e) => {
+    sent.push({ to: e.to, text: e.text })
+    return { isDelivered: true as const }
+  })
+  // A submit waits for the running turn; `release` ends that turn.
+  let release = () => undefined as void
+  const turn = new Promise<void>(resolve => {
+    release = resolve
+  })
+  if (options.isTurnRunning !== true) release()
+  on('prompt.submit', async ($, e) => {
+    submitted.push({ text: e.text, context: e.context ?? [] })
+    await turn
+    return options.drop === undefined ? { text: e.text } : { drop: options.drop }
+  })
+  on('ui.notify', ($, e) => {
+    notified.push(e.text)
+    return { value: { isSent: true as const, channel: 'terminal_bell' as const } }
+  })
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  const project = () => commands.filter(argv => argv[0] === 'project').map(argv => argv.slice(1).join(' '))
+  return { store, registered, notified, toasts, sent, submitted, project, release }
+}
+
+async function startSession($: Engine, clock: Clock, isShown = true) {
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  if (isShown) await $.command.run(COMMAND)
+  await clock.advance(1)
+  await clock.settle()
+}
+
+const running = (status: AgentInfo['status']): AgentInfo =>
+  ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
+
+test('asks through the tool, and the band shows the question after its pull request', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+
+  const called = await $.tool.call({
+    tool: 'mcp__projector__ask',
+    question: 'Decline the finding?',
+    recommendation: 'Decline it',
+    options: ['Add a budget'],
+    pr: 'x/y#7',
+  })
+  expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
+  expect(session.registered).toEqual([expect.objectContaining({ name: 'ask', isDeferred: false })])
+  expect(session.project()).toContain(
+    'question ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+  )
+  expect(session.notified).toEqual(['#7.1 Decline the finding?'])
+
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('refuses a call the CLI refuses, and asks for an upgrade when the CLI is too old', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  const ask = { tool: 'mcp__projector__ask' as const, question: 'Decline the finding?', recommendation: 'Decline it' }
+
+  Object.assign(session.store.refusal, { code: 65, message: 'the question must be one line; put the rest in --detail' })
+  const refused = await $.tool.call(ask)
+  expect(refused.deny ?? refused.text).toBe('the question must be one line; put the rest in --detail')
+
+  Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'question'" })
+  const old = await $.tool.call(ask)
+  expect(old.deny ?? old.text).toBe("error: argument command: invalid choice: 'question'; run project upgrade")
+})
+
+test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held({ ref: 'q1', pr: null, question: 'Run project init?' })])
+  await startSession($, clock, false)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: 'Run project init?' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an idle session with no questions starts no project process', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  await clock.advance(3 * TICK)
+  await clock.settle()
+
+  expect(session.project()).toEqual([])
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a letter records the answer, reaches the live subagent, and leaves the band a minute later', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('running')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#7.1' })
+  expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
+  expect(await ui.find({ type: 'Button', key: 'answer:#7.1.b' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
+  expect((await ui.find({ type: 'Input', key: 'answer:#7.1.c' }))?.props.placeholder).toBe('Type something')
+  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
+  // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
+  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+
+  await ui.press({ key: 'answer:#7.1.a' })
+  expect(await ui.find({ type: 'Text', text: /^#7\.1\.a sending Decline the finding\?$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeUndefined()
+
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.sent).toEqual([
+    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
+  ])
+  expect(session.submitted).toEqual([])
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^#7\.1\.a Decline the finding\?$/ })).toBeDefined()
+
+  await clock.advance(60_000 + TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a typed answer and a dismissal record what was given', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, question: 'Rebase first?' })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#7.1' })
+  await ui.input({ key: 'answer:#7.1.c', text: 'keep the cap' })
+  expect(session.project()).toContain('question answer #7.1.c --text=keep the cap --session s1 --json')
+  await ui.press({ key: 'question:#7.2' })
+  await ui.press({ key: 'dismiss:#7.2' })
+  expect(session.project()).toContain('question dismiss #7.2 --session s1 --json')
+
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.submitted.map(one => one.text)).toEqual([
+    'ANSWER #7.1.c Decline the finding? → keep the cap',
+    'DISMISSED #7.2 Rebase first?',
+  ])
+  await ui.unmount()
+})
+
+test('an answer for a subagent that ended goes to the main loop, naming it', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('completed')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#7.1' })
+  await ui.press({ key: 'answer:#7.1.b' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.sent).toEqual([])
+  expect(session.submitted[0]?.text).toContain('ANSWER #7.1.b Decline the finding? → Add a budget')
+  expect(session.submitted[0]?.text).toContain('The subagent Fix #7 (agent-1) asked this')
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  await ui.unmount()
+})
+
+test('a dropped submit reopens the question and says why', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()], { drop: 'a hook refused it' })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#7.1' })
+  await ui.press({ key: 'answer:#7.1.a' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
+  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer })], { isTurnRunning: true })
+  await startSession($, clock, false)
+  await clock.advance(TICK)
+  await clock.settle()
+  const lists = () => session.project().filter(command => command.startsWith('question list')).length
+  const before = lists()
+
+  for (let at = 0; at < 6; at += 1) await clock.advance(TICK)
+  await clock.settle()
+  const claims = session.project().filter(command => command.startsWith('question claim'))
+  expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
+  expect(claims.filter(command => command.includes('--renew')).length).toBeGreaterThanOrEqual(6)
+  expect(lists()).toBe(before)
+  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+
+  session.release()
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.submitted).toHaveLength(1)
+})
+
+test('a submit an earlier copy of the module left keeps its claim and settles when its prompt arrives', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const text = 'ANSWER #7.1.a Decline the finding? → Decline it'
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+  let pending: Record<string, unknown> = { '#7.1': { ref: '#7.1', session: SESSION, token: 'old', route: 'submit', text } }
+  let version = 1
+  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
+  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
+    pending = e.value as Record<string, unknown>
+    version += 1
+    return { value: { isSet: true as const, version } }
+  })
+  await startSession($, clock, false)
+  await clock.advance(2 * TICK)
+  await clock.settle()
+
+  const claims = session.project().filter(command => command.startsWith('question claim'))
+  expect(claims.length).toBeGreaterThanOrEqual(2)
+  for (const claim of claims) expect(claim).toBe('question claim #7.1 --renew old --session s1')
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
+  expect(session.project()).toContain('question delivered #7.1 --claim old --session s1 --json')
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(pending).toEqual({})
+})
+
+test('a reference typed in the prompt reaches the agent with its question', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+
+  await $.prompt.submit({ text: 'go with #7.1.b', wait: false, origin: { kind: 'composer' } })
+  await $.prompt.submit({ text: 'rerun the 2 failing tests', wait: false, origin: { kind: 'composer' } })
+  expect(session.submitted).toEqual([
+    { text: 'go with #7.1.b', context: ['#7.1.b answers Decline the finding? with Add a budget'] },
+    { text: 'rerun the 2 failing tests', context: [] },
+  ])
+  expect(session.project().filter(command => command.startsWith('question context'))).toHaveLength(1)
 })
