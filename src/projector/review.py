@@ -1345,22 +1345,39 @@ def check_collision(root: Path, state: dict, loop: Optional[str], second: Option
 
 # The newest verdict
 
-# Anyone can review a public repository's pull request, so beside the reviewer's own, a verdict counts
-# only from an account the repository lets in. The site's status reads the same tuple.
+# Anyone can review a public repository's pull request, so there, beside the reviewer's own, a verdict
+# counts only from an account the repository lets in. Only an account that can see a private or internal
+# repository can review its pull requests, so there every review counts. That matters because GitHub hides
+# a private organization membership from a token that cannot see it, such as a workflow's GITHUB_TOKEN, and
+# reports that member's reviews with a lower association.
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
+CLOSED = ("private", "internal")
 
 
-def verdicts(repo: str, number: int, reviewer: str) -> list[dict]:
+def review_counts(association: Optional[str], visibility: Optional[str]) -> bool:
+    """Whether a review whose author has `association` can sign a pull request off or set its status on the
+    site, in a repository of `visibility`: GitHub's `public`, `private`, or `internal`, in either case, or
+    None when it is unknown. An unknown visibility counts as public."""
+    return (visibility or "").lower() in CLOSED or association in TRUSTED
+
+
+def repo_visibility(pr: dict) -> Optional[str]:
+    """The visibility of the repository that `pr`, a pull request as GitHub's REST API returns it, targets,
+    or None when it does not say."""
+    return ((pr.get("base") or {}).get("repo") or {}).get("visibility")
+
+
+def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -> list[dict]:
     """Every Projector review on the pull request that can be its head's newest verdict, from every page:
-    the reviewer's, and any whose author owns the repository, belongs to its organization, or
-    collaborates on it. Each has its `id`, `url`, `at`, `login`, and `body`."""
+    the reviewer's, and any other that `review_counts` counts in a repository of `visibility`. Each has its
+    `id`, `url`, `at`, `login`, and `body`."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
                    "--jq", '.[] | select(.body // "" | contains("projector-review")) '
                            '| {id, url: .html_url, at: .submitted_at, login: .user.login, '
                            'association: .author_association, body} | @json']).splitlines()
     found = [json.loads(row) for row in rows if row.strip()]
     return [r for r in found
-            if (r.get("login") or "").lower() == reviewer.lower() or r.get("association") in TRUSTED]
+            if (r.get("login") or "").lower() == reviewer.lower() or review_counts(r.get("association"), visibility)]
 
 
 def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
@@ -1402,7 +1419,7 @@ def status(repo: str, number: int, reviewer: str) -> dict:
     except NotFound as exc:
         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
     head = pr["head"]["sha"]
-    models = newest_verdicts(head, verdicts(repo, number, reviewer))
+    models = newest_verdicts(head, verdicts(repo, number, reviewer, repo_visibility(pr)))
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
     held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
     newest = models[0] if models else None
@@ -1650,10 +1667,10 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         # author is building changes no review has read.
         posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
                   "login": reviewer, "body": read["body"]}
-        others = [r for r in verdicts(repo, number, reviewer) if r.get("id") != review_id]
+        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+        others = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
         newest = newest_verdicts(sha, others + [posted])[0]
         open_threads = census(repo, number)["open"]
-        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
         held = bool(holds(repo, number, (current.get("user") or {}).get("login") or ""))
     if standing and newest["verdict"] == "clean" and not open_threads and not held:
         dismissed = dismiss(repo, number, reviewer, standing,

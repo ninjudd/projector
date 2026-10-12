@@ -422,16 +422,17 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
-    def statuses(self, reviews: list[dict] | None) -> dict[str, dict | None]:
-        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None.
-        Head c's summary is older than head d's, so d is the newest head."""
+    def statuses(self, reviews: list[dict] | None, visibility: str | None = "public") -> dict[str, dict | None]:
+        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None, in
+        a repository GitHub reports as `visibility`. Head c's summary is older than head d's, so d is the newest
+        head."""
         asked: list[tuple[str, int]] = []
 
         def pr_status(repo: str, number: int) -> dict:
             asked.append((repo, number))
             if reviews is None:
                 raise summary.SummaryError("gh api failed: offline")
-            return {"state": "open", "reviews": reviews}
+            return {"state": "open", "visibility": visibility, "reviews": reviews}
 
         for when, head in ((1_700_000_000, "c" * 40), (1_700_000_100, "d" * 40)):
             self.publish(9, head)
@@ -474,6 +475,24 @@ class SiteContentTests(SiteRepoCase):
                           "d": {"status": "pending",
                                 "last": {"status": "changes-requested", "head": "c" * 40, "url": review_url(1)}}},
                          statuses, "d is pending on c's trusted change request, not the forged clean verdicts")
+
+    def test_in_a_private_or_internal_repository_every_review_sets_the_status(self) -> None:
+        # Only an account that can see the repository can review there. GitHub hides a private organization
+        # membership from a token that cannot see it, as the deploy's cannot, and reports a lower association.
+        reviews = [projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1,
+                                    association="CONTRIBUTOR"),
+                   projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE")]
+        for visibility in ("private", "internal"):
+            with self.subTest(visibility=visibility):
+                self.reset()
+                self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
+                                  "d": {"status": "clean", "url": review_url(2)}}, self.statuses(reviews, visibility))
+        for visibility in ("public", None):
+            with self.subTest(visibility=visibility):
+                self.reset()
+                self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}},
+                                 self.statuses(reviews, visibility),
+                                 "a public repository, or one GitHub gives no visibility for, still ignores them")
 
     def test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them(self) -> None:
         statuses = self.statuses([
@@ -650,7 +669,7 @@ class SiteContentTests(SiteRepoCase):
                     11: [projector_review("changes-requested", "a" * 40, "2026-10-01T10:00:00Z", 2)]}
 
         def pr_status(repo: str, number: int) -> dict:
-            return {"state": states[number], "reviews": reviewed[number]}
+            return {"state": states[number], "visibility": "public", "reviews": reviewed[number]}
 
         with mock.patch.object(summary, "pr_status", side_effect=pr_status):
             reviews = self.build()["reviews"]

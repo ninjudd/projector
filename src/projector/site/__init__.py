@@ -30,7 +30,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..core import Project, ProjectorError, project_from_text, title_from_text
-from ..review import TRUSTED, identity, verdict_marker
+from ..review import identity, review_counts, verdict_marker
 from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
                        new_file_text, prepare_page, stored_attributes)
 
@@ -143,13 +143,16 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def review_statuses(reviews: list[dict]) -> dict[str, dict]:
+def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[str, dict]:
     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
 
     A review is Projector's when a line of its body is the marker a Projector
     review carries, which names the verdict, the head it reviewed, and the
-    model, and its author owns the repository, belongs to its organization, or
-    collaborates on it. The newest review decides, whichever model wrote it.
+    model, and `review.review_counts` counts its author in a repository of
+    `visibility`: any author in a private or internal repository, and in a
+    public one, or one whose visibility is None, only an author who owns the
+    repository, belongs to its organization, or collaborates on it. The newest
+    review decides, whichever model wrote it.
     When it is a clean incremental review, the status also carries
     `incrementalFrom`: the head of the full review it builds on, and that
     model's newest full review of that head as `url`, or None when none is
@@ -165,8 +168,8 @@ def review_statuses(reviews: list[dict]) -> dict[str, dict]:
 
     for review in reviews:
         # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
-        # only a review by someone the repository let in can set a status, as it can sign a head off.
-        if review.get("association") not in TRUSTED:
+        # there only a review by someone the repository let in can set a status, as it can sign a head off.
+        if not review_counts(review.get("association"), visibility):
             continue
         marker = verdict_marker(review.get("body") or "")
         if marker is None:
@@ -312,10 +315,11 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     says, or, for a summary without one, as the checkout at `repo_root` reads
     its .gitattributes. A file whose head copy `publish` stored beside its
     summary carries the `context` its page expands, as `add_context`
-    describes. `status_lookup` returns a pull request's state and
-    reviews, as `summary.pr_status` does, or None when it cannot ask. From
-    them each page carries `pr.state`, `pr.currentBaseRef`, the base branch
-    GitHub reports, or None once that branch is deleted, and `review`, the
+    describes. `status_lookup` returns a pull request's state, reviews,
+    and repository visibility, as `summary.pr_status` does, or None when it
+    cannot ask. From them each page carries `pr.state`, `pr.currentBaseRef`,
+    the base branch GitHub reports, or None once that branch is deleted, and
+    `review`, the
     newest Projector review of its head, as `review_statuses` gives it, or,
     when none names the head, `pending` or `unreviewed`, as `head_status`
     decides given the pull request's heads with newer summaries. A page has
@@ -403,7 +407,7 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
         segments = segmented[tuple(members[pull])]
         header = next(s["header"] for s in segments if pull in s["members"])
         status = asked[number]
-        statuses = review_statuses(status["reviews"]) if status is not None else None
+        statuses = review_statuses(status["reviews"], status.get("visibility")) if status is not None else None
         for i, (_, payload, _) in enumerate(versions):
             head = payload["pr"]["head"]
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
@@ -1039,8 +1043,9 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     `stacks_lookup` returns GitHub's stacks, or None when it cannot ask, and
     `lookup` finds the pull request whose head is a branch, for a summary in
     no GitHub stack that did not record the one it is stacked on.
-    `status_lookup` returns a pull request's state, reviews, and whether it
-    is a fork's, or None when it cannot ask, for each summary's file links and
+    `status_lookup` returns a pull request's state, reviews, whether it is
+    a fork's, and its repository's visibility, which decides whose reviews
+    count, or None when it cannot ask, for each summary's file links and
     review status and for the projects open pull requests propose.
     `projects_dir` is the configured projects directory, which a pull request
     can propose the first plan of. Each project, proposed ones included,

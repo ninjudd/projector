@@ -786,10 +786,16 @@ decides the draft state. When that review is incremental, the header reads
 the head of the full review it builds on, by the same model, and links that
 review, while the row on Reviews shows **Clean** alone. Models are told apart
 by their model ID, lowercased and without a trailing bracketed variant such as
-`[1m]`. A review counts only when its author owns the repository, belongs to
-its organization, or collaborates on it, because anyone can review a public
-repository's pull request. The build reads the pull request's state and
-reviews through `gh` and shows no status when `gh` cannot answer. **Docs**
+`[1m]`. In a public repository a review counts only when its author owns the
+repository, belongs to its organization, or collaborates on it, because anyone
+can review a public repository's pull request. In a private or internal
+repository every review counts, because only an account that can see the
+repository can review there. That keeps a verdict counting when its author
+keeps their organization membership private, which the token the deploy
+workflow runs with cannot see. A repository whose visibility GitHub does not
+report counts as public. The build reads the pull request's state, its
+reviews, and the repository's visibility through `gh` and shows no status
+when `gh` cannot answer. **Docs**
 renders `README.md`
 beside a sidebar of every other document under `docs/`, leaving out the
 projects directory, which Projects covers. The Docs sidebar lists its readme
@@ -1186,8 +1192,10 @@ holds it. It also keeps the pull request a draft while its author has a hold
 comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
 `hold` posts for `fix-pr` while it builds a change for the pull request. Only
 the author's comment counts. It counts the reviewer's verdicts, the one it just
-posted included, and those of any account that owns the repository, belongs
-to its organization, or collaborates on it. On another author's pull request
+posted included, and those of the accounts the site's status counts: in a
+public repository, any account that owns the repository, belongs to its
+organization, or collaborates on it, and in a private or internal repository,
+every account. On another author's pull request
 it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
 verdict where `review.allow_approve` is `true` and the author has no hold
 comment open, and leaves draft state alone. A `COMMENT` leaves the account's
@@ -1225,8 +1233,9 @@ held; clean from …`, and a line such as `held in draft by comment 4411 until
 the changes it lists are pushed` names the comment. `status` counts the
 verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
 from `--reviewer`, then `review.username`, then the authenticated user, and
-those of any account that owns the repository, belongs to its organization, or
-collaborates on it. It reads the pull request, its reviews, its issue
+in a public repository those of any account that owns the repository, belongs
+to its organization, or collaborates on it, or in a private or internal
+repository those of every account. It reads the pull request, its reviews, its issue
 comments, and its threads, and runs from any directory. It exits 0 whatever the verdict, and 1 only when
 it cannot read the pull request. With `--json` it prints one object:
 

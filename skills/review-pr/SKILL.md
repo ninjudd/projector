@@ -164,8 +164,9 @@ The newest verdict on the head signs it off. After it submits, `publish`
 reads the Projector verdicts on the head, its own included, and on your own
 pull request sets draft state by the newest one, whichever model gave it:
 draft when it requests changes, ready when it is clean. The verdicts it reads
-are the reviewer account's and those of any account that owns the
-repository, belongs to its organization, or collaborates on it, the same
+are the reviewer account's and, in a public repository, those of any account
+that owns the repository, belongs to its organization, or collaborates on it,
+or, in a private or internal repository, those of every account, the same
 ones the site's status reads. So a clean verdict from one model after
 another model's change request marks the pull request ready, and a change
 request after a clean verdict drafts it again. That is safe because a clean
