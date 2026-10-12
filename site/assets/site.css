@@ -155,7 +155,7 @@ iframe.htmlpage { display: block; width: 100%; border: 0; background: #fff; }
   width: 100%; box-sizing: border-box; margin: 8px 0 20px; padding: 8px 12px; font: inherit;
   color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
 }
-.pintro { margin: 4px 0 8px; }
+.pintro { margin: 32px 0 8px; }
 .pintro summary { cursor: pointer; color: var(--muted); font-size: 14px; }
 .pintro summary:hover { color: var(--accent); }
 .pintro .markdown { margin-top: 12px; padding: 4px 16px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
