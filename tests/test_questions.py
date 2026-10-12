@@ -263,6 +263,15 @@ class DeliveryTests(QuestionCase):
             self.assertEqual("ANSWER #337.1.b Decline it? → Add a budget\n",
                              self.run_cli("watch", "--once", "--session", "s1")[1])
 
+    def test_watch_refuses_an_interval_that_is_not_a_positive_number(self) -> None:
+        for interval in ("-1", "0", "nan", "inf", "soon"):
+            with self.subTest(interval=interval):
+                err = io.StringIO()
+                with self.assertRaises(SystemExit) as stop, redirect_stderr(err):
+                    cli.main(["question", "watch", "--interval", interval, "--once", "--session", "s1"])
+                self.assertEqual(2, stop.exception.code)
+                self.assertIn("--interval", err.getvalue())
+
     def test_keeps_the_newest_delivered_questions(self) -> None:
         with mock.patch.object(questions, "KEEP_DELIVERED", 2):
             for number in range(3):

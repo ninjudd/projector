@@ -617,6 +617,13 @@ def add_output(command: argparse.ArgumentParser) -> None:
     command.add_argument("--json", action="store_true", dest="json_output")
 
 
+def seconds(text: str) -> float:
+    value = float(text)
+    if not 0 < value < float("inf"):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive number of seconds")
+    return value
+
+
 def add_question_parser(subcommands) -> None:
     question = subcommands.add_parser("question", help="ask the person a question, and answer and deliver it")
     commands = question.add_subparsers(dest="question_command", required=True)
@@ -661,7 +668,7 @@ def add_question_parser(subcommands) -> None:
         settled.add_argument("--claim", required=True, metavar="TOKEN", help="the token `claim` printed")
 
     watch = command("watch", "claim, print, and mark delivered each answer, one line an answer")
-    watch.add_argument("--interval", type=float, default=5.0, help="seconds between passes (default: 5)")
+    watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
 
     command("context", "print what each question reference in standard input means")
