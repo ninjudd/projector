@@ -120,8 +120,11 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 4 -->
+<!-- projector:begin 5 -->
 ## Projector conventions
+
+Projector generates this section. To change it, change the template in
+Projector and run `project init`.
 
 This repository keeps its project plans in Git with
 [Projector](https://github.com/ninjudd/projector). Read
@@ -142,12 +145,6 @@ it the commit message. Match the line wrapping already used around a Markdown
 edit, and do not hard-wrap prose you post to GitHub, because GitHub renders
 line breaks.
 
-Open every pull request as a draft, each layer of a stack included. A review
-loop marks a pull request ready when its head reviews clean, so a draft says
-the work has not been signed off yet. Never mark your own draft ready, even
-once the reason you drafted it is resolved, because only a clean review
-clears it.
-
 Open dependent work that is too large to review as one pull request as a
 GitHub stack with `gh stack`, as Projector's `implement` skill describes
 under "Stack dependent work". Fix stacked code on the branch that introduced
@@ -156,6 +153,22 @@ above, so each layer stays on the current head of the one below and the
 stack can merge as a unit. Chain pull requests by base branch, and update
 them by merging, only where `gh stack` is unavailable.
 
-Projector generates this section. To change it, change the template in
-Projector and run `project init`.
+### Projector skills
+
+Follow these rules only when the Projector plugin is installed, which you can
+tell because its skills, such as `implement`, are available to you. Without
+the plugin, the rest of this section still applies.
+
+Build each change you will open a pull request for with the `implement`
+skill, `/projector:implement` in Claude Code or `$implement` in Codex,
+whether it follows a plan under `docs/projects` or only a description,
+however small. Its hand-over opens the pull request and starts a fix loop on
+it, so review findings are fixed as they arrive rather than waiting for
+someone to notice that nothing is fixing them.
+
+Open every pull request as a draft, each layer of a stack included. A review
+loop marks a pull request ready when its head reviews clean, so a draft says
+the work has not been signed off yet. Never mark your own draft ready, even
+once the reason you drafted it is resolved, because only a clean review
+clears it.
 <!-- projector:end -->

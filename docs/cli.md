@@ -38,15 +38,18 @@ what it did to each:
   `docs/projects/` in another repository knows where the `project` command
   comes from. `init` creates it once and never rewrites it.
 - `AGENTS.md` carries a section Projector generates between two HTML-comment
-  markers: where plans live, how to use `project`, the writing style for
-  documentation and GitHub prose, that every pull request opens as a draft
-  until a clean review marks it ready, and how to open dependent work as a
+  markers. It says where plans live, how to use `project`, the writing style
+  for documentation and GitHub prose, and how to open dependent work as a
   stack with `gh stack`, or as pull requests chained by base branch where
   `gh stack` is unavailable, and keep every layer on the current head of the
-  one below so the stack can merge as a unit. `init` appends the section to
-  an existing file or creates the file with only that section, and refreshes
-  the section when it falls behind the template this command ships.
-  Everything outside the markers is yours and is never changed.
+  one below so the stack can merge as a unit. Its last part applies only
+  where the Projector plugin is installed: build every change with the
+  `implement` skill, so a fix loop starts on its pull request, and open every
+  pull request as a draft until a clean review marks it ready. `init`
+  appends the section to an existing file or creates the file
+  with only that section, and refreshes the section when it falls behind the
+  template this command ships. Everything outside the markers is yours and
+  is never changed.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
@@ -397,7 +400,7 @@ collaborator on an older CLI is told what to do without a failing gate.
 
 ```console
 $ project check
-warning: AGENTS.md: Projector section is version 3; this command ships version 4 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
+warning: AGENTS.md: Projector section is version 4; this command ships version 5 (run 'project init' to refresh it; your own content is not changed) [instructions-outdated]
 Project plans are valid.
 ```
 
