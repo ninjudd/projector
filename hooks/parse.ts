@@ -130,7 +130,7 @@ export function expand(parts: readonly Part[], env: Env): string | undefined {
   return out
 }
 
-/** Expands a path typed as one shell word, such as `/loop-prs ~/loop/tracked`. */
+/** Expands a path typed as one shell word, such as `/projector ~/loop/tracked`. */
 export function expandPath(text: string, env: Env): string | undefined {
   const tokens = tokenize(text.trim())
   const [word] = tokens
