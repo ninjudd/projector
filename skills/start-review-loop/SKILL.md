@@ -1,6 +1,6 @@
 ---
 name: start-review-loop
-description: Monitor the operator's pull requests, and those whose author requests the operator's review, in the current GitHub repository and run review-pr on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
+description: Monitor the operator's pull requests, and those that request the operator's review, in the current GitHub repository and run review-pr on every pushed SHA, one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing current and subsequent PR heads.
 ---
 
 # Start Review Loop
@@ -20,24 +20,25 @@ describes; the watcher needs the operator's login for `--author` and
 
 Watch only the repository containing the current working directory. The loop
 reviews every open pull request the operator authors there, from whichever
-session opened it, every one whose author requests the operator's review,
-and any the user explicitly assigns. The tracked set lives in the tracked
-file the watcher reads, one `owner/repo#number` per line, and the watcher
-sees nothing outside it. Run the watcher with `--repo <owner/repo> --author
-<operator> --review-requested <operator>` and it appends each open pull
-request the operator wrote or was asked to review to that file, so a new one
-reports as `NEW PR` without anyone adopting it. Only a request to the
-operator by name counts, not one to a team the operator belongs to. A
-requested pull request is someone else's, so `review-pr` reviews it in the
-cross-author mode and never moves its draft state. Adoption only adds lines,
-so it stays tracked after the request is answered, and every later push gets
-a review until it closes. A line `!owner/repo#number` keeps one pull request
-out when the user asks. Hold validated logins literally in every query you
-run yourself; never use `@me`. Under the default the two roles coincide and
-`@me` looks harmless, but its value follows whichever token is live, so under
-a reviewer override it resolves to the reviewer — an account that authors
-nothing here — and a listing by `@me` comes back empty, indistinguishable
-from a repository with nothing open.
+session opened it, every one that requests the operator's review, and any the
+user explicitly assigns. The tracked set lives in the tracked file the watcher
+reads, one `owner/repo#number` per line, and the watcher sees nothing outside
+it. Run the watcher with `--repo <owner/repo> --author <operator>
+--review-requested <operator>` and it appends each open pull request the
+operator wrote or was asked to review to that file, so a new one reports as
+`NEW PR` without anyone adopting it. A request counts whoever made it,
+whether the author, a CODEOWNERS rule, or a bot, but only when it names the
+operator rather than a team the operator belongs to. A requested pull request
+is someone else's, so `review-pr` reviews it in the cross-author mode and
+never moves its draft state. Adoption only adds lines, so it stays tracked
+after the request is answered, and every later push gets a review until it
+closes. A line `!owner/repo#number` keeps one pull request out when the user
+asks. Hold validated logins literally in every query you run yourself; never
+use `@me`. Under the default the two roles coincide and `@me` looks harmless,
+but its value follows whichever token is live, so under a reviewer override
+it resolves to the reviewer — an account that authors nothing here — and a
+listing by `@me` comes back empty, indistinguishable from a repository with
+nothing open.
 
 ## Establish the loop
 

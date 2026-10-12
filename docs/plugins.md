@@ -24,7 +24,7 @@ install docs`.
 `review-pr` reviews a pull request's current head once, by the method in
 `skills/review-pr/method.md`, and publishes one labeled review;
 `start-review-loop` runs it on every new head of your pull requests and of
-those whose author requests your review. `fix-pr` answers one pull request's
+those that request your review. `fix-pr` answers one pull request's
 findings, verifying each by the same protocol, and merges the base into a
 branch that conflicts with it; `start-fix-loop` runs it, one subagent per
 pull request, whenever its watcher reports work on one this conversation

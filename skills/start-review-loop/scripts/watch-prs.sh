@@ -45,15 +45,16 @@
 # --repo with --author adopts that author's pull requests: each cycle lists
 # the author's open pull requests in the repository and appends every one the
 # file does not name yet, which then reports as NEW PR. --repo with
-# --review-requested adopts the open pull requests whose author asked that
-# login for a review, the same way. Only a request to the login itself counts,
-# not one to a team it belongs to, since a team that CODEOWNERS requests can
-# be asked on nearly every pull request in a repository. GitHub drops a
-# request once that login reviews, so a pull request is adopted while its
-# request stands and stays tracked after. Give either flag or both. Adoption
-# only ever adds lines, so the file stays the scope. A line of the form
-# `!owner/repo#number` keeps that pull request out of both the watch and
-# adoption. A failed listing adopts nothing that cycle and is tried again.
+# --review-requested adopts the open pull requests that request that login's
+# review, the same way, whoever made the request: the author, a CODEOWNERS
+# rule, or a bot. Only a request to the login itself counts, not one to a team
+# it belongs to, since a team that CODEOWNERS requests can be asked on nearly
+# every pull request in a repository. GitHub drops a request once that login
+# reviews, so a pull request is adopted while its request stands and stays
+# tracked after. Give either flag or both. Adoption only ever adds lines, so
+# the file stays the scope. A line of the form `!owner/repo#number` keeps
+# that pull request out of both the watch and adoption. A failed listing
+# adopts nothing that cycle and is tried again.
 #
 # The state file is the loop's memory of what has been seen. Seed it with rows
 # of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
@@ -199,8 +200,8 @@ not_found() {
 }
 
 # Print the number of every open pull request in $REPO that $AUTHOR wrote or
-# whose author asked $REQUESTED for a review. A listing that fails prints
-# nothing, so the other one still adopts this cycle.
+# that requests $REQUESTED's review. A listing that fails prints nothing, so
+# the other one still adopts this cycle.
 listed() {
   [ -z "$AUTHOR" ] || gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
     --json number --jq '.[].number' 2>"$STATE.err"
