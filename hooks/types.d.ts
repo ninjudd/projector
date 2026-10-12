@@ -1,8 +1,8 @@
-/** Which watcher a loop runs: `watch-prs.sh` reviews, `watch-threads.sh` fixes. */
-export type LoopKind = 'review' | 'fix' | 'unknown'
+/** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
+export type LoopKind = 'watching' | 'reviewing'
 
 /** A tracked file this session started a watcher on, or named by hand. */
-export type SeenLoop = { kind: LoopKind; tracked: string }
+export type SeenLoop = { kind?: LoopKind; tracked: string }
 
 export type PullRequest = {
   repo: string
@@ -16,26 +16,16 @@ export type PullRequest = {
   openThreads: number
 }
 
-/** One loop as the pane draws it. */
-export type LoopView = {
-  kind: LoopKind
-  tracked: string
-  isOwn: boolean
-  isRunning: boolean
-  prs: PullRequest[]
-  /** Tracked entries GitHub returned no pull request for. */
-  missing: string[]
-  error: string | null
-}
-
+/** The open pull requests the pane draws, by section. */
 export type Snapshot = {
-  loops: LoopView[]
+  watching: PullRequest[]
+  reviewing: PullRequest[]
   fetchedAt: number | null
   error: string | null
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    projector: { seenLoops: SeenLoop[]; loopSnapshot: Snapshot }
+    projector: { seenLoops: SeenLoop[]; loopSnapshot: Snapshot; loopNow: number }
   }
 }

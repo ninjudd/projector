@@ -16,8 +16,8 @@ export type Watcher = {
 export type TrackedPr = { repo: string; number: number }
 
 const SCRIPTS: Record<string, LoopKind> = {
-  'watch-prs.sh': 'review',
-  'watch-threads.sh': 'fix',
+  'watch-prs.sh': 'reviewing',
+  'watch-threads.sh': 'watching',
 }
 
 const OPERATORS = ['&&', '||', ';', '&', '|', '(', ')', '\n']
@@ -140,16 +140,37 @@ export function expandPath(text: string, env: Env): string | undefined {
 
 const raw = (parts: readonly Part[]) => parts.map(part => part.text).join('')
 
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/
+
 /**
  * Finds each `watch-prs.sh` or `watch-threads.sh` invocation in a command
- * line and the `--tracked` path given to it.
+ * line and the `--tracked` path given to it. A variable the command assigns
+ * before the watcher, as in `D=~/loops; watch-prs.sh --tracked $D/tracked`,
+ * expands ahead of the environment.
  */
 export function findWatchers(command: string, env: Env): Watcher[] {
   const tokens = tokenize(command)
   const found: Watcher[] = []
+  const assigned = new Map<string, string | undefined>()
+  const lookup: Env = name => (assigned.has(name) ? assigned.get(name) : env(name))
+  let isCommandStart = true
 
   for (const [index, token] of tokens.entries()) {
-    if (!('parts' in token)) continue
+    if (!('parts' in token)) {
+      isCommandStart = true
+      continue
+    }
+    const [first, ...rest] = token.parts
+    const assignment =
+      isCommandStart && first !== undefined && !first.isLiteral ? ASSIGNMENT.exec(first.text) : null
+    if (assignment !== null && first !== undefined) {
+      const [written, name] = assignment as unknown as [string, string]
+      assigned.set(name, expand([{ ...first, text: first.text.slice(written.length) }, ...rest], lookup))
+      continue
+    }
+    if (isCommandStart && raw(token.parts) === 'export') continue
+    isCommandStart = false
+
     const name = raw(token.parts).split('/').pop() ?? ''
     const kind = SCRIPTS[name]
     if (kind === undefined) continue
@@ -161,14 +182,14 @@ export function findWatchers(command: string, env: Env): Watcher[] {
       if (text === '--tracked') {
         const value = tokens[at + 1]
         if (value === undefined || !('parts' in value)) break
-        found.push({ kind, tracked: expand(value.parts, env), written: raw(value.parts) })
+        found.push({ kind, tracked: expand(value.parts, lookup), written: raw(value.parts) })
         break
       }
       if (text.startsWith('--tracked=')) {
         const [first, ...rest] = arg.parts
         if (first === undefined) break
         const value = [{ ...first, text: first.text.slice('--tracked='.length) }, ...rest]
-        found.push({ kind, tracked: expand(value, env), written: raw(value) })
+        found.push({ kind, tracked: expand(value, lookup), written: raw(value) })
         break
       }
     }
@@ -178,6 +199,9 @@ export function findWatchers(command: string, env: Env): Watcher[] {
 }
 
 const ENTRY = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/
+
+/** Names a pull request without regard to case, as GitHub and the watchers do. */
+export const keyOf = (pr: TrackedPr) => `${pr.repo}#${pr.number}`.toLowerCase()
 
 /**
  * Reads a tracked file: one `owner/repo#number` per line, where a line
@@ -192,11 +216,12 @@ export function parseTracked(text: string): TrackedPr[] {
     const match = ENTRY.exec(line.trim())
     if (match === null) continue
     const [, bang, repo, number] = match as unknown as [string, string, string, string]
-    const key = `${repo}#${number}`
+    const pr = { repo, number: Number(number) }
+    const key = keyOf(pr)
     if (bang === '!') {
       excluded.add(key)
-    } else {
-      kept.set(key, { repo, number: Number(number) })
+    } else if (!kept.has(key)) {
+      kept.set(key, pr)
     }
   }
 

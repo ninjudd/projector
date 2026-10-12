@@ -10,14 +10,14 @@ describe('findWatchers', () => {
   test('reads the tracked path of a review watcher', () => {
     expect(
       findWatchers('scripts/watch-prs.sh --tracked /loops/tracked --state /loops/state --once', env),
-    ).toEqual([{ kind: 'review', tracked: '/loops/tracked', written: '/loops/tracked' }])
+    ).toEqual([{ kind: 'reviewing', tracked: '/loops/tracked', written: '/loops/tracked' }])
   })
 
   test('reads a fix watcher behind cd, quotes and a variable script path', () => {
     const command =
       'cd /repo && "$ROOT/skills/start-fix-loop/scripts/watch-threads.sh" --tracked "$HOME/fix loop/tracked" --state s'
     expect(findWatchers(command, env)).toEqual([
-      { kind: 'fix', tracked: '/home/ada/fix loop/tracked', written: '$HOME/fix loop/tracked' },
+      { kind: 'watching', tracked: '/home/ada/fix loop/tracked', written: '$HOME/fix loop/tracked' },
     ])
   })
 
@@ -29,9 +29,18 @@ describe('findWatchers', () => {
 
   test('leaves a path it cannot expand undefined', () => {
     expect(findWatchers('watch-prs.sh --tracked "$LOOP/tracked"', env)).toEqual([
-      { kind: 'review', tracked: undefined, written: '$LOOP/tracked' },
+      { kind: 'reviewing', tracked: undefined, written: '$LOOP/tracked' },
     ])
     expect(findWatchers('watch-prs.sh --tracked "$(pwd)/tracked"', env)[0]?.tracked).toBeUndefined()
+  })
+
+  test('expands a variable the command assigns before the watcher', () => {
+    const command =
+      'D=~/.local/state/projector; ID=projector-review-loop; bash /p/watch-prs.sh --tracked $D/$ID.tracked --state s'
+    expect(findWatchers(command, env)[0]?.tracked).toBe('/home/ada/.local/state/projector/projector-review-loop.tracked')
+    expect(findWatchers('export T="$HOME/t" && watch-threads.sh --tracked "$T"', env)[0]?.tracked).toBe('/home/ada/t')
+    expect(findWatchers('watch-prs.sh --tracked $D/t; D=/late', env)[0]?.tracked).toBeUndefined()
+    expect(findWatchers('D=$(pwd); watch-prs.sh --tracked $D/t', env)[0]?.tracked).toBeUndefined()
   })
 
   test('stops at the end of the watcher command', () => {
@@ -60,6 +69,12 @@ describe('parseTracked', () => {
     expect(parseTracked(text)).toEqual([
       { repo: 'o/r', number: 1 },
       { repo: 'other/re.po', number: 30 },
+    ])
+  })
+
+  test('matches entries and exclusions without regard to case', () => {
+    expect(parseTracked('Owner/Repo#5\nowner/repo#5\nowner/repo#6\n!OWNER/REPO#6\n')).toEqual([
+      { repo: 'Owner/Repo', number: 5 },
     ])
   })
 })

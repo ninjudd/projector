@@ -176,26 +176,35 @@ claude plugin test .
 ### See a loop's pull requests in a pane
 
 In Claude Code, the plugin also ships a hooks module in `hooks/` that draws
-the open pull requests of each fix or review loop in a pane. Run
-`/loop-prs` to open it. It opens by itself when the session starts a loop's
-watcher.
+the open pull requests your loops track in a pane. Run `/loop-prs` to open
+it. It opens by itself when the session starts a loop's watcher for the
+first time.
 
-The pane finds a loop by the tracked file its watcher reads: the
-`--tracked` argument of `watch-prs.sh` for a review loop or
-`watch-threads.sh` for a fix loop. It learns that file when the session runs
-the watcher, and it also finds watchers already running on the machine, such
-as a loop another session started. To show a tracked file by hand, name it:
+The pane has two sections, each hidden while it has no open pull request:
+
+- **Watching** lists the pull requests a `start-fix-loop` watcher,
+  `watch-threads.sh`, tracks.
+- **Reviewing** lists the pull requests a `start-review-loop` watcher,
+  `watch-prs.sh`, tracks.
+
+Each row is a link, `draft` or `ready`, and the title, with a second line
+when the pull request has a merge conflict, a change request, or unresolved
+review threads.
+
+The pane finds a loop by the `--tracked` file its watcher reads. It learns
+that file when the session runs the watcher, and it also finds watchers
+already running on the machine, such as a loop another session started. To
+show a tracked file by hand, name it:
 
 ```text
 /loop-prs ~/loops/review/tracked
 ```
 
-Each loop lists its open pull requests with a link, `draft` or `ready`, and
-the title, and a second line when a pull request has a merge conflict, a
-change request, or unresolved review threads. The pane asks GitHub for every
-pull request in one `gh api graphql` call each minute while it is open, and
-`r` refreshes it at once. The skills never depend on the pane, and Codex has
-no equivalent.
+The pane reloads when one of the session's watchers reports a change and
+when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
+for every pull request in one `gh api graphql` call, and only while the pane
+is open. Its last line says how long ago it reloaded. The skills never
+depend on the pane, and Codex has no equivalent.
 
 ## Install for Codex
 

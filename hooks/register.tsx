@@ -1,28 +1,39 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LoopKind, LoopView, PullRequest, SeenLoop, Snapshot } from './types'
-import { buildQuery, keyOf, parseResponse, type Fetched } from './github'
-import { expandPath, findWatchers, parseTracked, type Env, type TrackedPr } from './parse'
+import type { LoopKind, PullRequest, SeenLoop, Snapshot } from './types'
+import { buildQuery, parseResponse, type Fetched } from './github'
+import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 
 type Engine = EngineInterface
+type Loop = { kind: LoopKind; tracked: string }
 
 const PANE = 'loop-prs'
 const TITLE = 'Loop PRs'
-const POLL_MS = 60_000
-const EMPTY: Snapshot = { loops: [], fetchedAt: null, error: null }
+const TICK_MS = 5_000
+const POLL_MS = 30_000
+const EMPTY: Snapshot = { watching: [], reviewing: [], fetchedAt: null, error: null }
 
-const KIND_LABEL: Record<LoopKind, string> = {
-  review: 'Review loop',
-  fix: 'Fix loop',
-  unknown: 'Tracked set',
-}
+const SECTIONS: { kind: LoopKind; title: string }[] = [
+  { kind: 'watching', title: 'Watching' },
+  { kind: 'reviewing', title: 'Reviewing' },
+]
 
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
+const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
+
+// The session keeps its state across a reload or an update of the plugin,
+// so a value an earlier version wrote can have another shape.
+const isKind = (kind: unknown): kind is LoopKind => SECTIONS.some(section => section.kind === kind)
+const current = (value: Snapshot): Snapshot =>
+  Array.isArray(value.watching) && Array.isArray(value.reviewing) ? value : EMPTY
 
 let envLoad: Promise<Env> | undefined
 let inFlight: Promise<void> | undefined
+let isQueued = false
+let attemptedAt = 0
+const unreadable = new Set<string>()
 
 /** The few variables a tracked path is written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
@@ -48,31 +59,42 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
   }
 }
 
-const remember = ($: Engine, loop: SeenLoop) =>
-  update($, seen, list =>
-    list.some(one => one.tracked === loop.tracked) ? list : [...list, loop],
-  )
+/** Records a loop, answering whether the session had not seen it before. */
+async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
+  let isNew = false
+  await update($, seen, list => {
+    isNew = !list.some(one => one.tracked === loop.tracked)
+    return isNew ? [...list, loop] : list
+  })
+  return isNew
+}
 
 /**
- * Records the tracked file of each watcher a command starts. Answers whether
- * the command started one.
+ * Records the tracked file of each watcher a command starts, and opens the
+ * pane when one is new. A loop restarts its watcher with the same command,
+ * as a Monitor does each time it expires, so a known one opens nothing and
+ * a path it cannot read is said once.
  */
-async function adopt($: Engine, command: string): Promise<boolean> {
+async function adopt($: Engine, command: string): Promise<void> {
+  if (!command.includes('watch-')) return
   const env = await envOf($)
-  const watchers = findWatchers(command, env)
-  for (const watcher of watchers) {
+  let isAdded = false
+  for (const watcher of findWatchers(command, env)) {
     if (watcher.tracked === undefined) {
-      $.ui.toast(`loop-prs: cannot tell which file ${watcher.written} names; run /loop-prs <tracked file>`)
+      if (!unreadable.has(watcher.written)) {
+        unreadable.add(watcher.written)
+        $.ui.toast(`loop-prs: cannot tell which file ${watcher.written} names; run /loop-prs <tracked file>`)
+      }
       continue
     }
     const tracked = (await canonical($, watcher.tracked)) ?? watcher.tracked
-    await remember($, { kind: watcher.kind, tracked })
+    isAdded = (await remember($, { kind: watcher.kind, tracked })) || isAdded
   }
-  return watchers.length > 0
+  if (isAdded) show($)
 }
 
 /** Watchers running anywhere on this machine, found by their arguments. */
-async function runningLoops($: Engine, env: Env): Promise<SeenLoop[]> {
+async function runningLoops($: Engine, env: Env): Promise<Loop[]> {
   let stdout: string
   try {
     ;({ stdout } = await $.process.run(['ps', '-A', '-o', 'args='], { timeoutMs: 10_000 }))
@@ -80,7 +102,7 @@ async function runningLoops($: Engine, env: Env): Promise<SeenLoop[]> {
     return []
   }
 
-  const loops = new Map<string, SeenLoop>()
+  const loops = new Map<string, Loop>()
   for (const line of stdout.split('\n')) {
     if (!line.includes('watch-')) continue
     for (const watcher of findWatchers(line, env)) {
@@ -114,74 +136,88 @@ async function load($: Engine): Promise<void> {
   const own = await read($, seen)
   const running = await runningLoops($, env)
 
-  const loops = [
-    ...own.map(loop => {
-      const live = running.find(one => one.tracked === loop.tracked)
-      const kind = loop.kind === 'unknown' && live !== undefined ? live.kind : loop.kind
-      return { ...loop, kind, isOwn: true, isRunning: live !== undefined }
-    }),
-    ...running
-      .filter(loop => !own.some(one => one.tracked === loop.tracked))
-      .map(loop => ({ ...loop, isOwn: false, isRunning: true })),
+  // A file named by hand takes its kind from the watcher reading it, if one runs.
+  const loops: Loop[] = [
+    ...own.map(loop => ({
+      tracked: loop.tracked,
+      kind: isKind(loop.kind)
+        ? loop.kind
+        : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
+    })),
+    ...running.filter(loop => !own.some(one => one.tracked === loop.tracked)),
   ]
 
+  // A tracked file that is gone belongs to a loop that ended.
   const sets = await Promise.all(
-    loops.map(async loop => {
-      try {
-        return { loop, entries: parseTracked(await $.fs.read(loop.tracked)), error: null }
-      } catch {
-        return { loop, entries: [] as TrackedPr[], error: 'The tracked file is missing.' }
-      }
-    }),
+    loops.map(async loop => ({
+      kind: loop.kind,
+      entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
+    })),
   )
 
   const unique = new Map(sets.flatMap(set => set.entries).map(pr => [keyOf(pr), pr]))
   const fetched = await fetchPrs($, [...unique.values()])
 
   // When GitHub cannot be reached, keep drawing what it said last time.
-  const last = await read($, snapshot)
-  const previous = new Map(last.loops.flatMap(loop => loop.prs).map(pr => [keyOf(pr), pr]))
+  const last = current(await read($, snapshot))
+  const previous = new Map([...last.watching, ...last.reviewing].map(pr => [keyOf(pr), pr]))
   const isFetched = fetched.error === null
 
-  const views: LoopView[] = sets.map(({ loop, entries, error }) => {
-    const prs: PullRequest[] = []
-    const missing: string[] = []
-    for (const entry of entries) {
-      const key = keyOf(entry)
-      const pr = fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key))
-      if (pr !== undefined) {
-        prs.push(pr)
-      } else if (isFetched) {
-        missing.push(key)
-      }
-    }
-    return { ...loop, prs, missing, error }
-  })
+  const openIn = (kind: LoopKind): PullRequest[] => {
+    const keys = new Set(sets.filter(set => set.kind === kind).flatMap(set => set.entries.map(keyOf)))
+    return [...keys]
+      .map(key => fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key)))
+      .filter((pr): pr is PullRequest => pr !== undefined && pr.state === 'OPEN')
+  }
 
-  const now = await $.clock.now()
+  const time = await $.clock.now()
   await update($, snapshot, () => ({
-    loops: views,
-    fetchedAt: isFetched ? now : last.fetchedAt,
+    watching: openIn('watching'),
+    reviewing: openIn('reviewing'),
+    fetchedAt: isFetched ? time : last.fetchedAt,
     error: fetched.error,
   }))
+  await update($, now, () => time)
 }
 
+const isOpen = async ($: Engine) => (await $.ui.panes()).some(pane => pane.id === PANE)
+
 /**
- * Reloads the loops and their pull requests. A timer's refresh runs only
- * while the pane is open, so a closed pane costs no GitHub calls.
+ * Reloads the loops and their pull requests, only while the pane is open
+ * unless forced. A request that arrives mid-load runs once more after it,
+ * so a change it was told about is never missed.
  */
 function refresh($: Engine, isForced = false): Promise<void> {
-  inFlight ??= (async () => {
+  if (inFlight !== undefined) {
+    isQueued = true
+    return inFlight
+  }
+  inFlight = (async () => {
     try {
-      if (isForced || (await $.ui.panes()).some(pane => pane.id === PANE)) await load($)
+      if (isForced || (await isOpen($))) {
+        attemptedAt = await $.clock.now()
+        await load($)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await update($, snapshot, last => ({ ...last, error: message }))
+      await update($, snapshot, last => ({ ...current(last), error: message })).catch(() => undefined)
     }
   })().finally(() => {
     inFlight = undefined
+    if (isQueued) {
+      isQueued = false
+      void refresh($)
+    }
   })
   return inFlight
+}
+
+/** Moves the pane's clock on, and polls GitHub once the last load is old enough. */
+async function tick($: Engine): Promise<void> {
+  if (!(await isOpen($))) return
+  const time = await $.clock.now()
+  await update($, now, () => time)
+  if (time - attemptedAt >= POLL_MS) await refresh($)
 }
 
 /** Opens the pane and loads it, from a timer so no hook waits on GitHub. */
@@ -192,41 +228,59 @@ function show($: Engine): void {
   })
 }
 
-const clock = (ms: number) => {
-  const date = new Date(ms)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+/** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
+const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
+
+const ago = (seconds: number) =>
+  seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`
+
+/** Labels a pull request `#12` when the pane shows one repository, else by its repository's name. */
+function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+  const repos = [...new Set(prs.map(pr => pr.repo))]
+  if (repos.length <= 1) return pr => `#${pr.number}`
+  const names = repos.map(repo => repo.split('/')[1])
+  const isNameEnough = new Set(names).size === names.length
+  return pr => `${isNameEnough ? pr.repo.split('/')[1] : pr.repo}#${pr.number}`
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'loop-prs',
-      description: 'Show the open pull requests in a fix or review loop',
+      description: 'Show the open pull requests your watch and review loops track',
       argumentHint: '[tracked file]',
     })
-    $.clock.every(POLL_MS, () => void refresh($))
-    $.clock.after(1, () => void refresh($))
+    $.clock.every(TICK_MS, () => void tick($))
+    soon($)
     return next(e)
   })
 
-  // These hooks only watch: the catch hands back what the tool settled to,
-  // so a failure here never runs the tool twice or refuses it.
+  // These hooks only watch: the catch hands back what the event settled to,
+  // so a failure here never runs a tool twice or refuses anything.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (ran.deny === undefined && e.command.includes('watch-') && (await adopt($, e.command))) {
-      show($)
-    }
+    if (ran.deny === undefined) await adopt($, e.command)
     return ran
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
     const ran = await next(e)
-    const command = e.command ?? ''
-    if (ran.deny === undefined && command.includes('watch-') && (await adopt($, command))) {
-      show($)
-    }
+    if (ran.deny === undefined) await adopt($, e.command ?? '')
     return ran
   }).catch(($, e, next) => next(e))
+
+  // A watcher's line reaches the session as a task notification: the moment
+  // a pull request it tracks has changed.
+  on('prompt.submit', ($, e, next) => {
+    if (e.origin.kind === 'task-notification') soon($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // A turn may have pushed, replied or resolved threads.
+  on('turn.complete', ($, e, next) => {
+    soon($)
+    return next(e)
+  })
 
   on('command.run', { command: 'loop-prs' }, async ($, e) => {
     const written = (e.args ?? '').trim()
@@ -234,20 +288,21 @@ export const register: Register = on => {
       const expanded = expandPath(written, await envOf($))
       const tracked = expanded === undefined ? undefined : await canonical($, expanded)
       if (tracked === undefined) return { text: `loop-prs: no tracked file at ${written}.` }
-      await remember($, { kind: 'unknown', tracked })
+      await remember($, { tracked })
     }
     show($)
     return { text: 'Opened the Loop PRs pane.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Link, Text } = $.ui.resolve(e)
-    const { loops, fetchedAt, error } = await read($, snapshot)
-    const home = (await envOf($))('HOME')
-    const shorten = (path: string) =>
-      home !== undefined && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+    const { Box, Link, Text } = $.ui.resolve(e)
+    const shown = current(await read($, snapshot))
+    const time = await read($, now)
+    const all = [...shown.watching, ...shown.reviewing]
+    const label = labeler(all)
+    const labelWidth = Math.max(0, ...all.map(pr => label(pr).length))
 
-    const drawPr = (pr: PullRequest, isOneRepo: boolean) => {
+    const drawPr = (pr: PullRequest) => {
       const notes: { text: string; color: 'error' | 'warning' | 'success' }[] = []
       if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
       if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
@@ -256,74 +311,56 @@ export const register: Register = on => {
       }
       if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
 
+      // Only the title gives way to a narrow pane; the label column is as
+      // wide as the longest label, so every title starts in one column.
       return (
         <Box key={keyOf(pr)} flexDirection="column">
-          <Box flexDirection="row">
-            <Link href={pr.url} label={isOneRepo ? `#${pr.number}` : keyOf(pr)} />
-            <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? ' draft ' : ' ready '}</Text>
+          <Box flexDirection="row" columnGap={1}>
+            <Box flexShrink={0} width={labelWidth}>
+              <Link href={pr.url} label={label(pr)} />
+            </Box>
+            <Box flexShrink={0}>
+              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+            </Box>
             <Text wrap="truncate-end">{pr.title}</Text>
           </Box>
           {notes.length > 0 && (
-            <Text>
-              {'  '}
-              {notes.map((note, index) => (
-                <Text color={note.color}>
-                  {index > 0 ? ' · ' : ''}
-                  {note.text}
-                </Text>
-              ))}
-            </Text>
+            <Box marginLeft={labelWidth + 1}>
+              <Text>
+                {notes.map((note, index) => (
+                  <Text color={note.color}>
+                    {index > 0 ? ' · ' : ''}
+                    {note.text}
+                  </Text>
+                ))}
+              </Text>
+            </Box>
           )}
         </Box>
       )
     }
 
-    const drawLoop = (loop: LoopView) => {
-      const open = loop.prs.filter(pr => pr.state === 'OPEN')
-      const done = loop.prs.length - open.length
-      const repos = new Set([...loop.prs.map(pr => pr.repo), ...loop.missing.map(key => key.split('#')[0])])
-      const isOneRepo = repos.size === 1
-      const where = loop.isOwn ? 'this session' : 'another session'
-
-      return (
-        <Box key={loop.tracked} flexDirection="column" marginBottom={1}>
-          <Text wrap="truncate-end">
-            <Text bold>{KIND_LABEL[loop.kind]}</Text>
-            {isOneRepo ? ` · ${[...repos][0]}` : ''}
-            <Text dimColor> · {where} · </Text>
-            <Text color={loop.isRunning ? 'success' : 'warning'}>
-              {loop.isRunning ? 'watching' : 'stopped'}
-            </Text>
-          </Text>
-          <Text dimColor wrap="truncate-start">
-            {shorten(loop.tracked)}
-          </Text>
-          {loop.error !== null && <Text color="error">{loop.error}</Text>}
-          {loop.error === null && open.length === 0 && <Text dimColor>No open pull requests.</Text>}
-          {open.map(pr => drawPr(pr, isOneRepo))}
-          {loop.missing.length > 0 && (
-            <Text color="warning">Not found: {loop.missing.join(', ')}</Text>
-          )}
-          {done > 0 && <Text dimColor>{done} merged or closed</Text>}
-        </Box>
-      )
-    }
+    const sections = SECTIONS.filter(section => shown[section.kind].length > 0)
 
     return (
       <Box flexDirection="column">
-        {loops.length === 0 && (
+        {sections.map(section => (
+          <Box key={section.kind} flexDirection="column" marginBottom={1}>
+            <Text bold>{section.title}</Text>
+            {shown[section.kind].map(drawPr)}
+          </Box>
+        ))}
+        {sections.length === 0 && (
           <Text dimColor>
-            {fetchedAt === null && error === null
-              ? 'Looking for a loop…'
-              : 'No fix or review loop is running. Start one, or run /loop-prs <tracked file>.'}
+            {shown.fetchedAt === null && shown.error === null
+              ? 'Looking for pull requests…'
+              : 'No open pull requests are being watched or reviewed.'}
           </Text>
         )}
-        {loops.map(drawLoop)}
-        {error !== null && <Text color="error">GitHub: {error}</Text>}
-        <Box flexDirection="row">
-          <Text dimColor>{fetchedAt === null ? 'Not loaded yet ' : `Updated ${clock(fetchedAt)} `}</Text>
-          <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => void refresh($, true)} />
-        </Box>
+        {shown.error !== null && <Text color="error">GitHub: {shown.error}</Text>}
+        {shown.fetchedAt !== null && (
+          <Text dimColor>updated {ago(Math.max(0, Math.round((time - shown.fetchedAt) / 1000)))}</Text>
+        )}
       </Box>
     )
   })

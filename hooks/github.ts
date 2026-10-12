@@ -1,7 +1,5 @@
 import type { PullRequest } from './types'
-import type { TrackedPr } from './parse'
-
-export const keyOf = (pr: TrackedPr) => `${pr.repo}#${pr.number}`
+import { keyOf, type TrackedPr } from './parse'
 
 /** Where one pull request's node sits in the response. */
 type Slot = { pr: TrackedPr; repoAlias: string; prAlias: string }
