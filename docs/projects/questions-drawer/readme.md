@@ -3,19 +3,20 @@ status: ready
 priority: now
 ---
 
-# Answer an agent's questions in the loop band
+# Answer an agent's questions in Projector's band
 
 An agent posts a question to its session's band above the Claude Code
 prompt and keeps working; you answer it there, and the answer goes straight
 to the agent that asked.
 
-The band is the Claude Code hooks module in `hooks/`, which lists the open
-pull requests of your fix and review loops one line each and opens a drawer
-under a line when you click it ([#267](https://github.com/ninjudd/projector/pull/267),
-documented in `docs/plugins.md`). This project adds the session's questions
-to the same band, above the pull requests. Its implementation waits for #267
-to merge, because `hooks/` and the band's section of `docs/plugins.md` exist
-only on that pull request's branch until then.
+Projector's band is the Claude Code hooks module in `hooks/`. It lists the
+open pull requests of your fix and review loops one line each, opens a
+drawer under a line when you click it, and `/projector` shows or hides it,
+as `docs/plugins.md` describes. This project adds the session's questions to
+the same band, above the pull requests. It uses the command and the
+band-prefixed state keys that
+[#269](https://github.com/ninjudd/projector/pull/269) gives the band, so its
+implementation follows #269.
 
 ## 1. Problem
 
@@ -62,7 +63,7 @@ answer them only in that session.
 1. An agent, the main loop or a subagent, calls `mcp__projector__ask` with
    `question`, and optionally `options` and `pr`.
 2. The module's `tool.call` hook answers the call itself. It adds the
-   question (§ 2.2) to the session's `loopQuestions` state, with the
+   question (§ 2.2) to the session's `bandQuestions` state, with the
    calling subagent's `agentId` when there is one. It shows the band, raises
    one `$.ui.notify` through your notification channel, and returns `Posted
    question <id>. Keep working; the answer arrives as a message.`
@@ -96,7 +97,7 @@ A dismissed question is delivered the same way, as `You dismissed question
 
 ### 2.2 A question
 
-Each question is one entry in `loopQuestions`, a list in the session's
+Each question is one entry in `bandQuestions`, a list in the session's
 `$.state` under the `projector` plugin.
 
 | Field | Value |
@@ -143,7 +144,7 @@ button. The option buttons have no hotkeys. Claude Code presses a band
 prompt, the way a survey takes its answer, so a prompt such as `2 things
 first:` would answer the question. Without hotkeys, only a click, or Enter
 on a button while the band holds the keyboard, picks an option. The
-drawer's open/closed state is the band's `loopDrawer`, keyed `q:<id>` for a
+drawer's open/closed state is the band's `bandDrawer`, keyed `q:<id>` for a
 question, so one drawer is open at a time across questions and pull
 requests.
 
@@ -153,7 +154,7 @@ requests.
 | --- | --- |
 | `hooks/questions.ts` | New: the question's id and type check, the order, the route an answer takes from the subagent's status, and the text each delivery sends |
 | `hooks/register.tsx` | Register `ask` in `session.start`; answer its `tool.call`; deliver an answer and keep or remove its question; draw the questions, their drawer, and the count in the divider |
-| `hooks/types.d.ts` | The `Question` type, and `loopQuestions` under the `projector` plugin's state |
+| `hooks/types.d.ts` | The `Question` type, and `bandQuestions` under the `projector` plugin's state |
 | `hooks/questions.test.ts` | New: the id, the order, and the route by the subagent's status |
 | `hooks/band.test.tsx` | Asking, answering by option, field, and dismiss, each delivery route and each failure, a second press while sending, a digit typed in the empty prompt answering nothing, and the divider's count |
 | `docs/plugins.md` | A section on questions in the band |
@@ -188,14 +189,14 @@ skills keep working in Codex and without the module.
   the keyboard, so questions work on the main screen too.
 - **Built on the band, not beside it.** The band above the prompt has one
   slot, which the first hook that draws there fills, so a second band cannot
-  sit beside it. Questions reuse the band's divider and its `loopDrawer`
+  sit beside it. Questions reuse the band's divider and its `bandDrawer`
   state.
 
 ## 4. Acceptance criteria
 
 | Do | Expect |
 | --- | --- |
-| A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; `loopQuestions` holds the question with that subagent's `agentId`; the band shows it and the divider counts it |
+| A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; `bandQuestions` holds the question with that subagent's `agentId`; the band shows it and the divider counts it |
 | Press an option, or type an answer and press Enter | The subagent receives the answer through `$.session.send`, and the question leaves the band |
 | Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
 | `$.session.send` resolves `{ isDelivered: false }` | The main loop receives the answer through `$.prompt.submit` |
