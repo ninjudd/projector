@@ -1,0 +1,193 @@
+{
+ "version": 1,
+ "name": "Loop pull requests band",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 267,
+  "title": "List a loop's open pull requests above the Claude Code prompt",
+  "head": "ca9381137dfce7fcd781d467666becc15630c3e9",
+  "headRef": "loop-prs-pane",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops each run a watcher script in the background: <code>watch-prs.sh</code> for a review loop and <code>watch-threads.sh</code> for a fix loop. Each watcher reads a <b>tracked file</b>, a plain text file with one <code>owner/repo#number</code> line for each pull request the loop owns. Until now, to see which pull requests a loop watches and which of them need work, you read that file and looked each pull request up on GitHub.",
+   "This pull request adds a Claude Code <b>hooks module</b>: TypeScript that Claude Code loads from a plugin's <code>hooks/</code> directory and runs on engine events, such as a tool call or a slash command. The module lists open pull requests in the <b>band above the prompt</b>, a strip of the terminal directly above the input that spans its width and is only as tall as its lines. Each pull request takes one line: its number, <code>draft</code> or <code>ready</code>, the title, and any conflict, change request, or open threads. A pull request that both a fix loop and a review loop track appears once.",
+   "Clicking a pull request's number opens a <b>drawer</b> under it. The drawer says whether your loops are watching or reviewing it, then gives its author, branch, size, checks, and when it last changed. Three actions follow: <b>discuss</b> puts the number in the prompt, <b>github</b> opens the pull request, and <b>projector</b> opens the Projector summary that the description links. A ctrl, alt, or cmd click on the number opens the summary directly, or GitHub when there is none. The drawer needs Claude Code's fullscreen layout, because only that layout reports a click to the band. On the main screen, the number stays a link that the terminal opens.",
+   "<ul class=\"tight\"><li><b>When the band shows.</b> It stays hidden until the session first runs a watcher it has not seen, through the Bash or Monitor tool, or until you run <code>/loop-prs</code>, which shows or hides it. Claude Code's own <code>[-]</code> collapses it.</li><li><b>How it finds loops.</b> It reads each watcher command's <code>--tracked</code> argument, and it scans <code>ps</code> for watchers that other sessions started. <code>/loop-prs &lt;file&gt;</code> adds a tracked file by hand.</li><li><b>When it reloads.</b> It reloads when a watcher's notification reaches the session, when a turn ends, and every 30 seconds. Each reload makes one <code>gh api graphql</code> call, and only while the band is shown.</li><li><b>What it leaves alone.</b> The module is Claude Code packaging only. No skill depends on it, and Codex gets nothing new.</li></ul>",
+   "The validation gate gains <code>claude plugin test .</code>, which runs the module's <code>*.test.ts</code> files."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>742c923</code>, opened two findings about the watcher command the session runs itself. <code>ac89f58</code> fixed both.</li><li><code>20e8905</code> moved the list into the band above the prompt, and its review was clean.</li><li><code>edd820e</code> added the drawer. Its review found that the docs promised a click opens the drawer everywhere, while Claude Code reports clicks only in the fullscreen layout.</li><li><code>ca93811</code> documents that limit. Its review is clean, and the gate passed, with <code>claude plugin test .</code> at 21 of 21.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Watcher</b>: the shell script a loop runs in the background, <code>watch-prs.sh</code> or <code>watch-threads.sh</code>.</li><li><b>Tracked file</b>: the file a watcher reads, one <code>owner/repo#number</code> per line. A <code>!owner/repo#number</code> line keeps that pull request out.</li><li><b>Hooks module</b>: a plugin's TypeScript that Claude Code runs on engine events.</li><li><b>Band</b>: the <code>AbovePrompt</code> region directly above the prompt input, where one plugin can draw.</li><li><b>Drawer</b>: two lines that a click on a pull request's number opens under it, with its details and actions.</li><li><b>Main screen</b>: Claude Code's non-fullscreen layout, the default under tmux. It does not report mouse clicks to plugins.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "packaging",
+   "title": "Packaging the hooks module for Claude Code only",
+   "kicker": "Where Claude Code finds the module, and the state it keeps",
+   "intro": [
+    "Claude Code finds <code>hooks/hooks.json</code> at the plugin root by itself, and that file names the module's entry point, <code>register.tsx</code>. The Claude manifest adds a <code>types</code> field that points at <code>hooks/types.d.ts</code>, the module's state contract. That file declares the two values the module keeps in plugin state: the loops the session has seen, and the last snapshot it drew.",
+    "The Codex manifest does not change, and a new packaging test checks that it names neither <code>types</code> nor <code>hooks</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".claude-plugin/plugin.json",
+     "note": "Adds <code>types</code>, pointing at the module's state contract."
+    },
+    {
+     "path": "hooks/hooks.json",
+     "note": "Names <code>register.tsx</code> as the module Claude Code loads."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "The pull request, row, and snapshot shapes. A <code>Row</code> is one open pull request and the loop kinds that track it. The plugin-state keys are <code>seenLoops</code>, <code>loopSnapshot</code>, <code>loopNow</code>, <code>isLoopBandShown</code>, and <code>loopDrawer</code>, the pull request whose drawer is open."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Checks that the module and its contract exist, and that only the Claude manifest declares them."
+    }
+   ]
+  },
+  {
+   "id": "parse",
+   "title": "Reading watcher commands and tracked files",
+   "kicker": "Pure functions that find a watcher's tracked path and read the file",
+   "intro": [
+    "The module learns a loop from a shell command, either the one the session ran or a line of <code>ps</code> output. <code>tokenize</code> splits the command into words and operators, and it records which parts of each word were quoted. <code>findWatchers</code> looks for a word whose last path segment is <code>watch-prs.sh</code> or <code>watch-threads.sh</code>. It then reads that command's <code>--tracked</code> value and stops at the next operator, such as <code>;</code> or <code>&amp;&amp;</code>.",
+    "<code>expand</code> expands a leading <code>~</code> and <code>$NAME</code> outside single quotes. A variable that the command assigns before the watcher, as in <code>D=~/loops; watch-prs.sh --tracked $D/tracked</code>, expands ahead of the environment. <code>expand</code> gives up on a command substitution or an unknown variable, so the caller can tell the person to add the file by hand. <code>parseTracked</code> reads the tracked file with the same entry pattern the watchers use, and like <code>watch-prs.sh</code> it matches entries and <code>!</code> exclusions without regard to case."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "The tokenizer, path expansion, watcher detection, and tracked-file parser.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 143,
+       "text": "A command that sets its tracked path through variables earlier in the command now resolves. The first review had found that it did not. A new test runs this machine's own loop command, <code>D=~/.local/state/projector; ID=…; bash …/watch-prs.sh --tracked $D/$ID.tracked</code>, and gets the expanded path, and <code>claude plugin test .</code> passed."
+      },
+      {
+       "kind": "context",
+       "line": 204,
+       "text": "<code>keyOf</code> lowercases, so the GitHub response, the previous snapshot, and the tracked entries all key one pull request the same way."
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Covers watcher detection, expansion, the tracked-file parser, and the GitHub query and response."
+    }
+   ]
+  },
+  {
+   "id": "github",
+   "title": "Asking GitHub for every pull request at once",
+   "kicker": "One GraphQL query, and a reader that tolerates a missing pull request",
+   "intro": [
+    "<code>buildQuery</code> groups the pull requests by repository and gives each one an alias, so one <code>gh api graphql</code> call fetches all of them. Repository names come from <code>parseTracked</code>, which admits only the characters GitHub allows in a name, so they are safe inside the query's string literals. For the drawer, the query also asks for each pull request's description, author, branch, size, update time, and the head commit's check rollup.",
+    "<code>parseResponse</code> keeps whatever data came back. A pull request that does not exist leaves its slot null and adds an error, but the call fails only when no data came back at all. <code>toPullRequest</code> finds the Projector summary's URL in the link block that <code>project summary publish</code> appends to the description."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "Builds the query and reads its answer into <code>PullRequest</code> records.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 16,
+       "text": "<code>reviewThreads(first: 100)</code> reads only the first 100 threads, so the open-thread count is too low on a pull request with more."
+      },
+      {
+       "kind": "verify",
+       "line": 20,
+       "text": "This pattern matches the marker and link line that <code>summary_link</code> in <code>src/projector/summary.py</code> writes: <code>&lt;!-- projector-summary v=1 sha=… --&gt;</code>, then <code>📽️ **Projector summary** of …: URL</code>. Read against the Python source. A test in <code>parse.test.ts</code> parses such a description."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "pane",
+   "title": "The hooks and the band above the prompt",
+   "kicker": "Learning loops from tool calls, reloading, and drawing the band",
+   "intro": [
+    "<code>register.tsx</code> wires the module to Claude Code events:",
+    "<ul class=\"tight\"><li><b><code>session.start</code></b> registers <code>/loop-prs</code> and starts a five-second tick. While the band is shown, the tick moves the band's \"updated … ago\" text on and reloads once the last load is 30 seconds old.</li><li><b><code>tool.call</code> for Bash and Monitor</b> lets the tool run first, then passes the command to <code>adopt</code>. <code>adopt</code> records each watcher's tracked file and shows the band only for a loop the session has not seen. A <code>.catch</code> handler replays the tool's result, so a failure in the hook never runs the tool twice.</li><li><b><code>prompt.submit</code> and <code>turn.complete</code></b> schedule a reload when a watcher's notification arrives and when a turn ends.</li><li><b><code>command.run</code> for <code>/loop-prs</code></b> hides the band when it is shown and shows it otherwise. With a tracked file as its argument, it records the file and shows the band.</li><li><b><code>ui.render</code> for <code>AbovePrompt</code></b> draws a divider carrying the reload time, then one line per open pull request, with the open drawer under its pull request. Each number is a <code>Markdown</code> link whose <code>onLinkPress</code> toggles that drawer. It passes to the engine while the band is hidden or a survey holds it.</li></ul>",
+    "<code>load</code> merges the session's own loops with watchers that <code>ps</code> found, reads each tracked file, and makes one GitHub call for every pull request. When that call fails, the band keeps what GitHub returned last time. A reload requested during a load runs once more after it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The event hooks, the reload logic, and the band's drawing.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 97,
+       "text": "A watcher that restarts with the same command does not show a band that you hid. <code>remember</code> reports whether it added the tracked file, and this line shows the band only then. A test in <code>band.test.tsx</code> covers it, and <code>claude plugin test .</code> passed."
+      },
+      {
+       "kind": "context",
+       "line": 199,
+       "text": "A request that arrives during a load sets <code>isQueued</code>, and the load runs once more when it ends. A non-forced reload loads only while <code>isLoopBandShown</code> is true."
+      },
+      {
+       "kind": "context",
+       "line": 430,
+       "text": "The drawer opens through <code>onLinkPress</code>, which Claude Code raises only for a plain click in the fullscreen layout. On the main screen, the default under tmux, the number stays an ordinary link, as <code>docs/plugins.md</code> now says."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Drives watcher commands and <code>/loop-prs</code> through the engine, answers <code>ps</code>, file reads, and <code>gh</code> from memory, and checks the band's lines, the drawer and <b>discuss</b>, and when the band shows. Every test runs in the fullscreen layout."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the validation gate",
+   "kicker": "The new gate step and how to use the pane",
+   "intro": [
+    "The gate in <code>AGENTS.md</code> and <code>docs/develop.md</code> adds <code>claude plugin test .</code>, which runs the module's <code>*.test.ts</code> and <code>*.test.tsx</code> files. <code>docs/plugins.md</code> gains a section on the band: an example, what each line shows, the drawer and its actions, the drawer's need for the fullscreen layout, how the band finds a loop, and when it reloads."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "Adds <code>claude plugin test .</code> to the gate and says what each <code>claude plugin</code> command validates.",
+     "checks": []
+    },
+    {
+     "path": "docs/develop.md"
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "New section on the pane.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 214,
+       "text": "This paragraph matches the hooks API, which describes a <code>Markdown</code> press as \"a plain single click where the surface reports clicks (the fullscreen terminal)\". A ctrl, alt, or cmd click still opens the link. Read against the API's type declarations."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
