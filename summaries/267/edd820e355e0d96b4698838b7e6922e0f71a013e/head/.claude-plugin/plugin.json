@@ -1,0 +1,17 @@
+{
+  "name": "projector",
+  "displayName": "Projector",
+  "version": "0.7.13",
+  "description": "Git-native project plans and agent workflows for any repository",
+  "author": {
+    "name": "Justin Balthrop",
+    "url": "https://github.com/ninjudd"
+  },
+  "homepage": "https://github.com/ninjudd/projector",
+  "repository": "https://github.com/ninjudd/projector",
+  "license": "MIT",
+  "keywords": ["projects", "planning", "git", "agents", "code-review"],
+  "dependencies": ["gh-stack"],
+  "skills": "./skills/",
+  "types": "./hooks/types.d.ts"
+}

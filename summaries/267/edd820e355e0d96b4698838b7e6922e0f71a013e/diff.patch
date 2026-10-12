@@ -1,0 +1,1512 @@
+diff --git a/.claude-plugin/plugin.json b/.claude-plugin/plugin.json
+index 8908da5..7546bfd 100644
+--- a/.claude-plugin/plugin.json
++++ b/.claude-plugin/plugin.json
+@@ -12,5 +12,6 @@
+   "license": "MIT",
+   "keywords": ["projects", "planning", "git", "agents", "code-review"],
+   "dependencies": ["gh-stack"],
+-  "skills": "./skills/"
++  "skills": "./skills/",
++  "types": "./hooks/types.d.ts"
+ }
+diff --git a/AGENTS.md b/AGENTS.md
+index 786b470..2dd0b2d 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -69,13 +69,15 @@ PYTHONPATH=src python3 -m unittest discover -v
+ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
++claude plugin test .
+ git diff --check
+ ```
+ 
+ The packaging tests validate both plugin manifests and their exact published
+-skill set. `claude plugin validate .` validates the marketplace, while
+-`claude plugin validate skills` validates the skill tree. Codex has no separate
+-public validation command.
++skill set. `claude plugin validate .` validates the marketplace and the Claude
++Code hooks module in `hooks/`, while `claude plugin validate skills` validates
++the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
++and `*.test.tsx` files. Codex has no separate public validation command.
+ 
+ The site's front end lives in `site/`: TypeScript under `site/src/`, and
+ the stylesheets, icon, and compiled JavaScript the site serves under
+diff --git a/docs/develop.md b/docs/develop.md
+index 3d4f620..fc650a6 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -93,6 +93,7 @@ PYTHONPATH=src python3 -m unittest discover -v
+ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
++claude plugin test .
+ git diff --check
+ ```
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 4886c6d..3904718 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -170,8 +170,61 @@ Validate a checkout before publishing it:
+ ```sh
+ claude plugin validate .
+ claude plugin validate skills
++claude plugin test .
+ ```
+ 
++### See a loop's pull requests above the prompt
++
++In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
++the open pull requests your loops track in the band above the prompt, one
++line each. Run `/loop-prs` to show or hide the band. It also appears when the
++session starts a loop's watcher for the first time.
++
++```text
++───────────────────────────────────────────────── updated 12s ago [-]
++#267 draft List a loop's open pull requests above the Claude Code prompt
++#258 draft Name the reviewed head in a review's signature line  conflict
++           reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
++           discuss  github  projector
++```
++
++Each line is the pull request's number, `draft` or `ready`, the title, and,
++when the pull request has them, a merge conflict, a change request, or
++unresolved review threads. A pull request that both a `start-fix-loop`
++watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
++`watch-prs.sh`, track is listed once. Only the title shortens on a narrow
++terminal. The divider says how long ago the band reloaded, and Claude Code's
++`[-]` at its end collapses the band.
++
++Click a pull request's number to open a drawer under it, and click it again
++to close the drawer; opening one drawer closes any other. The drawer says
++whether your loops are watching or reviewing the pull request, then its
++author, branch, size, checks, and when it last changed. Below that:
++
++- **discuss** puts the pull request's number in the prompt at the cursor,
++  as `#258`, or as `owner/repo#258` when the band lists more than one
++  repository.
++- **github** opens the pull request on GitHub.
++- **projector** opens its Projector summary, when the pull request's
++  description links one.
++
++A ctrl, alt, or cmd click on the number skips the drawer and opens the
++Projector summary, or the pull request on GitHub when it has no summary.
++
++The band finds a loop by the `--tracked` file its watcher reads. It learns
++that file when the session runs the watcher, and it also finds watchers
++already running on the machine, such as a loop another session started. To
++show a tracked file by hand, name it:
++
++```text
++/loop-prs ~/loops/review/tracked
++```
++
++The band reloads when one of the session's watchers reports a change and
++when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
++for every pull request in one `gh api graphql` call, and only while the band
++is shown. The skills never depend on the band, and Codex has no equivalent.
++
+ ## Install for Codex
+ 
+ Add the same repository as a Codex marketplace and install the plugin:
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+new file mode 100644
+index 0000000..c09a995
+--- /dev/null
++++ b/hooks/band.test.tsx
+@@ -0,0 +1,281 @@
++import type { On } from 'claude-code'
++import { expect, mock, test } from 'claude-code/testing'
++
++const HOME = '/home/ada'
++const REVIEW = `${HOME}/loops/review/tracked`
++const WATCH = `${HOME}/loops/watch/tracked`
++const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
++
++// The Bash tool's own shell shows the command single-quoted; the watcher it
++// started shows its arguments expanded. The watch loop runs in another session.
++const PS = [
++  `/bin/zsh -c eval 'scripts/watch-prs.sh --tracked "$HOME/loops/review/tracked"'`,
++  `bash scripts/watch-prs.sh --tracked ${REVIEW} --state ${HOME}/loops/review/state`,
++  `bash /plugin/skills/start-fix-loop/scripts/watch-threads.sh --tracked ${WATCH} --state s`,
++  '',
++].join('\n')
++
++const BAND = {
++  plugin: 'projector',
++  surface: 'terminal',
++  component: 'AbovePrompt',
++  props: {
++    hasSurvey: false,
++    isWorking: false,
++    maxRows: 12,
++    bodyColumns: 120,
++    scroll: { offset: 0, bodyRows: 12 },
++    view: {},
++  },
++} as const
++
++const COMMAND = {
++  command: 'loop-prs',
++  args: '',
++  origin: { kind: 'composer' },
++  presentation: { isFullscreen: true, columns: 120 },
++} as const
++
++const NOW = Date.UTC(2026, 9, 12, 12, 0)
++const SEVEN = 'https://github.com/x/y/pull/7'
++const SUMMARY = 'https://example.com/site/reviews/7'
++
++const pr = (number: number, title: string, fields: Record<string, unknown> = {}) => ({
++  number,
++  title,
++  url: `https://github.com/o/r/pull/${number}`,
++  state: 'OPEN',
++  isDraft: false,
++  reviewDecision: null,
++  mergeable: 'MERGEABLE',
++  reviewThreads: { nodes: [] },
++  ...fields,
++})
++
++// What GitHub answers for each repository, whatever alias the query gives it.
++const BY_REPO: Record<string, Record<string, unknown>> = {
++  'o/r': {
++    p1: pr(1, 'Signed-off change'),
++    p2: pr(2, 'Change under review', { isDraft: true, reviewThreads: { nodes: [{ isResolved: false }] } }),
++    p3: pr(3, 'Already merged', { state: 'MERGED' }),
++  },
++  'x/y': {
++    p7: pr(7, 'Conflicting change', {
++      url: SEVEN,
++      isDraft: true,
++      mergeable: 'CONFLICTING',
++      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
++      author: { login: 'ada' },
++      headRefName: 'fix-branch',
++      additions: 12,
++      deletions: 3,
++      changedFiles: 2,
++      updatedAt: new Date(NOW - 5 * 60_000).toISOString(),
++      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
++      body: `Why.\n\n<!-- projector-summary v=1 sha=${'b'.repeat(40)} -->\n📽️ **Projector summary** of bbbbbbb: ${SUMMARY}\n`,
++    }),
++  },
++}
++
++/** Answers a GraphQL query with each repository it names, under the alias it gave. */
++function answer(query: string): string {
++  const data: Record<string, unknown> = {}
++  for (const [, alias, owner, name] of query.matchAll(/(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\)/g)) {
++    data[alias ?? ''] = BY_REPO[`${owner}/${name}`] ?? null
++  }
++  return JSON.stringify({ data })
++}
++
++const ran = (stdout: string) => ({
++  exitCode: 0,
++  stdout,
++  stderr: '',
++  isStdoutTruncated: false,
++  isStderrTruncated: false,
++})
++
++/** What the engine draws in the band when the plugin hands it on. */
++const ENGINE_BAND = 'the engine’s own band'
++
++/** Answers the files, processes, prompt and Bash calls beneath the plugin. */
++function world(on: On, files: Record<string, string>, ps = PS) {
++  const commands: string[][] = []
++  const filled: string[] = []
++  on('fs.stat', ($, e) => ({
++    value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false, realPath: e.path },
++  }))
++  on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
++  on('process.run', ($, e) => {
++    commands.push([...e.argv])
++    return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
++  })
++  on('prompt.fill', ($, e) => {
++    filled.push(`${e.mode}:${e.text}`)
++    return { isFilled: true }
++  })
++  on('tool.call', { tool: 'Bash' }, () => ({
++    result: { stdout: '', stderr: '', interrupted: false },
++    text: '',
++  }))
++  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
++    const { Text } = $.ui.resolve(e)
++    return <Text>{ENGINE_BAND}</Text>
++  })
++  return { commands, filled }
++}
++
++test('draws one line per open pull request, with no section labels', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const { commands } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const gh = commands.filter(argv => argv[0] === 'gh')
++  expect(gh.length).toBe(1)
++  expect(gh[0]?.join(' ')).toContain('repository(owner: "x", name: "y") { p7: pullRequest(number: 7)')
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
++  const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
++  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
++  expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('a click on a pull request opens its drawer, and discuss puts it in the prompt', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  // A ctrl, alt or cmd click opens what the label links: the summary when
++  // there is one, the pull request otherwise.
++  expect((await ui.find({ key: 'pr:x/y#7' }))?.props.text).toBe(`[y#7](${SUMMARY})`)
++  expect((await ui.find({ key: 'pr:o/r#1' }))?.props.text).toBe('[r#1](https://github.com/o/r/pull/1)')
++
++  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
++  expect(
++    await ui.find({ type: 'Text', text: 'watching · by ada · fix-branch · +12 −3 in 2 files' }),
++  ).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: ' · updated 5m ago' })).toBeDefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
++  expect(await ui.find({ key: 'projector:x/y#7' })).toBeDefined()
++  expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
++
++  await ui.press({ key: 'discuss:x/y#7', link: { href: SEVEN } })
++  expect(filled).toEqual(['insert:x/y#7 '])
++
++  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('opening one drawer closes the one that was open', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
++  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
++  expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('lists a pull request both loops track once, as watched and reviewed', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
++  expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
++  await ui.unmount()
++})
++
++test('stays hidden until the session starts a watcher or asks for it', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
++
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('keeps a band you hid hidden when a known watcher starts again', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await $.command.run(COMMAND)
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('draws over a snapshot an earlier version left in the session', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++  const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
++  on('state.get', { plugin: 'projector', key: 'loopSnapshot' }, () => ({
++    value: { value: earlier as never, version: 1 },
++  }))
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('says so when no loop tracks an open pull request', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, {}, '')
++
++  await $.command.run(COMMAND)
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
++  await ui.unmount()
++})
+diff --git a/hooks/github.ts b/hooks/github.ts
+new file mode 100644
+index 0000000..a13d482
+--- /dev/null
++++ b/hooks/github.ts
+@@ -0,0 +1,139 @@
++import type { Checks, PullRequest } from './types'
++import { keyOf, type TrackedPr } from './parse'
++
++/** Where one pull request's node sits in the response. */
++type Slot = { pr: TrackedPr; repoAlias: string; prAlias: string }
++
++export type Query = { text: string; slots: Slot[] }
++
++export type Fetched = {
++  prs: Map<string, PullRequest>
++  error: string | null
++}
++
++const FIELDS = `number title url state isDraft reviewDecision mergeable body
++  author { login } headRefName additions deletions changedFiles updatedAt
++  reviewThreads(first: 100) { nodes { isResolved } }
++  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
++
++// The line `project summary publish` leaves at the bottom of a description.
++const SUMMARY = /^<!-- projector-summary v=1 sha=[0-9a-f]{40} -->\r?\n\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?:\/\/\S+)\s*$/m
++
++const CHECKS: Record<string, Checks> = {
++  SUCCESS: 'passing',
++  FAILURE: 'failing',
++  ERROR: 'failing',
++  PENDING: 'pending',
++  EXPECTED: 'pending',
++}
++
++/**
++ * Builds one GraphQL query for every pull request, grouped by repository.
++ * Repository names come from `parseTracked`, which admits only GitHub's
++ * name characters, so they are safe inside a string literal.
++ */
++export function buildQuery(prs: readonly TrackedPr[]): Query {
++  const byRepo = new Map<string, TrackedPr[]>()
++  for (const pr of prs) {
++    byRepo.set(pr.repo, [...(byRepo.get(pr.repo) ?? []), pr])
++  }
++
++  const slots: Slot[] = []
++  const repos = [...byRepo.entries()].map(([repo, list], index) => {
++    const [owner, name] = repo.split('/')
++    const repoAlias = `r${index}`
++    const pulls = list.map(pr => {
++      const prAlias = `p${pr.number}`
++      slots.push({ pr, repoAlias, prAlias })
++      return `${prAlias}: pullRequest(number: ${pr.number}) { ${FIELDS} }`
++    })
++    return `${repoAlias}: repository(owner: "${owner}", name: "${name}") { ${pulls.join(' ')} }`
++  })
++
++  return { text: `query { ${repos.join(' ')} }`, slots }
++}
++
++const isRecord = (value: unknown): value is Record<string, unknown> =>
++  typeof value === 'object' && value !== null && !Array.isArray(value)
++
++const firstLine = (text: string) => text.trim().split('\n')[0] ?? ''
++
++function messageOf(body: unknown): string | undefined {
++  if (!isRecord(body) || !Array.isArray(body.errors)) return undefined
++  const [first] = body.errors as unknown[]
++  return isRecord(first) && typeof first.message === 'string' ? first.message : undefined
++}
++
++const nodesOf = (value: unknown): unknown[] =>
++  isRecord(value) && Array.isArray(value.nodes) ? (value.nodes as unknown[]) : []
++
++const numberOf = (value: unknown) => (typeof value === 'number' ? value : 0)
++
++function checksOf(node: Record<string, unknown>): Checks | null {
++  const [last] = nodesOf(node.commits)
++  const commit = isRecord(last) ? last.commit : undefined
++  const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
++  return isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
++}
++
++function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
++  const threads = nodesOf(node.reviewThreads)
++  const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
++  const decision = node.reviewDecision
++  const updatedAt = typeof node.updatedAt === 'string' ? Date.parse(node.updatedAt) : Number.NaN
++  const summary = typeof node.body === 'string' ? SUMMARY.exec(node.body) : null
++  return {
++    repo: pr.repo,
++    number: pr.number,
++    title: typeof node.title === 'string' ? node.title : '',
++    url: typeof node.url === 'string' ? node.url : `https://github.com/${pr.repo}/pull/${pr.number}`,
++    state,
++    isDraft: node.isDraft === true,
++    reviewDecision:
++      decision === 'APPROVED' || decision === 'CHANGES_REQUESTED' || decision === 'REVIEW_REQUIRED'
++        ? decision
++        : null,
++    isConflicting: node.mergeable === 'CONFLICTING',
++    openThreads: threads.filter(thread => isRecord(thread) && thread.isResolved === false).length,
++    author: isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login : null,
++    branch: typeof node.headRefName === 'string' ? node.headRefName : '',
++    additions: numberOf(node.additions),
++    deletions: numberOf(node.deletions),
++    changedFiles: numberOf(node.changedFiles),
++    checks: checksOf(node),
++    updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
++    summaryUrl: summary?.[1] ?? null,
++  }
++}
++
++/**
++ * Reads what `gh api graphql` printed. A pull request that does not exist
++ * leaves its slot null and adds an error, but the rest still answer, so
++ * errors fail the fetch only when no data came back at all.
++ */
++export function parseResponse(
++  query: Query,
++  result: { exitCode: number; stdout: string; stderr: string },
++): Fetched {
++  let body: unknown
++  try {
++    body = JSON.parse(result.stdout)
++  } catch {
++    const reason = firstLine(result.stderr) || `gh exited with ${result.exitCode}`
++    return { prs: new Map(), error: reason }
++  }
++
++  const data = isRecord(body) && isRecord(body.data) ? body.data : undefined
++  if (data === undefined) {
++    return { prs: new Map(), error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data') }
++  }
++
++  const prs = new Map<string, PullRequest>()
++  for (const slot of query.slots) {
++    const repo = data[slot.repoAlias]
++    const node = isRecord(repo) ? repo[slot.prAlias] : undefined
++    if (isRecord(node)) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
++  }
++
++  return { prs, error: null }
++}
+diff --git a/hooks/hooks.json b/hooks/hooks.json
+new file mode 100644
+index 0000000..5a63f64
+--- /dev/null
++++ b/hooks/hooks.json
+@@ -0,0 +1 @@
++{ "modules": ["./register.tsx"] }
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+new file mode 100644
+index 0000000..0a341b7
+--- /dev/null
++++ b/hooks/parse.test.ts
+@@ -0,0 +1,169 @@
++import { describe, expect, test } from 'claude-code/testing'
++
++import { buildQuery, parseResponse } from './github'
++import { expandPath, findWatchers, parseTracked } from './parse'
++
++const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
++const env = (name: string) => VARIABLES[name]
++
++describe('findWatchers', () => {
++  test('reads the tracked path of a review watcher', () => {
++    expect(
++      findWatchers('scripts/watch-prs.sh --tracked /loops/tracked --state /loops/state --once', env),
++    ).toEqual([{ kind: 'reviewing', tracked: '/loops/tracked', written: '/loops/tracked' }])
++  })
++
++  test('reads a fix watcher behind cd, quotes and a variable script path', () => {
++    const command =
++      'cd /repo && "$ROOT/skills/start-fix-loop/scripts/watch-threads.sh" --tracked "$HOME/fix loop/tracked" --state s'
++    expect(findWatchers(command, env)).toEqual([
++      { kind: 'watching', tracked: '/home/ada/fix loop/tracked', written: '$HOME/fix loop/tracked' },
++    ])
++  })
++
++  test('expands ~ and leaves single-quoted text alone', () => {
++    expect(findWatchers('watch-prs.sh --tracked ~/t', env)[0]?.tracked).toBe('/home/ada/t')
++    expect(findWatchers("watch-prs.sh --tracked '$HOME/t'", env)[0]?.tracked).toBe('$HOME/t')
++    expect(findWatchers('watch-prs.sh --tracked=${HOME}/t', env)[0]?.tracked).toBe('/home/ada/t')
++  })
++
++  test('leaves a path it cannot expand undefined', () => {
++    expect(findWatchers('watch-prs.sh --tracked "$LOOP/tracked"', env)).toEqual([
++      { kind: 'reviewing', tracked: undefined, written: '$LOOP/tracked' },
++    ])
++    expect(findWatchers('watch-prs.sh --tracked "$(pwd)/tracked"', env)[0]?.tracked).toBeUndefined()
++  })
++
++  test('expands a variable the command assigns before the watcher', () => {
++    const command =
++      'D=~/.local/state/projector; ID=projector-review-loop; bash /p/watch-prs.sh --tracked $D/$ID.tracked --state s'
++    expect(findWatchers(command, env)[0]?.tracked).toBe('/home/ada/.local/state/projector/projector-review-loop.tracked')
++    expect(findWatchers('export T="$HOME/t" && watch-threads.sh --tracked "$T"', env)[0]?.tracked).toBe('/home/ada/t')
++    expect(findWatchers('watch-prs.sh --tracked $D/t; D=/late', env)[0]?.tracked).toBeUndefined()
++    expect(findWatchers('D=$(pwd); watch-prs.sh --tracked $D/t', env)[0]?.tracked).toBeUndefined()
++  })
++
++  test('stops at the end of the watcher command', () => {
++    expect(findWatchers('watch-prs.sh --once; echo --tracked /x', env)).toEqual([])
++    expect(findWatchers('watch-prs.sh --once && other --tracked /x', env)).toEqual([])
++  })
++
++  test('ignores a command that only mentions a watcher', () => {
++    expect(findWatchers("echo 'watch-prs.sh --tracked /x'", env)).toEqual([])
++    expect(findWatchers('cat skills/start-review-loop/scripts/watch-prs.sh', env)).toEqual([])
++    expect(findWatchers('my-watch-prs.sh --tracked /x', env)).toEqual([])
++  })
++})
++
++describe('expandPath', () => {
++  test('expands one word and refuses more', () => {
++    expect(expandPath('~/loops/tracked', env)).toBe('/home/ada/loops/tracked')
++    expect(expandPath('"/a b/tracked"', env)).toBe('/a b/tracked')
++    expect(expandPath('/a /b', env)).toBeUndefined()
++  })
++})
++
++describe('parseTracked', () => {
++  test('keeps entries in order, once each, less the excluded ones', () => {
++    const text = 'o/r#1\no/r#2\n!o/r#2\n\nnot an entry\no/r#1\n  other/re.po#30  \no/r#0\n'
++    expect(parseTracked(text)).toEqual([
++      { repo: 'o/r', number: 1 },
++      { repo: 'other/re.po', number: 30 },
++    ])
++  })
++
++  test('matches entries and exclusions without regard to case', () => {
++    expect(parseTracked('Owner/Repo#5\nowner/repo#5\nowner/repo#6\n!OWNER/REPO#6\n')).toEqual([
++      { repo: 'Owner/Repo', number: 5 },
++    ])
++  })
++})
++
++describe('GitHub', () => {
++  const query = buildQuery([
++    { repo: 'o/r', number: 1 },
++    { repo: 'o/r', number: 2 },
++    { repo: 'x/y', number: 3 },
++  ])
++
++  test('asks for every pull request in one query, grouped by repository', () => {
++    expect(query.text).toContain('r0: repository(owner: "o", name: "r") { p1: pullRequest(number: 1)')
++    expect(query.text).toContain('p2: pullRequest(number: 2)')
++    expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
++  })
++
++  test('reads what came back even when one pull request is missing', () => {
++    const body = {
++      data: {
++        r0: {
++          p1: {
++            number: 1,
++            title: 'First',
++            url: 'https://github.com/o/r/pull/1',
++            state: 'OPEN',
++            isDraft: true,
++            reviewDecision: 'CHANGES_REQUESTED',
++            mergeable: 'CONFLICTING',
++            reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
++            author: { login: 'ada' },
++            headRefName: 'first-change',
++            additions: 120,
++            deletions: 7,
++            changedFiles: 4,
++            updatedAt: '2026-10-12T12:00:00Z',
++            commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
++            body:
++              'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
++              'a'.repeat(40) +
++              ' -->\n📽️ **Projector summary** of aaaaaaa: https://example.com/site/reviews/1\n',
++          },
++          p2: null,
++        },
++        r1: { p3: { number: 3, title: 'Third', state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' } },
++      },
++      errors: [{ message: 'Could not resolve to a PullRequest with the number of 2.' }],
++    }
++    const fetched = parseResponse(query, { exitCode: 1, stdout: JSON.stringify(body), stderr: '' })
++
++    expect(fetched.error).toBeNull()
++    expect([...fetched.prs.keys()]).toEqual(['o/r#1', 'x/y#3'])
++    expect(fetched.prs.get('o/r#1')).toEqual({
++      repo: 'o/r',
++      number: 1,
++      title: 'First',
++      url: 'https://github.com/o/r/pull/1',
++      state: 'OPEN',
++      isDraft: true,
++      reviewDecision: 'CHANGES_REQUESTED',
++      isConflicting: true,
++      openThreads: 2,
++      author: 'ada',
++      branch: 'first-change',
++      additions: 120,
++      deletions: 7,
++      changedFiles: 4,
++      checks: 'failing',
++      updatedAt: Date.UTC(2026, 9, 12, 12, 0),
++      summaryUrl: 'https://example.com/site/reviews/1',
++    })
++    expect(fetched.prs.get('x/y#3')?.state).toBe('MERGED')
++    expect(fetched.prs.get('x/y#3')).toMatchObject({ author: null, checks: null, updatedAt: null, summaryUrl: null })
++    expect(fetched.prs.get('x/y#3')?.url).toBe('https://github.com/x/y/pull/3')
++  })
++
++  test('reports why gh failed', () => {
++    const offline = parseResponse(query, {
++      exitCode: 1,
++      stdout: '',
++      stderr: 'error connecting to api.github.com\ncheck your internet connection\n',
++    })
++    expect(offline).toEqual({ prs: new Map(), error: 'error connecting to api.github.com' })
++
++    const refused = parseResponse(query, {
++      exitCode: 1,
++      stdout: JSON.stringify({ errors: [{ message: 'Bad credentials' }] }),
++      stderr: '',
++    })
++    expect(refused.error).toBe('Bad credentials')
++  })
++})
+diff --git a/hooks/parse.ts b/hooks/parse.ts
+new file mode 100644
+index 0000000..7f7000b
+--- /dev/null
++++ b/hooks/parse.ts
+@@ -0,0 +1,231 @@
++import type { LoopKind } from './types'
++
++/** Looks up an environment variable; undefined when it is unset or unknown. */
++export type Env = (name: string) => string | undefined
++
++/** A watcher found in a command line, and the tracked path it was given. */
++export type Watcher = {
++  kind: LoopKind
++  /** The path, expanded; undefined when it could not be expanded. */
++  tracked: string | undefined
++  /** The `--tracked` argument as written, for messages. */
++  written: string
++}
++
++/** One `owner/repo#number` entry of a tracked file. */
++export type TrackedPr = { repo: string; number: number }
++
++const SCRIPTS: Record<string, LoopKind> = {
++  'watch-prs.sh': 'reviewing',
++  'watch-threads.sh': 'watching',
++}
++
++const OPERATORS = ['&&', '||', ';', '&', '|', '(', ')', '\n']
++
++type Part = { text: string; isLiteral: boolean }
++type Token = { parts: Part[] } | { operator: string }
++
++/**
++ * Splits a shell command into words and operators, keeping which parts of a
++ * word were quoted so that expansion leaves single-quoted text alone.
++ */
++export function tokenize(command: string): Token[] {
++  const tokens: Token[] = []
++  let parts: Part[] = []
++  let isInWord = false
++
++  const add = (text: string, isLiteral: boolean) => {
++    isInWord = true
++    const last = parts[parts.length - 1]
++    if (last !== undefined && last.isLiteral === isLiteral) {
++      last.text += text
++    } else {
++      parts.push({ text, isLiteral })
++    }
++  }
++  const end = () => {
++    if (isInWord) tokens.push({ parts })
++    parts = []
++    isInWord = false
++  }
++
++  let i = 0
++  while (i < command.length) {
++    const char = command[i] as string
++    const operator = OPERATORS.find(op => command.startsWith(op, i))
++    if (char === ' ' || char === '\t') {
++      end()
++      i += 1
++    } else if (operator !== undefined) {
++      end()
++      tokens.push({ operator })
++      i += operator.length
++    } else if (char === '#' && !isInWord) {
++      while (i < command.length && command[i] !== '\n') i += 1
++    } else if (char === "'") {
++      const close = command.indexOf("'", i + 1)
++      const stop = close === -1 ? command.length : close
++      add(command.slice(i + 1, stop), true)
++      i = stop + 1
++    } else if (char === '"') {
++      i += 1
++      while (i < command.length && command[i] !== '"') {
++        const inner = command[i] as string
++        const next = command[i + 1]
++        if (inner === '\\' && next !== undefined && '"\\$`'.includes(next)) {
++          add(next, true)
++          i += 2
++        } else {
++          add(inner, false)
++          i += 1
++        }
++      }
++      if (!isInWord) add('', true)
++      i += 1
++    } else if (char === '\\') {
++      const next = command[i + 1]
++      if (next !== undefined && next !== '\n') add(next, true)
++      i += 2
++    } else {
++      add(char, false)
++      i += 1
++    }
++  }
++  end()
++
++  return tokens
++}
++
++const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g
++
++/**
++ * Expands a word the way the shell would for a path: a leading `~` and
++ * `$NAME` or `${NAME}` outside single quotes. Undefined when the word holds
++ * something only the running shell knows, such as an unset variable or a
++ * command substitution.
++ */
++export function expand(parts: readonly Part[], env: Env): string | undefined {
++  let out = ''
++  for (const [index, part] of parts.entries()) {
++    if (part.isLiteral) {
++      out += part.text
++      continue
++    }
++    let text = part.text
++    if (text.includes('$(') || text.includes('`')) return undefined
++    if (index === 0 && (text === '~' || text.startsWith('~/'))) {
++      const home = env('HOME')
++      if (home === undefined) return undefined
++      text = home + text.slice(1)
++    }
++    let isKnown = true
++    text = text.replace(VARIABLE, (_, braced: string | undefined, bare: string | undefined) => {
++      const value = env(braced ?? bare ?? '')
++      if (value === undefined) isKnown = false
++      return value ?? ''
++    })
++    if (!isKnown || text.includes('$')) return undefined
++    out += text
++  }
++  return out
++}
++
++/** Expands a path typed as one shell word, such as `/loop-prs ~/loop/tracked`. */
++export function expandPath(text: string, env: Env): string | undefined {
++  const tokens = tokenize(text.trim())
++  const [word] = tokens
++  if (tokens.length !== 1 || word === undefined || !('parts' in word)) return undefined
++  return expand(word.parts, env)
++}
++
++const raw = (parts: readonly Part[]) => parts.map(part => part.text).join('')
++
++const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/
++
++/**
++ * Finds each `watch-prs.sh` or `watch-threads.sh` invocation in a command
++ * line and the `--tracked` path given to it. A variable the command assigns
++ * before the watcher, as in `D=~/loops; watch-prs.sh --tracked $D/tracked`,
++ * expands ahead of the environment.
++ */
++export function findWatchers(command: string, env: Env): Watcher[] {
++  const tokens = tokenize(command)
++  const found: Watcher[] = []
++  const assigned = new Map<string, string | undefined>()
++  const lookup: Env = name => (assigned.has(name) ? assigned.get(name) : env(name))
++  let isCommandStart = true
++
++  for (const [index, token] of tokens.entries()) {
++    if (!('parts' in token)) {
++      isCommandStart = true
++      continue
++    }
++    const [first, ...rest] = token.parts
++    const assignment =
++      isCommandStart && first !== undefined && !first.isLiteral ? ASSIGNMENT.exec(first.text) : null
++    if (assignment !== null && first !== undefined) {
++      const [written, name] = assignment as unknown as [string, string]
++      assigned.set(name, expand([{ ...first, text: first.text.slice(written.length) }, ...rest], lookup))
++      continue
++    }
++    if (isCommandStart && raw(token.parts) === 'export') continue
++    isCommandStart = false
++
++    const name = raw(token.parts).split('/').pop() ?? ''
++    const kind = SCRIPTS[name]
++    if (kind === undefined) continue
++
++    for (let at = index + 1; at < tokens.length; at += 1) {
++      const arg = tokens[at] as Token
++      if (!('parts' in arg)) break
++      const text = raw(arg.parts)
++      if (text === '--tracked') {
++        const value = tokens[at + 1]
++        if (value === undefined || !('parts' in value)) break
++        found.push({ kind, tracked: expand(value.parts, lookup), written: raw(value.parts) })
++        break
++      }
++      if (text.startsWith('--tracked=')) {
++        const [first, ...rest] = arg.parts
++        if (first === undefined) break
++        const value = [{ ...first, text: first.text.slice('--tracked='.length) }, ...rest]
++        found.push({ kind, tracked: expand(value, lookup), written: raw(value) })
++        break
++      }
++    }
++  }
++
++  return found
++}
++
++const ENTRY = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/
++
++/** Names a pull request without regard to case, as GitHub and the watchers do. */
++export const keyOf = (pr: TrackedPr) => `${pr.repo}#${pr.number}`.toLowerCase()
++
++/**
++ * Reads a tracked file: one `owner/repo#number` per line, where a line
++ * `!owner/repo#number` keeps that pull request out. Lines of any other
++ * shape are skipped; the watcher reports them itself.
++ */
++export function parseTracked(text: string): TrackedPr[] {
++  const kept = new Map<string, TrackedPr>()
++  const excluded = new Set<string>()
++
++  for (const line of text.split('\n')) {
++    const match = ENTRY.exec(line.trim())
++    if (match === null) continue
++    const [, bang, repo, number] = match as unknown as [string, string, string, string]
++    const pr = { repo, number: Number(number) }
++    const key = keyOf(pr)
++    if (bang === '!') {
++      excluded.add(key)
++    } else if (!kept.has(key)) {
++      kept.set(key, pr)
++    }
++  }
++
++  return [...kept.entries()]
++    .filter(([key]) => !excluded.has(key))
++    .map(([, pr]) => pr)
++}
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+new file mode 100644
+index 0000000..2f5629f
+--- /dev/null
++++ b/hooks/register.tsx
+@@ -0,0 +1,462 @@
++import { atom, read, update } from 'claude-code'
++import type { EngineInterface, Register } from 'claude-code'
++
++import type { Checks, LoopKind, PullRequest, Row, SeenLoop, Snapshot } from './types'
++import { buildQuery, parseResponse, type Fetched } from './github'
++import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
++
++type Engine = EngineInterface
++type Loop = { kind: LoopKind; tracked: string }
++
++const TICK_MS = 5_000
++const POLL_MS = 30_000
++const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
++
++// Watching first: a pull request both loops track is listed once, where its
++// watch loop puts it.
++const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
++
++const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
++  passing: 'success',
++  failing: 'error',
++  pending: 'warning',
++}
++
++const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
++const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
++const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
++const isShown = atom({ plugin: 'projector', key: 'isLoopBandShown' } as const, false)
++const drawer = atom({ plugin: 'projector', key: 'loopDrawer' } as const, null)
++
++// The session keeps its state across a reload or an update of the plugin,
++// so a value an earlier version wrote can have another shape.
++const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
++const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
++
++let envLoad: Promise<Env> | undefined
++let inFlight: Promise<void> | undefined
++let isQueued = false
++let attemptedAt = 0
++const unreadable = new Set<string>()
++
++/** The few variables a tracked path is written with, read once per load. */
++function envOf($: Engine): Promise<Env> {
++  envLoad ??= (async () => {
++    const values: Record<string, string | undefined> = {
++      HOME: await $.env.get('HOME'),
++      TMPDIR: await $.env.get('TMPDIR'),
++      XDG_CONFIG_HOME: await $.env.get('XDG_CONFIG_HOME'),
++      XDG_DATA_HOME: await $.env.get('XDG_DATA_HOME'),
++      XDG_STATE_HOME: await $.env.get('XDG_STATE_HOME'),
++    }
++    return (name: string) => (values[name] === '' ? undefined : values[name])
++  })()
++  return envLoad
++}
++
++async function canonical($: Engine, path: string): Promise<string | undefined> {
++  try {
++    const stat = await $.fs.stat(path, { resolve: true })
++    return stat.realPath ?? path
++  } catch {
++    return undefined
++  }
++}
++
++/** Records a loop, answering whether the session had not seen it before. */
++async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
++  let isNew = false
++  await update($, seen, list => {
++    isNew = !list.some(one => one.tracked === loop.tracked)
++    return isNew ? [...list, loop] : list
++  })
++  return isNew
++}
++
++/**
++ * Records the tracked file of each watcher a command starts, and shows the
++ * band when one is new. A loop restarts its watcher with the same command,
++ * as a Monitor does each time it expires, so a known one shows nothing and
++ * a path it cannot read is said once.
++ */
++async function adopt($: Engine, command: string): Promise<void> {
++  if (!command.includes('watch-')) return
++  const env = await envOf($)
++  let isAdded = false
++  for (const watcher of findWatchers(command, env)) {
++    if (watcher.tracked === undefined) {
++      if (!unreadable.has(watcher.written)) {
++        unreadable.add(watcher.written)
++        $.ui.toast(`loop-prs: cannot tell which file ${watcher.written} names; run /loop-prs <tracked file>`)
++      }
++      continue
++    }
++    const tracked = (await canonical($, watcher.tracked)) ?? watcher.tracked
++    isAdded = (await remember($, { kind: watcher.kind, tracked })) || isAdded
++  }
++  if (isAdded) show($)
++}
++
++/** Watchers running anywhere on this machine, found by their arguments. */
++async function runningLoops($: Engine, env: Env): Promise<Loop[]> {
++  let stdout: string
++  try {
++    ;({ stdout } = await $.process.run(['ps', '-A', '-o', 'args='], { timeoutMs: 10_000 }))
++  } catch {
++    return []
++  }
++
++  const loops = new Map<string, Loop>()
++  for (const line of stdout.split('\n')) {
++    if (!line.includes('watch-')) continue
++    for (const watcher of findWatchers(line, env)) {
++      // A process's arguments arrive expanded, and a relative path there is
++      // relative to that process, so only an absolute one names its file.
++      if (watcher.tracked === undefined || !watcher.tracked.startsWith('/')) continue
++      const tracked = await canonical($, watcher.tracked)
++      if (tracked !== undefined && !loops.has(tracked)) {
++        loops.set(tracked, { kind: watcher.kind, tracked })
++      }
++    }
++  }
++  return [...loops.values()]
++}
++
++async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
++  if (prs.length === 0) return { prs: new Map(), error: null }
++  const query = buildQuery(prs)
++  try {
++    const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
++      timeoutMs: 30_000,
++    })
++    return parseResponse(query, result)
++  } catch (error) {
++    return { prs: new Map(), error: error instanceof Error ? error.message : String(error) }
++  }
++}
++
++async function load($: Engine): Promise<void> {
++  const env = await envOf($)
++  const own = await read($, seen)
++  const running = await runningLoops($, env)
++
++  // A file named by hand takes its kind from the watcher reading it, if one runs.
++  const loops: Loop[] = [
++    ...own.map(loop => ({
++      tracked: loop.tracked,
++      kind: isKind(loop.kind)
++        ? loop.kind
++        : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
++    })),
++    ...running.filter(loop => !own.some(one => one.tracked === loop.tracked)),
++  ]
++
++  // A tracked file that is gone belongs to a loop that ended.
++  const sets = await Promise.all(
++    loops.map(async loop => ({
++      kind: loop.kind,
++      entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
++    })),
++  )
++
++  const kindsOf = new Map<string, LoopKind[]>()
++  const tracked = new Map<string, TrackedPr>()
++  for (const kind of KINDS) {
++    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) {
++      const key = keyOf(entry)
++      tracked.set(key, tracked.get(key) ?? entry)
++      const kinds = kindsOf.get(key) ?? []
++      if (!kinds.includes(kind)) kindsOf.set(key, [...kinds, kind])
++    }
++  }
++
++  const fetched = await fetchPrs($, [...tracked.values()])
++
++  // When GitHub cannot be reached, keep drawing what it said last time.
++  const last = current(await read($, snapshot))
++  const previous = new Map(last.rows.map(row => [keyOf(row.pr), row.pr]))
++  const isFetched = fetched.error === null
++
++  const rows: Row[] = [...kindsOf].flatMap(([key, kinds]) => {
++    const pr = fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key))
++    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, kinds }] : []
++  })
++
++  const time = await $.clock.now()
++  await update($, snapshot, () => ({
++    rows,
++    fetchedAt: isFetched ? time : last.fetchedAt,
++    error: fetched.error,
++  }))
++  await update($, now, () => time)
++}
++
++/**
++ * Reloads the loops and their pull requests, only while the band is shown
++ * unless forced. A request that arrives mid-load runs once more after it,
++ * so a change it was told about is never missed.
++ */
++function refresh($: Engine, isForced = false): Promise<void> {
++  if (inFlight !== undefined) {
++    isQueued = true
++    return inFlight
++  }
++  inFlight = (async () => {
++    try {
++      if (isForced || (await read($, isShown))) {
++        attemptedAt = await $.clock.now()
++        await load($)
++      }
++    } catch (error) {
++      const message = error instanceof Error ? error.message : String(error)
++      await update($, snapshot, last => ({ ...current(last), error: message })).catch(() => undefined)
++    }
++  })().finally(() => {
++    inFlight = undefined
++    if (isQueued) {
++      isQueued = false
++      void refresh($)
++    }
++  })
++  return inFlight
++}
++
++/** Moves the band's clock on, and polls GitHub once the last load is old enough. */
++async function tick($: Engine): Promise<void> {
++  if (!(await read($, isShown))) return
++  const time = await $.clock.now()
++  await update($, now, () => time)
++  if (time - attemptedAt >= POLL_MS) await refresh($)
++}
++
++/** Shows the band and loads it, from a timer so no hook waits on GitHub. */
++function show($: Engine): void {
++  $.clock.after(1, () => {
++    void update($, isShown, () => true).then(() => refresh($, true))
++  })
++}
++
++/** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
++const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
++
++/**
++ * Names a pull request for the prompt: `#12` when the band shows one
++ * repository, `owner/repo#12` otherwise, so the reference is never ambiguous.
++ */
++function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
++  const isOneRepo = new Set(prs.map(pr => pr.repo)).size <= 1
++  return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
++}
++
++type Note = { text: string; color: 'error' | 'warning' | 'success' }
++
++/** What a row says after the title: what holds the pull request back, or its approval. */
++function notesOf(pr: PullRequest): Note[] {
++  const notes: Note[] = []
++  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
++  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
++  if (pr.openThreads > 0) {
++    notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
++  }
++  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
++  return notes
++}
++
++/** The drawer's facts, before its checks: what the loops do, who, where, and how big. */
++function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
++  const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
++  return [
++    kinds.join(' and '),
++    pr.author === null ? undefined : `by ${pr.author}`,
++    pr.branch || undefined,
++    `+${pr.additions} −${pr.deletions} in ${files}`,
++  ]
++    .filter(part => part !== undefined)
++    .join(' · ')
++}
++
++const ago = (seconds: number) =>
++  seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago`
++    : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86_400)}d ago`
++
++const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
++
++/** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
++function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
++  const repos = [...new Set(prs.map(pr => pr.repo))]
++  if (repos.length <= 1) return pr => `#${pr.number}`
++  const names = repos.map(repo => repo.split('/')[1])
++  const isNameEnough = new Set(names).size === names.length
++  return pr => `${isNameEnough ? pr.repo.split('/')[1] : pr.repo}#${pr.number}`
++}
++
++export const register: Register = on => {
++  on('session.start', async ($, e, next) => {
++    await $.command.register({
++      name: 'loop-prs',
++      description: 'Show the open pull requests your watch and review loops track',
++      argumentHint: '[tracked file]',
++    })
++    $.clock.every(TICK_MS, () => void tick($))
++    soon($)
++    return next(e)
++  })
++
++  // These hooks only watch: the catch hands back what the event settled to,
++  // so a failure here never runs a tool twice or refuses anything.
++  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
++    const ran = await next(e)
++    if (ran.deny === undefined) await adopt($, e.command)
++    return ran
++  }).catch(($, e, next) => next(e))
++
++  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
++    const ran = await next(e)
++    if (ran.deny === undefined) await adopt($, e.command ?? '')
++    return ran
++  }).catch(($, e, next) => next(e))
++
++  // A watcher's line reaches the session as a task notification: the moment
++  // a pull request it tracks has changed.
++  on('prompt.submit', ($, e, next) => {
++    if (e.origin.kind === 'task-notification') soon($)
++    return next(e)
++  }).catch(($, e, next) => next(e))
++
++  // A turn may have pushed, replied or resolved threads.
++  on('turn.complete', ($, e, next) => {
++    soon($)
++    return next(e)
++  })
++
++  // `/loop-prs` shows or hides the band; `/loop-prs <tracked file>` adds a
++  // loop and shows it.
++  on('command.run', { command: 'loop-prs' }, async ($, e) => {
++    const written = (e.args ?? '').trim()
++    if (written !== '') {
++      const expanded = expandPath(written, await envOf($))
++      const tracked = expanded === undefined ? undefined : await canonical($, expanded)
++      if (tracked === undefined) return { text: `loop-prs: no tracked file at ${written}.` }
++      await remember($, { tracked })
++    } else if (await read($, isShown)) {
++      await update($, isShown, () => false)
++      return { text: 'Hid the loop PRs band.' }
++    }
++    show($)
++    return { text: 'Showing the loop PRs band above the prompt.' }
++  })
++
++  // The band above the prompt spans the terminal and is as tall as its rows,
++  // so each pull request takes one line, and its drawer two more.
++  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
++    if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
++
++    const { Box, Markdown, Text } = $.ui.resolve(e)
++    const shown = current(await read($, snapshot))
++    const time = await read($, now)
++    const opened = await read($, drawer)
++    const label = labeler(shown.rows.map(row => row.pr))
++    const reference = referencer(shown.rows.map(row => row.pr))
++    const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
++    // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
++    const drawerIndent = labelWidth + 1 + 'draft'.length + 1
++    const updated = shown.fetchedAt === null ? '' : ` updated ${ago(secondsSince(time, shown.fetchedAt))}`
++    const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
++
++    // The engine draws the band's `[-]` just past `bodyColumns` on the first
++    // row, so a divider that fills the body ends at the mark.
++    const divider = (
++      <Text dimColor>
++        {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
++        {updated}
++      </Text>
++    )
++
++    if (shown.rows.length === 0) {
++      return (
++        <Box flexDirection="column">
++          {divider}
++          <Box flexDirection="row" columnGap={1}>
++            <Text dimColor wrap="truncate-end">
++              {shown.fetchedAt === null && failure === undefined
++                ? 'Looking for pull requests…'
++                : 'No open pull requests are being watched or reviewed.'}
++            </Text>
++            {failure !== undefined && <Text color="error">{failure}</Text>}
++          </Box>
++        </Box>
++      )
++    }
++
++    const drawRow = ({ pr, kinds }: Row) => {
++      const key = keyOf(pr)
++      const notes = notesOf(pr)
++      return (
++        <Box key={key} flexDirection="column">
++          {/* Only the title gives way when the line is short; the label column
++              is as wide as the longest label, so every title starts in one
++              column. A plain click on the label opens the drawer; a ctrl, alt
++              or terminal-kept cmd click opens its Projector summary, or the
++              pull request on GitHub when it has none. */}
++          <Box flexDirection="row" columnGap={1}>
++            <Box flexShrink={0} width={labelWidth}>
++              <Markdown
++                key={`pr:${key}`}
++                text={`[${label(pr)}](${pr.summaryUrl ?? pr.url})`}
++                onLinkPress={() => {
++                  update($, drawer, open => (open === key ? null : key)).catch(() => undefined)
++                }}
++              />
++            </Box>
++            <Box flexShrink={0}>
++              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
++            </Box>
++            <Box flexShrink={1}>
++              <Text wrap="truncate-end">{pr.title}</Text>
++            </Box>
++            {notes.length > 0 && (
++              <Box flexShrink={0}>
++                <Text>
++                  {notes.map((note, at) => (
++                    <Text color={note.color}>
++                      {at > 0 ? ' · ' : ''}
++                      {note.text}
++                    </Text>
++                  ))}
++                </Text>
++              </Box>
++            )}
++          </Box>
++          {opened === key && (
++            <Box flexDirection="column" marginLeft={drawerIndent}>
++              <Text wrap="truncate-end">
++                <Text dimColor>{factsOf(pr, kinds)}</Text>
++                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
++                {pr.updatedAt !== null && <Text dimColor> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>}
++              </Text>
++              <Box flexDirection="row" columnGap={2}>
++                <Markdown
++                  key={`discuss:${key}`}
++                  text={`[discuss](${pr.url})`}
++                  onLinkPress={() => {
++                    $.prompt.fill({ text: `${reference(pr)} `, mode: 'insert' }).catch(() => undefined)
++                  }}
++                />
++                <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
++                {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
++              </Box>
++            </Box>
++          )}
++        </Box>
++      )
++    }
++
++    return (
++      <Box flexDirection="column">
++        {divider}
++        {shown.rows.map(drawRow)}
++        {failure !== undefined && <Text color="error">{failure}</Text>}
++      </Box>
++    )
++  })
++}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+new file mode 100644
+index 0000000..cfd8676
+--- /dev/null
++++ b/hooks/types.d.ts
+@@ -0,0 +1,52 @@
++/** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
++export type LoopKind = 'watching' | 'reviewing'
++
++/** A tracked file this session started a watcher on, or named by hand. */
++export type SeenLoop = { kind?: LoopKind; tracked: string }
++
++export type Checks = 'passing' | 'failing' | 'pending'
++
++export type PullRequest = {
++  repo: string
++  number: number
++  title: string
++  url: string
++  state: 'OPEN' | 'MERGED' | 'CLOSED'
++  isDraft: boolean
++  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
++  isConflicting: boolean
++  openThreads: number
++  author: string | null
++  branch: string
++  additions: number
++  deletions: number
++  changedFiles: number
++  /** The head commit's combined check state; null when it has no checks. */
++  checks: Checks | null
++  /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
++  updatedAt: number | null
++  /** The Projector summary the description links, when one was published. */
++  summaryUrl: string | null
++}
++
++/** One line of the band: an open pull request and what the loops do with it. */
++export type Row = { pr: PullRequest; kinds: LoopKind[] }
++
++export type Snapshot = {
++  rows: Row[]
++  fetchedAt: number | null
++  error: string | null
++}
++
++declare module 'claude-code' {
++  interface PluginState {
++    projector: {
++      seenLoops: SeenLoop[]
++      loopSnapshot: Snapshot
++      loopNow: number
++      isLoopBandShown: boolean
++      /** The pull request whose drawer is open, by `keyOf`. */
++      loopDrawer: string | null
++    }
++  }
++}
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index c36cd3d..083802c 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -101,6 +101,17 @@ def test_both_hosts_serve_upstreams_gh_stack_skill_from_one_pin(self) -> None:
+         self.assertEqual(claude["source"], codex["source"])
+         self.assertEqual(claude["version"], codex["version"])
+ 
++    def test_only_claude_code_loads_the_hooks_module(self) -> None:
++        # Claude Code finds hooks/hooks.json at the plugin root by itself; the
++        # manifest names the module's state contract. Codex has no hooks module.
++        hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())
++        [module] = hooks["modules"]
++        self.assertTrue((ROOT / "hooks" / module).is_file())
++        self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
++        self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
++        self.assertNotIn("types", self.manifest("codex"))
++        self.assertNotIn("hooks", self.manifest("codex"))
++
+     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
+         # Codex has no plugin dependencies; install.sh adds gh-stack there.
+         self.assertEqual(["gh-stack"], self.manifest("claude")["dependencies"])
