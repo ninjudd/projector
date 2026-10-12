@@ -25,7 +25,7 @@
 #
 # Usage:
 #   watch-prs.sh --tracked <file> --state <path>
-#                [--repo <owner/repo> --author <login>]
+#                [--repo <owner/repo> [--author <login>] [--review-requested <login>]]
 #                [--interval 60] [--worktree <dir>] [--once]
 #
 # --tracked names the file holding the tracked set: one `owner/repo#number`
@@ -41,9 +41,15 @@
 # watch that starts cleanly and never mentions the pull request it was meant
 # for; a bad line that appears later is announced once.
 #
-# --repo and --author, given together, adopt that author's pull requests: each
-# cycle lists the author's open pull requests in the repository and appends
-# every one the file does not name yet, which then reports as NEW PR. Adoption
+# --repo with --author adopts that author's pull requests: each cycle lists
+# the author's open pull requests in the repository and appends every one the
+# file does not name yet, which then reports as NEW PR. --repo with
+# --review-requested adopts the open pull requests whose author asked that
+# login for a review, the same way. Only a request to the login itself counts,
+# not one to a team it belongs to, since a team that CODEOWNERS requests can
+# be asked on nearly every pull request in a repository. GitHub drops a
+# request once that login reviews, so a pull request is adopted while its
+# request stands and stays tracked after. Give either flag or both. Adoption
 # only ever adds lines, so the file stays the scope. A line of the form
 # `!owner/repo#number` keeps that pull request out of both the watch and
 # adoption. A failed listing adopts nothing that cycle and is tried again.
@@ -61,13 +67,14 @@
 
 set -uo pipefail
 
-TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""
+TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --tracked)  TRACKED="${2:-}"; shift 2 ;;
     --repo)     REPO="${2:-}"; shift 2 ;;
     --author)   AUTHOR="${2:-}"; shift 2 ;;
+    --review-requested) REQUESTED="${2:-}"; shift 2 ;;
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
@@ -79,9 +86,11 @@ done
 [ -n "$TRACKED" ] || { echo "watch-prs.sh: --tracked is required" >&2; exit 2; }
 [ -n "$STATE" ] || { echo "watch-prs.sh: --state is required" >&2; exit 2; }
 touch "$STATE" 2>/dev/null || { echo "watch-prs.sh: cannot write state file: $STATE" >&2; exit 2; }
-if [ -n "$REPO$AUTHOR" ]; then
-  [ -n "$REPO" ] && [ -n "$AUTHOR" ] || { echo "watch-prs.sh: --repo and --author go together" >&2; exit 2; }
+if [ -n "$REPO$AUTHOR$REQUESTED" ]; then
+  [ -n "$REPO" ] && [ -n "$AUTHOR$REQUESTED" ] || { echo "watch-prs.sh: --repo goes with --author, --review-requested, or both" >&2; exit 2; }
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "watch-prs.sh: --repo is not owner/repo: $REPO" >&2; exit 2; }
+  # The login lands inside a search query, where a space would add a term.
+  [ -z "$REQUESTED" ] || [[ $REQUESTED =~ ^[A-Za-z0-9-]+$ ]] || { echo "watch-prs.sh: --review-requested is not a GitHub login: $REQUESTED" >&2; exit 2; }
   # An adopting watch may start from nothing; adoption fills the file.
   touch "$TRACKED" 2>/dev/null || { echo "watch-prs.sh: cannot write tracked file: $TRACKED" >&2; exit 2; }
 fi
@@ -188,16 +197,23 @@ not_found() {
   return 1
 }
 
-# Append every open pull request by $AUTHOR in $REPO that the tracked file
-# does not name yet, as an entry or as a `!` exclusion, in any letter case.
-# It prints nothing:
-# each appended line reports as NEW PR on this same pass.
+# Print the number of every open pull request in $REPO that $AUTHOR wrote or
+# whose author asked $REQUESTED for a review. A listing that fails prints
+# nothing, so the other one still adopts this cycle.
+listed() {
+  [ -z "$AUTHOR" ] || gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
+    --json number --jq '.[].number' 2>"$STATE.err"
+  [ -z "$REQUESTED" ] || gh pr list --repo "$REPO" --search "user-review-requested:$REQUESTED" \
+    --state open --limit 200 --json number --jq '.[].number' 2>"$STATE.err"
+}
+
+# Append every pull request `listed` prints that the tracked file does not
+# name yet, as an entry or as a `!` exclusion, in any letter case. It prints
+# nothing: each appended line reports as NEW PR on this same pass.
 adopt() {
-  [ -n "$AUTHOR" ] || return 0
-  local numbers n
-  numbers=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --limit 200 \
-    --json number --jq '.[].number' 2>"$STATE.err") || return 0
-  for n in $numbers; do
+  [ -n "$REPO" ] || return 0
+  local n
+  for n in $(listed); do
     awk -v a="$(lower "$REPO#$n")" \
       '{ gsub(/^[ \t]+|[ \t]+$/, ""); sub(/^!/, "") } tolower($0) == a { found = 1 } END { exit !found }' \
       "$TRACKED" 2>/dev/null && continue
