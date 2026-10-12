@@ -895,6 +895,43 @@ class WatchPrsTests(WatcherCase):
         )
         self.assertEqual("acme/app#2\nacme/app#1\n", self.tracked.read_text())
 
+    def test_only_the_authors_own_draft_waits_on_a_clean_review(self) -> None:
+        # A review never moves another author's draft state, so that draft stays
+        # a draft after a clean review dismisses the change request it settled.
+        adopt = ("--repo", "acme/app", "--author", "operator", "--review-requested", "operator")
+
+        def both(**node):
+            self.pull_request(1, ref="mine", draft=True, **node)
+            self.pull_request(2, ref="asked", author="teammate", draft=True, **node)
+
+        both(requested=("operator",))
+        adopted = self.run_watcher(PRS, *adopt)
+        # The review requests changes, the authors push a fix, and that head's
+        # review starts with the finding still open.
+        both(decision="CHANGES_REQUESTED", threads=[thread("T1")])
+        reviewed = self.run_watcher(PRS, *adopt)
+        both(head=SHA_B, decision="CHANGES_REQUESTED", threads=[thread("T1")])
+        pushed = self.run_watcher(PRS, *adopt)
+        under_review = self.run_watcher(PRS, *adopt)
+        # It resolves the finding and dismisses the change request.
+        both(head=SHA_B, decision="REVIEW_REQUIRED", threads=[thread("T1", resolved=True)])
+        settled = self.run_watcher(PRS, *adopt)
+
+        self.assert_ok(adopted)
+        self.assertEqual(2, len(adopted.stdout.splitlines()), adopted.stdout)
+        self.assert_ok(reviewed)
+        self.assertEqual("", reviewed.stdout)
+        self.assert_ok(pushed)
+        self.assertEqual(2, len(pushed.stdout.splitlines()), pushed.stdout)
+        self.assert_ok(under_review)
+        self.assertEqual("", under_review.stdout)
+        self.assert_ok(settled)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (mine) head=bbbbbbb — still a draft with every thread resolved; "
+             "re-review this head and sign off if clean"],
+            settled.stdout.splitlines(),
+        )
+
     def test_an_exclusion_holds_after_adoption_and_in_any_letter_case(self) -> None:
         self.pull_request(4, ref="excluded")
         self.pull_request(5, ref="kept")

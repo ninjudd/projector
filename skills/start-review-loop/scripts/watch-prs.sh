@@ -6,9 +6,10 @@
 #   NEW PR     a tracked pull request the state file has not seen
 #   NEW HEAD   a tracked pull request's head SHA moved
 #   RESPONDED  the author answered without pushing on a pull request still
-#              waiting for a review: a draft (self-review, where the verdict
-#              never moves) or one at CHANGES_REQUESTED (cross-author, where
-#              draft state is never touched). Answered means every thread is
+#              waiting for a review: a draft by the --author login, or any
+#              draft without one (self-review, where the verdict never
+#              moves), or one at CHANGES_REQUESTED (cross-author, where draft
+#              state is never touched). Answered means every thread is
 #              resolved, or the newest comment on an open Projector finding
 #              thread is the author's rather than the reviewer's. No head
 #              event is coming, so this asks for a re-review of the same
@@ -153,11 +154,11 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # carries a cross-author review, where REQUEST_CHANGES works and draft state
 # is untouched — the skill forbids drafting another author's pull request.
 #
-# The last field is "held" while the pull request's author has a hold comment
+# The next field is "held" while the pull request's author has a hold comment
 # open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
 # otherwise. Only the author's comment counts, because anyone can comment. A
 # hold lives only while its changes are built, so it is among the newest 100
-# comments.
+# comments. The last field is the author's login.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
     state isDraft reviewDecision headRefOid headRefName author{login}
@@ -176,7 +177,7 @@ PR_JQ='.data.repository.pullRequest
   | (if $author != "" and any(.comments.nodes[];
          (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
      then "held" else "-" end) as $held
-  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held)"'
+  | "\(.state) \(.isDraft) \(.reviewDecision // "NONE") \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($author)"'
 
 # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
 # can be told apart from a pull request that does not exist.
@@ -310,7 +311,7 @@ EOF
 "
       continue
     fi
-    read -r pstate pdraft pdecision sha ref unresolved answer held <<EOF
+    read -r pstate pdraft pdecision sha ref unresolved answer held pauthor <<EOF
 $row
 EOF
     [ -n "${answer:-}" ] || answer="-"
@@ -345,7 +346,9 @@ EOF
     # wording, and they call for opposite actions: a clean re-review marks a
     # self-reviewed draft ready, while on a cross-author changes request
     # marking it ready is forbidden and a clean re-review is a COMMENT
-    # recommending a human approval.
+    # recommending a human approval. So with --author, only that author's
+    # draft waits on a review: a review never moves another author's draft,
+    # which stays a draft after a clean one.
     #
     # An open hold says the author is building changes, so the head waits on
     # the author and nothing is a response; the flag records that a hold was
@@ -360,7 +363,7 @@ EOF
       if [ "$unresolved" = "0" ] || [ "$answer" != "-" ]; then
         if [ "$pdecision" = "CHANGES_REQUESTED" ]; then
           rstate="changes-requested"
-        elif [ "$pdraft" = "true" ]; then
+        elif [ "$pdraft" = "true" ] && { [ -z "$AUTHOR" ] || [ "$(lower "$pauthor")" = "$(lower "$AUTHOR")" ]; }; then
           rstate="draft"
         fi
       fi
