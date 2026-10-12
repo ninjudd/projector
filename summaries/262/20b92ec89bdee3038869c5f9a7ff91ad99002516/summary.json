@@ -1,0 +1,62 @@
+{
+ "version": 1,
+ "name": "Projects page intro spacing",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 262,
+  "title": "Separate How projects work from the project list",
+  "head": "20b92ec89bdee3038869c5f9a7ff91ad99002516",
+  "headRef": "pintro-space",
+  "base": "9462f46835ed608a9524a62940550b2db873d57f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A repository's Projector site has a Projects page that lists every plan in one table per status, such as <b>in-progress</b> and <b>completed</b>. Below the tables, the page shows a collapsible <b>How projects work</b> introduction, rendered from <code>docs/projects/README.md</code>.",
+   "That introduction sat only 4px below the last table, so it read as a stray line attached to the final status group rather than a section of its own. The 4px top margin made sense when the introduction sat under the filter box. Pull request #250 moved the introduction to the bottom of the page and did not change the margin.",
+   "This pull request raises the introduction's top margin to 32px. That is more than the 24px gap between one status group and the next, so the introduction reads as separate from the list. Nothing else changes: no markup, no TypeScript, and no colors."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of this head, <b>clean</b>, with no finding threads.</li><li>The gate passed: all 829 tests, <code>project check</code>, both plugin validations, and the site's <code>npm run check</code> and <code>npm run build</code> with <code>site/assets</code> unchanged.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "spacing",
+   "title": "Space above the introduction",
+   "kicker": "One margin in the site stylesheet",
+   "intro": [
+    "The Projects page's script, <code>showProjects</code> in <code>site/src/site.ts</code>, draws the status tables and then appends a <code>&lt;details class=\"pintro\"&gt;</code> element for the introduction. The <code>.pintro</code> rule in <code>site/assets/site.css</code> sets that element's margins, and this group changes only its top margin."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/assets/site.css",
+     "note": "The site's shared stylesheet. The <code>.pintro</code> top margin goes from 4px to 32px.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "Only the Projects page uses the <code>pintro</code> class. A search of the head finds it in <code>showProjects</code>, its compiled copy in <code>site.js</code>, a test, and the four <code>.pintro</code> rules, and nowhere in the summary pages' <code>summary.css</code> or <code>summary.js</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "The full 32px shows on the page. The last status table ends with no bottom margin, because neither <code>.tblwrap</code> nor <code>table.tbl</code> sets one, so nothing collapses into the gap. Each status heading, <code>.pgroup h2</code>, has a 24px top margin, so the introduction sits further from the list than one group sits from the next."
+      },
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "No media query overrides <code>.pintro</code>, so the margin is the same at narrow widths. The rule sets no color, so the light and dark themes are unaffected."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
