@@ -352,10 +352,9 @@ settled.
   band and a `watch` from both sending one answer. Renewing it while a
   delivery waits, and letting it expire only once renewals stop, keeps a
   slow delivery from being sent twice while a stopped deliverer still
-  strands nothing. Claude Code's band is that
-  deliverer in Claude Code because it runs in every session there; `watch`
-  is the deliverer anywhere else, in the shape Projector's loops already
-  use to hear GitHub.
+  strands nothing. Claude Code's band is that deliverer in Claude Code
+  because it runs in every session there; `watch` is the deliverer anywhere
+  else, in the shape Projector's loops already use to hear GitHub.
 - **One line, then the drawer; the question beside its pull request.** One
   line each keeps the band short, and a question about a pull request reads
   best right after it, where its reference already names it.
