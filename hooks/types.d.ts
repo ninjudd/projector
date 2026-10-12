@@ -42,11 +42,11 @@ declare module 'claude-code' {
   interface PluginState {
     projector: {
       seenLoops: SeenLoop[]
-      loopSnapshot: Snapshot
-      loopNow: number
-      isLoopBandShown: boolean
+      bandSnapshot: Snapshot
+      bandNow: number
+      isBandShown: boolean
       /** The pull request whose drawer is open, by `keyOf`. */
-      loopDrawer: string | null
+      bandDrawer: string | null
     }
   }
 }

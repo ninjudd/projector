@@ -173,11 +173,11 @@ claude plugin validate skills
 claude plugin test .
 ```
 
-### See a loop's pull requests above the prompt
+### See your loops' pull requests in Projector's band
 
 In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
 the open pull requests your loops track in the band above the prompt, one
-line each. Run `/loop-prs` to show or hide the band. It also appears when the
+line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
@@ -224,7 +224,7 @@ already running on the machine, such as a loop another session started. To
 show a tracked file by hand, name it:
 
 ```text
-/loop-prs ~/loops/review/tracked
+/projector ~/loops/review/tracked
 ```
 
 The band reloads when one of the session's watchers reports a change and

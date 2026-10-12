@@ -30,7 +30,7 @@ const BAND = {
 } as const
 
 const COMMAND = {
-  command: 'loop-prs',
+  command: 'projector',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 120 },
@@ -253,7 +253,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
-  on('state.get', { plugin: 'projector', key: 'loopSnapshot' }, () => ({
+  on('state.get', { plugin: 'projector', key: 'bandSnapshot' }, () => ({
     value: { value: earlier as never, version: 1 },
   }))
 

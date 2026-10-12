@@ -23,10 +23,10 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
 }
 
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
-const snapshot = atom({ plugin: 'projector', key: 'loopSnapshot' } as const, EMPTY)
-const now = atom({ plugin: 'projector', key: 'loopNow' } as const, 0)
-const isShown = atom({ plugin: 'projector', key: 'isLoopBandShown' } as const, false)
-const drawer = atom({ plugin: 'projector', key: 'loopDrawer' } as const, null)
+const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
+const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
+const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
+const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -87,7 +87,7 @@ async function adopt($: Engine, command: string): Promise<void> {
     if (watcher.tracked === undefined) {
       if (!unreadable.has(watcher.written)) {
         unreadable.add(watcher.written)
-        $.ui.toast(`loop-prs: cannot tell which file ${watcher.written} names; run /loop-prs <tracked file>`)
+        $.ui.toast(`projector: cannot tell which file ${watcher.written} names; run /projector <tracked file>`)
       }
       continue
     }
@@ -293,8 +293,8 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'loop-prs',
-      description: 'Show the open pull requests your watch and review loops track',
+      name: 'projector',
+      description: 'Show or hide Projector’s band of the pull requests your loops track',
       argumentHint: '[tracked file]',
     })
     $.clock.every(TICK_MS, () => void tick($))
@@ -329,21 +329,21 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // `/loop-prs` shows or hides the band; `/loop-prs <tracked file>` adds a
+  // `/projector` shows or hides the band; `/projector <tracked file>` adds a
   // loop and shows it.
-  on('command.run', { command: 'loop-prs' }, async ($, e) => {
+  on('command.run', { command: 'projector' }, async ($, e) => {
     const written = (e.args ?? '').trim()
     if (written !== '') {
       const expanded = expandPath(written, await envOf($))
       const tracked = expanded === undefined ? undefined : await canonical($, expanded)
-      if (tracked === undefined) return { text: `loop-prs: no tracked file at ${written}.` }
+      if (tracked === undefined) return { text: `projector: no tracked file at ${written}.` }
       await remember($, { tracked })
     } else if (await read($, isShown)) {
       await update($, isShown, () => false)
-      return { text: 'Hid the loop PRs band.' }
+      return { text: 'Hid Projector’s band.' }
     }
     show($)
-    return { text: 'Showing the loop PRs band above the prompt.' }
+    return { text: 'Showing Projector’s band above the prompt.' }
   })
 
   // The band above the prompt spans the terminal and is as tall as its rows,
