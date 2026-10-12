@@ -52,10 +52,9 @@ tool records the question in the session's own plugin state and returns at
 once, so the agent keeps working. The session's band lists its questions
 as a checklist, each on the line after the pull request it is about and
 each open one marked `[ ]`, with the open count in the divider. Clicking a
-question opens its drawer: the whole
-question, the pull request it is about, the recommendation, and the answers
-you can give, which are the recommendation, each choice, a field for any
-other answer, and **dismiss**. When you answer, the module delivers the
+question opens its drawer: its detail, then each choice as a bulleted line
+with the recommended one marked, a field for any other answer, and
+**dismiss**. When you answer, the module delivers the
 answer at once, to the subagent that asked or, when that subagent has ended,
 to the session's main loop. Once the answer was taken, the line reads `[x]`
 with the answer for one minute, then leaves the band. An answer that was not
@@ -123,7 +122,7 @@ Each question is one entry in `bandQuestions`, a list in the session's
 | `question` | The question in one line of at most 120 characters, the checklist line's text |
 | `detail` | What you need to answer it, as Markdown, shown only in the drawer; empty when the line says it all |
 | `recommendation` | The answer the agent recommends; one of `options` when it has them |
-| `options` | Up to six short answers, in order; empty for a free answer |
+| `options` | Up to six answers, in order, each a sentence or more when it needs one; empty when the recommendation is the only choice |
 | `pr` | The pull request it is about, as `owner/repo#number`; null when none |
 | `answer` | Absent while open; `{ text }` or `{ dismissed: true }` from the moment you answer, kept after delivery for the `[x]` line |
 | `resolvedAt` | Absent until the answer was taken; then when, in milliseconds |
@@ -135,7 +134,7 @@ The module registers the tool in `session.start` with `$.tool.register`.
 | Field | Value |
 | --- | --- |
 | `name` | `ask`, which the model sees as `mcp__projector__ask` |
-| `description` | Post a question for the person without stopping your work. Use it when you need a decision you cannot make, such as declining a finding or running a command you are not allowed to run. Ask in one short line, put what the person needs to decide in `detail`, and always give the answer you recommend; when you offer options, recommend one of them. Keep working on anything the answer does not block; the answer arrives later as a message. |
+| `description` | Post a question for the person without stopping your work. Use it when you need a decision you cannot make, such as declining a finding or running a command you are not allowed to run. Ask in one short line, put what the person needs to decide in `detail`, and always give the answer you recommend; when you offer options, write each as a full answer the person can pick as it stands, and recommend one of them. Keep working on anything the answer does not block; the answer arrives later as a message. |
 | `inputSchema` | `question` and `recommendation`, required strings; `detail`, a string; `options`, an array of at most six strings; `pr`, a string matching `owner/repo#number` |
 | `isDeferred` | `false`, so the tool is in the model's tool list from the start rather than behind ToolSearch |
 
@@ -157,24 +156,29 @@ question, and the answer, or `dismissed`.
 [ ] Decline the finding about the retry budget?        5m
     The review asks for a retry budget per host. The loop already caps
     retries at three in total, which covers the case the finding names.
-    Recommended: decline
-    [ decline (recommended) ]  [ add the budget ]  [ Answer…        ]  [ dismiss ]
+    - Decline it: the total cap already bounds retries to one host (recommended)
+    - Add a budget of two retries per host, as the review asks, and keep the
+      total cap of three
+    [ Answer…                                                          ]
+    [ dismiss ]
 #258 ready Name the reviewed head in a review's signature line
 ```
 
 The drawer holds what the line has no room for: `detail` as `Markdown`,
-then `Recommended:` and the recommendation, then the answers. With options,
-it draws one button for each, the recommended one with `variant="primary"`
-and `(recommended)` after its label. Without options, it draws an
-**accept** button that answers with the recommendation. Either way, an
-`Input` keyed `answer` takes any other answer through its `onSubmit`, and a
-**dismiss** button follows.
+then the answers, each choice a line of its own. Each choice is a `Button`
+with `plain` whose text starts `- `, and a long one wraps onto further
+lines under its own text. The recommended choice ends `(recommended)`, in
+the accent color. A question without options draws one choice, its
+recommendation, so you accept the recommendation the way you pick any
+choice. After the choices come an `Input` keyed `answer`, which takes any
+other answer through its `onSubmit`, and a **dismiss** button, each on a
+line of its own.
 
-The answer buttons have no hotkeys. Claude Code presses a band `Button`
-whose hotkey is a digit when that digit is typed first in an empty prompt,
-the way a survey takes its answer, so a prompt such as `2 things first:`
-would answer the question. Without hotkeys, only a click, or Enter on a
-button while the band holds the keyboard, picks an answer. The drawer's
+The choices have no hotkeys. Claude Code presses a band `Button` whose
+hotkey is a digit when that digit is typed first in an empty prompt, the
+way a survey takes its answer, so a prompt such as `2 things first:` would
+answer the question. Without hotkeys, only a click, or Enter on a choice
+while the band holds the keyboard, picks an answer. The drawer's
 open/closed state is the band's `bandDrawer`, keyed `q:<id>` for a
 question, so one drawer is open at a time across questions and pull
 requests.
@@ -207,6 +211,11 @@ skills keep working in Codex and without the module.
   by accepting the agent's answer, and an agent that must name one has
   thought the decision through before it asks. Requiring the recommendation
   to be one of the options, when there are options, lets the drawer mark it.
+- **Choices as bulleted lines, not a row of buttons.** A choice worth
+  offering often needs a sentence to say what it does, which a button label
+  cannot hold, and a line each lets it say that in full. The recommendation
+  is a choice too, so a question without options still answers the same
+  way, with one press on one line.
 - **One line, then the drawer.** A checklist of one line each shows every
   open question at a glance and keeps the band short, while `detail` holds
   whatever the decision needs, out of the way until you open it.
@@ -246,8 +255,8 @@ skills keep working in Codex and without the module.
 | Ask about a pull request the band lists | The question's line comes right after that pull request's line, at the same left edge, without the pull request's number; two questions about it follow it oldest first |
 | Ask with no `pr`, or about a pull request the band does not list | The question's line comes above the pull requests, naming its `pr` when it has one |
 | A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `isError` with the reason, and no question is added |
-| Open a question with options | Its drawer shows `detail`, the recommendation, and one button per option, the recommended one primary and marked `(recommended)` |
-| Open a question without options, and press **accept** | The agent receives the recommendation as the answer |
+| Open a question with options | Its drawer shows `detail`, then each option as its own line starting `- `, a long one wrapping under its text, and the recommended one ending `(recommended)` |
+| Open a question without options, and press its one choice | The choice is the recommendation, marked `(recommended)`, and the agent receives it as the answer |
 | Press an option, or type an answer and press Enter | The subagent receives the answer through `$.session.send`; the line reads `[x]` and the answer, the divider no longer counts it, and it leaves the band one minute later |
 | Press a resolved question's line | Nothing happens |
 | Answer after the subagent has ended, so `$.agent.list()` reports it `completed`, `failed`, or `killed` | The main loop receives the answer through `$.prompt.submit`, naming the subagent |
