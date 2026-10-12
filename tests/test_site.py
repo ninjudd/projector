@@ -450,6 +450,22 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
                           "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
 
+    def test_a_review_whose_marker_names_no_version_sets_its_heads_status(self) -> None:
+        statuses = self.statuses([
+            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1, version=None),
+            projector_review("approved", "d" * 40, "2026-10-02T10:00:00Z", 2, version=None),
+        ])
+
+        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
+                          "d": {"status": "clean", "url": review_url(2)}}, statuses,
+                         "a clean verdict spelled approved shows as clean")
+        head = "8f1ec500248ff566848d88e8f4fae6e6ed85d256"
+        older = {"body": ("**Projector review** · model `claude-opus-5-5[1m]`\n\n"
+                          "<!-- projector-review v=1 verdict=clean model=claude-opus-5-5[1m] effort=high "
+                          f"sha={head} findings=0 seconds=66 covered=1/1 -->\n\nWhat the review found."),
+                 "url": review_url(3), "at": "2026-10-03T10:00:00Z", "association": "OWNER"}
+        self.assertEqual({head: {"status": "clean", "url": review_url(3)}}, site_build.review_statuses([older]))
+
     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
         statuses = self.statuses([
@@ -3415,13 +3431,16 @@ def review_url(review_id: int) -> str:
 
 
 def projector_review(verdict: str, head: str, at: str, review_id: int, association: str = "OWNER",
-                     model: str = "claude-opus") -> dict:
+                     model: str = "claude-opus", version: str | None = "0.6.13") -> dict:
     """A review of pull request 9 as `summary.pr_status` lists it, carrying a Projector review's marker for `head`.
 
     `association` is the author's relation to the repository, as GitHub's
-    `author_association` gives it, and `model` the model its marker names.
+    `author_association` gives it, `model` the model its marker names, and
+    `version` the Projector version it names, or None for a marker that names
+    none.
     """
-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.6.13 model={model} effort=high "
+    named = f"projector={version} " if version else ""
+    marker = (f"<!-- projector-review v=1 verdict={verdict} {named}model={model} effort=high "
               f"sha={head} findings=0 seconds=60 covered=2/2 -->")
     return {"body": f"**Projector review** · `0.6.13`\n\n{marker}\n\nWhat the review found.",
             "url": review_url(review_id), "at": at, "association": association}
