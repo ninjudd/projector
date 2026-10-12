@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "name": "Review requested pull requests",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 270,
+  "title": "Review the pull requests that request the operator's review",
+  "head": "487ceaf2ede7f78b22a593a78d7f0795bcd0be6f",
+  "headRef": "review-requested-prs",
+  "base": "34cd08935baa4d4e62532427f1b11e6f33e11f1f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The review loop (<code>start-review-loop</code>) reviews every new head of the pull requests it tracks. Its watcher script, <code>watch-prs.sh</code>, polls GitHub and reads a <b>tracked file</b>, one <code>owner/repo#number</code> per line, that sets which pull requests the loop watches. With <code>--author</code>, the watcher <b>adopts</b> pull requests: each cycle it appends the operator's open pull requests to the tracked file, and the loop reviews each new one.",
+   "Before this change, a teammate who asked the operator for a review got no review until someone added the pull request to the tracked file by hand. This change adds <code>--review-requested &lt;login&gt;</code>, which adopts each open pull request that requests that login by name. The request can come from the author, a CODEOWNERS rule, or a bot. A request to a team the login belongs to does not count, because CODEOWNERS can request a team on nearly every pull request. Adoption only appends, so the pull request stays tracked after the operator answers the request.",
+   "A requested pull request belongs to someone else. So <code>review-pr</code> reviews it in the <b>cross-author mode</b>: it posts <code>REQUEST_CHANGES</code> when it finds problems and a <code>COMMENT</code> when the head is clean, and it never changes the pull request's draft state.",
+   "The watcher's <code>RESPONDED</code> event asks for a re-review when the author answers without a push, by replying on a finding or resolving every thread. For a draft, it fires only on a pull request by the <code>--author</code> login, because a review never changes another author's draft state. For another author's pull request, it fires when the newest Projector verdict on the current head requests changes. The watcher reads that verdict from the marker in the review body, because GitHub's <code>reviewDecision</code> field stays <code>null</code> unless the base branch requires reviews."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Head <code>b7c5460</code>: changes requested. A teammate's adopted draft got a second full review of a head that it had already passed. Fixed at <code>6c8e5c6</code>.</li><li>Head <code>332f683</code>: changes requested. Another author's answer without a push depended on <code>reviewDecision</code>, which GitHub leaves <code>null</code> without required reviews. Fixed at <code>487ceaf</code>.</li><li>Head <code>487ceaf</code>: clean, with both finding threads resolved. The gate passes: 847 tests, <code>project check</code>, and both plugin validations.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account the loop runs for, which is the authenticated user.</li><li><b>Adopt</b>: append a pull request to the tracked file so that the loop reviews it.</li><li><b><code>RESPONDED</code></b>: a watcher event that asks for a re-review of an unchanged head after the author answers.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watcher",
+   "title": "The watcher adopts requested pull requests",
+   "kicker": "A second listing in watch-prs.sh feeds the same adoption loop",
+   "intro": [
+    "The new <code>listed</code> function prints the numbers of open pull requests from up to two listings: the operator's own pull requests (<code>--author</code>) and those that request a login (<code>--review-requested</code>). <code>adopt</code> appends every number that the tracked file does not name yet, as before. Each listing fails on its own, so if one listing fails, the other still adopts in that cycle.",
+    "The search uses GitHub's <code>user-review-requested:</code> qualifier rather than <code>review-requested:</code>, because <code>review-requested:</code> also matches requests to the login's teams. The watcher checks the login against GitHub's login characters before it builds the query, so a space cannot add a search term.",
+    "A row from GitHub now ends with the pull request author's login. In place of <code>reviewDecision</code>, the row carries the <b>verdict</b>: the newest Projector verdict whose marker names the current head, or <code>-</code> when there is none. In a public repository, only an owner, a member, or a collaborator can give a verdict, which matches <code>project review status</code>. When <code>--author</code> is set, the watcher reads a draft as waiting for sign-off only when that login wrote it. Another author's pull request waits when its verdict is <code>changes-requested</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "Adds the flag, the login check, and the <code>listed</code> function that feeds <code>adopt</code>. Reads the head's Projector verdict to decide when another author's pull request waits on a re-review.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "At <code>b7c5460</code>, one <code>--once</code> pass against <code>kubernetes/kubernetes</code>, with temporary tracked and state files, adopted the same 11 pull requests that <code>gh pr list --search \"user-review-requested:&lt;login&gt;\"</code> lists. The listing code has not changed since then.",
+       "line": 230
+      },
+      {
+       "kind": "context",
+       "text": "On a public repository, a CODEOWNERS rule that names the operator brings fork pull requests from outsiders into the loop. <code>setup</code> refuses to run their code, but the loop still reviews and summarizes them.",
+       "line": 50
+      },
+      {
+       "kind": "verify",
+       "text": "Run read-only against this pull request, this head's <code>PR_QUERY</code> and <code>PR_JQ</code> print <code>-</code> for the current head and <code>changes-requested</code> for <code>332f683</code> and <code>b7c5460</code>. That matches the review markers on GitHub.",
+       "line": 190
+      },
+      {
+       "kind": "verify",
+       "text": "With a null <code>reviewDecision</code> and a changes-requested verdict, a fake-<code>gh</code> run prints <code>RESPONDED</code> once when a teammate replies on a finding, for both a draft and a ready pull request.",
+       "line": 392
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The loop passes the flag and describes the wider scope",
+   "kicker": "start-review-loop, review-pr, and the plugin guide",
+   "intro": [
+    "<code>start-review-loop</code> now passes <code>--review-requested &lt;operator&gt;</code> beside <code>--author</code>. When the loop starts, it also lists the requested pull requests. When it adopts a watcher that is already running, it checks for both flags. <code>review-pr</code> and <code>docs/plugins.md</code> describe the operator as the account that the loop tracks pull requests for, which includes the ones that request the operator's review."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A watcher that started before this change has no <code>--review-requested</code>. The new check for both flags makes the loop restart it."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Widens the loop's scope and adds the flag to the startup listing, the first pass, and the check on a running watcher.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This listing must match what the watcher adopts, because each head that the loop finds unreviewed must come back as <code>NEW PR</code> in the first pass.",
+       "line": 65
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Redefines the operator as the account the loop tracks pull requests for."
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests drive the watcher through a fake gh",
+   "kicker": "The fake gh answers the new search, and one test covers adoption",
+   "intro": [
+    "The fake <code>gh</code> in <code>tests/test_watchers.py</code> now answers <code>--search user-review-requested:&lt;login&gt;</code> from each fixture's <code>reviewRequests</code>. The new test adopts only the open pull request that requests the operator. It also checks that the pull request stays tracked and reports <code>NEW HEAD</code> after the request is gone. The flag test adds <code>--repo</code> without an adoption flag, and a login that contains a space.",
+    "<code>test_only_the_authors_own_draft_waits_on_a_clean_review</code> runs the operator's draft and a teammate's requested draft through the same fix cycle. Only the operator's draft gets <code>RESPONDED</code> once the finding is resolved and the change request is dismissed.",
+    "The fake <code>gh</code> now serves review nodes that carry a verdict marker, and a repository's visibility. <code>test_another_authors_answer_without_a_push_asks_for_a_re_review</code> covers a draft, a ready pull request, a passerby's marker in a public repository, and a private repository. <code>test_a_review_that_settles_findings_before_it_publishes_is_no_answer</code> checks that a verdict on an earlier head does not count."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_watchers.py"
+    }
+   ]
+  }
+ ]
+}
