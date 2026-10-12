@@ -13,7 +13,7 @@ Projector's band is the Claude Code hooks module in `hooks/`. It lists the
 open pull requests of your fix and review loops one line each, opens a
 drawer under a line when you click it, and `/projector` shows or hides it,
 as `docs/plugins.md` describes. This project adds the session's questions to
-the same band, above the pull requests. It uses the command and the
+the same band, each beside the pull request it is about. It uses the command and the
 band-prefixed state keys that
 [#269](https://github.com/ninjudd/projector/pull/269) gives the band, so its
 implementation follows #269.
@@ -50,8 +50,9 @@ The hooks module registers a tool, `ask`, that the model calls as
 answer, and may offer choices, of which the recommendation must be one. The
 tool records the question in the session's own plugin state and returns at
 once, so the agent keeps working. The session's band lists its questions
-above the pull requests as a checklist, each open one marked `[ ]`, with the
-open count in the divider. Clicking a question opens its drawer: the whole
+as a checklist, each on the line after the pull request it is about and
+each open one marked `[ ]`, with the open count in the divider. Clicking a
+question opens its drawer: the whole
 question, the pull request it is about, the recommendation, and the answers
 you can give, which are the recommendation, each choice, a field for any
 other answer, and **dismiss**. When you answer, the module delivers the
@@ -70,12 +71,15 @@ session.
    call with `isError` and the reason, so the agent asks again, when
    `question` is more than one line or longer than 120 characters, when
    `recommendation` is empty, or when `options` are given and
-   `recommendation` is not one of them. Otherwise it adds the question (§ 2.2) to the
-   session's `bandQuestions` state, with the calling subagent's `agentId`
-   when there is one. It shows the band, raises one `$.ui.notify` through
-   your notification channel, and returns `Posted question <id>. Keep
-   working; the answer arrives as a message.`
-3. The band lists the questions first, oldest first, then the pull
+   `recommendation` is not one of them. Otherwise it adds the question
+   (§ 2.2) to the session's `bandQuestions` state, with the calling
+   subagent's `agentId` when there is one. It shows the band, raises one
+   `$.ui.notify` through your notification channel, and returns `Posted
+   question <id>. Keep working; the answer arrives as a message.`
+3. The band puts each question on the line after the pull request its `pr`
+   names, oldest first when a pull request has several, and starts it at
+   the same left edge as the pull request lines. A question with no `pr`,
+   or one about a pull request the band does not list, goes above the pull
    requests. An open question's line starts `[ ]`. The divider counts the
    open questions: `──── 2 questions · updated 12s ago [-]`.
 4. You open a question's drawer by clicking its line in the fullscreen
@@ -141,19 +145,21 @@ The questions are a checklist with one line each. An open question's line
 is a `Button` with `plain`, so it is a press target in both layouts: a click
 in fullscreen, and Enter once the band has the keyboard on the main screen.
 It reads `[ ]`, the question, truncated only on a narrow terminal, then its
-`pr`, when it has one, and its age, dim. A resolved question's line is plain
-dim text that takes no press: `[x]`, the question, and the answer, or
-`dismissed`.
+age, dim. A question above the pull requests also names its `pr`, when it
+has one, before its age; one under its pull request does not repeat it. A
+resolved question's line is plain dim text that takes no press: `[x]`, the
+question, and the answer, or `dismissed`.
 
 ```text
 ──────────────────────────────────────── 1 question · updated 12s ago [-]
-[ ] Decline the finding about the retry budget?        projector#267 · 5m
+[x] Run project init to add the publish rule?          → done · 40s
+#267 draft List a loop's open pull requests above the Claude Code prompt
+[ ] Decline the finding about the retry budget?        5m
     The review asks for a retry budget per host. The loop already caps
     retries at three in total, which covers the case the finding names.
     Recommended: decline
     [ decline (recommended) ]  [ add the budget ]  [ Answer…        ]  [ dismiss ]
-[x] Run project init to add the publish rule?          → done · 40s
-#267 draft List a loop's open pull requests above the Claude Code prompt
+#258 ready Name the reviewed head in a review's signature line
 ```
 
 The drawer holds what the line has no room for: `detail` as `Markdown`,
@@ -217,6 +223,12 @@ skills keep working in Codex and without the module.
 - **Kept until taken.** A send can come back undelivered and a submit can
   be dropped by a hook, so the question stays until one of them took the
   answer, and a failure reopens it.
+- **Beside its pull request, at the same edge.** A question about a pull
+  request is about something on that pull request's line, so it reads best
+  right after it, without repeating the number. Starting it at the same left
+  edge keeps every line's `[ ]` or number in one column, and the `[ ]` alone
+  marks it as a question. A question with no listed pull request has no
+  line to follow, so it goes above them all.
 - **Buttons, not links, for a question's line.** The pull requests' numbers
   are `Markdown` links, which take a click only in the fullscreen layout,
   as `docs/plugins.md` says. A `Button` also takes Enter when the band has
@@ -231,6 +243,8 @@ skills keep working in Codex and without the module.
 | Do | Expect |
 | --- | --- |
 | A subagent calls `mcp__projector__ask` | The call returns at once with the question's id; `bandQuestions` holds the question with that subagent's `agentId`; the band shows it as a `[ ]` line and the divider counts it |
+| Ask about a pull request the band lists | The question's line comes right after that pull request's line, at the same left edge, without the pull request's number; two questions about it follow it oldest first |
+| Ask with no `pr`, or about a pull request the band does not list | The question's line comes above the pull requests, naming its `pr` when it has one |
 | A call whose `question` has two lines or 121 characters, whose `recommendation` is empty, or whose `recommendation` is not one of its `options` | The call returns `isError` with the reason, and no question is added |
 | Open a question with options | Its drawer shows `detail`, the recommendation, and one button per option, the recommended one primary and marked `(recommended)` |
 | Open a question without options, and press **accept** | The agent receives the recommendation as the answer |
