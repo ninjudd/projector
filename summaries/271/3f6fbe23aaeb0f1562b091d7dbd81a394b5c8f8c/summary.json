@@ -1,0 +1,158 @@
+{
+ "version": 1,
+ "name": "Questions for the person",
+ "project": "questions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 271,
+  "title": "Ask the person questions through project question",
+  "head": "3f6fbe23aaeb0f1562b091d7dbd81a394b5c8f8c",
+  "headRef": "questions-cli",
+  "base": "184f82c14e920a48c906bce10aa6721b7ee72441",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a review or fix loop's subagent needs a decision from you, today it can only hand the question to the main loop, which asks it as a line in the transcript. That line scrolls away, nothing lists what is still open, and your answer has no route back to the subagent that asked. The <code>questions</code> plan fixes this in two pull requests. This first one adds the host-neutral part: a <code>project question</code> command that any host can run, whether that host is Claude Code, Codex, or a runner such as Paseo.",
+   "The flow has three steps:",
+   "<ol><li><b>An agent asks.</b> <code>project question ask</code> checks a one-line question and its recommended answer, numbers it, writes it to the session's store, and prints a reference such as <code>#337.3</code> at once, so the agent keeps working.</li><li><b>You answer.</b> <code>project question answer '#337.3.a'</code> records the answer from any terminal. Without <code>--session</code>, it finds the one session that holds the reference.</li><li><b>One deliverer sends it.</b> <code>watch</code>, or a view such as the band in the next pull request, <i>claims</i> the recorded answer with a random token, sends it to the agent, and marks it delivered. A claim that goes a minute without renewal lapses, so a deliverer that stopped strands nothing.</li></ol>",
+   "The first review found two defects, and both are fixed at this head. A short reference such as <code>#271.1</code> could name pull request #271 in two repositories, so the second question overwrote the first. Now a session records its repository on its first <code>ask</code>, and only that repository's pull requests take the short form. <code>watch</code> marked an answer delivered before printing it, so a failed print lost the answer. Now it prints first, and a failed print leaves only a claim that lapses."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Session</b>: the id of the agent session that asked, from <code>--session</code> or <code>PROJECTOR_SESSION</code>. Each session has its own directory of questions.</li><li><b>Reference</b>: a question's fixed name. <code>#337.3</code> is the third question about #337 in the session's repository, the one its first <code>ask</code> from a checkout recorded, <code>owner/repo#337.3</code> names another repository's pull request, and <code>q2</code> is the session's second question about no pull request.</li><li><b>Letter</b>: an answer's suffix. <code>a</code> is always the recommendation, the other options follow, and the last letter is a typed answer given with <code>--text</code>.</li><li><b>Claim</b>: a token a deliverer holds while it sends an answer. Only that token renews the claim, marks the answer delivered, or reopens the question.</li></ul>"
+   },
+   {
+    "id": "exits",
+    "title": "Exit codes the commands add meanings to",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Code</th><th>When</th></tr></thead><tbody><tr><td class=\"r\">65</td><td>A check fails, the question is already answered, the answer is already claimed or delivered, or the token is wrong</td></tr><tr><td class=\"r\">66</td><td>The reference names no question</td></tr><tr><td class=\"r\">67</td><td>Without a session, the reference names questions in more than one session</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The question store",
+   "kicker": "Questions, answers, and claims as JSON files under a per-session lock",
+   "intro": [
+    "<code>questions.py</code> holds everything the commands do. Each session's questions live under <code>$XDG_STATE_HOME/projector/questions/&lt;session&gt;/</code>, one JSON file per question, named after its URL-quoted reference. Beside them, <code>counts.json</code> holds the last number given in each count, and <code>session.json</code> holds the session's repository.",
+    "Every write takes the session's lock and lands by renaming a temporary file into place. The lock is the operating system's exclusive lock on the directory's <code>.lock</code> file: <code>flock</code> on Linux and macOS, <code>msvcrt.locking</code> on Windows. The system releases it when its holder exits, so a command that crashes while holding it blocks nobody, and a command that finds it held retries for 5 seconds, then exits 65. Each answer, dismissal, claim, and settlement is a read-change-write under that lock, in <code>update</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The test suite passes at this head, run with Python 3.12, including the tests for both fixes in <code>tests/test_questions.py</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/questions.py",
+     "note": "New module: the store and its lock, numbering and references, the checks, answers and claims, retention, <code>watch</code>'s pass, and finding references in prompt text.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 40,
+       "text": "<code>IN_TEXT</code> finds references in prose. A reference must not touch a letter, digit, <code>/</code>, <code>#</code>, or <code>.</code> on its left. A trailing <code>.</code> ends it only before a space or the end of the text, so <code>Go with #337.3.b.</code> matches and <code>#337.3.4</code> does not."
+      },
+      {
+       "kind": "context",
+       "line": 80,
+       "text": "<code>try_lock</code> and <code>unlock</code> have one definition per platform. The Windows pair seeks to byte 0 before each call, because <code>msvcrt.locking</code> locks bytes from the file's current position."
+      },
+      {
+       "kind": "verify",
+       "line": 111,
+       "text": "Each <code>locked</code> call opens its own descriptor, so threads in one process exclude each other as processes do, and every exit path releases the lock and closes the descriptor. In a scratch state directory, twenty <code>ask</code> processes started at once got twenty distinct references. Of six concurrent <code>answer</code> processes, one recorded, and of six concurrent <code>claim</code> processes, one took the claim."
+      },
+      {
+       "kind": "verify",
+       "line": 200,
+       "text": "<code>session_repo</code> records the repository of the first checkout the session asks from, under the lock, and later asks compare against it. Asking about <code>acme/app#271</code> from an <code>acme/app</code> checkout, then about <code>octo/web#271</code> and <code>acme/app#271</code> from an <code>octo/web</code> checkout, printed <code>#271.1</code>, <code>octo/web#271.1</code>, and <code>#271.2</code> in a scratch state directory, and all three stayed in the store."
+      },
+      {
+       "kind": "context",
+       "line": 238,
+       "text": "The count is written before the question, so a write cut short between the two skips a number instead of handing the next question the same reference."
+      },
+      {
+       "kind": "context",
+       "line": 357,
+       "text": "A claim lapses once it goes <code>CLAIM_EXPIRES_MS</code> (one minute) without renewal. A renewal, <code>delivered</code>, or <code>reopen</code> checks only the token, so a lapsed claim that nobody replaced still works for its holder. The plan and <code>docs/cli.md</code> now say so."
+      },
+      {
+       "kind": "context",
+       "line": 386,
+       "text": "Retention runs whenever an answer is marked delivered. It keeps the 100 most recently delivered questions and never touches open or undelivered ones. Counts never go back, so a pruned reference is never reused."
+      },
+      {
+       "kind": "verify",
+       "line": 408,
+       "text": "<code>deliver_pass</code> sends each line before it marks the answer delivered. A <code>watch</code> whose output pipe had lost its reader exited on <code>BrokenPipeError</code>, and <code>list</code> then showed the answer as <code>delivering</code>, a claim that lapses for the next deliverer, not as delivered."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The project question command",
+   "kicker": "Ten subcommands that map flags onto the store",
+   "intro": [
+    "<code>cli.py</code> adds the <code>question</code> parser and <code>run_question</code>, which dispatches before the CLI looks for a projects directory, so the command works outside any repository. <code>ask</code>, <code>watch</code>, and <code>context</code> need a session. <code>list</code>, <code>show</code>, <code>answer</code>, and <code>dismiss</code> work without one, which is how you answer from a terminal."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The parser for each subcommand and the code that runs them; <code>ask</code> passes the current checkout's repository, which becomes the session's repository on its first ask.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1159,
+       "text": "<code>watch</code> passes <code>deliver_pass</code> a <code>send</code> that prints and flushes each line. With <code>--json</code> each line is one JSON object, so a watcher reads one event a line. <code>--interval</code> refuses anything but a positive number of seconds."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_questions.py",
+     "note": "Each subcommand against a temporary state directory and a temporary checkout whose origin is <code>acme/app</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference section and the plan's status",
+   "intro": [
+    "<code>docs/cli.md</code> gains a section on asking and answering questions, and its exit-code table adds the question meanings of 65, 66, and 67. The plan moves from <code>ready</code> to <code>in-progress</code>, because this is the first of its two pull requests, and its command table adds <code>watch --once</code> and <code>--json</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "A new <b>Ask and answer questions</b> section, and the question meanings in the exit-code table.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1512,
+       "text": "Only <code>watch</code> and the claim commands deliver answers. The table below this line lists the steps a view such as the band takes for itself."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "Status moves to <code>in-progress</code>, § 2.1's table documents <code>watch --once</code>, and § 2.2 and § 3 describe the session's repository and the operating-system lock.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "Priority stays <code>now</code>. The plan stays <code>in-progress</code> until the second pull request ships the band."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
