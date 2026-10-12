@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Questions in Projector's band",
+ "project": "questions-drawer",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 268,
+  "title": "Plan answering an agent's questions in Projector's band",
+  "head": "d380cf90b306530986ef258ac030f44964fa2e11",
+  "headRef": "questions-drawer-spec",
+  "base": "77cd5d66423a6dbe6c2f89c02b837cb4c42617ac",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's fix and review loops run subagents that sometimes need a decision only the person can make. Today a subagent hands its question to the main loop, which asks it as a line of text in the transcript. That line scrolls away, nothing lists which questions are still open, and nothing carries the answer back to the subagent.",
+   "This pull request adds one plan, <code>docs/projects/questions-drawer/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It changes no code. The plan builds on <b>Projector's band</b>: a Claude Code hooks module, merged in #267, that draws a strip above the prompt listing the pull requests the loops track. It uses the <code>/projector</code> command and the <code>band</code>-prefixed state keys that #269 gives the band, so its implementation follows #269.",
+   "<ol><li><b>An agent posts a numbered question.</b> The module registers a tool, <code>mcp__projector__ask</code>, that takes a one-line <code>question</code>, a required <code>recommendation</code>, and optional <code>detail</code>, <code>options</code>, and <code>pr</code>. It numbers the question, <code>#337.3</code> for the third about #337 in the session's repository, <code>owner/repo#337.3</code> for another repository, or <code>q1</code> otherwise, stores it in the session's own plugin state, <code>bandQuestions</code>, and returns the number at once.</li><li><b>The session's band lists it under its pull request.</b> The number is a press target that opens a drawer: <code>detail</code>, then lettered choices (<code>a.</code>, <code>b.</code>) with the recommended one marked, then a lettered <b>Type something</b> field and dismiss. Other sessions do not see it.</li><li><b>The answer goes straight back, with context.</b> The module sends the answer, as <code>#337.3.a</code> with the question and the choice, to the subagent if it is still live, or queues it for the main loop otherwise. A refused delivery reopens the question. A reference typed in the prompt adds its question and choice to the prompt's <code>context</code>.</li></ol>",
+   "Earlier heads stored questions in shared files that every session's band read. Later heads keep each question in the session that asked it, require a recommendation, and, from this head on, name every question and answer by a reference you can type."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Projector's band</b>: the strip above the Claude Code prompt that #267 added and <code>/projector</code> shows or hides, one line per tracked pull request.</li><li><b>Drawer</b>: the extra lines that open under a band line when you press it.</li><li><b><code>$.state</code></b>: values Claude Code holds for one session on a plugin's behalf; they survive a hot reload of the module, and writing one redraws the band.</li><li><b>Main screen</b>: Claude Code's non-fullscreen layout, used under tmux, where only a <code>Button</code> takes a press.</li><li><b>Reference</b>: a question's number, <code>#337.3</code>, <code>owner/repo#337.3</code>, or <code>q1</code>, fixed when the agent asks, and an answer's number with its letter, <code>#337.3.a</code>.</li></ul>"
+   },
+   {
+    "id": "readiness",
+    "title": "Readiness",
+    "html": "<p>The plan owns every open question at <code>ready</code>. Section 6 lists three: opening a pull request's drawer on the main screen (owned, outside this plan's questions), whether a resumed session keeps <code>$.state</code> (deferred until observed), and Codex (deferred). None blocks implementation.</p>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><code>2b3a0ed</code>: changes requested, three findings on the delivery route, the repository name, and the option hotkeys.</li><li><code>9445f99</code>: all three fixed. Clean, with a suggestion about a submit that a hook drops.</li><li><code>b74f1b3</code>: questions move from shared files to each session's own state, and a dropped submit now reopens the question. Clean, with a suggestion about a reload during a delivery.</li><li><code>623d52f</code>: the band and its state keys take the names #269 gives them. Clean.</li><li><code>12990cb</code>: every question carries a recommendation and draws as a one-line checklist entry beside its pull request. Changes requested on two paragraphs whose wrapping does not match the plan's.</li><li><code>b017061</code>: choices become numbered lines that can hold a sentence, the chosen answer carries its number, and the wrapping is fixed. Clean.</li><li><code>a13ba48</code>: questions and answers get typed references, and every delivered answer carries its question. Changes requested: a bare-number reference matches ordinary numbers in a prompt, and a pull request's reference changes form with the band's repositories. The author holds the pull request for more changes.</li><li><code>d380cf9</code>: every reference takes one fixed form, and § 2.2 states exactly what the hook matches. Changes requested: a reference followed by a sentence's closing period matches nothing.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The questions-drawer plan",
+   "kicker": "How an agent's question reaches the person and how the answer gets back",
+   "intro": [
+    "The plan covers the whole round trip: the <code>ask</code> tool and the question it records (sections 2.1 to 2.3), what the band draws (2.4), the files the implementation touches (2.5), the reasons for each choice (3), and the acceptance tests (4).",
+    "Read section 2.1 first. Its numbered steps are the design, and the later sections fill in each step's data and drawing."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The API calls the plan names exist as described in Claude Code 2.1.296's plugin declarations: <code>$.tool.register</code> with <code>isDeferred</code>, <code>$.ui.notify</code>, <code>$.session.send({ to: { agentId } })</code>, <code>$.agent.list()</code> with its statuses, <code>$.prompt.submit</code> and its <code>drop</code> result, <code>$.state</code>, <code>Button</code> with <code>plain</code>, <code>Input</code> with <code>onSubmit</code>, and ctrl+x tab to focus the band."
+    },
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> passes at this head, and the plan's frontmatter reads <code>status: ready</code> and <code>priority: now</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/questions-drawer/readme.md",
+     "collapsed": false,
+     "note": "The new plan: the problem, the <code>ask</code> tool and the question it records, the band's drawing, the design reasons, and the acceptance tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 75,
+       "text": "The plugin API documents <code>{ deny: reason }</code> as how a <code>tool.call</code> hook refuses a call, and the model reads the reason as an error result."
+      },
+      {
+       "kind": "verify",
+       "line": 98,
+       "text": "The live statuses here, <code>pending</code>, <code>running</code>, <code>waiting</code>, and <code>idle</code>, and the ended ones, <code>completed</code>, <code>failed</code>, and <code>killed</code>, are exactly the <code>AgentStatus</code> values in the 2.1.296 plugin API."
+      },
+      {
+       "kind": "verify",
+       "line": 123,
+       "text": "Each reference is fixed when the agent asks. Only the session's own repository takes the short <code>#337.3</code> form, so two repositories' #337 questions never share a reference, and a question without a pull request is <code>q2</code>, which ordinary numbers do not match."
+      },
+      {
+       "kind": "flag",
+       "line": 146,
+       "text": "The rule ends a reference only at a space, punctuation other than <code>.</code>, or the end of the prompt, so <code>Go with #337.3.b.</code> matches nothing and the prompt arrives without the question. Let a <code>.</code> end a reference when a space or the end of the prompt follows it."
+      },
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "<code>bandQuestions</code> and <code>bandQuestionCounts</code> follow the <code>band</code> prefix that #269 gives the band's state at <code>b90b297</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 225,
+       "text": "In the 2.1.296 API, a <code>Button</code> takes <code>Text</code> children, so the underlined <code>suggestion</code>-colored number is drawable. <code>Input</code> takes a <code>placeholder</code>, and <code>Text</code> takes <code>strikethrough</code> for a dismissed line."
+      },
+      {
+       "kind": "verify",
+       "line": 234,
+       "text": "With no <code>hotkey</code>, a digit typed into an empty prompt presses no letter, so the letters are only labels."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
