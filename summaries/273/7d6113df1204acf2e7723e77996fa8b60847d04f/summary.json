@@ -1,0 +1,214 @@
+{
+ "version": 1,
+ "name": "Questions for the person",
+ "project": "questions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 273,
+  "title": "Answer an agent's questions from Projector's band",
+  "head": "7d6113df1204acf2e7723e77996fa8b60847d04f",
+  "headRef": "questions-band",
+  "base": "7e7ccf3ab8111125df91aaf24087effc8673d4f0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a review or fix loop's subagent needs a decision from you, it can only hand the question to the main loop, which asks it as a line in the transcript. That line scrolls away, and your answer has no route back to the subagent. The <code>questions</code> plan fixes this in two pull requests. The first, #271, now merged into <code>main</code>, added <code>project question</code>, a command any host can run to ask, list, answer, and deliver questions. This second one builds Claude Code's view on top of that command, in <i>Projector's band</i>, the strip above the prompt that lists the pull requests your loops track.",
+   "The change gives Claude Code three things:",
+   "<ol><li><b>An <code>ask</code> tool.</b> The model sees it as <code>mcp__projector__ask</code> from the first turn. The hooks module serves it by running <code>project question ask</code>, so a question asked through the tool and one asked from the shell land in the same store. The tool returns the question's reference, such as <code>#337.3</code>, at once, and the agent keeps working.</li><li><b>Questions in the band.</b> The questions are a bulleted list below the pull requests, oldest first, each line ending with its pull request and its age. Pressing a question opens a drawer that takes the band to itself: the detail, the numbered options with the recommendation first, a field for a typed answer, and <b>discuss</b> and <b>dismiss</b>.</li><li><b>Answers through your prompt.</b> Choosing an option records nothing. It puts the quoted question, a blank line, and the answer into your prompt. Sending that prompt answers the question: the band reads the answer back out of the sent text, records it, and marks it delivered, because the prompt carried it to the main loop. An answer given from a terminal is still <i>claimed</i> and delivered by the band, straight to a live subagent or to the main loop as a prompt of its own.</li></ol>",
+   "The plan stays <code>in-progress</code>. One acceptance row, opening a question's drawer on the main screen with ctrl+x tab and Enter, is a check by hand under tmux that has not been done."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>The store</b>: <code>project question</code>'s files for one session, one JSON file per question under <code>$XDG_STATE_HOME/projector/questions/&lt;session&gt;/</code>.</li><li><b>Reference</b>: a question's fixed name, <code>#337.3</code>, <code>owner/repo#337.3</code>, or <code>q2</code>; an answer adds its letter, as <code>#337.3.a</code>.</li><li><b>Claim</b>: a random token a deliverer takes on a recorded answer, so only one deliverer sends it. A claim lapses after a minute without renewal.</li><li><b>Route</b>: <code>send</code>, a message to a live subagent through <code>$.session.send</code>, or <code>submit</code>, a prompt for the main loop through <code>$.prompt.submit</code>, which waits until the session is idle.</li><li><b>Signature</b>: a string built from the store directory's file names, sizes and times, which the band compares on each tick to decide whether to read the store again.</li><li><b>Proposal</b>: the text an option puts in the prompt, <code>\"&lt;question&gt;\"</code>, a blank line, and the answer. The band finds answers in a sent prompt by looking for a quoted question that ends its line.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>f1229f3</code>, found that a failed store read was never retried. <code>51e8c80</code> fixed it.</li><li>The review of <code>382fb7f</code>, which made your prompt carry the answer, found two problems. A quote answered every open question with the same text, and a prompt you did not send could answer a question. <code>6af99d9</code> and <code>fc04c04</code> fix both.</li><li>The review of <code>fc04c04</code> found that a proposal you cleared from the prompt still won when two questions share their text. <code>7d6113d</code> fixes it: a quote now goes to the drawer that last put that same answer line in the prompt, else to the oldest question.</li><li>The review of <code>7d6113d</code> is clean, with all four finding threads resolved. The gate passed, including 51 hook tests under <code>claude plugin test</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "The state and the pure helpers",
+   "kicker": "The types the band keeps and the logic that needs no engine",
+   "intro": [
+    "Two files hold everything that can be tested without the engine. <code>hooks/types.d.ts</code> declares a <code>Question</code> as <code>project question list --json</code> prints it, and the two pieces of session state the band adds: <code>bandQuestions</code>, the band's last read of the store, and <code>bandSending</code>, each delivery in flight.",
+    "<code>hooks/questions.ts</code> holds the decisions: which text might hold a reference, the proposal an option puts in the prompt and how a sent prompt's answers are read back out (<code>answersIn</code>), the note that tells the main loop which subagent asked, whether an answer still needs a deliverer, which route it takes, where the store lives, the directory signature, and the <code>ask</code> tool's description, schema, and arguments."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Session state survives a hot reload of the hooks module, while module variables do not. That is why each delivery's token, route, and text live in <code>bandSending</code>: a reloaded module can keep renewing a submit an earlier copy made, and recognize its prompt when it arrives."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>Question</code>, <code>Answer</code>, and <code>Sending</code>, and the <code>bandQuestions</code> and <code>bandSending</code> state keys.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>bandSending</code> is keyed by reference alone. That holds because the band only delivers questions from its own session's store.",
+       "line": 87
+      }
+     ]
+    },
+    {
+     "path": "hooks/questions.ts",
+     "note": "The engine-free helpers: reference detection, proposals and reading answers back from a prompt, the relay note, delivery need, routing, the store path and signature, and the tool's schema and argument vector.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "These statuses match the engine's <code>AgentStatus</code> in the 2.1.296 plugin-authoring declarations, which lists <code>completed</code>, <code>failed</code>, and <code>killed</code> as the ended states.",
+       "line": 12
+      },
+      {
+       "kind": "context",
+       "line": 116,
+       "text": "A file whose claim the band itself renews counts by name alone, so the band's renewal every 5 seconds does not make it run <code>project question list</code> again."
+      },
+      {
+       "kind": "verify",
+       "line": 176,
+       "text": "I ran the vector this builds against the CLI in a temporary state directory: a question and a recommendation that start with <code>-</code> stay text, and a <code>--detail</code> value keeps its line break."
+      },
+      {
+       "kind": "verify",
+       "line": 69,
+       "text": "A shared quote goes to the drawer that last proposed the same answer line, else to the oldest open question. Band tests at this head show it: a cleared proposal for <code>#8.1</code> no longer takes the answer sent for <code>#7.1</code>, and when both drawers proposed the same answer, the later one takes it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The tool, the store read, answering, and delivery",
+   "kicker": "How the hooks module asks, reads, records, and delivers",
+   "intro": [
+    "<code>hooks/register.tsx</code> wires the helpers into the engine. At <code>session.start</code> it registers the <code>ask</code> tool with <code>isDeferred: false</code>. Its <code>tool.call</code> hook runs <code>project question ask</code> and answers with the reference, or refuses with <code>{ deny }</code>: the failed check for exit <code>65</code>, the error and <code>run project upgrade</code> for another exit, and advice to ask in the conversation when <code>project</code> did not finish.",
+    "Every 5-second tick, shown or hidden, the band lists the store's directory and runs <code>project question list</code> only when the signature changed since the last successful read. A question it has not shown before shows the band.",
+    "An answer reaches the store one of two ways:",
+    "<ol><li><b>From your prompt.</b> A drawer option fills the prompt with the quoted question and the answer. When you send the prompt, the <code>prompt.submit</code> hook finds each open question quoted at the end of a line, takes the next non-blank line as its answer, and adds a relay note to the prompt's context when a subagent asked. Once the prompt has entered, the band runs <code>answer</code>, <code>claim</code>, and <code>delivered</code>.</li><li><b>From a terminal, or a dismissal.</b> The band claims the recorded answer and sends it: through <code>$.session.send</code> to a live subagent, or otherwise through <code>$.prompt.submit</code> to the main loop, renewing the claim while that prompt waits. A dropped submit reopens the question.</li></ol>",
+    "The band's own submits are settled by the same <code>prompt.submit</code> hook when they arrive, so a hot reload never sends a second copy. The rest of the file draws the list and the drawer, which takes the band to itself while it is open."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "I checked each engine call against the 2.1.296 plugin-authoring declarations: <code>$.tool.register</code> with <code>isDeferred</code>, the <code>tool.call</code> answer as <code>{ result }</code> or <code>{ deny }</code>, <code>SessionSendResult.isDelivered</code>, <code>PromptSubmitResult.drop</code>, <code>$.fs.list</code>'s entries, and a mobile surface without <code>Input</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers and serves <code>ask</code>, reads the store on every tick, reads answers out of sent prompts, dismisses, claims and delivers terminal answers, attaches typed references, and draws the list and the drawer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 315,
+       "text": "The signature is recorded only after a read succeeds, so a failed read runs again on the next tick; the band test \"a store read that fails runs again on the next tick\" covers it."
+      },
+      {
+       "kind": "context",
+       "line": 79,
+       "text": "<code>proposed</code> holds each drawer's proposed answer beside its reference and lives in the module, so a hot reload forgets it and a quote then goes to the oldest open question with that text."
+      },
+      {
+       "kind": "context",
+       "line": 326,
+       "text": "Settling takes the entry out of <code>bandSending</code> in one state update before it runs the CLI, so the submit's own result and the <code>prompt.submit</code> hook settle a delivery once between them."
+      },
+      {
+       "kind": "context",
+       "line": 448,
+       "text": "The reference joins <code>delivering</code> before the first <code>await</code>, so a tick cannot deliver this answer again while <code>answer</code>, <code>claim</code>, and <code>delivered</code> run."
+      },
+      {
+       "kind": "verify",
+       "line": 624,
+       "text": "Only a <code>composer</code> or <code>bridge</code> prompt is read for answers. A <code>peer-send-message</code> prompt that quotes an open question on its own line, run as a band test at this head, records nothing and leaves the question open."
+      },
+      {
+       "kind": "context",
+       "line": 736,
+       "text": "Options are <code>Markdown</code> links, so a plain click fills the prompt and a ctrl, alt, or cmd click opens the pull request, or the question's file in the store when it has none. On the main screen a link takes no press, so an option there is answered through the typed field."
+      },
+      {
+       "kind": "context",
+       "line": 797,
+       "text": "The whole question line is one plain <code>Button</code> with no <code>hotkey</code>, so a press anywhere opens the drawer and a digit typed first in an empty prompt presses nothing."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The helpers alone, and the band driven through the engine's test kit",
+   "intro": [
+    "<code>hooks/questions.test.ts</code> covers the helpers directly. <code>hooks/band.test.tsx</code> drives the whole module through the engine's test kit, over an in-memory stand-in for <code>project question</code> that keeps questions, claims, and tokens the way the CLI does."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passed all 51 tests at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/questions.test.ts",
+     "note": "Reference detection, the proposal text, reading answers back from a sent prompt (typed, blank lines, discussed, already answered), the relay note, the minute a delivered question stays, claim lapse, routing, the store path, the signature, and the tool's arguments."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Asking through the tool and listing the question, each refusal, a hidden band shown by a shell question, an idle session, the drawer taking the band, an option filling the prompt and the sent prompt answering, typed answers, discuss, dismiss, terminal answers by route, a dropped submit, claim renewal, a failed read retried, a reload's leftover submit, and typed references.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "What users read about the band, and what the plan now records",
+   "intro": [
+    "<code>docs/plugins.md</code> gains a section on answering questions in the band: the list, the drawer, answering through the prompt, discuss and dismiss, and terminal answers. The plan's § 2.6, § 2.7, § 3, § 4, and § 5 are rewritten for the list layout and for answers that travel in your prompt."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "A new section: asking, where a question sits, the drawer, delivery, typed references, and what the tick costs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 241,
+       "text": "The link to <code>cli.md#ask-and-answer-questions</code> resolves to the <code>## Ask and answer questions</code> heading at this head."
+      },
+      {
+       "kind": "context",
+       "line": 286,
+       "text": "This paragraph is the rule <code>answersIn</code> follows: a quoted question that ends its line, then the next non-blank line as its answer, one question per quote, and only from a prompt you send."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "§ 2.6 now describes the list and the drawer; § 2.7 item 2 has answers travel in the prompt; § 3, § 4, and § 5 follow.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 309,
+       "text": "§ 2.7 item 2: how a sent prompt answers a question, now with one question per quote and only <code>composer</code> or <code>bridge</code> prompts."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
