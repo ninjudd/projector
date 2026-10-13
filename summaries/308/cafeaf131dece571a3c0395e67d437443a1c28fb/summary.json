@@ -1,0 +1,98 @@
+{
+ "version": 1,
+ "name": "Close the inbox project",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 308,
+  "title": "Finish the inbox project",
+  "head": "cafeaf131dece571a3c0395e67d437443a1c28fb",
+  "headRef": "finish-inbox",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>inbox</code> project gave agents a place to leave you two kinds of item: a question to answer and a notice to read. An agent posts one with <code>project inbox ask</code> or <code>project inbox tell</code>, or with the <code>ask</code> and <code>tell</code> tools in Claude Code, and Projector's band, the panel above the Claude Code prompt, lists it until you answer, dismiss, or snooze it. That work shipped across releases 0.7.15 to 0.7.18.",
+   "This pull request closes the project. The plan said it would stay <code>in-progress</code> until the owner checked one acceptance row by hand: on Claude Code's main screen under tmux, ctrl+x tab and Enter on an item opens its drawer. The owner has now made that check, so the plan's status becomes <code>completed</code> and a new § 12 records the outcome. One band test is added for a § 10 row whose evidence was indirect.",
+   "Projector's rules for plans, in <code>docs/projects/README.md</code>, say a completed plan states whether it shipped, was abandoned, or was superseded, and the <code>finish</code> skill asks that every acceptance criterion have evidence or a stated reason it is not delivered. § 12 is where this plan meets both."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Item</b>: a question or a notice an agent posted to the inbox.</li><li><b>The band</b>: Projector's panel above the Claude Code prompt, which lists pull requests and inbox items.</li><li><b>Drawer</b>: the detail an item or pull request expands into when you open its line in the band.</li><li><b>Acceptance row</b>: one line of a plan's acceptance table, an action and the result it must produce.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One finding is open. § 12.3 cites a test that #303, an open pull request that edits § 10, renames, so the two together would leave a stale citation and § 10 changes that no listed release carries. The author plans to merge <code>main</code> once #303 lands and record #303 in § 12.</li><li>Settled: § 12's opening paragraph is rewrapped to the plan's width, and § 12.4 now gives each kind of old directory its own reason.</li><li>An earlier head numbered the outcome § 13 and said #305 adds § 12. #305 no longer touches the plan, and the outcome is § 12.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "outcome",
+   "title": "The plan records its outcome",
+   "kicker": "Status <code>completed</code>, and a new § 12 that accounts for every acceptance row",
+   "intro": [
+    "The plan's frontmatter changes from <code>in-progress</code> to <code>completed</code>. Its priority stays <code>now</code>, as on the repository's other completed plans; Projector requires no priority once a plan is completed.",
+    "§ 9 and § 11.10 each ended by saying the project stays <code>in-progress</code> until the hand check. Both sentences now say it stayed <code>in-progress</code> until the check that § 12 records, so the history reads correctly beside the new status. § 6 and § 10 are untouched.",
+    "<ol><li><b>§ 12.1 What shipped</b> lists each release and the pull requests in it.</li><li><b>§ 12.2 How the result differs from § 2</b> collects the deviations that § 9, § 10, and § 11 record, such as answering under a quoted question in the prompt in place of a <code>Type something</code> field, and numbering each session's items from 1.</li><li><b>§ 12.3 Evidence</b> maps each acceptance row of § 4, § 10, and § 11.8 to the test that pins it, or to the owner's hand check.</li><li><b>§ 12.4 What this project does not deliver</b> lists the open questions in § 7 that stay out of the project, such as a session's id outside Claude Code.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "The status change, the two closing sentences rewritten in the past tense, and the new § 12.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 991,
+       "text": "Every test and test class that § 12.3 cites exists at this head in the file the section names. Each was found by name in <code>tests/test_inbox.py</code>, <code>tests/test_loop.py</code>, <code>hooks/inbox.test.ts</code>, or <code>hooks/band.test.tsx</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 930,
+       "text": "Each pull request in § 12.1 merged between the release commit it is listed under and the one before it, read from <code>git log</code> on <code>main</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 1015,
+       "text": "The removed names, such as <code>references_in</code>, <code>mayReference</code>, <code>checkout_repo</code>, and <code>Type something</code>, appear only in the <code>inbox</code> and <code>questions</code> plans, by <code>git grep</code> at this head. <code>counts.json</code> and <code>session.json</code> appear in code only in the old-items test's fixture."
+      },
+      {
+       "kind": "flag",
+       "line": 991,
+       "text": "#303, open and edits § 10, renames the first test this row cites to <code>a sent prompt that quotes a notice answers nothing, and closes its drawer</code>, and adds band changes to § 10 that no release in § 12.1 carries. Merged together, this row cites a test that no longer exists. Landing this after #303 and recording #303 here settles it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "age-test",
+   "title": "A test for the shared age column",
+   "kicker": "A pull request's age and an item's age end in one column",
+   "intro": [
+    "Each line in the band ends with an age, such as <code>5m</code>. § 10 says pull requests and inbox items share one right-aligned age column, as wide as the widest age in the band. The existing test drew only pull requests, so the items' part of that rule had no test.",
+    "The new test puts a pull request updated 5 minutes ago beside a question posted 12 minutes ago, and checks that both ages take the 3-column width of <code>12m</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "One new test beside the band's other tool and item tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 887,
+       "text": "The test fails when the items' ages are removed from <code>ageWidth</code> in <code>hooks/register.tsx</code>, while the other 78 plugin tests pass, and passes with the code as it is. Checked by editing a scratch copy and running <code>claude plugin test .</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
