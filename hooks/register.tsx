@@ -1288,7 +1288,7 @@ export const register: Register = on => {
               </Text>
               {/* Each link has a line of its own: a terminal without hyperlinks
                   draws a link's URL after its text, and a shared line would
-                  cut the URL off. The actions follow, on one row. */}
+                  cut the URL off. The actions follow, a line each. */}
               <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
               {pr.summaryUrl !== null && (
                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
