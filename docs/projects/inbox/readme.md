@@ -239,8 +239,8 @@ session's id in every host, which § 7 leaves open.
   agent hears of it.
 - **Dismissing a notice marks it delivered.** With `deliveredAt` set at
   once, retention, `watch`, the band's deliverer, and the band's 30
-  seconds of fading all handle a dismissed notice with no new branch: it is simply a
-  delivered item.
+  seconds of fading all handle a dismissed notice with no new branch: it
+  is simply a delivered item.
 - **Snoozing hides without losing.** An item you cannot deal with yet
   should leave your way without leaving the inbox. Snoozing records a time
   rather than a state, so nothing has to run when it ends: the band and
@@ -808,10 +808,10 @@ runs for any prompt that holds text shaped like `#12.3` or `q2`. Nothing
 else changes.
 
 Build the change as one pull request after #295, § 10's band pull
-request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
-tests, and `docs/plugins.md`. The CLI and the hooks change in that one
-pull request, and because `ref` stays a string, a band and a CLI a
-release apart still work together.
+request, merges, since both change `hooks/register.tsx`,
+`hooks/inbox.ts`, their tests, and `docs/plugins.md`. The CLI and the
+hooks change in that one pull request, and because `ref` stays a string,
+a band and a CLI a release apart still work together.
 
 ### 11.10 What building it settled
 
