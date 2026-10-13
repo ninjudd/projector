@@ -1,0 +1,1831 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index d9c8324..1244330 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 11 -->
++<!-- projector:begin 12 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -213,6 +213,8 @@ instead, answer what they asked. Then withdraw the question with the
+ if the reply shows it was unclear or the choice has changed, or leave it
+ open while it still needs them. Each time the person writes to you, also
+ look over the other items you posted that are still open, and withdraw any
+-that no longer need them, such as news that has gone stale. Name an item by
+-the number `ask` or `tell` returned.
++that no longer need them, such as news that has gone stale. When the person
++says they dismissed an item by mistake, restore it with the `restore` tool or
++`project inbox restore` rather than asking again. Name an item by the number
++`ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index e9f0216..dcf2fbb 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1808,14 +1808,16 @@ need to decide in `--detail`, or `--detail-file`.
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+ every session's open items, and `show`, `answer`, `dismiss`, `withdraw`,
+-`revise`, and `snooze` find the session that holds the number. `list` prints
+-each item's number, kind, state, and subject, separated by tabs, after the
+-session when it lists every session. Every session counts from 1 and keeps the
+-items you resolved, so two sessions often hold the same number. Without a
+-session, those six commands look first among open items, the ones with no
+-answer recorded: a number that one session holds open names that session's
+-item, whatever other sessions hold resolved under the same number. Only when
+-no session holds the number open do they look among every item. A command that
++`revise`, `snooze`, and `restore` find the session that holds the number.
++`list` prints each item's number, kind, state, and subject, separated by tabs,
++after the session when it lists every session. Every session counts from 1 and
++keeps the items you resolved, so two sessions often hold the same number.
++Without a session, the first six of those commands look first among open
++items, the ones with no answer recorded: a number that one session holds open
++names that session's item, whatever other sessions hold resolved under the
++same number. `restore` looks first among the items it can bring back, the
++dismissed and snoozed ones. Only when no session holds such an item under the
++number do they look among every item. A command that
+ still finds the number in more than one session exits 67 and names them; run
+ it again with `--session` and the session that `list` prints beside the item.
+ A command waits up to five seconds while another command changes the same
+@@ -1858,6 +1860,8 @@ needs you.
+ `project init` adds ask you before an agent runs one, in Claude Code, and
+ leave them to Codex's usual approval. Otherwise an agent could answer its own
+ question. Projector's band runs them itself, so answering there never asks.
++`restore` takes no choice from you, so an agent runs it without asking, in
++either host, when you say a dismissal was a mistake.
+ 
+ Every command refuses any other form of reference, such as `#337.3`,
+ `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
+@@ -1872,18 +1876,27 @@ loop running it hears the answer:
+ $ project inbox watch --session "$SESSION"
+ ANSWER 3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
+ DISMISSED 2 Run project init to add the publish rule?
++RESTORED 2 Run project init to add the publish rule?
+ ```
+ 
++`RESTORED` tells the agent that you brought back a question it already heard
++`DISMISSED` for, so the question is open again, as `restore` below describes.
+ `watch --once` makes one pass and exits. A view that delivers answers itself,
+ such as Projector's band in Claude Code, uses the steps `watch` takes:
+ 
+ | Command | What it does |
+ | --- | --- |
+-| `claim <number>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
++| `claim <number>` | Claims an answer, or word of a restore, for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
+ | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
+ | `delivered <number> --claim <token>` | Marks the claimed answer delivered |
+ | `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+ 
++A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
++deliverer sends it again, and the question stays open. A restore, or an
++answer to a restored question, that lands while a line is being delivered
++drops that line's claim, so `delivered` and `reopen` exit 65 for it, and the
++next deliverer sends what the question owes then.
++
+ A claim that is not renewed for a minute lapses, so a deliverer that stops
+ halfway leaves the answer for the next one. A lapsed claim's token still
+ works until another `claim` takes the answer. `watch` marks an answer
+@@ -1911,9 +1924,10 @@ delivered, and `list` shows it, as `dismissed`, only with `--all`.
+ 
+ To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+ an hour, or for the whole minutes that `--for` gives, up to a day (1440
+-minutes), and `--for 0` wakes it now. Projector's band leaves a snoozed item
+-out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
+-local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
++minutes), and `--for 0` wakes it now. Projector's band keeps a snoozed item
++listed, muted, for 30 seconds, and then leaves it out until its time passes.
++`list` shows it as `snoozed until <HH:MM>`, in local time, or as
++`snoozed until tomorrow <HH:MM>` when it returns tomorrow:
+ 
+ ```console
+ $ project inbox snooze 3 --for 30
+@@ -1930,6 +1944,36 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+ 65, an item already answered or dismissed, a negative `--for`, and a `--for`
+ longer than a day, and it changes nothing when it refuses.
+ 
++When you dismiss or snooze an item by mistake, bring it back with `restore`:
++
++```console
++$ project inbox restore 3
++restored 3
++```
++
++`restore` reopens the item in place. It keeps its number, its text and
++options, the pull request it is about, when it was posted, and the subagent
++that posted it, and Projector's band lists it as open again. For a snoozed
++item, `restore` ends the snooze and changes nothing else. For a dismissed
++item, it clears the dismissal, so a later `answer` records an answer as if the
++item had never been dismissed. A dismissal clears any snooze, and `restore`
++does not bring that snooze back.
++
++A dismissed question owes its agent a `DISMISSED` line. When that line has
++not gone out yet, `restore` cancels it, and the agent hears nothing. When it
++was delivered, or a deliverer had claimed it, the agent may have heard it, so
++the deliverer then sends a line that starts `RESTORED 3`, and the agent knows
++the question is open again. A snooze sends the agent nothing, and neither
++does a notice's dismissal, so restoring either sends nothing too.
++
++`restore` refuses, with exit code 65, an open item, which has nothing to
++restore, an answered question, an item its agent withdrew, which is the
++agent's to post again, and an answer letter such as `3.a`. A number no
++session holds exits 66, a busy store exits 75, and `restore` changes nothing
++when it refuses. In Claude Code, the agent restores an item with Projector's
++`restore` tool when you tell it a dismissal was a mistake, and the band
++offers **restore** and **unsnooze** in the item's drawer.
++
+ An agent takes back an open item that no longer needs you with `withdraw`,
+ such as a question your reply settled or news that has gone stale:
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 084e259..8361634 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -254,7 +254,9 @@ watchers honor, so the loops stop acting on it. When the command fails, the
+ band shows its error and keeps the line. To bring a dismissed pull request
+ back, run `project loop restore` with the same reference and tracked file,
+ as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
+-describes.
++describes. A drawer closes whenever its pull request leaves the band,
++dismissed here, dropped from a terminal, or merged, so the line comes back
++with its drawer closed.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
+@@ -284,9 +286,12 @@ keeps working. When an item it posted no longer needs you, such as a question
+ your reply settled, the agent takes it back with the `withdraw` tool,
+ `mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
+ reply shows that a question was unclear, the agent rewrites the question in
+-place with the `revise` tool, `mcp__projector__revise`. An agent that runs
+-`project inbox ask`, `tell`, `withdraw`, or `revise` from the shell reaches
+-the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
++place with the `revise` tool, `mcp__projector__revise`. When you tell it you
++dismissed or snoozed an item by mistake, the agent brings the item back
++under its number with the `restore` tool, `mcp__projector__restore`, rather
++than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
++`revise`, or `restore` from the shell reaches the same inbox, as
++[Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, oldest first. A question's
+ line starts with `-`, and a notice's with `•`, so you can tell which items
+@@ -381,18 +386,22 @@ Under the options, a question's drawer has three actions:
+   while you type. Type your reply under the quote, or on the quote's own
+   line, and send the prompt. The reply reaches the agent and answers
+   nothing.
+-- **dismiss** sets the question aside without an answer.
+-- **snooze** hides the question for an hour.
++- **dismiss** sets the question aside without an answer and closes the
++  drawer.
++- **snooze** puts the question off for an hour and closes the drawer.
+ 
+ A notice's drawer shows its detail, then the same `discuss | dismiss |
+ snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
+ that quotes a notice answers nothing, but it closes the notice's drawer; the
+ notice stays in the band until you dismiss it. **dismiss** clears the notice
+-once you have read it, and nothing goes back to the agent.
+-
+-A snoozed item leaves the band and the divider's counts at once. When its
+-hour passes, it returns to the list, and the band appears if you hid it. To
+-pick another time, or to wake an item now, find the item's number with
++once you have read it and closes its drawer, and nothing goes back to the
++agent.
++
++A snoozed item leaves the divider's counts at once, and stays in the list
++for 30 seconds in the `subtle` color, not struck through, so it reads as put
++off rather than dismissed. Then it leaves the band. When its hour passes, it
++returns to the list, and the band appears if you hid it. To pick another
++time, or to wake an item now, find the item's number with
+ `project inbox list` in a terminal, then run
+ `project inbox snooze <number> --for <minutes>`. An item you answer or
+ dismiss from a terminal while it is snoozed does not return.
+@@ -403,13 +412,25 @@ delivered at once, since nothing goes back to the agent. An item the agent
+ withdrew leaves the band at once, its drawer with it, and sends nothing back,
+ not even `DISMISSED` for a question. A question's drawer
+ still opens and marks the answer given with `✓`, listing an answer typed in
+-a terminal with `project inbox answer --text` after the options. A dismissed
+-notice's drawer keeps only **discuss**.
++a terminal with `project inbox answer --text` after the options.
++
++While a dismissed or snoozed item is still listed, click its line to open
++its drawer again. There, **restore** takes the place of **dismiss** for a
++dismissed item, which reads `discuss | restore`, and **unsnooze** takes the
++place of **snooze** for a snoozed one, which reads
++`discuss | dismiss | unsnooze`. Either runs `project inbox restore`, and the
++item is open again at once, in its place in the list, with its drawer still
++open and **dismiss** and **snooze** back in their places. A dismissed question
++whose `DISMISSED` has not gone out sends its agent nothing; one whose agent
++already heard `DISMISSED` sends `RESTORED`. Once the item has left the band,
++ask the agent to restore it. A drawer closes when its line leaves the band,
++so a pull request or an item that comes back returns with its drawer closed.
+ 
+ An answer you give from a terminal with `project inbox answer` reaches the
+ agent through the band of the session that asked. A subagent that is still
+-running receives it directly, as a message that starts `ANSWER`, or
+-`DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
++running receives it directly, as a message that starts `ANSWER`,
++`DISMISSED` for a dismissal, or `RESTORED` when you restore a question
++whose agent heard `DISMISSED`. Otherwise the main loop receives it as a prompt
+ of its own once its turn ends, with the name of the subagent that asked, and
+ `sending` follows the question until it has gone.
+ 
+@@ -683,9 +704,10 @@ marketplace files, and read upstream's new skill against the rules in
+ 
+ ## Work without MCP
+ 
+-Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`, and
+-`revise` tools carry the `mcp__projector__` prefix, but Projector's hooks
+-module in Claude Code serves them: no MCP server runs, and no skill depends
+-on them. Every core skill uses the public `project` CLI and ordinary Git or
+-GitHub commands. A future MCP adapter can expose the same versioned project
+-operations without becoming the package that contains the skills.
++Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`,
++`revise`, and `restore` tools carry the `mcp__projector__` prefix, but
++Projector's hooks module in Claude Code serves them: no MCP server runs, and
++no skill depends on them. Every core skill uses the public `project` CLI and
++ordinary Git or GitHub commands. A future MCP adapter can expose the same
++versioned project operations without becoming the package that contains the
++skills.
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index fa07683..bc69c67 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1216,3 +1216,162 @@ one beside the old.
+ | The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
+ | `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |
+ | The Projector section's new text is pinned to begin marker 11 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
++
++## 14. Restore a dismissed or snoozed item
++
++You can bring back an item you dismissed or snoozed, in place, under its
++number. `project inbox restore <number>` reopens it, the band's drawer offers
++**restore** for a dismissed item and **unsnooze** for a snoozed one, and an
++agent restores an item with a `restore` tool beside `ask`, `tell`,
++`withdraw`, and `revise` when you say a dismissal was a mistake. Dismissing
++or snoozing an item from the band now closes its drawer, and the item stays
++listed, muted, for 30 seconds, which is the window in which its drawer offers
++to bring it back. This section supersedes the bullet of § 2.5 under which a
++snoozed item leaves the list at once and a dismissed notice's drawer keeps
++only **discuss**.
++
++### 14.1 Problem
++
++The owner dismissed a question by accident, and nothing brought it back.
++The only recourse was for the agent to ask the question again, which posted
++a duplicate under a new number beside the dismissed one. The owner said: "we
++need a way to undismiss. creating a duplicate question isn't good." Two more
++gaps showed in the same use. When the owner pressed **dismiss**, the drawer
++stayed open over the band on an item that no longer needed anything: "when
++it is dismissed, we should close the drawer". And a snoozed item left the
++band at once, so a snooze pressed by mistake could be undone only from a
++terminal, with `project inbox snooze <number> --for 0`. The owner asked for
++"a restore button in place of dismiss when you open a dismissed question"
++and for "unsnooze when an item is snoozed".
++
++### 14.2 What changes
++
++- **`project inbox restore <number>` reopens an item in place.** It takes
++  `--session` and `--json` as the other commands do, and works under the
++  session's lock. A dismissed item loses `answer`, `deliveredAt`, and any
++  `claim`, which is everything dismissal and its delivery recorded, and
++  keeps its number, text, options, `pr`, `postedAt`, and `agentId`. A later
++  `answer` then records an answer as if the item had never been dismissed.
++  A snoozed item loses `snoozedUntil` and `snoozedAt` and nothing else.
++  `restore` refuses, with exit `65`, an open item, an answered question, a
++  withdrawn item, and an answer letter; a number no session holds exits
++  `66`, and a busy store exits `75`. Without a session, it looks first among
++  the dismissed and snoozed items, as `answer` looks first among open ones.
++- **A restore tells the agent only what it may have heard.** A dismissed
++  question owes its agent `DISMISSED`. When no deliverer has claimed that
++  line, the restore cancels it, and nothing goes out. When the line was
++  delivered or claimed, the restore records `restoredAt`, and the deliverer
++  sends `RESTORED <number> <subject>`, the shape of the other lines, so the
++  agent knows the question is open again. `watch`, `claim`, and the band's
++  deliverer handle it as they handle `ANSWER` and `DISMISSED`. A snooze and
++  a notice's dismissal send the agent nothing, so restoring either sends
++  nothing.
++- **A change to a line in flight drops its claim.** A restore drops the
++  claim on a `DISMISSED` line being delivered, and an answer or a second
++  dismissal drops the claim on a `RESTORED` line being delivered. The
++  deliverer's `delivered` or `reopen` then exits `65`, and the next
++  deliverer sends what the question owes then. `watch` carries on past such
++  a refusal. An answer replaces a `RESTORED` line nobody has claimed, since
++  the answer tells the agent the question was open. A second dismissal
++  before anyone claimed `RESTORED` is delivered at once, since the last line
++  the agent heard already says `DISMISSED`. A claimed `RESTORED` is done
++  after `delivered` or `reopen`, so no deliverer sends it twice.
++- **Dismissing or snoozing closes the drawer.** In the band, **dismiss** and
++  **snooze** close the item's drawer, as sending an answer or a reply does.
++  A dismissed item stays listed for 30 seconds after `deliveredAt`, muted
++  and struck through, as before. A snoozed item stays listed for 30 seconds
++  after the new `snoozedAt`, which `snooze` records, in the `subtle` color
++  but not struck through, so it reads as put off rather than dismissed, and
++  out of the divider's counts. Then it leaves the band until its snooze ends.
++- **The drawer offers the way back where it offered the way out.** While
++  such an item is listed, its line opens its drawer as before. A dismissed
++  item's drawer reads `discuss | restore`, with **restore** in **dismiss**'s
++  place and no **snooze**, since a resolved item cannot be snoozed. A
++  snoozed item's drawer reads `discuss | dismiss | unsnooze`. Either
++  action runs `project inbox restore`, redraws the item open at once, and
++  leaves the drawer open on it, with `discuss | dismiss | snooze` again.
++- **A drawer closes when its line leaves the band.** The band closes the
++  open drawer once its pull request or item is no longer listed, on each
++  tick and each reload. Before, the drawer's key stayed set, so a line that
++  came back, a pull request restored to a loop or an item restored or woken,
++  came back with its drawer open. **dismiss** in a pull request's drawer
++  already closed it when every drop succeeded.
++- **The `restore` tool runs it.** It takes the item's `number`, runs
++  `project inbox restore` through `runTool`, and puts the item in the band
++  at once, as `withdraw` does. Its description tells the agent to use it
++  only when the person says a dismissal was a mistake or asks for the item
++  back, never on its own judgement, and never to ask a dismissed question
++  again as a new one. The `ask` tool's description says that `RESTORED`
++  arrives when the person restores a question its agent heard dismissed.
++- **Agents learn it from their instructions.** The Projector section of
++  `AGENTS.md`, at begin marker 12, tells the agent to restore an item the
++  person says they dismissed by mistake rather than ask again.
++- **Codex allows it by name.** `project init` adds `restore` to the `inbox`
++  subcommands its Codex rules allow. Claude Code's `Bash(project *)` rule
++  already allows it, and it takes no ask rule.
++
++### 14.3 Why this design
++
++- **Restore in place, not ask again.** A duplicate leaves two items for one
++  decision, with the dismissed one still in `list --all` and the agent
++  holding two numbers. Restoring keeps the number the agent already holds,
++  so `ANSWER` and `DISMISSED` keep arriving under it.
++- **One command for both ways back.** Restoring a dismissed item and ending
++  a snooze both answer "bring it back", so one command and one tool cover
++  them, and an agent never has to know which the person pressed. The band's
++  button reads **unsnooze** for a snoozed item because that is what it does
++  there. `snooze --for 0` still wakes an item from a terminal, so a separate
++  `unsnooze` command would add a third spelling for no new case.
++- **Cancel when unheard, tell when maybe heard.** An agent that never heard
++  `DISMISSED` has nothing to correct, so the restore sends nothing. Once the
++  line was delivered, or claimed and possibly sent, the agent may hold the
++  question as dismissed, and `RESTORED` corrects it. A duplicate `RESTORED`
++  for a question the agent still held open is harmless; a missing one would
++  leave the agent ignoring a question the person wants answered.
++- **Drop the claim rather than mark it.** Recording in each claim which line
++  it carries would let `delivered` tell an old line from a new one, but
++  every deliverer would have to carry it. Dropping the claim when the
++  question changes keeps `settle`'s rule as it was: a claim that still
++  matches settles the line it was taken for. A deliverer delivers one line
++  of a question at a time, so the band and `watch` still send `RESTORED`
++  after the `DISMISSED` it corrects.
++- **`RESTORED` is told once.** A `reopen` of a `DISMISSED` line reopens the
++  question so the person answers again, but there is nothing for the person
++  to redo after a failed `RESTORED`. Retrying it would repeat the band's
++  toast every five seconds while delivery keeps failing. The question stays
++  open, and its eventual answer or dismissal reaches the agent.
++- **A withdrawn item is the agent's.** The agent took it back, so restoring
++  it would put back an item its own agent decided it no longer needed. The
++  agent posts it again if it changes its mind. An answered question is not
++  restored either: its answer went to the agent, and `restore` is for a
++  mistaken dismissal.
++- **A dismissal's snooze is not restored.** Dismissing clears the snooze, as
++  § 2 has it, so `restore` returns the item open and in view, which is what
++  someone undoing a dismissal wants.
++- **`snoozedAt` lives in the store.** The 30 seconds a snoozed item stays
++  listed count from the snooze, as a dismissed item's count from
++  `deliveredAt`. Recording the time in the item, rather than in the band's
++  memory, gives a snooze from a terminal the same window and survives a
++  reload of the module.
++- **No ask rule for `restore`.** `answer`, `dismiss`, and `snooze` ask before
++  an agent runs them because they record the person's choice. `restore`
++  undoes a choice the person tells the agent was a mistake, and puts the
++  item back in front of the person, so it cannot answer anything for them.
++
++### 14.4 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| `restore` brings back a dismissed question exactly as it was, keeps the number, cancels the undelivered `DISMISSED`, and a later `answer` works | `test_restores_a_dismissed_question_in_place_and_cancels_its_undelivered_dismissal` in `RestoreTests`, `tests/test_inbox.py` |
++| A dismissed notice comes back and sends nothing | `test_restores_a_dismissed_notice_and_sends_nothing` |
++| `RESTORED` goes out only after `DISMISSED` was delivered or claimed, once | `test_sends_restored_only_after_its_agent_heard_dismissed`, `test_a_restore_while_dismissed_is_being_delivered_sends_restored_after_it`, `test_a_restored_line_whose_delivery_failed_is_not_sent_again` |
++| A change to a line in flight drops its claim, and `watch` carries on | `test_watch_survives_a_restore_that_lands_while_its_line_goes_out`, `test_an_answer_or_dismissal_before_restored_goes_out_replaces_it`, `test_dismissing_again_once_restored_is_claimed_sends_dismissed_after_it` |
++| A snoozed item loses its snooze and nothing else | `test_restores_a_snoozed_item_by_clearing_its_snooze` |
++| The refusals, the bare number, and the lock | `test_refuses_an_open_answered_or_withdrawn_item_and_an_unknown_number`, `test_a_bare_number_looks_first_among_dismissed_and_snoozed_items`, `test_two_restores_at_once_restore_once`, `test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75`, and `restore` in `test_refuses_an_answer_letter_on_every_other_command` |
++| **dismiss** closes the drawer and strikes the line through; the drawer then reads `discuss \| restore`; **restore** redraws it open with **dismiss** back, sends `RESTORED` only after `DISMISSED`, and a pick answers it | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place` in `hooks/band.test.tsx`, and `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
++| **snooze** closes the drawer and leaves the line in `subtle`, not struck, for 30 seconds; the drawer reads `discuss \| dismiss \| unsnooze`, and **unsnooze** brings `snooze` back | `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place`, `snooze hides either kind for an hour, then brings a hidden band back`, and `a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time` in `hooks/inbox.test.ts` |
++| A drawer closes when its line leaves the band, so a returning line has it closed | `a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns`, and the restore tool's test below |
++| The `restore` tool redraws the item at once, its old drawer closed, refuses what the CLI refuses, and a failed `RESTORED` is said once | `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED`, `the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs`, `a dropped RESTORED says so without asking for an answer, and is not sent again` |
++| The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |
++| Codex allows `restore` by name | The `project inbox restore` row of `DECISIONS` and `test_the_codex_rules_name_every_command_or_leave_it_out` in `tests/test_permissions.py` |
++| The Projector section's new sentence is pinned to begin marker 12 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 9b52ad1..64f048b 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1,5 +1,5 @@
+ import type { AgentInfo, FsEntry, On } from 'claude-code'
+-import { expect, mock, test, type Engine } from 'claude-code/testing'
++import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
+ 
+ import type { Notice, Question } from './types'
+ 
+@@ -374,6 +374,49 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
+   await ui.unmount()
+ })
+ 
++test('a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const files: Record<string, string> = { [WATCH]: 'x/y#7\n' }
++  world(on, files, ([, , , reference = '', , tracked = '']) => {
++    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
++    return ran(`dropped ${reference} from ${tracked}\n`)
++  })
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  // Hiding and showing the band reloads it, as a watcher's report does.
++  const reload = async () => {
++    await $.command.run(COMMAND)
++    await $.command.run(COMMAND)
++    await clock.advance(1)
++    await clock.settle()
++  }
++
++  const ui = await $.ui.mount(BAND)
++  // Dropped from a terminal while its drawer is open, the pull request leaves the band.
++  await ui.press({ key: 'pr:x/y#7' })
++  files[WATCH] = 'x/y#7\n!x/y#7\n'
++  await reload()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
++  // `project loop restore` brings its line back with the drawer closed.
++  files[WATCH] = 'x/y#7\n'
++  await reload()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++
++  // So does dismissing it from its drawer.
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
++  files[WATCH] = 'x/y#7\n'
++  await reload()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  await ui.unmount()
++})
++
+ test('opening one drawer closes the one that was open', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -641,9 +684,12 @@ const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
+   ...fields,
+ })
+ 
++/** An item with the named fields cleared. */
++const without = <T extends Held>(item: T, ...keys: string[]): T =>
++  Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
++
+ /** A question with its answer and claim cleared, as `reopen` leaves it. */
+-const reopened = (question: HeldQuestion): HeldQuestion =>
+-  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as HeldQuestion
++const reopened = (question: HeldQuestion): HeldQuestion => without(question, 'answer', 'claim')
+ 
+ /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
+ function questionStore(clock: Clock, seed: readonly Held[]) {
+@@ -678,9 +724,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     return at === -1 ? undefined : args[at + 1]
+   }
+   const textOf = (question: HeldQuestion) =>
+-    question.answer !== undefined && 'letter' in question.answer
+-      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
+-      : `DISMISSED ${question.ref} ${question.subject}`
++    question.restoredAt !== undefined
++      ? `RESTORED ${question.ref} ${question.subject}`
++      : question.answer !== undefined && 'letter' in question.answer
++        ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
++        : `DISMISSED ${question.ref} ${question.subject}`
+ 
+   const run = (argv: string[]): Outcome | Promise<Outcome> => {
+     const [, group, command = '', ...args] = argv
+@@ -708,7 +756,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         })
+         .then(() => listed)
+     }
+-    if (command === 'ask' || command === 'tell' || command === 'withdraw' || command === 'revise') {
++    if (['ask', 'tell', 'withdraw', 'revise', 'restore'].includes(command)) {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+     }
+@@ -745,16 +793,36 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'revise', 'snooze'].includes(command)) {
+       return failed(65, `${ref} is already answered`)
+     }
+-    const { snoozedUntil: _, ...awake } = item
++    if (command === 'restore') {
++      if (item.answer === undefined) {
++        if (item.snoozedUntil === undefined || time >= item.snoozedUntil) {
++          return failed(65, `${ref} is open, so there is nothing to restore`)
++        }
++        return printed(put(without(item, 'snoozedUntil', 'snoozedAt')))
++      }
++      if ('withdrawn' in item.answer) {
++        return failed(65, `${ref} was withdrawn by the agent that posted it, so it is that agent's to post again`)
++      }
++      if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
++      const restored = without(item, 'answer', 'deliveredAt', 'claim')
++      if (restored.kind === 'question' && (item.deliveredAt !== undefined || 'claim' in item)) {
++        return printed(put({ ...restored, restoredAt: time }))
++      }
++      return printed(put(restored))
++    }
++    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does.
++    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', 'claim')
++    const isUnsaid = 'restoredAt' in item && !('claim' in item)
+     if (command === 'dismiss') {
+       const answer = { dismissed: true as const, answeredAt: time }
+-      return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
++      const isDelivered = awake.kind === 'notice' || isUnsaid
++      return printed(put(isDelivered ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+     }
+     if (command === 'withdraw') {
+       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
+       return printed(put({ ...awake, answer, deliveredAt: time }))
+     }
+-    if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
++    if (command === 'snooze') return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + HOUR }))
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+     if (command === 'revise') {
+       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+@@ -775,7 +843,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
+     }
+     if (command === 'claim') {
+-      if (item.answer === undefined || item.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
++      if (item.restoredAt === undefined && (item.answer === undefined || item.deliveredAt !== undefined)) {
++        return failed(65, 'nothing to deliver')
++      }
+       const renew = flag(args, 'renew')
+       if (renew !== undefined) {
+         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+@@ -788,6 +858,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     }
+     if (command === 'delivered' || command === 'reopen') {
+       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      // A restore's line is done either way.
++      if (item.restoredAt !== undefined) return printed(put(without(item, 'claim', 'restoredAt')))
+       return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
+     }
+     return failed(2, `invalid choice: '${command}'`)
+@@ -884,6 +956,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+     expect.objectContaining({ name: 'tell', isDeferred: false }),
+     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
+     expect.objectContaining({ name: 'revise', isDeferred: false }),
++    expect.objectContaining({ name: 'restore', isDeferred: false }),
+   ])
+   expect(session.project()).toContain(
+     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+@@ -1319,6 +1392,24 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
+   await ui.unmount()
+ })
+ 
++test('a dropped RESTORED says so without asking for an answer, and is not sent again', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held({ restoredAt: NOW - 1_000 })], { drop: 'a hook refused it' })
++  await startSession($, clock)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
++  expect(session.toasts).toEqual([
++    'projector: word that "Decline the finding?" is open again did not reach its agent (a hook refused it)',
++  ])
++  expect(session.store.store.get('1')).toEqual(held())
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.submitted).toHaveLength(1)
++})
++
+ test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1543,9 +1634,14 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
+     'inbox dismiss 2 --session s1 --json',
+   ])
++  // Dismissing closes the drawer, and the line stays, muted and struck through.
+   const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
++  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
++  // Its line opens the drawer again, where restore takes dismiss's place.
++  await ui.press({ key: 'item:2' })
+   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'restore:2' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'dismiss:2' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'snooze:2' })).toBeUndefined()
+ 
+@@ -1853,14 +1949,18 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await clock.settle()
+   expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
+   expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+-  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
++  // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+   await ui.unmount()
+ 
+   await clock.advance(TICK)
+   await clock.settle()
+   await $.command.run(COMMAND)
+-  await clock.advance(HOUR - TICK)
++  await clock.advance(HOUR - 2 * TICK - 30_000)
+   await clock.settle()
+   const hidden = await $.ui.mount(BAND)
+   expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+@@ -2003,3 +2103,196 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
+   expect(await woken.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+   await woken.unmount()
+ })
++
++/** The keys of an item's drawer actions, in the order its row draws them. */
++async function actionsOf(ui: Pick<Mounted, 'findAll'>, ref: string): Promise<string[]> {
++  const pattern = new RegExp(`^(discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
++  return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => pattern.test(key))
++}
++
++test('dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
++
++  await ui.press({ key: 'item:1' })
++  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
++  await ui.press({ key: 'dismiss:1' })
++  await clock.settle()
++  // The drawer closes, and the line stays, muted in the subtle color and struck through.
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  const dismissed = await line()
++  expect([dismissed?.props.color, dismissed?.props.dimColor, dismissed?.props.strikethrough]).toEqual([
++    'subtle',
++    undefined,
++    true,
++  ])
++
++  // Its line opens the drawer again, where restore takes dismiss's place.
++  await ui.press({ key: 'item:1' })
++  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
++  await ui.press({ key: 'restore:1' })
++  await clock.settle()
++  expect(session.project()).toContain('inbox restore 1 --session s1 --json')
++  // The drawer stays open on the question, open again, with dismiss back in its place.
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
++  expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
++  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
++  const restored = await line()
++  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
++  expect(session.store.store.get('1')).toEqual(held())
++
++  // The dismissal had not gone out, so the restore sends nothing.
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.submitted).toEqual([])
++
++  // Once the agent has heard DISMISSED, a restore sends RESTORED after it.
++  await ui.press({ key: 'dismiss:1' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.submitted.map(one => one.text)).toEqual(['DISMISSED 1 Decline the finding?'])
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'restore:1' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.submitted.map(one => one.text)).toEqual([
++    'DISMISSED 1 Decline the finding?',
++    'RESTORED 1 Decline the finding?',
++  ])
++  expect(Object.keys(session.store.store.get('1') ?? {})).not.toContain('restoredAt')
++
++  // Picking an option answers it as if it had never been dismissed.
++  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  await ui.unmount()
++})
++
++test('snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  const line = () => ui.find({ type: 'Text', text: FORCE_PUSHED })
++
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'snooze:2' })
++  await clock.settle()
++  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
++  // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++  const snoozed = await line()
++  expect([snoozed?.props.color, snoozed?.props.dimColor, snoozed?.props.strikethrough]).toEqual([
++    'subtle',
++    undefined,
++    false,
++  ])
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
++
++  // Its line opens the drawer again, where unsnooze takes snooze's place.
++  await ui.press({ key: 'item:2' })
++  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'unsnooze:2'])
++  await ui.press({ key: 'unsnooze:2' })
++  await clock.settle()
++  expect(session.project()).toContain('inbox restore 2 --session s1 --json')
++  expect(await ui.find({ key: 'detail:2' })).toBeDefined()
++  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
++  expect((await line())?.props.color).toBeUndefined()
++  expect(session.store.store.get('2')).toEqual(notice())
++
++  // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
++  await ui.press({ key: 'snooze:2' })
++  await clock.advance(30_000 - TICK)
++  await clock.settle()
++  expect(await line()).toBeDefined()
++  await clock.advance(2 * TICK)
++  await clock.settle()
++  expect(await line()).toBeUndefined()
++  expect(session.submitted).toEqual([])
++  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
++  await ui.unmount()
++})
++
++test('the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
++  const heard = held({ answer: dismissed, deliveredAt: NOW - 1_000 })
++  const read = notice({ answer: dismissed, deliveredAt: NOW - 1_000 })
++  const session = questionWorld(on, clock, [heard, read])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++
++  // You open the dismissed question's drawer, and the question leaves the band 30 seconds after its dismissal.
++  await ui.press({ key: 'item:1' })
++  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
++  await clock.advance(30_000)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
++
++  const called = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
++  expect(String(called.text ?? called.result)).toBe(
++    'Restored 1. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
++  )
++  expect(session.project()).toContain('inbox restore 1 --session s1 --json')
++  // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
++  const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
++  expect([line?.props.color, line?.props.strikethrough]).toEqual([undefined, false])
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
++
++  // A notice comes back too, and nothing goes to the agent.
++  const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
++  expect(String(told.text ?? told.result)).toBe(
++    'Restored 2. It is back in Projector’s band until the person dismisses it; nothing comes back to you.',
++  )
++  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.submitted).toHaveLength(1)
++  await ui.unmount()
++})
++
++test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const answered = held({ answer, deliveredAt: NOW - 1_000 })
++  const session = questionWorld(on, clock, [answered, notice()])
++  await startSession($, clock)
++  const restore = { tool: 'mcp__projector__restore' as const, number: 1 }
++
++  const resolved = await $.tool.call(restore)
++  expect(resolved.deny ?? resolved.text).toBe('1 is already answered')
++
++  const open = await $.tool.call({ ...restore, number: 2 })
++  expect(open.deny ?? open.text).toBe('2 is open, so there is nothing to restore')
++
++  const unknown = await $.tool.call({ ...restore, number: 9 })
++  expect(unknown.deny ?? unknown.text).toBe('no item 9')
++
++  session.store.failing.locks = 1
++  const busy = await $.tool.call(restore)
++  expect(busy.deny ?? busy.text).toBe(BUSY)
++
++  Object.assign(session.store.refusal, { code: 2, message: "error: argument inbox_command: invalid choice: 'restore'" })
++  const old = await $.tool.call(restore)
++  expect(old.deny ?? old.text).toBe("error: argument inbox_command: invalid choice: 'restore'; run project upgrade")
++
++  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
++  const hung = await $.tool.call(restore)
++  expect(hung.deny ?? hung.text).toMatch(
++    /^project did not finish \(.*\); tell the person in the conversation that it could not be restored$/,
++  )
++  expect(session.store.store.get('1')).toEqual(answered)
++  expect(session.store.store.get('2')).toEqual(notice())
++})
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 48a7515..6e7d965 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -6,6 +6,7 @@ import {
+   askArguments,
+   forMainLoop,
+   isShownAt,
++  isSnoozedAt,
+   liveAgent,
+   needsDelivery,
+   proposalOf,
+@@ -13,12 +14,16 @@ import {
+   readPrompt,
+   relayNote,
+   replyNote,
++  RESTORE_DESCRIPTION,
++  RESTORE_SCHEMA,
++  restoreArguments,
+   reviseArguments,
+   signatureOf,
+   span,
+   storeOf,
+   tellArguments,
+   typedLetter,
++  WITHDRAW_SCHEMA,
+   withdrawArguments,
+   wokeBetween,
+   type Proposal,
+@@ -76,6 +81,16 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as
+   )
+   expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question, and the question stays open')
+   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
++  expect(ASK_DESCRIPTION).toContain(
++    'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
++  )
++})
++
++test('the restore tool is for a dismissal the person calls a mistake, never a question asked again', () => {
++  expect(RESTORE_DESCRIPTION).toContain(
++    'Use it only when the person says a dismissal was a mistake or asks for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
++  )
++  expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
+ })
+ 
+ test('letters run from the recommendation to the typed answer', () => {
+@@ -302,6 +317,14 @@ test('a call of the withdraw tool becomes `project inbox withdraw`, and only a w
+   }
+ })
+ 
++test('a call of the restore tool becomes `project inbox restore`, and only a whole number names an item', () => {
++  expect(restoreArguments({ number: 3 }, 's1')).toEqual(['inbox', 'restore', '3', '--session', 's1', '--json'])
++  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
++  for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
++    expect(restoreArguments({ number }, 's1')).toEqual(refusal)
++  }
++})
++
+ test('a call of the revise tool becomes `project inbox revise` with only what changes, text kept as text', () => {
+   expect(
+     reviseArguments(
+@@ -349,6 +372,13 @@ test('an answer waits for a deliverer until a live claim holds it', () => {
+   expect(needsDelivery({ ...answered, deliveredAt: NOW }, NOW)).toBe(false)
+ })
+ 
++test('word that a question was restored waits for a deliverer until a live claim holds it', () => {
++  const restored = question({ restoredAt: NOW - 1_000 })
++  expect(needsDelivery(restored, NOW)).toBe(true)
++  expect(needsDelivery({ ...restored, claim: { token: 't', renewedAt: NOW - 5_000 } }, NOW)).toBe(false)
++  expect(needsDelivery({ ...restored, claim: { token: 't', renewedAt: NOW - 60_000 } }, NOW)).toBe(true)
++})
++
+ test('the subagent’s status decides where an answer goes', () => {
+   const asked = question({ agentId: 'agent-1' })
+   for (const status of ['pending', 'running', 'waiting', 'idle'] as const) {
+@@ -436,6 +466,15 @@ test('a snoozed item leaves the band until its time, and wakes once between two
+   expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
+ })
+ 
++test('a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time', () => {
++  const snoozed = notice({ snoozedAt: NOW, snoozedUntil: NOW + 3_600_000 })
++  expect(isSnoozedAt(snoozed, NOW + 29_000)).toBe(true)
++  expect(isShownAt(snoozed, NOW + 29_000)).toBe(true)
++  expect(isShownAt(snoozed, NOW + 30_000)).toBe(false)
++  expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
++  expect(isSnoozedAt(snoozed, NOW + 3_600_000)).toBe(false)
++})
++
+ test('only a question’s answer waits for a deliverer', () => {
+   const dismissed = { dismissed: true as const, answeredAt: NOW }
+   expect(needsDelivery(question({ answer: dismissed }), NOW)).toBe(true)
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 4169ce6..281a069 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -16,19 +16,20 @@ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0)
+ /** The letter of a typed answer: the one after the last choice. */
+ export const typedLetter = (question: Question) => letterAt(question.choices.length)
+ 
+-/** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
+-const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
++/** Whether an item is snoozed at a time: put off until its `snoozedUntil`. */
++export const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
+ 
+ /** Whether the agent that posted an item withdrew it. */
+ const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
+ 
+ /**
+- * Whether the band shows an item: not withdrawn, not snoozed, and open, being
+- * delivered, or delivered within the last 30 seconds.
++ * Whether the band shows an item: not withdrawn, not snoozed or snoozed
++ * within the last 30 seconds, and open, being delivered, or delivered within
++ * the last 30 seconds.
+  */
+ export const isShownAt = (item: Item, time: number) =>
+   !isWithdrawn(item) &&
+-  !isSnoozedAt(item, time) &&
++  (!isSnoozedAt(item, time) || (item.snoozedAt !== undefined && time - item.snoozedAt < RESOLVED_MS)) &&
+   (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
+ 
+ /** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
+@@ -38,11 +39,13 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
+       item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
+   )
+ 
+-/** Whether a question's answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
++/**
++ * Whether a question's line waits for a deliverer: an answer recorded and
++ * undelivered, or word of a restore, and claimed by none that is live.
++ */
+ export const needsDelivery = (item: Item, time: number): item is Question =>
+   item.kind === 'question' &&
+-  item.answer !== undefined &&
+-  item.deliveredAt === undefined &&
++  (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
+   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
+ 
+ /** What the band puts in the prompt to discuss an item: its subject, in quotes. */
+@@ -209,6 +212,7 @@ export const ASK_DESCRIPTION = [
+   'Name the pull request the question is about in `pr`, as owner/repo#number.',
+   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
+   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
++  'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
+   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
+   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
+   'or leave it open while it still needs them.',
+@@ -307,7 +311,8 @@ export const WITHDRAW_DESCRIPTION = [
+   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
+ ].join(' ')
+ 
+-export const WITHDRAW_SCHEMA = {
++/** The schema of a tool that takes one item, by the number `ask` or `tell` returned. */
++const ITEM_SCHEMA = {
+   type: 'object',
+   properties: {
+     number: {
+@@ -320,18 +325,35 @@ export const WITHDRAW_SCHEMA = {
+   additionalProperties: false,
+ }
+ 
++export const WITHDRAW_SCHEMA = ITEM_SCHEMA
++
+ /** Whether a tool's `number` names an item: a whole number from 1. */
+ const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
+ 
++/** The arguments of a `project inbox` command on one item for one call of its tool, or why the call cannot be one. */
++const itemArguments =
++  (command: 'withdraw' | 'restore') =>
++  (input: Readonly<Record<string, unknown>>, session: string): string[] | { error: string } => {
++    const { number } = input
++    if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
++    return ['inbox', command, String(number), '--session', session, '--json']
++  }
++
+ /** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
+-export function withdrawArguments(
+-  input: Readonly<Record<string, unknown>>,
+-  session: string,
+-): string[] | { error: string } {
+-  const { number } = input
+-  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+-  return ['inbox', 'withdraw', String(number), '--session', session, '--json']
+-}
++export const withdrawArguments = itemArguments('withdraw')
++
++export const RESTORE_DESCRIPTION = [
++  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s band',
++  'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
++  'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
++  'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
++  'that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
++].join(' ')
++
++export const RESTORE_SCHEMA = ITEM_SCHEMA
++
++/** The arguments of `project inbox restore` for one call of the tool, or why the call cannot be one. */
++export const restoreArguments = itemArguments('restore')
+ 
+ export const REVISE_DESCRIPTION = [
+   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 19f40ca..f916524 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -10,6 +10,7 @@ import {
+   askArguments,
+   forMainLoop,
+   isShownAt,
++  isSnoozedAt,
+   letterAt,
+   liveAgent,
+   needsDelivery,
+@@ -18,6 +19,9 @@ import {
+   readPrompt,
+   relayNote,
+   replyNote,
++  RESTORE_DESCRIPTION,
++  RESTORE_SCHEMA,
++  restoreArguments,
+   REVISE_DESCRIPTION,
+   REVISE_SCHEMA,
+   reviseArguments,
+@@ -45,6 +49,7 @@ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+ const WITHDRAW_TOOL = 'mcp__projector__withdraw'
+ const REVISE_TOOL = 'mcp__projector__revise'
++const RESTORE_TOOL = 'mcp__projector__restore'
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+@@ -238,6 +243,7 @@ async function load($: Engine): Promise<void> {
+     error: fetched.error,
+   }))
+   await update($, now, () => time)
++  await closeLeftDrawer($, time)
+ }
+ 
+ /**
+@@ -277,6 +283,20 @@ const replace = ($: Engine, item: Item) =>
+ /** Closes a drawer when it is the one open. */
+ const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
+ 
++/**
++ * Closes the open drawer once its line has left the band, so it does not
++ * open again by itself when the line comes back: a pull request a loop
++ * tracks again, or an item restored or woken from its snooze.
++ */
++async function closeLeftDrawer($: Engine, time: number): Promise<void> {
++  const opened = await read($, drawer)
++  if (opened === null) return
++  const isListed = opened.startsWith('item:')
++    ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
++    : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
++  if (!isListed) await closeDrawer($, opened)
++}
++
+ /**
+  * An item as the CLI prints it, without the session the band adds. Each kind
+  * is its own `Omit`, because one over the union would merge their `kind`s.
+@@ -298,7 +318,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
+   let isNew = false
+   await update($, items, before => {
+     const known = new Set(before.map(one => one.ref))
+-    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && isShownAt(one, time))
++    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && !isSnoozedAt(one, time))
+     return list
+   })
+   if (isNew && !(await read($, isShown))) show($)
+@@ -343,16 +363,22 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+     return Object.fromEntries(Object.entries(all).filter(([key]) => key !== ref))
+   })
+   if (entry === undefined) return
+-  const { session, token } = entry
++  const { session, token, text } = entry
+   const ran = await project($, ['inbox', outcome, ref, '--claim', token, '--session', session, '--json']).catch(
+     () => undefined,
+   )
+   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   if (outcome === 'reopen') {
+-    // You never see an item's number, so the toast names the question by its subject.
++    // You never see an item's number, so the toast names the question by its
++    // subject. A restore's line is not sent again, and its question stays open.
+     const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
+-    const what = question === undefined ? 'an answer' : `the answer to ${quoteOf(question)}`
+-    void $.ui.toast(`projector: ${what} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
++    const quoted = question === undefined ? undefined : quoteOf(question)
++    const why = reason ? ` (${reason})` : ''
++    void $.ui.toast(
++      text.startsWith('RESTORED ')
++        ? `projector: word that ${quoted ?? 'a question'} is open again did not reach its agent${why}`
++        : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
++    )
+   }
+ }
+ 
+@@ -439,11 +465,13 @@ async function checkInbox($: Engine): Promise<void> {
+ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+ /**
+- * Dismisses or snoozes an item from the band; a second press finds it changed
+- * and does nothing. Snoozing closes the item's drawer, since the item leaves
+- * the band.
++ * Dismisses, snoozes, or restores an item from the band; a second press finds
++ * it changed and does nothing. Dismissing or snoozing closes the item's
++ * drawer, and the item stays listed, muted, for 30 seconds, so its line
++ * opens the drawer again to restore it. Restoring keeps the drawer open on
++ * the item, open again.
+  */
+-async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promise<void> {
++async function act($: Engine, item: Item, command: 'dismiss' | 'snooze' | 'restore'): Promise<void> {
+   const { ref, session } = item
+   if (acting.has(ref)) return
+   acting.add(ref)
+@@ -451,7 +479,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
+     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
+-      if (command === 'snooze') await closeDrawer($, `item:${ref}`)
++      if (command !== 'restore') await closeDrawer($, `item:${ref}`)
+     } else if (ran.exitCode === 65) {
+       // Resolved elsewhere since the band read the store: read it again.
+       listed = undefined
+@@ -522,8 +550,9 @@ async function answerFromPrompt($: Engine, question: Question, letter: string):
+ }
+ 
+ /**
+- * Reads the inbox whether or not the band is shown, and brings a hidden band
+- * back for an item whose snooze ended since the last tick. A shown band moves
++ * Reads the inbox whether or not the band is shown, closes the drawer of an
++ * item that left the band, and brings a hidden band back for an item whose
++ * snooze ended since the last tick. A shown band moves
+  * its clock on, which returns that item to the list, and polls GitHub once
+  * the last load is old enough.
+  */
+@@ -532,6 +561,7 @@ async function tick($: Engine): Promise<void> {
+   // falls in the next tick's window.
+   const time = await $.clock.now()
+   await checkInbox($)
++  await closeLeftDrawer($, time).catch(() => undefined)
+   const since = tickedAt ?? time
+   tickedAt = time
+   if (!(await read($, isShown))) {
+@@ -661,6 +691,7 @@ export const register: Register = on => {
+       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
+       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
++      { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
+     ]) {
+       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
+     }
+@@ -726,6 +757,26 @@ export const register: Register = on => {
+     deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
+   }))
+ 
++  // The band takes the restored item from the CLI at once, so it is open in
++  // the band before the next read of the store.
++  on('tool.call', { tool: RESTORE_TOOL }, async ($, e) => {
++    const session = await $.session.id()
++    const instead = 'tell the person in the conversation that it could not be restored'
++    const ran = await runTool($, restoreArguments(e, session), instead)
++    if ('deny' in ran) return ran
++    const item = itemOf(ran.stdout, session)
++    await replace($, item)
++    const { ref } = item
++    return {
++      result:
++        item.kind === 'notice'
++          ? `Restored ${ref}. It is back in Projector’s band until the person dismisses it; nothing comes back to you.`
++          : `Restored ${ref}. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
++    }
++  }).catch(() => ({
++    deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
++  }))
++
+   // These hooks only watch: the catch hands back what the event settled to,
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+@@ -822,7 +873,9 @@ export const register: Register = on => {
+     const opened = await read($, drawer)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+     const counts = (['question', 'notice'] as const).map(kind => {
+-      const count = shownItems.filter(item => item.kind === kind && item.answer === undefined).length
++      const count = shownItems.filter(
++        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
++      ).length
+       return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
+     })
+     const label = labeler(shown.rows.map(row => row.pr))
+@@ -997,7 +1050,14 @@ export const register: Register = on => {
+       const key = `item:${ref}`
+       const isOpen = answer === undefined
+       const isDismissed = answer !== undefined && 'dismissed' in answer
++      // A snoozed item stays listed for 30 seconds, muted but not struck
++      // through, so it reads as put off rather than dismissed.
++      const isSnoozed = isSnoozedAt(item, time)
++      const isMuted = !isOpen || isSnoozed
+       const pull = pullOf(item)
++      // A dismissed or snoozed item's drawer offers to bring it back where it
++      // offered to dismiss or snooze it.
++      const restore = (name: string) => ({ name, onPress: () => void act($, item, 'restore') })
+       const actions = [
+         {
+           name: 'discuss',
+@@ -1009,9 +1069,11 @@ export const register: Register = on => {
+         ...(isOpen
+           ? [
+               { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
+-              { name: 'snooze', onPress: () => void act($, item, 'snooze') },
++              isSnoozed ? restore('unsnooze') : { name: 'snooze', onPress: () => void act($, item, 'snooze') },
+             ]
+-          : []),
++          : isDismissed
++            ? [restore('restore')]
++            : []),
+       ]
+ 
+       return (
+@@ -1023,10 +1085,10 @@ export const register: Register = on => {
+             <Box flexGrow={1} flexShrink={1}>
+               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
+               <Button key={key} plain onPress={() => toggle(key)}>
+-                <Text color={isOpen ? undefined : 'subtle'} inverse={opened === key}>
++                <Text color={isMuted ? 'subtle' : undefined} inverse={opened === key}>
+                   {item.kind === 'notice' ? '•' : '-'}{' '}
+                 </Text>
+-                <Text color={isOpen ? undefined : 'subtle'} strikethrough={isDismissed} inverse={opened === key}>
++                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={opened === key}>
+                   {item.subject}
+                 </Text>
+               </Button>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index df39b85..b41271b 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -62,6 +62,8 @@ export type Posted = {
+   agentId?: string
+   /** When a snoozed item returns, in milliseconds; absent when it is not snoozed. */
+   snoozedUntil?: number
++  /** When the item was last snoozed, in milliseconds; absent when it is not snoozed. */
++  snoozedAt?: number
+   deliveredAt?: number
+   session: string
+ }
+@@ -73,6 +75,8 @@ export type Question = Posted & {
+   choices: string[]
+   answer?: Answer
+   claim?: { token: string; renewedAt: number }
++  /** When the person restored the question after its agent may have heard `DISMISSED`, until `RESTORED` is delivered. */
++  restoredAt?: number
+ }
+ 
+ /** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 391ec91..23b1ed2 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -696,7 +696,7 @@ def seconds(text: str) -> float:
+ 
+ def add_inbox_parser(subcommands) -> None:
+     parser = subcommands.add_parser("inbox", help="put a question or a notice in the person's inbox, and answer, "
+-                                                   "dismiss, snooze, and deliver it")
++                                                   "dismiss, snooze, restore, and deliver it")
+     commands = parser.add_subparsers(dest="inbox_command", required=True)
+ 
+     def command(name: str, help_text: str) -> argparse.ArgumentParser:
+@@ -753,6 +753,9 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+ 
+     snooze = command("snooze", "hide an open item for a while")
+     snooze.add_argument("reference")
++
++    restore = command("restore", "reopen an item the person dismissed or snoozed, keeping its number")
++    restore.add_argument("reference", help="the item's number, such as 3")
+     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+                         help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
+ 
+@@ -1350,6 +1353,9 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+     elif command == "snooze":
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
++    elif command == "restore":
++        item = inbox.restore(inbox_session(arguments, False), ref)
++        print(json_text({"item": item}) if json_output else f"restored {item['ref']}")
+     elif command == "claim":
+         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
+         token, text = item["claim"]["token"], inbox.message(item)
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index b98c9f5..a5eb65c 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -3,7 +3,8 @@
+ An item is a question, which the person answers or dismisses and whose answer goes back to the
+ agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
+ that posted an open item can withdraw it, which dismisses it and sends nothing back, and can
+-revise an open question's text in place. Each session numbers its items 1, 2, 3, and on, in one
++revise an open question's text in place. An item the person dismissed or snoozed can be restored,
++which reopens it in place. Each session numbers its items 1, 2, 3, and on, in one
+ count across both kinds. Its items are JSON files in their own directory, one per item and named
+ by its number, with `count.json` holding the last number given. Every write happens under the
+ directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
+@@ -282,18 +283,28 @@ def is_open(item: Optional[dict]) -> bool:
+     return item is not None and not item.get("answer")
+ 
+ 
+-def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
++def is_restorable(item: Optional[dict]) -> bool:
++    """Whether `restore` can bring an item back: the person dismissed it, or it is snoozed."""
++    if item is None:
++        return False
++    answered = item.get("answer")
++    if answered:
++        return bool(answered.get("dismissed")) and not answered.get("withdrawn")
++    return snoozed_until(item) is not None
++
++
++def locate(session: Optional[str], ref: str, prefer: Optional[Callable[[Optional[dict]], bool]] = None) -> Path:
+     """The folder holding `ref`: the session's, or, without one, the one session that has it. Every
+-    session counts from 1 and keeps its resolved items, so with `prefer_open` the sessions that hold
+-    `ref` open, with no answer recorded, are the candidates whenever any does."""
++    session counts from 1 and keeps its resolved items, so with `prefer` the sessions whose item
++    `ref` it accepts, such as the ones that hold it open, are the candidates whenever any is."""
+     if session is not None:
+         folder = session_dir(session)
+         if not item_file(folder, ref).is_file():
+             raise ItemNotFound(f"session {session} has no item {ref}")
+         return folder
+     holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
+-    if prefer_open:
+-        holders = [name for name in holders if is_open(item_in(item_file(store_root() / name, ref)))] or holders
++    if prefer is not None:
++        holders = [name for name in holders if prefer(item_in(item_file(store_root() / name, ref)))] or holders
+     if not holders:
+         raise ItemNotFound(f"no session has an item {ref}")
+     if len(holders) > 1:
+@@ -303,7 +314,7 @@ def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
+ 
+ 
+ def find(session: Optional[str], ref: str) -> dict:
+-    return read_item(locate(session, ref, prefer_open=True), ref)
++    return read_item(locate(session, ref, is_open), ref)
+ 
+ 
+ def is_notice(item: dict) -> bool:
+@@ -320,8 +331,8 @@ def typed_letter(question: dict) -> str:
+ 
+ 
+ def answer_ref(item: dict) -> str:
+-    answered = item.get("answer") or {}
+-    return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
++    letter = (item.get("answer") or {}).get("letter")
++    return f"{item['ref']}.{letter}" if letter else item["ref"]
+ 
+ 
+ def resolution(item: dict) -> str:
+@@ -334,7 +345,10 @@ def resolution(item: dict) -> str:
+ 
+ 
+ def message(question: dict) -> str:
+-    """The line that delivers an answer, as `watch` prints it and the band sends it."""
++    """The line that tells the agent what became of its question, as `watch` prints it and the band
++    sends it: its answer, its dismissal, or that a dismissal it may have heard of was undone."""
++    if question.get("restoredAt"):
++        return f"RESTORED {question['ref']} {question['subject']}"
+     answered = question["answer"]
+     if answered.get("dismissed"):
+         return f"DISMISSED {question['ref']} {question['subject']}"
+@@ -343,9 +357,10 @@ def message(question: dict) -> str:
+ 
+ # Answering and delivering
+ 
+-def update(session: Optional[str], ref: str, change, prefer_open: bool = False) -> dict:
++def update(session: Optional[str], ref: str, change,
++           prefer: Optional[Callable[[Optional[dict]], bool]] = None) -> dict:
+     """Read the item under the lock, let `change` alter it, and write it back."""
+-    folder = locate(session, ref, prefer_open)
++    folder = locate(session, ref, prefer)
+     with locked(folder):
+         item = read_item(folder, ref)
+         change(item)
+@@ -376,25 +391,33 @@ def record(question: dict) -> None:
+         else:
+             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
+         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+-        question.pop("snoozedUntil", None)
++        # The answer tells the agent the question was open, so it replaces word of a restore that
++        # has not reached the agent, and any claim to deliver that word.
++        for key in ("snoozedUntil", "snoozedAt", "restoredAt", "claim"):
++            question.pop(key, None)
+ 
+-    return update(session, ref, record, prefer_open=True)
++    return update(session, ref, record, is_open)
+ 
+ 
+ def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
+     """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
+     notice has nothing to send, so it is delivered at once. A `withdrawn` item, which the agent that
+-    posted it took back, is delivered at once too, because that agent already knows."""
++    posted it took back, is delivered at once too, because that agent already knows. So is a
++    question dismissed again before any deliverer claimed the `RESTORED` line its restore owes,
++    because the last line its agent heard said `DISMISSED`."""
+     def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+         now = now_ms()
++        restored = item.pop("restoredAt", None) is not None
++        claimed = item.pop("claim", None) is not None
+         item["answer"] = {"dismissed": True, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
+         item.pop("snoozedUntil", None)
+-        if withdrawn or is_notice(item):
++        item.pop("snoozedAt", None)
++        if withdrawn or is_notice(item) or (restored and not claimed):
+             item["deliveredAt"] = now
+ 
+-    return update(session, ref, record, prefer_open=True)
++    return update(session, ref, record, is_open)
+ 
+ 
+ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
+@@ -421,7 +444,7 @@ def record(item: dict) -> None:
+         if detail is not None:
+             item["detail"] = detail.strip()
+ 
+-    return update(session, ref, record, prefer_open=True)
++    return update(session, ref, record, is_open)
+ 
+ 
+ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
+@@ -432,9 +455,39 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
+     def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}, so it has nothing to return for")
+-        item["snoozedUntil"] = now_ms() + minutes * 60_000
++        now = now_ms()
++        item["snoozedAt"] = now
++        item["snoozedUntil"] = now + minutes * 60_000
+ 
+-    return update(session, ref, record, prefer_open=True)
++    return update(session, ref, record, is_open)
++
++
++def restore(session: Optional[str], ref: str) -> dict:
++    """Bring back, in place and open, an item the person dismissed or snoozed. A snoozed item loses
++    its snooze. A dismissed item loses its dismissal and what its delivery recorded, and keeps
++    everything else. When the agent may have heard `DISMISSED`, because the line was delivered or
++    claimed for delivery, the item records `restoredAt`, and its deliverer sends `RESTORED`;
++    otherwise the restore cancels the line, and nothing goes out."""
++    def record(item: dict) -> None:
++        answered = item.get("answer")
++        if not answered:
++            if snoozed_until(item) is None:
++                raise InboxError(f"{item['ref']} is open, so there is nothing to restore")
++            item.pop("snoozedUntil")
++            item.pop("snoozedAt", None)
++            return
++        if answered.get("withdrawn"):
++            raise InboxError(f"{item['ref']} was withdrawn by the agent that posted it, so it is that agent's to "
++                             "post again")
++        if not answered.get("dismissed"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}, and only a dismissed or snoozed item "
++                             "can be restored")
++        if not is_notice(item) and (item.get("deliveredAt") or item.get("claim")):
++            item["restoredAt"] = now_ms()
++        for key in ("answer", "deliveredAt", "claim"):
++            item.pop(key, None)
++
++    return update(session, ref, record, is_restorable)
+ 
+ 
+ def snoozed_until(item: dict) -> Optional[int]:
+@@ -454,7 +507,7 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
+     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
+     def take(question: dict) -> None:
+         refuse_notice(question, "has nothing to deliver")
+-        if not question.get("answer"):
++        if not question.get("answer") and not question.get("restoredAt"):
+             raise InboxError(f"{question['ref']} has no answer to deliver")
+         if question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+@@ -471,13 +524,17 @@ def take(question: dict) -> None:
+ 
+ 
+ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
+-    """Mark a claimed answer delivered, or reopen the question when its delivery failed."""
++    """Mark a claimed answer delivered, or reopen the question when its delivery failed. A claimed
++    `RESTORED` line is done either way: the band does not retry it, and the question's answer or
++    next dismissal still reaches the agent."""
+     def finish(question: dict) -> None:
+         if question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+         if (question.get("claim") or {}).get("token") != token:
+             raise InboxError(f"{question['ref']} is not claimed with that token")
+         del question["claim"]
++        if question.pop("restoredAt", None) is not None:
++            return
+         if delivered:
+             question["deliveredAt"] = now_ms()
+         else:
+@@ -494,19 +551,30 @@ def prune(folder: Path) -> None:
+             item_file(folder, item["ref"]).unlink()
+ 
+ 
++def owes_a_line(item: dict) -> bool:
++    """Whether the item's agent is owed a line: an answer or dismissal not yet delivered, or word that
++    a dismissal it may have heard of was undone."""
++    return bool(item.get("restoredAt")) or bool(item.get("answer")) and not item.get("deliveredAt")
++
++
+ def undelivered(session: str) -> list[dict]:
+-    return [item for item in load_items(session_dir(session))
+-            if item.get("answer") and not item.get("deliveredAt") and not live_claim(item)]
++    return [item for item in load_items(session_dir(session)) if owes_a_line(item) and not live_claim(item)]
+ 
+ 
+ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
+     """One pass of `watch`: claim each undelivered answer, `send` its line, and only then mark it
+     delivered, so an answer whose line fails to send keeps just a claim, which lapses for the next
+-    deliverer."""
++    deliverer. A restore or an answer that lands while the line goes out drops the claim, so the
++    line cannot be marked delivered, and the next pass sends what the item owes then."""
+     for question in undelivered(session):
+         try:
+             claimed = claim(session, question["ref"])
+         except InboxError:
+             continue
+         send(message(claimed))
+-        settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
++        try:
++            settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
++        except InboxBusy:
++            raise
++        except InboxError:
++            continue
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 72275e7..f939c7b 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -28,7 +28,10 @@
+ posted, or their choice to dismiss or put it off, so an agent running one
+ could answer its own question. Projector's band runs those commands itself,
+ not through an agent's shell, so the person answering from the band is never
+-asked. The rules go in the person's own settings, so they hold in every
++asked. `project inbox restore` needs no ask rule: it reopens an item the
++person dismissed or snoozed, which takes no choice from them, and an agent
++runs it when the person says a dismissal was a mistake. The rules go in the
++person's own settings, so they hold in every
+ repository, clone, and worktree they open, and no repository has to carry a
+ permission for everyone who opens it.
+ 
+@@ -105,9 +108,10 @@
+     (["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
+      "Runs a Projector command that works on plans, loops, or pull request summaries."),
+     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+-    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "revise", "show", "tell", "watch",
+-                           "withdraw"]],
+-     "Posts, revises, reads, withdraws, or delivers an inbox item, but never records the person's answer to one."),
++    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell",
++                           "watch", "withdraw"]],
++     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
++     "answer to one."),
+     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules",
+                             "settle", "setup", "status"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 95eec2a..c9e1a3e 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 11 -->
++<!-- projector:begin 12 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -68,6 +68,8 @@ instead, answer what they asked. Then withdraw the question with the
+ if the reply shows it was unclear or the choice has changed, or leave it
+ open while it still needs them. Each time the person writes to you, also
+ look over the other items you posted that are still open, and withdraw any
+-that no longer need them, such as news that has gone stale. Name an item by
+-the number `ask` or `tell` returned.
++that no longer need them, such as news that has gone stale. When the person
++says they dismissed an item by mistake, restore it with the `restore` tool or
++`project inbox restore` rather than asking again. Name an item by the number
++`ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index d92e73a..6e30209 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -339,8 +339,8 @@ def test_refuses_a_typed_answer_of_more_than_one_line(self) -> None:
+         self.assertNotIn("answer", self.item(1))
+ 
+     def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
+-        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
+-                     ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
++        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["restore", "1.a"],
++                     ["claim", "1.a"], ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
+             with self.subTest(command=args[0]):
+                 code, out, err = self.run_cli(*args, "--session", "s1")
+                 self.assertEqual((65, ""), (code, out))
+@@ -844,6 +844,166 @@ def test_dismissing_a_snoozed_item_clears_its_snooze(self) -> None:
+             self.run_cli("snooze", ref, "--session", "s1")
+             self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
+         self.assertEqual({"1": "dismissed", "2": "dismissed"}, self.states("--all"))
++        self.assertEqual([], [key for ref in (1, 2) for key in ("snoozedUntil", "snoozedAt") if key in self.item(ref)])
++
++
++class RestoreTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
++                 "--pr", "acme/app#12", "--agent", "agent-7")
++        self.run_cli("tell", "Force-pushed #12", "--detail", "It held a token.", "--pr", "acme/app#12",
++                     "--agent", "agent-7", "--session", "s1")
++
++    def restore(self, ref: str = "1", *args: str) -> tuple[int, str, str]:
++        return self.run_cli("restore", ref, "--session", "s1", *args)
++
++    def watch(self) -> str:
++        return self.run_cli("watch", "--once", "--session", "s1")[1]
++
++    def test_restores_a_dismissed_question_in_place_and_cancels_its_undelivered_dismissal(self) -> None:
++        before = self.item(1)
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertEqual((0, "restored 1\n", ""), self.restore())
++        self.assertEqual(before, self.item(1))
++        self.assertEqual({"last": 2}, json.loads((self.folder() / "count.json").read_text()))
++        self.assertEqual("1\tquestion\topen\tDecline it?", self.run_cli("list", "--session", "s1")[1].splitlines()[0])
++        self.assertEqual("", self.watch())
++        self.assertEqual("answered 1.b\n", self.run_cli("answer", "1.b", "--session", "s1")[1])
++        self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
++
++    def test_restores_a_dismissed_notice_and_sends_nothing(self) -> None:
++        before = self.item(2)
++        self.run_cli("dismiss", "2", "--session", "s1")
++        code, out, err = self.restore("2", "--json")
++        self.assertEqual(0, code, err)
++        self.assertEqual(before, json.loads(out)["item"])
++        self.assertEqual(before, self.item(2))
++        self.assertEqual("", self.watch())
++        self.assertIn("2\tnotice\topen\tForce-pushed #12", self.run_cli("list", "--session", "s1")[1])
++
++    def test_sends_restored_only_after_its_agent_heard_dismissed(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertEqual("DISMISSED 1 Decline it?\n", self.watch())
++        self.assertEqual(0, self.restore()[0])
++        restored = self.item(1)
++        self.assertEqual([], [key for key in ("answer", "deliveredAt", "claim") if key in restored])
++        self.assertIn("restoredAt", restored)
++        self.assertEqual("1\tquestion\topen\tDecline it?", self.run_cli("list", "--session", "s1")[1].splitlines()[0])
++        self.assertEqual("RESTORED 1 Decline it?\n", self.watch())
++        self.assertEqual("", self.watch())
++        self.assertNotIn("restoredAt", self.item(1))
++        self.run_cli("answer", "1.a", "--session", "s1")
++        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n", self.watch())
++
++    def test_a_restore_while_dismissed_is_being_delivered_sends_restored_after_it(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
++        self.assertEqual(0, self.restore()[0])
++        self.assertNotIn("claim", self.item(1))
++        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual("RESTORED 1 Decline it?\n", self.watch())
++
++    def test_watch_survives_a_restore_that_lands_while_its_line_goes_out(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        lines: list[str] = []
++
++        def send(line: str) -> None:
++            lines.append(line)
++            if line.startswith("DISMISSED"):
++                inbox.restore("s1", "1")
++
++        inbox.deliver_pass("s1", send)
++        inbox.deliver_pass("s1", send)
++        self.assertEqual(["DISMISSED 1 Decline it?", "RESTORED 1 Decline it?"], lines)
++
++    def test_an_answer_or_dismissal_before_restored_goes_out_replaces_it(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.watch()
++        self.restore()
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertIn("deliveredAt", self.item(1))
++        self.assertEqual("", self.watch())
++
++        self.restore()
++        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
++        self.run_cli("answer", "1.b", "--session", "s1")
++        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
++
++    def test_dismissing_again_once_restored_is_claimed_sends_dismissed_after_it(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.watch()
++        self.restore()
++        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertNotIn("deliveredAt", self.item(1))
++        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual("DISMISSED 1 Decline it?\n", self.watch())
++
++    def test_a_restored_line_whose_delivery_failed_is_not_sent_again(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.watch()
++        self.restore()
++        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
++        self.assertEqual(0, self.run_cli("reopen", "1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual([], [key for key in ("answer", "restoredAt", "claim") if key in self.item(1)])
++        self.assertEqual("", self.watch())
++
++    def test_restores_a_snoozed_item_by_clearing_its_snooze(self) -> None:
++        for ref in ("1", "2"):
++            with self.subTest(ref=ref):
++                before, started = self.item(ref), inbox.now_ms()
++                self.run_cli("snooze", ref, "--session", "s1")
++                self.assertTrue(started <= self.item(ref)["snoozedAt"] <= inbox.now_ms())
++                self.assertEqual((0, f"restored {ref}\n", ""), self.restore(ref))
++                self.assertEqual(before, self.item(ref))
++        self.assertEqual("", self.watch())
++        self.assertEqual(["1\tquestion\topen\tDecline it?", "2\tnotice\topen\tForce-pushed #12"],
++                         self.run_cli("list", "--session", "s1")[1].splitlines())
++
++    def test_refuses_an_open_answered_or_withdrawn_item_and_an_unknown_number(self) -> None:
++        self.ask("Rebase?", "--recommend", "Yes")
++        self.run_cli("answer", "1.a", "--session", "s1")
++        self.run_cli("withdraw", "3", "--session", "s1")
++        self.run_cli("snooze", "2", "--for", "0", "--session", "s1")
++        items = [self.item(ref) for ref in (1, 2, 3)]
++        for ref, said in (("1", "1 is already answered, as 1.a, and only a dismissed or snoozed item can be restored"),
++                          ("2", "2 is open, so there is nothing to restore"),
++                          ("3", "3 was withdrawn by the agent that posted it, so it is that agent's to post again")):
++            with self.subTest(ref=ref):
++                self.assertEqual((65, "", f"project: {said}\n"), self.restore(ref))
++        self.assertEqual(66, self.restore("4")[0])
++        self.assertEqual(66, self.run_cli("restore", "4")[0])
++        self.assertEqual([self.item(ref) for ref in (1, 2, 3)], items)
++        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n", self.watch())
++
++    def test_a_bare_number_looks_first_among_dismissed_and_snoozed_items(self) -> None:
++        self.ask("Other?", "--recommend", "x", session="s2")
++        self.run_cli("dismiss", "1", "--session", "s2")
++        self.assertEqual((0, "restored 1\n", ""), self.run_cli("restore", "1"))
++        self.assertNotIn("answer", self.item(1, "s2"))
++        self.run_cli("snooze", "1", "--session", "s1")
++        self.assertEqual((0, "restored 1\n", ""), self.run_cli("restore", "1"))
++        self.assertNotIn("snoozedUntil", self.item(1))
++
++    def test_two_restores_at_once_restore_once(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertEqual(["done", "refused"], at_once(lambda: inbox.restore("s1", "1"),
++                                                      lambda: inbox.restore("s1", "1")))
++
++    def test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75(self) -> None:
++        self.run_cli("dismiss", "1", "--session", "s1")
++        dismissed = self.item(1)
++        holder = self.hold_lock("wait")
++        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
++            code, _, err = self.restore()
++        self.assertEqual(75, code)
++        self.assertIn("another command holds", err)
++        self.assertEqual(dismissed, self.item(1))
++        holder.stdin.close()
++        self.assertEqual(0, holder.wait())
++        self.assertEqual(0, self.restore()[0])
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 570b6a9..1dbcc26 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -23,6 +23,7 @@
+     9: "c427d1e6effbc38103d89b576070ff2c7ad8b1d792e61a3fb3efb44351bb8172",
+     10: "79ad714d61653a155a8d3ea8168ceb4f72bd1bd2e247a91abc4489cf3870324d",
+     11: "76b426bb38c4943dfcf471b3b9aa958f36b988d766f153df5a120aa325a7db05",
++    12: "63875baaa115d20fb8662ce521fdebf9bc7a10e84a4d0ea53698fd935d9b06f8",
+ }
+ 
+ 
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index b32332e..391cf79 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -30,6 +30,7 @@
+     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+     ("project inbox tell notice --session s1", "allow", "allow"),
+     ("project inbox withdraw 3 --session s1", "allow", "allow"),
++    ("project inbox restore 3 --session s1", "allow", "allow"),
+     ("project inbox revise 3 --question 'Merge it now?' --session s1", "allow", "allow"),
+     ("project inbox watch --session s1", "allow", "allow"),
+     ("project inbox claim 3 --session s1", "allow", "allow"),

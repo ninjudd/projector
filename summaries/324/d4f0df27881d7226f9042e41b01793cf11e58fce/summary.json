@@ -1,0 +1,223 @@
+{
+ "version": 1,
+ "name": "Restore inbox items",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 324,
+  "title": "Restore a dismissed or snoozed inbox item in place",
+  "head": "d4f0df27881d7226f9042e41b01793cf11e58fce",
+  "headRef": "restore-dismissed-inbox-items",
+  "base": "d016544a9e7775f85b0ffd506b1c337b1cf49791",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent put a question or a notice in front of the person. The items show in the band, a strip of lines Projector draws above Claude Code's prompt. Each item has a number, and an item opens a drawer of actions when you press its line. The person answers or dismisses a question, and dismisses a notice once read. Either kind can also be snoozed for an hour. When the person answers or dismisses a question, a deliverer sends the agent a line: <code>ANSWER 3.a …</code> or <code>DISMISSED 3 …</code>. The deliverer is the band itself, or <code>project inbox watch</code> in a terminal.",
+   "Before this change, a dismissal could not be undone. The agent's only recourse was to ask the question again, which put a duplicate in the band under a new number. A snooze pressed by mistake hid the item at once. This pull request adds a way back:",
+   "<ul><li><b><code>project inbox restore &lt;number&gt;</code></b> reopens a dismissed or snoozed item in place, under the same number and with the same text.</li><li><b>The band's drawer</b> offers <b>restore</b> on a dismissed item and <b>unsnooze</b> on a snoozed one. Dismiss and snooze now close the drawer, and the item stays listed, muted, for 30 seconds, which is the window for pressing it again.</li><li><b>The <code>mcp__projector__restore</code> tool</b> lets the agent restore an item when the person says a dismissal was a mistake.</li><li><b>A new <code>RESTORED 3 …</code> line</b> goes to the agent only when it may already have heard <code>DISMISSED</code>, so it learns the question is open again.</li></ul>",
+   "The review requested changes. A restore never brings back a band the person hid with <code>/projector</code>. A new question and a snooze that ends both bring it back, so a restored item stays out of sight until the person shows the band again. The flag on <code>hooks/register.tsx</code> has the details."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the lines Projector draws above the prompt, one per pull request or inbox item.</li><li><b>Drawer</b>: the actions under an item's line, opened by pressing the line. The band keeps one drawer open at a time, recorded in <code>bandDrawer</code>.</li><li><b>Deliverer</b>: whoever sends the agent its line, the band or <code>watch</code>. It <i>claims</i> the line for a token, sends it, and then calls <code>delivered</code> or <code>reopen</code>.</li><li><b><code>restoredAt</code></b>: set on a restored question whose agent may have heard <code>DISMISSED</code>. It means a <code>RESTORED</code> line is owed.</li><li><b><code>snoozedAt</code></b>: when an item was last snoozed. The band uses it to keep the item listed for 30 seconds.</li></ul>"
+   },
+   {
+    "id": "lines",
+    "title": "What the agent hears after a restore",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>State of the <code>DISMISSED</code> line at the restore</th><th>What the agent hears</th></tr></thead><tbody><tr><td>Not yet claimed</td><td class=\"r\">Nothing: the restore cancels the line</td></tr><tr><td>Claimed, in flight</td><td class=\"r\"><code>DISMISSED</code>, then <code>RESTORED</code></td></tr><tr><td>Delivered</td><td class=\"r\"><code>RESTORED</code></td></tr><tr><td>A notice, or a snooze</td><td class=\"r\">Nothing</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The inbox store learns to restore",
+   "kicker": "<code>restore</code>, <code>RESTORED</code>, and how dismissal, answer, and delivery treat a restored item",
+   "intro": [
+    "The CLI keeps each item as a JSON file in a per-session store and changes it under the session's lock. A dismissed item has an <code>answer</code> of <code>{dismissed: true}</code>. A dismissed question also gets <code>deliveredAt</code> once its <code>DISMISSED</code> line has gone out, and holds a <code>claim</code> while a deliverer is sending it.",
+    "<code>restore</code> removes <code>answer</code>, <code>deliveredAt</code>, and <code>claim</code> from a dismissed item, or <code>snoozedUntil</code> and <code>snoozedAt</code> from a snoozed one. When the agent may have heard <code>DISMISSED</code>, the restore also sets <code>restoredAt</code>, which makes the item owe a <code>RESTORED</code> line. The other changes keep that one owed line correct:",
+    "<ul><li><b>An answer</b> drops a pending <code>restoredAt</code> and its claim, since <code>ANSWER</code> already tells the agent the question was open.</li><li><b>A second dismissal</b> is marked delivered at once when nobody had claimed <code>RESTORED</code>, because the last line the agent heard already said <code>DISMISSED</code>.</li><li><b>Settling a claimed <code>RESTORED</code></b>, as <code>delivered</code> or as <code>reopen</code>, ends it. A failed <code>RESTORED</code> is not retried.</li><li><b>A change that lands while a line is in flight</b> drops the line's claim. The deliverer's <code>delivered</code> call then exits 65, and <code>watch</code> now carries on past that error.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran against a scratch store: a restore while <code>DISMISSED</code> was claimed made the in-flight <code>delivered</code> exit 65, and the next <code>watch --once</code> printed <code>RESTORED 1</code>. Restores of an open item and of a withdrawn item exited 65, and an unknown number exited 66."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>restore</code> and <code>is_restorable</code>, the <code>RESTORED</code> line in <code>message</code>, and the changes to <code>answer</code>, <code>dismiss</code>, <code>snooze</code>, <code>claim</code>, <code>settle</code>, and <code>deliver_pass</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A <code>RESTORED</code> line is owed only when <code>DISMISSED</code> was delivered or claimed. A notice never owes one, because dismissing a notice sends nothing.",
+       "line": 485
+      },
+      {
+       "kind": "context",
+       "text": "The second dismissal is marked delivered at once only when <code>restoredAt</code> was set and nobody had claimed it. An expired claim still counts as claimed, so <code>DISMISSED</code> goes out again, which is redundant but harmless.",
+       "line": 417
+      },
+      {
+       "kind": "context",
+       "text": "<code>settle</code> returns before it sets <code>deliveredAt</code> for a <code>RESTORED</code> line, so the question stays open after either outcome.",
+       "line": 536
+      },
+      {
+       "kind": "verify",
+       "text": "Without <code>--session</code>, the restore picks the session that holds the number as a dismissed or snoozed item. In a scratch store, session <code>s1</code> held item 1 open and <code>s2</code> held item 1 dismissed, and the restore reopened <code>s2</code>'s.",
+       "line": 286
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>snoozedAt</code> to every item and <code>restoredAt</code> to a question."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The CLI command and its permission",
+   "kicker": "<code>project inbox restore</code>, and why an agent may run it without asking",
+   "intro": [
+    "<code>project inbox restore &lt;number&gt;</code> prints <code>restored 3</code>, or the item with <code>--json</code>. It exits 65 for an item it cannot restore, 66 for an unknown number, and 75 for a busy store, like the other inbox commands.",
+    "<code>project init</code> writes permission rules into the person's own host settings. In Claude Code, an ask rule makes an agent get the person's approval before it runs <code>inbox answer</code>, <code>dismiss</code>, or <code>snooze</code>, because those record the person's choice. <code>restore</code> gets no ask rule: it records no answer, and an agent could already put a dismissed question back in front of the person by asking it again. Codex's rules name <code>restore</code> among the allowed inbox commands."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the Python suite at this head: 1057 tests, OK, 1 skipped. That includes <code>RestoreTests</code> and the new <code>project inbox restore</code> row in <code>DECISIONS</code>, which expects allow in both hosts."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>restore</code> subcommand and prints its result.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The <code>restore</code> parser sits between <code>snooze</code>'s <code>reference</code> and its <code>--for</code>. It works, because <code>--for</code> attaches to the <code>snooze</code> variable, but it reads as if <code>--for</code> belonged to <code>restore</code>. The review suggested moving it.",
+       "line": 757
+      }
+     ]
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>restore</code> to Codex's allowed inbox commands, and explains in the module docstring why it needs no ask rule."
+    },
+    {
+     "path": "tests/test_inbox.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band's drawers and the restore tool",
+   "kicker": "Restore and unsnooze in the drawer, drawers that close when their line leaves, and the new tool",
+   "intro": [
+    "The band is Projector's hooks module in Claude Code. It reads the store, draws one line per item, delivers lines to the agent, and serves the <code>mcp__projector__*</code> tools. No MCP server runs.",
+    "<ul><li><b>The drawer.</b> Dismiss and snooze now close the item's drawer. A dismissed item stays listed for 30 seconds after its delivery, struck through. A snoozed item now also stays listed for 30 seconds after <code>snoozedAt</code>, muted but not struck through, and out of the divider's counts. Pressing either line reopens the drawer, where <b>restore</b> replaces <b>dismiss</b> or <b>unsnooze</b> replaces <b>snooze</b>.</li><li><b>Drawers that outlive their line.</b> <code>closeLeftDrawer</code> runs on each tick and each reload. It clears the open drawer once its pull request or item is no longer listed. Before, a line that came back reopened with its drawer still open.</li><li><b>The <code>restore</code> tool.</b> It runs the CLI and puts the returned item in the band at once. Its description limits it to a dismissal the person calls a mistake.</li><li><b>Delivery.</b> <code>needsDelivery</code> counts a pending <code>restoredAt</code>. A failed <code>RESTORED</code> raises its own toast, which does not ask the person to answer again.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran <code>claude plugin test .</code> at this head: 110 of 110 hook tests passed. <code>hooks/typecheck.sh</code> did not run, because neither this checkout nor the main one has <code>site/node_modules</code> or Claude Code's declarations."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the restore tool, <code>closeLeftDrawer</code>, the <b>restore</b> and <b>unsnooze</b> actions, the muted line for a snoozed item, and the <code>RESTORED</code> toast.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "A restore never shows a band the person hid with <code>/projector</code>. A new question brings the band back through <code>setItems</code>, and a snooze that ends brings it back through <code>wokeBetween</code>. This handler only calls <code>replace</code>, so the next <code>setItems</code> already knows the item, and a restore from a terminal behaves the same way. A probe test at this head hid the band and called <code>mcp__projector__restore</code>, and the band stayed hidden. The tool still tells the agent the item is open in the band. The review asks <code>setItems</code> to count an item that comes back open as new, and asks this handler to call <code>show</code>.",
+       "line": 768
+      },
+      {
+       "kind": "context",
+       "text": "<code>closeLeftDrawer</code> reads the item list against the clock, and the pull request rows against the last snapshot. <code>closeDrawer</code> clears the key only while it is still the open one, so it cannot close a drawer the person opened in the meantime.",
+       "line": 291
+      },
+      {
+       "kind": "context",
+       "text": "Restore keeps the drawer open on the item, while dismiss and snooze close it.",
+       "line": 482
+      },
+      {
+       "kind": "context",
+       "text": "A snoozed item's drawer keeps <b>dismiss</b> and swaps <b>snooze</b> for <b>unsnooze</b>. A dismissed item's drawer shows only <b>discuss</b> and <b>restore</b>.",
+       "line": 1072
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Shows a recently snoozed item in <code>isShownAt</code>, counts <code>restoredAt</code> in <code>needsDelivery</code>, and adds the restore tool's description and arguments.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>isShownAt</code> now returns true for an item snoozed within the last 30 seconds. So <code>setItems</code> and the divider's counts switch to <code>isSnoozedAt</code>, to keep such an item from counting as open.",
+       "line": 30
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx"
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Agent instructions and documentation",
+   "kicker": "The generated <code>AGENTS.md</code> section, the CLI and plugin guides, and plan section 14",
+   "intro": [
+    "The Projector section that <code>project init</code> writes into a repository's <code>AGENTS.md</code> gains one sentence: restore an item the person says they dismissed by mistake, rather than ask again. The template's version moves to begin marker 12, and <code>tests/test_instructions.py</code> pins its hash. The guides describe the command, the drawer actions, and the <code>RESTORED</code> line. Section 14 of the inbox plan records the design and its reasons."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read <code>docs/cli.md</code>, <code>docs/plugins.md</code>, and section 14 of <code>docs/projects/inbox/readme.md</code> against the code at this head, and found them consistent. <code>project check</code> printed <code>Project plans are valid.</code>"
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Adds the sentence about restoring, at begin marker 12."
+    },
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "tests/test_instructions.py"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 14.3 explains why <code>restore</code> needs no ask rule: it undoes a choice the person calls a mistake, and it cannot answer anything for them."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
