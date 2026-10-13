@@ -1149,7 +1149,6 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
-  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
   // An answer in your own words goes through discuss, so only the options are numbered.
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
@@ -2499,19 +2498,9 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'dismiss:1 x dismiss question',
     'snooze:1 s snooze question',
   ])
-  // No blank line or `|` comes between them, and each action's label is subtle, its letter the engine's.
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.slice(texts.indexOf(' (recommended)'))).toEqual([
-    ' (recommended)',
-    'discuss this',
-    'dismiss question',
-    'snooze question',
-  ])
-  for (const action of await ui.findAll({ type: 'Button' })) {
-    if (!/^(discuss|dismiss|snooze):/.test(action.key ?? '')) continue
-    const labels = (action.children ?? []) as { props: { color?: string } }[]
-    expect(labels.map(label => label.props.color)).toEqual(['subtle'])
-  }
+  // No blank line or `|` comes between them: the drawer's only blank lines set the detail apart.
+  expect(await ui.findAll({ type: 'Text', text: /^ $/ })).toHaveLength(2)
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
 
   // Snoozed, unsnooze takes snooze's place.
   await ui.press({ key: 'snooze:1' })
@@ -2543,6 +2532,57 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   // A pull request's drawer has its links above its actions, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
   expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss this', 'dismiss:x/y#7 x dismiss pull request'])
+  await ui.unmount()
+})
+
+test('a keyed line’s label takes the color of the `: ` before it, so it inverts as one block', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // The engine draws a plain Button's key in its accent color and the `: ` in
+  // the Button's own color, which takes no color, `hover`, or `dimColor` from
+  // the band. A label of plain text, with no colored child, takes that same
+  // color, at rest and inverted.
+  const partsOf = async (key: string) => {
+    const line = await ui.find({ type: 'Button', key })
+    return {
+      key: line?.props.hotkey,
+      plain: line?.props.plain,
+      line: [line?.props.color, line?.props.hover, line?.props.dimColor],
+      label: [line?.props.label, line?.children],
+    }
+  }
+  await ui.press({ key: 'item:1' })
+  expect(await partsOf('answer:1.a')).toEqual({
+    key: '1',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['Decline it (recommended)', []],
+  })
+  expect(await partsOf('answer:1.b')).toEqual({
+    key: '2',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['Add a budget', []],
+  })
+  expect(await partsOf('dismiss:1')).toEqual({
+    key: 'x',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['dismiss question', []],
+  })
+  await ui.press({ key: 'close:1' })
+
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await partsOf('discuss:x/y#7')).toEqual({
+    key: 'd',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['discuss this', []],
+  })
   await ui.unmount()
 })
 

@@ -387,7 +387,10 @@ to the main loop, and when a subagent asked, the main loop also reads a note
 naming it, so it can pass the answer or the reply on.
 
 The options and the actions form one list, the actions a line each after
-the options, their labels in the `subtle` color. A question's drawer has
+the options. Each line's key is drawn in Claude Code's accent color and the
+rest of the line in the default text color, which Claude Code's own `: `
+after the key always takes, so under the pointer or the focus ring the
+line inverts as the key and one block after it. A question's drawer has
 three actions:
 
 - **discuss this** puts the quoted question in the prompt, followed by a

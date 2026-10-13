@@ -1036,16 +1036,21 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
+    // The engine draws a plain Button's key in its fixed accent color and the
+    // `: ` after it in the Button's own text color, which a plugin cannot set,
+    // and a hover or the focus ring inverts each colored part apart. So a
+    // keyed line's label is a plain string, drawn and inverted with the `: `
+    // as one block after the key.
+    //
     // A drawer's actions follow its options, a line each: a plain Button on
-    // its letter, which the engine draws before the label in the accent
-    // color, as `d: discuss this`, the label in `subtle`. A letter presses its
-    // action while the band holds the keyboard: `d` discusses, `x` sets the
-    // line aside or brings it back, and `s` puts it off or ends the snooze.
+    // its letter, as `d: discuss this`. A letter presses its action while the
+    // band holds the keyboard: `d` discusses, `x` sets the line aside or
+    // brings it back, and `s` puts it off or ends the snooze.
     type Action = { name: string; label: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
     const drawActions = (id: string, actions: readonly Action[]) =>
       actions.map(({ name, label, hotkey, onPress }) => (
         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
-          <Text color="subtle">{label}</Text>
+          {label}
         </Button>
       ))
     // The lengths snooze offers share one row, `|` between them, with no
@@ -1069,7 +1074,7 @@ export const register: Register = on => {
     const drawAnswers = (question: Question) => {
       const { ref, answer } = question
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
-      const recommended = <Text color="success"> (recommended)</Text>
+      const recommended = ' (recommended)'
       const marked = <Text color="success"> ✓</Text>
       const pick = (choice: string) => {
         propose(question, choice)
@@ -1082,12 +1087,12 @@ export const register: Register = on => {
           const letter = letterAt(index)
           return answer === undefined ? (
             <Button key={`answer:${ref}.${letter}`} plain hotkey={String(index + 1)} onPress={() => pick(choice)}>
-              {index === 0 ? [choice, recommended] : choice}
+              {index === 0 ? `${choice}${recommended}` : choice}
             </Button>
           ) : (
             <Text key={`option:${ref}.${letter}`} color={letter === chosen ? undefined : 'subtle'}>
               {choice}
-              {index === 0 && recommended}
+              {index === 0 && <Text color="success">{recommended}</Text>}
               {letter === chosen && marked}
             </Text>
           )
