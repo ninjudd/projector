@@ -330,10 +330,7 @@ filled it in answers the question and closes its drawer, so the band shows
 its list again. The band finds each quoted question whose quote ends its
 line, and reads the text after the quote, up to the next quoted item or the
 end of the prompt. When that text is one of the question's options, whatever
-blank lines and spaces surround it, that option answers the question. Each
-quote answers one question: when two open questions ask the same thing, it
-answers the one whose drawer last put that same answer in your prompt, or
-else the older one that offers it.
+blank lines and spaces surround it, that option answers the question.
 
 Anything else you send under a quoted question is a reply, not an answer:
 your own words, an option with more text after it, or a question back. The
@@ -343,7 +340,16 @@ what you asked and then settles the question. It withdraws the question if
 your reply settles it, revises it if your reply shows it was unclear or the
 choice has changed, or leaves it open while it still needs you. A revised
 question keeps its place in the list, and the band shows its new text as
-soon as the agent revises it.
+soon as the agent revises it. An option you put in your prompt before the
+revision answers no question: sent as it stands, it replies to the revised
+question. To answer, choose again in the revised question's drawer.
+
+Each quote speaks to one question. When two open questions ask the same
+thing, an option answers the one whose drawer last put that option, or the
+quote alone through **discuss**, in your prompt, or else the older one that
+offers it. A reply goes to the one whose drawer put the quote in your
+prompt, or else to the older one. A prompt that answers or replies to one
+of them says nothing to the other and leaves its drawer alone.
 
 Only a prompt you send, at the terminal or through Remote Control, answers
 or replies to a question. Another session's message or a notification that

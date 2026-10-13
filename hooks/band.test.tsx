@@ -1182,6 +1182,53 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   await ui.unmount()
 })
 
+test('a prompt about one of two questions that share a subject leaves the other alone', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const fixer = (id: string, description: string) =>
+    ({ id, description, type: 'general-purpose', status: 'running' }) as AgentInfo
+  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
+  const first = held({ ...merge, agentId: 'agent-a' })
+  const second = held({ ...merge, ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-b' })
+  const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
+  const session = questionWorld(on, clock, [first, second], { agents })
+  await startSession($, clock)
+  const pull8 = { href: 'https://github.com/x/y/pull/8' }
+
+  const ui = await $.ui.mount(BAND)
+  // You discuss the second question: your reply goes to its subagent alone.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'discuss:2' })
+  const reply = '"Merge it?"\n\nwhy now?'
+  await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted.at(-1)).toEqual({
+    text: reply,
+    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
+  })
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+
+  // Then you pick No in its drawer and open the first question's drawer before you send. The
+  // prompt answers the second question, and the first hears nothing and keeps its drawer open.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.b', link: pull8 })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'item:1' })
+  const answer = '"Merge it?"\n\nNo\n'
+  await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted.at(-1)).toEqual({
+    text: answer,
+    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the answer this prompt gives.'],
+  })
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
+    'inbox answer 2.b --session s1 --json',
+  ])
+  expect(session.store.store.get('1')).toEqual(first)
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('an answer from a terminal reaches the live subagent that asked', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1587,7 +1634,47 @@ test('the revise tool redraws the question with its new text at once, keeping it
   await ui.unmount()
 })
 
-test('a revise forgets the answer the question’s drawer put in the prompt', async ($, on) => {
+test('an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-1' })
+  const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
+  await startSession($, clock)
+  const decline = '"Decline the finding?"\n\nDecline it\n'
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The cap is three.')
+
+  // You chose that answer from the text the question had: sent, it answers neither question, though
+  // the older one shares the text and offers the option. It replies to the revised question.
+  await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  expect(session.store.store.get('2')?.answer).toBeUndefined()
+  expect(session.submitted.at(-1)).toEqual({
+    text: decline,
+    context: [
+      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+    ],
+  })
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Text', text: /^Decline the finding\?$/ })).toHaveLength(2)
+
+  // The same option, picked again in the revised question's drawer, answers it.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an answer chosen before a revise rewords its question does not answer another question with the old words', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
@@ -1597,12 +1684,16 @@ test('a revise forgets the answer the question’s drawer put in the prompt', as
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
-  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
-  // You chose that answer from the text the question had, so it no longer picks the question out from the older one that shares its text.
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
+  expect(await ui.find({ key: 'detail:2' })).toBeDefined()
+
   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
-  expect(session.store.store.get('2')?.answer).toBeUndefined()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  // The reply was to the revised question, so its drawer closes though the prompt no longer quotes it.
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   await ui.unmount()
 })
 

@@ -932,7 +932,10 @@ and a `revise` tool beside `ask`, `tell`, and `withdraw` do the revising.
 This section supersedes the first bullet of § 10, which made what you type
 under a quoted question its answer, and settles two items of § 7: it
 builds revising in place, and it replaces the rule § 7 set aside with a
-different one, described below.
+different one, described below. The owner took up revising in place after
+seeing replies close questions he had not settled, so this section also
+supersedes § 12.4, which records revising in place as deferred until it
+proves common.
 
 ### 13.1 Problem
 
@@ -955,16 +958,25 @@ one beside the old.
   its options, whatever blank lines, spaces, or tabs surround it. That is
   what pressing an option's number puts in the prompt. Free text, an
   option with more text after it, and a question back are replies, on
-  the quote's own line or under it. When two open questions share a
-  subject, the quote goes to the one whose drawer put that option in the
-  prompt, and otherwise to the oldest that offers it.
+  the quote's own line or under it.
+- **Each quote speaks to one question.** When two open questions share a
+  subject, an option goes to the one whose drawer last put that option,
+  or the quote alone through **discuss**, in the prompt, and otherwise to
+  the oldest that offers it. A reply goes to the one whose drawer put the
+  quote in the prompt, and otherwise to the oldest. A prompt that answers
+  or replies to one of them says nothing to the other: it adds no note
+  for the other's subagent and leaves the other's drawer open. To know
+  which drawer put a quote there, the band records **discuss** as well as
+  each option it puts in the prompt.
 - **A reply closes the drawer and posts nothing.** A sent prompt closes
-  the drawer of every item it quotes, as § 10 has it do for a notice. A
-  replied question stays open and in the band, and the band runs no
-  `project inbox` command for it. When a subagent asked, the main loop
-  reads a note beside the prompt that names the subagent and says to send
-  it the reply, as it reads one for an answer. The band forgets the answer
-  a drawer put in the prompt for every item the sent prompt quotes.
+  the drawer of each question it answers or replies to, as § 10 has it
+  close the drawer of each notice it quotes. A replied question stays
+  open and in the band, and the band runs no `project inbox` command for
+  it. When a subagent asked, the main loop reads a note beside the prompt
+  that names the subagent and says to send it the reply, as it reads one
+  for an answer. Once you send a prompt, the band forgets what a drawer
+  put in it for each question the prompt answers or replies to, and for
+  each quote the prompt holds.
 - **The agent settles a replied question.** The Projector section of
   `AGENTS.md`, at begin marker 11, and the `ask` tool's description tell
   the agent that a picked option arrives as `ANSWER <number>.<letter>`,
@@ -987,9 +999,17 @@ one beside the old.
   of `question`, `recommendation`, `options`, and `detail`, where an empty
   `options` list drops every other option and an empty `detail` clears
   it. It runs `project inbox revise` through the band's `runTool`, as
-  `withdraw` does, puts the revised question in the band at once, forgets
-  any answer the question's drawer put in the prompt, and raises no
-  notification.
+  `withdraw` does, puts the revised question in the band at once, and
+  raises no notification.
+- **A pick made before a revision answers no question.** The band
+  remembers each answer a drawer put in the prompt with the question's
+  quote as it read then. A revision marks the question's picks stale. A
+  sent prompt that holds a stale pick, its old quote followed by its
+  option, answers nothing, not even an older question that shares the
+  old words and offers that option. It replies to the revised question
+  instead: the question stays open, its drawer closes, and the agent
+  reads the prompt. A fresh pick from the revised question's drawer
+  answers it, even when the revision kept that quote and that option.
 
 ### 13.3 Why this design
 
@@ -1005,6 +1025,12 @@ one beside the old.
   answers whenever the text is an option's, proposal or not, so an option
   you type by hand, or send through Remote Control, still answers, and a
   proposal only decides between questions that share a subject.
+- **A stale pick is kept, not dropped.** An option you picked in one
+  question's drawer must never answer a different question. Dropping the
+  pick at the revision would leave its text to the rule above, which
+  gives it to the oldest question that shares the quote and offers the
+  option. Keeping it, marked stale, lets the band recognize the text and
+  hold it back.
 - **`revise` is its own command, and the tool's name is `revise`.** § 7
   sketched `project inbox ask --revise <number>`. `ask` posts a new item
   and prints a new number; revising keeps the number and refuses what
@@ -1030,8 +1056,10 @@ one beside the old.
 | Behavior | Test |
 | --- | --- |
 | Free text, an option with more text after it, a question back, and another question's option answer nothing; an exact option answers, whitespace and a following quoted item included | `a sent prompt answers each question whose quote an option follows`, `anything after a quoted question but one of its options replies to it without answering`, `a quote two questions share goes to the oldest that offers the option it is followed by`, in `hooks/inbox.test.ts` |
+| A quote two open questions share speaks to one of them: an answer to one is no reply to the other, and a reply goes to the question whose drawer put the quote there | `a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it`, in `hooks/inbox.test.ts`; `a prompt about one of two questions that share a subject leaves the other alone`, in `hooks/band.test.tsx` |
 | A sent reply leaves the question listed, closes its drawer, runs no `project inbox answer`, and names the subagent that asked | `a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it`, in `hooks/band.test.tsx` |
 | The `revise` tool redraws the question with its new text under the same number, and a pick made from the old text answers nothing | `the revise tool redraws the question with its new text at once, keeping its number` |
-| The `revise` tool forgets the drawer's proposal, and refuses what the CLI refuses | `a revise forgets the answer the question’s drawer put in the prompt`, `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
+| A pick made before a revision answers no question, an older question with the same words included, and replies to the revised question; a fresh pick from the new drawer answers it | `a pick made before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one`, `an answer chosen before a revise rewords its question does not answer another question with the old words` |
+| The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
 | `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |
 | The Projector section's new text is pinned to begin marker 11 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |

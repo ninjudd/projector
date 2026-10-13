@@ -54,26 +54,37 @@ export const proposalOf = (question: Question, answer: string) => `${quoteOf(que
 /** One answer a sent prompt gives: the letter of the option it picks. */
 export type Given = { question: Question; letter: string }
 
-/** An answer a question's drawer put in the prompt. */
-export type Proposal = { ref: string; answer: string }
+/**
+ * What a question's drawer put in the prompt: the question's quote as it read
+ * then, and the option chosen, or an empty answer for discuss. `isStale`
+ * marks one put there before the question was revised.
+ */
+export type Proposal = { ref: string; quote: string; answer: string; isStale?: boolean }
+
+/** What a sent prompt says to the open questions: the answers it gives, and the questions it replies to. */
+export type Read = { answers: Given[]; replies: Question[] }
 
 /**
- * The answers a sent prompt gives, as the band writes them. A quoted open
- * question takes an answer only when its quote ends its line and the text
- * after it, up to the next quoted item or the prompt's end, is one of its
- * options, whatever blank lines and spaces surround it: what an option's
- * number puts in the prompt. Any other text after the quote replies to the
- * question without answering it. When open questions share the text, the
- * quote goes to the one whose drawer last put that same answer in the
- * prompt, `proposed` holding them oldest first, and otherwise to the oldest
- * that offers it, so two questions never take one answer. Only questions take
- * answers, snoozed ones included, so a quoted notice answers nothing either.
+ * Reads a sent prompt as the band writes it, each quote speaking to one
+ * question. A quoted open question takes an answer only when its quote ends
+ * its line and the text after it, up to the next quoted item or the prompt's
+ * end, is one of its options, whatever blank lines and spaces surround it:
+ * what an option's number puts in the prompt. When open questions share the
+ * text, the quote goes to the one whose drawer last put that answer, or the
+ * quote alone, in the prompt, `proposed` holding them oldest first, and
+ * otherwise to the oldest that offers it. Any other text after a quote
+ * replies to one question: the one whose drawer last put that quote in the
+ * prompt, and otherwise the oldest with that text. A quote and an answer
+ * that a drawer put there before its question was revised answer nothing, so
+ * a pick never falls through to another question with the old text: they
+ * reply to the revised question. Only questions take answers and replies,
+ * snoozed ones included.
  */
-export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
+export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
   const open = items
     .filter((item): item is Question => item.kind === 'question' && item.answer === undefined)
     .sort((one, other) => one.postedAt - other.postedAt)
-  const quotes = [...new Set(items.map(quoteOf))]
+  const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
     .flatMap(quote => {
       const found: { at: number; end: number; quote: string }[] = []
       for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
@@ -82,37 +93,43 @@ export function answersIn(text: string, items: readonly Item[], proposed: readon
       return found
     })
     .sort((one, other) => one.at - other.at)
-  const given: Given[] = []
-  const taken = new Set<string>()
+  const answers: Given[] = []
+  const answered = new Set<string>()
+  const replied = new Set<string>()
+  const isFree = (ref: string) => open.some(question => question.ref === ref) && !answered.has(ref) && !replied.has(ref)
   for (const { end, quote } of quotes) {
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
-    if (!/^[ \t]*\n/.test(after)) continue
-    const said = after.trim()
-    const asking = open.filter(
-      question => quoteOf(question) === quote && !taken.has(question.ref) && question.choices.includes(said),
+    const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
+    const stale = proposed.findLast(one => one.isStale === true && one.quote === quote && one.answer === said)
+    if (stale !== undefined) {
+      if (isFree(stale.ref)) replied.add(stale.ref)
+      continue
+    }
+    const offering = open.filter(
+      question =>
+        quoteOf(question) === quote &&
+        !answered.has(question.ref) &&
+        said !== undefined &&
+        question.choices.includes(said),
     )
-    const drawer = proposed.findLast(one => one.answer === said && asking.some(question => question.ref === one.ref))
-    const question = asking.find(one => one.ref === drawer?.ref) ?? asking[0]
-    if (question === undefined) continue
-    taken.add(question.ref)
-    given.push({ question, letter: letterAt(question.choices.indexOf(said)) })
+    const drawer = proposed.findLast(
+      one =>
+        one.isStale !== true &&
+        (one.answer === said || one.answer === '') &&
+        offering.some(question => question.ref === one.ref),
+    )
+    const question = offering.find(one => one.ref === drawer?.ref) ?? offering[0]
+    if (question !== undefined && said !== undefined) {
+      answered.add(question.ref)
+      answers.push({ question, letter: letterAt(question.choices.indexOf(said)) })
+      continue
+    }
+    const intended = proposed.findLast(one => one.quote === quote && isFree(one.ref))
+    const replying = intended?.ref ?? open.find(one => quoteOf(one) === quote && isFree(one.ref))?.ref
+    if (replying !== undefined) replied.add(replying)
   }
-  return given
+  return { answers, replies: open.filter(question => replied.has(question.ref) && !answered.has(question.ref)) }
 }
-
-/**
- * The open questions a sent prompt quotes without answering: its replies,
- * which reach the agent as the prompt itself and leave each question open
- * for that agent to settle.
- */
-export const repliesIn = (text: string, items: readonly Item[], given: readonly Given[]): Question[] =>
-  items.filter(
-    (item): item is Question =>
-      item.kind === 'question' &&
-      item.answer === undefined &&
-      text.includes(quoteOf(item)) &&
-      !given.some(one => one.question.ref === item.ref),
-  )
 
 /** Names the subagent that asked, by its description and id when the session still lists it. */
 function whoAsked(question: Question, agents: readonly AgentInfo[]): string {

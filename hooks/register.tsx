@@ -7,7 +7,6 @@ import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './p
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
-  answersIn,
   askArguments,
   forMainLoop,
   isShownAt,
@@ -16,8 +15,8 @@ import {
   needsDelivery,
   proposalOf,
   quoteOf,
+  readPrompt,
   relayNote,
-  repliesIn,
   replyNote,
   REVISE_DESCRIPTION,
   REVISE_SCHEMA,
@@ -92,10 +91,24 @@ let tickedAt: number | undefined
 /**
  * The answers questions' drawers put in the prompt, oldest first, so a sent
  * quote answers the question you chose when another shares its text. A
- * proposal lasts until a sent prompt quotes its question or the question is
- * revised.
+ * revision marks its question's proposals stale, so an answer chosen from the
+ * old text answers nothing. A proposal lasts until a prompt you send quotes
+ * its question or holds the quote it was chosen under.
  */
 let proposed: Proposal[] = []
+
+/**
+ * Records what a question's drawer put in the prompt: an option, or an empty
+ * answer for discuss. It takes the place of the question's last fresh pick,
+ * and of any stale pick that put the same text in the prompt, since a sent
+ * prompt cannot tell the two apart.
+ */
+function propose(question: Question, answer: string): void {
+  const quote = quoteOf(question)
+  const isKept = (one: Proposal) =>
+    one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== question.ref
+  proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
+}
 
 /** The few variables a tracked path is written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
@@ -697,15 +710,15 @@ export const register: Register = on => {
 
   // The band takes the revised question from the CLI at once, so it redraws
   // before the next read of the store. An answer a drawer put in the prompt
-  // was chosen from the old text, so it no longer decides which question a
-  // sent quote answers.
+  // was chosen from the old text, so it turns stale: sent, it answers no
+  // question, this one or another that shares the old text.
   on('tool.call', { tool: REVISE_TOOL }, async ($, e) => {
     const session = await $.session.id()
     const ran = await runTool($, reviseArguments(e, session), 'ask the revised question in the conversation instead')
     if ('deny' in ran) return ran
     const item = itemOf(ran.stdout, session)
     await replace($, item)
-    proposed = proposed.filter(proposal => proposal.ref !== item.ref)
+    proposed = proposed.map(proposal => (proposal.ref === item.ref ? { ...proposal, isStale: true } : proposal))
     return {
       result: `Revised ${item.ref}. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
     }
@@ -744,23 +757,29 @@ export const register: Register = on => {
       return entered
     }
 
-    // A sent prompt that quotes an item is done with the item's drawer. An
-    // option the band put in the prompt answers its question: the prompt
+    // An option the band put in the prompt answers its question: the prompt
     // carries the answer to the main loop, and once the prompt has entered,
     // the band records it. Any other text under a quoted question replies to
-    // it, and the prompt carries the reply while the question stays open. A
-    // subagent's question gets a note naming it, so the main loop can pass
-    // the answer or the reply on. Only a prompt you sent, at the terminal or
-    // through Remote Control, counts: an agent's message or a notification
-    // can quote a question it is still waiting on.
+    // it, and the prompt carries the reply while the question stays open.
+    // Either way the prompt is done with the question's drawer. A subagent's
+    // question gets a note naming it, so the main loop can pass the answer or
+    // the reply on. Only a prompt you sent, at the terminal or through Remote
+    // Control, counts: an agent's message or a notification can quote a
+    // question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
-    const quoted = mine.filter(item => e.text.includes(quoteOf(item)))
-    const given = answersIn(e.text, mine, proposed)
-    const replies = repliesIn(e.text, mine, given)
-    proposed = proposed.filter(proposal => !quoted.some(item => item.ref === proposal.ref))
-    const answered = given.map(one => one.question).filter(question => question.agentId !== undefined)
+    const { answers, replies } = readPrompt(e.text, mine, isYours ? proposed : [])
+    // An open question is done only when the prompt answers or replies to
+    // it, so a quote two questions share closes one drawer, not both.
+    const isOpenQuestion = (item: Item) => item.kind === 'question' && item.answer === undefined
+    const done = new Set([
+      ...mine.filter(item => !isOpenQuestion(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
+      ...answers.map(one => one.question.ref),
+      ...replies.map(question => question.ref),
+    ])
+    if (isYours) proposed = proposed.filter(proposal => !done.has(proposal.ref) && !e.text.includes(proposal.quote))
+    const answered = answers.map(one => one.question).filter(question => question.agentId !== undefined)
     const replied = replies.filter(question => question.agentId !== undefined)
     const agents = answered.length + replied.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = [
@@ -769,8 +788,8 @@ export const register: Register = on => {
     ]
     const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
     if (entered.drop === undefined) {
-      for (const item of quoted) void closeDrawer($, `item:${item.ref}`).catch(() => undefined)
-      for (const one of given) void answerFromPrompt($, one.question, one.letter)
+      for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
+      for (const one of answers) void answerFromPrompt($, one.question, one.letter)
     }
     return entered
   }).catch(($, e, next) => next(e))
@@ -922,8 +941,8 @@ export const register: Register = on => {
       const isOpen = answer === undefined
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
       const href = hrefOf(question)
-      const propose = (answer: string) => {
-        proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
+      const pick = (answer: string) => {
+        propose(question, answer)
         fill(`${proposalOf(question, answer)}\n`)
       }
       const option = (index: number, content: JSX.Element) => {
@@ -937,7 +956,7 @@ export const register: Register = on => {
                 <Markdown
                   key={`answer:${ref}.${letter}`}
                   text={`[${number}](${href})`}
-                  onLinkPress={() => propose(choice)}
+                  onLinkPress={() => pick(choice)}
                 />
               ) : (
                 <Text color={letter === chosen ? 'success' : 'subtle'}>{number}</Text>
@@ -980,7 +999,13 @@ export const register: Register = on => {
       const isDismissed = answer !== undefined && 'dismissed' in answer
       const pull = pullOf(item)
       const actions = [
-        { name: 'discuss', onPress: () => fill(`${quoteOf(item)}\n\n`) },
+        {
+          name: 'discuss',
+          onPress: () => {
+            if (item.kind === 'question') propose(item, '')
+            fill(`${quoteOf(item)}\n\n`)
+          },
+        },
         ...(isOpen
           ? [
               { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
