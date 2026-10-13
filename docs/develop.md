@@ -84,9 +84,21 @@ npm run dev
 
 ## Validate a change
 
-Run the validation gate from the repository root. Run `npm ci` once in
-`site/` first, or the test that compares the compiled scripts with their
-TypeScript skips:
+Run the validation gate from the repository root. Prepare each checkout once
+first:
+
+1. Run `npm ci` in `site/`. Without it, the test that compares the compiled
+   scripts with their TypeScript skips, and `hooks/typecheck.sh` needs the
+   main checkout's `tsc`.
+2. Start an interactive session with `claude --plugin-dir .` from the
+   repository root. When the session loads the checkout as a plugin, Claude
+   Code writes the declarations the hooks module compiles against to
+   `.claude-plugin/types/`, which Git ignores. They stay after you quit the
+   session. Projector loads only when its `gh-stack` dependency is installed,
+   as [Install for Claude Code](plugins.md#install-for-claude-code)
+   describes. Start such a session again after you update Claude Code. A
+   linked worktree can skip this step when the main checkout has the
+   declarations.
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -v
@@ -94,11 +106,25 @@ PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
 claude plugin test .
+hooks/typecheck.sh
 git diff --check
 ```
 
+`hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
+`tsconfig.json`, which extends the one Claude Code writes beside its
+declarations. In a linked worktree that has no `tsc` or no declarations of
+its own, the script uses the main checkout's, the first one
+`git worktree list` prints, and prints a `using` line that names that
+checkout for each one it borrows. The declarations depend mainly on the
+Claude Code version, so a worktree can share them. A borrowed `tsc` reads its
+libraries from beside itself and checks this worktree's files, as the
+worktree's own would. The script writes nothing to either checkout. When
+neither checkout has `tsc`, or neither has the declarations, the script fails
+and says how to get them.
+
 The Check workflow runs `npm run check`, the tests, and `project check` on
-every pull request.
+every pull request. It cannot type-check `hooks/`, because only an
+interactive Claude Code session writes the declarations.
 
 ## Release
 

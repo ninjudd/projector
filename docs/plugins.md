@@ -173,7 +173,16 @@ Validate a checkout before publishing it:
 claude plugin validate .
 claude plugin validate skills
 claude plugin test .
+hooks/typecheck.sh
 ```
+
+`hooks/typecheck.sh` type-checks the hooks module against the declarations
+Claude Code writes to `.claude-plugin/types/` when an interactive session
+loads the checkout with `claude --plugin-dir .`. Start that session once, and
+run `npm ci` in `site/`, before the first check, as
+[Validate a change](develop.md#validate-a-change) describes. A linked
+worktree that has no declarations or no `tsc` of its own uses the main
+checkout's.
 
 ### See your loops' pull requests in Projector's band
 
