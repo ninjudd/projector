@@ -16,19 +16,20 @@ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0)
 /** The letter of a typed answer: the one after the last choice. */
 export const typedLetter = (question: Question) => letterAt(question.choices.length)
 
-/** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
-const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
+/** Whether an item is snoozed at a time: put off until its `snoozedUntil`. */
+export const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
 
 /** Whether the agent that posted an item withdrew it. */
 const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
 
 /**
- * Whether the band shows an item: not withdrawn, not snoozed, and open, being
- * delivered, or delivered within the last 30 seconds.
+ * Whether the band shows an item: not withdrawn, not snoozed or snoozed
+ * within the last 30 seconds, and open, being delivered, or delivered within
+ * the last 30 seconds.
  */
 export const isShownAt = (item: Item, time: number) =>
   !isWithdrawn(item) &&
-  !isSnoozedAt(item, time) &&
+  (!isSnoozedAt(item, time) || (item.snoozedAt !== undefined && time - item.snoozedAt < RESOLVED_MS)) &&
   (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
 
 /** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
@@ -38,11 +39,13 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
       item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
   )
 
-/** Whether a question's answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
+/**
+ * Whether a question's line waits for a deliverer: an answer recorded and
+ * undelivered, or word of a restore, and claimed by none that is live.
+ */
 export const needsDelivery = (item: Item, time: number): item is Question =>
   item.kind === 'question' &&
-  item.answer !== undefined &&
-  item.deliveredAt === undefined &&
+  (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
 
 /** What the band puts in the prompt to discuss an item: its subject, in quotes. */
@@ -209,6 +212,7 @@ export const ASK_DESCRIPTION = [
   'Name the pull request the question is about in `pr`, as owner/repo#number.',
   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
+  'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
   'or leave it open while it still needs them.',
@@ -307,7 +311,8 @@ export const WITHDRAW_DESCRIPTION = [
   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
 ].join(' ')
 
-export const WITHDRAW_SCHEMA = {
+/** The schema of a tool that takes one item, by the number `ask` or `tell` returned. */
+const ITEM_SCHEMA = {
   type: 'object',
   properties: {
     number: {
@@ -320,18 +325,35 @@ export const WITHDRAW_SCHEMA = {
   additionalProperties: false,
 }
 
+export const WITHDRAW_SCHEMA = ITEM_SCHEMA
+
 /** Whether a tool's `number` names an item: a whole number from 1. */
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
 
+/** The arguments of a `project inbox` command on one item for one call of its tool, or why the call cannot be one. */
+const itemArguments =
+  (command: 'withdraw' | 'restore') =>
+  (input: Readonly<Record<string, unknown>>, session: string): string[] | { error: string } => {
+    const { number } = input
+    if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+    return ['inbox', command, String(number), '--session', session, '--json']
+  }
+
 /** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
-export function withdrawArguments(
-  input: Readonly<Record<string, unknown>>,
-  session: string,
-): string[] | { error: string } {
-  const { number } = input
-  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
-  return ['inbox', 'withdraw', String(number), '--session', session, '--json']
-}
+export const withdrawArguments = itemArguments('withdraw')
+
+export const RESTORE_DESCRIPTION = [
+  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s band',
+  'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
+  'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
+  'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
+  'that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
+].join(' ')
+
+export const RESTORE_SCHEMA = ITEM_SCHEMA
+
+/** The arguments of `project inbox restore` for one call of the tool, or why the call cannot be one. */
+export const restoreArguments = itemArguments('restore')
 
 export const REVISE_DESCRIPTION = [
   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',

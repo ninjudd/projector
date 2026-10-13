@@ -3,7 +3,8 @@
 An item is a question, which the person answers or dismisses and whose answer goes back to the
 agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
 that posted an open item can withdraw it, which dismisses it and sends nothing back, and can
-revise an open question's text in place. Each session numbers its items 1, 2, 3, and on, in one
+revise an open question's text in place. An item the person dismissed or snoozed can be restored,
+which reopens it in place. Each session numbers its items 1, 2, 3, and on, in one
 count across both kinds. Its items are JSON files in their own directory, one per item and named
 by its number, with `count.json` holding the last number given. Every write happens under the
 directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
@@ -282,18 +283,28 @@ def is_open(item: Optional[dict]) -> bool:
     return item is not None and not item.get("answer")
 
 
-def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
+def is_restorable(item: Optional[dict]) -> bool:
+    """Whether `restore` can bring an item back: the person dismissed it, or it is snoozed."""
+    if item is None:
+        return False
+    answered = item.get("answer")
+    if answered:
+        return bool(answered.get("dismissed")) and not answered.get("withdrawn")
+    return snoozed_until(item) is not None
+
+
+def locate(session: Optional[str], ref: str, prefer: Optional[Callable[[Optional[dict]], bool]] = None) -> Path:
     """The folder holding `ref`: the session's, or, without one, the one session that has it. Every
-    session counts from 1 and keeps its resolved items, so with `prefer_open` the sessions that hold
-    `ref` open, with no answer recorded, are the candidates whenever any does."""
+    session counts from 1 and keeps its resolved items, so with `prefer` the sessions whose item
+    `ref` it accepts, such as the ones that hold it open, are the candidates whenever any is."""
     if session is not None:
         folder = session_dir(session)
         if not item_file(folder, ref).is_file():
             raise ItemNotFound(f"session {session} has no item {ref}")
         return folder
     holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
-    if prefer_open:
-        holders = [name for name in holders if is_open(item_in(item_file(store_root() / name, ref)))] or holders
+    if prefer is not None:
+        holders = [name for name in holders if prefer(item_in(item_file(store_root() / name, ref)))] or holders
     if not holders:
         raise ItemNotFound(f"no session has an item {ref}")
     if len(holders) > 1:
@@ -303,7 +314,7 @@ def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
 
 
 def find(session: Optional[str], ref: str) -> dict:
-    return read_item(locate(session, ref, prefer_open=True), ref)
+    return read_item(locate(session, ref, is_open), ref)
 
 
 def is_notice(item: dict) -> bool:
@@ -320,8 +331,8 @@ def typed_letter(question: dict) -> str:
 
 
 def answer_ref(item: dict) -> str:
-    answered = item.get("answer") or {}
-    return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
+    letter = (item.get("answer") or {}).get("letter")
+    return f"{item['ref']}.{letter}" if letter else item["ref"]
 
 
 def resolution(item: dict) -> str:
@@ -334,7 +345,10 @@ def resolution(item: dict) -> str:
 
 
 def message(question: dict) -> str:
-    """The line that delivers an answer, as `watch` prints it and the band sends it."""
+    """The line that tells the agent what became of its question, as `watch` prints it and the band
+    sends it: its answer, its dismissal, or that a dismissal it may have heard of was undone."""
+    if question.get("restoredAt"):
+        return f"RESTORED {question['ref']} {question['subject']}"
     answered = question["answer"]
     if answered.get("dismissed"):
         return f"DISMISSED {question['ref']} {question['subject']}"
@@ -343,9 +357,10 @@ def message(question: dict) -> str:
 
 # Answering and delivering
 
-def update(session: Optional[str], ref: str, change, prefer_open: bool = False) -> dict:
+def update(session: Optional[str], ref: str, change,
+           prefer: Optional[Callable[[Optional[dict]], bool]] = None) -> dict:
     """Read the item under the lock, let `change` alter it, and write it back."""
-    folder = locate(session, ref, prefer_open)
+    folder = locate(session, ref, prefer)
     with locked(folder):
         item = read_item(folder, ref)
         change(item)
@@ -376,25 +391,33 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         else:
             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
-        question.pop("snoozedUntil", None)
+        # The answer tells the agent the question was open, so it replaces word of a restore that
+        # has not reached the agent, and any claim to deliver that word.
+        for key in ("snoozedUntil", "snoozedAt", "restoredAt", "claim"):
+            question.pop(key, None)
 
-    return update(session, ref, record, prefer_open=True)
+    return update(session, ref, record, is_open)
 
 
 def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
     """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
     notice has nothing to send, so it is delivered at once. A `withdrawn` item, which the agent that
-    posted it took back, is delivered at once too, because that agent already knows."""
+    posted it took back, is delivered at once too, because that agent already knows. So is a
+    question dismissed again before any deliverer claimed the `RESTORED` line its restore owes,
+    because the last line its agent heard said `DISMISSED`."""
     def record(item: dict) -> None:
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
         now = now_ms()
+        restored = item.pop("restoredAt", None) is not None
+        claimed = item.pop("claim", None) is not None
         item["answer"] = {"dismissed": True, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
         item.pop("snoozedUntil", None)
-        if withdrawn or is_notice(item):
+        item.pop("snoozedAt", None)
+        if withdrawn or is_notice(item) or (restored and not claimed):
             item["deliveredAt"] = now
 
-    return update(session, ref, record, prefer_open=True)
+    return update(session, ref, record, is_open)
 
 
 def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
@@ -421,7 +444,7 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, 
         if detail is not None:
             item["detail"] = detail.strip()
 
-    return update(session, ref, record, prefer_open=True)
+    return update(session, ref, record, is_open)
 
 
 def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
@@ -432,9 +455,39 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
     def record(item: dict) -> None:
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}, so it has nothing to return for")
-        item["snoozedUntil"] = now_ms() + minutes * 60_000
+        now = now_ms()
+        item["snoozedAt"] = now
+        item["snoozedUntil"] = now + minutes * 60_000
 
-    return update(session, ref, record, prefer_open=True)
+    return update(session, ref, record, is_open)
+
+
+def restore(session: Optional[str], ref: str) -> dict:
+    """Bring back, in place and open, an item the person dismissed or snoozed. A snoozed item loses
+    its snooze. A dismissed item loses its dismissal and what its delivery recorded, and keeps
+    everything else. When the agent may have heard `DISMISSED`, because the line was delivered or
+    claimed for delivery, the item records `restoredAt`, and its deliverer sends `RESTORED`;
+    otherwise the restore cancels the line, and nothing goes out."""
+    def record(item: dict) -> None:
+        answered = item.get("answer")
+        if not answered:
+            if snoozed_until(item) is None:
+                raise InboxError(f"{item['ref']} is open, so there is nothing to restore")
+            item.pop("snoozedUntil")
+            item.pop("snoozedAt", None)
+            return
+        if answered.get("withdrawn"):
+            raise InboxError(f"{item['ref']} was withdrawn by the agent that posted it, so it is that agent's to "
+                             "post again")
+        if not answered.get("dismissed"):
+            raise InboxError(f"{item['ref']} is already {resolution(item)}, and only a dismissed or snoozed item "
+                             "can be restored")
+        if not is_notice(item) and (item.get("deliveredAt") or item.get("claim")):
+            item["restoredAt"] = now_ms()
+        for key in ("answer", "deliveredAt", "claim"):
+            item.pop(key, None)
+
+    return update(session, ref, record, is_restorable)
 
 
 def snoozed_until(item: dict) -> Optional[int]:
@@ -454,7 +507,7 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
     def take(question: dict) -> None:
         refuse_notice(question, "has nothing to deliver")
-        if not question.get("answer"):
+        if not question.get("answer") and not question.get("restoredAt"):
             raise InboxError(f"{question['ref']} has no answer to deliver")
         if question.get("deliveredAt"):
             raise InboxError(f"{answer_ref(question)} is already delivered")
@@ -471,13 +524,17 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
 
 
 def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
-    """Mark a claimed answer delivered, or reopen the question when its delivery failed."""
+    """Mark a claimed answer delivered, or reopen the question when its delivery failed. A claimed
+    `RESTORED` line is done either way: the band does not retry it, and the question's answer or
+    next dismissal still reaches the agent."""
     def finish(question: dict) -> None:
         if question.get("deliveredAt"):
             raise InboxError(f"{answer_ref(question)} is already delivered")
         if (question.get("claim") or {}).get("token") != token:
             raise InboxError(f"{question['ref']} is not claimed with that token")
         del question["claim"]
+        if question.pop("restoredAt", None) is not None:
+            return
         if delivered:
             question["deliveredAt"] = now_ms()
         else:
@@ -494,19 +551,30 @@ def prune(folder: Path) -> None:
             item_file(folder, item["ref"]).unlink()
 
 
+def owes_a_line(item: dict) -> bool:
+    """Whether the item's agent is owed a line: an answer or dismissal not yet delivered, or word that
+    a dismissal it may have heard of was undone."""
+    return bool(item.get("restoredAt")) or bool(item.get("answer")) and not item.get("deliveredAt")
+
+
 def undelivered(session: str) -> list[dict]:
-    return [item for item in load_items(session_dir(session))
-            if item.get("answer") and not item.get("deliveredAt") and not live_claim(item)]
+    return [item for item in load_items(session_dir(session)) if owes_a_line(item) and not live_claim(item)]
 
 
 def deliver_pass(session: str, send: Callable[[str], None]) -> None:
     """One pass of `watch`: claim each undelivered answer, `send` its line, and only then mark it
     delivered, so an answer whose line fails to send keeps just a claim, which lapses for the next
-    deliverer."""
+    deliverer. A restore or an answer that lands while the line goes out drops the claim, so the
+    line cannot be marked delivered, and the next pass sends what the item owes then."""
     for question in undelivered(session):
         try:
             claimed = claim(session, question["ref"])
         except InboxError:
             continue
         send(message(claimed))
-        settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
+        try:
+            settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
+        except InboxBusy:
+            raise
+        except InboxError:
+            continue

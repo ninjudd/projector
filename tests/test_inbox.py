@@ -339,8 +339,8 @@ class AnswerTests(InboxCase):
         self.assertNotIn("answer", self.item(1))
 
     def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
-        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
-                     ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
+        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["restore", "1.a"],
+                     ["claim", "1.a"], ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
             with self.subTest(command=args[0]):
                 code, out, err = self.run_cli(*args, "--session", "s1")
                 self.assertEqual((65, ""), (code, out))
@@ -844,6 +844,166 @@ class SnoozeTests(InboxCase):
             self.run_cli("snooze", ref, "--session", "s1")
             self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
         self.assertEqual({"1": "dismissed", "2": "dismissed"}, self.states("--all"))
+        self.assertEqual([], [key for ref in (1, 2) for key in ("snoozedUntil", "snoozedAt") if key in self.item(ref)])
+
+
+class RestoreTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
+                 "--pr", "acme/app#12", "--agent", "agent-7")
+        self.run_cli("tell", "Force-pushed #12", "--detail", "It held a token.", "--pr", "acme/app#12",
+                     "--agent", "agent-7", "--session", "s1")
+
+    def restore(self, ref: str = "1", *args: str) -> tuple[int, str, str]:
+        return self.run_cli("restore", ref, "--session", "s1", *args)
+
+    def watch(self) -> str:
+        return self.run_cli("watch", "--once", "--session", "s1")[1]
+
+    def test_restores_a_dismissed_question_in_place_and_cancels_its_undelivered_dismissal(self) -> None:
+        before = self.item(1)
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.assertEqual((0, "restored 1\n", ""), self.restore())
+        self.assertEqual(before, self.item(1))
+        self.assertEqual({"last": 2}, json.loads((self.folder() / "count.json").read_text()))
+        self.assertEqual("1\tquestion\topen\tDecline it?", self.run_cli("list", "--session", "s1")[1].splitlines()[0])
+        self.assertEqual("", self.watch())
+        self.assertEqual("answered 1.b\n", self.run_cli("answer", "1.b", "--session", "s1")[1])
+        self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
+
+    def test_restores_a_dismissed_notice_and_sends_nothing(self) -> None:
+        before = self.item(2)
+        self.run_cli("dismiss", "2", "--session", "s1")
+        code, out, err = self.restore("2", "--json")
+        self.assertEqual(0, code, err)
+        self.assertEqual(before, json.loads(out)["item"])
+        self.assertEqual(before, self.item(2))
+        self.assertEqual("", self.watch())
+        self.assertIn("2\tnotice\topen\tForce-pushed #12", self.run_cli("list", "--session", "s1")[1])
+
+    def test_sends_restored_only_after_its_agent_heard_dismissed(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.assertEqual("DISMISSED 1 Decline it?\n", self.watch())
+        self.assertEqual(0, self.restore()[0])
+        restored = self.item(1)
+        self.assertEqual([], [key for key in ("answer", "deliveredAt", "claim") if key in restored])
+        self.assertIn("restoredAt", restored)
+        self.assertEqual("1\tquestion\topen\tDecline it?", self.run_cli("list", "--session", "s1")[1].splitlines()[0])
+        self.assertEqual("RESTORED 1 Decline it?\n", self.watch())
+        self.assertEqual("", self.watch())
+        self.assertNotIn("restoredAt", self.item(1))
+        self.run_cli("answer", "1.a", "--session", "s1")
+        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n", self.watch())
+
+    def test_a_restore_while_dismissed_is_being_delivered_sends_restored_after_it(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
+        self.assertEqual(0, self.restore()[0])
+        self.assertNotIn("claim", self.item(1))
+        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
+        self.assertEqual("RESTORED 1 Decline it?\n", self.watch())
+
+    def test_watch_survives_a_restore_that_lands_while_its_line_goes_out(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        lines: list[str] = []
+
+        def send(line: str) -> None:
+            lines.append(line)
+            if line.startswith("DISMISSED"):
+                inbox.restore("s1", "1")
+
+        inbox.deliver_pass("s1", send)
+        inbox.deliver_pass("s1", send)
+        self.assertEqual(["DISMISSED 1 Decline it?", "RESTORED 1 Decline it?"], lines)
+
+    def test_an_answer_or_dismissal_before_restored_goes_out_replaces_it(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.watch()
+        self.restore()
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.assertIn("deliveredAt", self.item(1))
+        self.assertEqual("", self.watch())
+
+        self.restore()
+        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
+        self.run_cli("answer", "1.b", "--session", "s1")
+        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
+        self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
+
+    def test_dismissing_again_once_restored_is_claimed_sends_dismissed_after_it(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.watch()
+        self.restore()
+        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.assertNotIn("deliveredAt", self.item(1))
+        self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
+        self.assertEqual("DISMISSED 1 Decline it?\n", self.watch())
+
+    def test_a_restored_line_whose_delivery_failed_is_not_sent_again(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.watch()
+        self.restore()
+        token = self.run_cli("claim", "1", "--session", "s1")[1].split("\t")[0]
+        self.assertEqual(0, self.run_cli("reopen", "1", "--claim", token, "--session", "s1")[0])
+        self.assertEqual([], [key for key in ("answer", "restoredAt", "claim") if key in self.item(1)])
+        self.assertEqual("", self.watch())
+
+    def test_restores_a_snoozed_item_by_clearing_its_snooze(self) -> None:
+        for ref in ("1", "2"):
+            with self.subTest(ref=ref):
+                before, started = self.item(ref), inbox.now_ms()
+                self.run_cli("snooze", ref, "--session", "s1")
+                self.assertTrue(started <= self.item(ref)["snoozedAt"] <= inbox.now_ms())
+                self.assertEqual((0, f"restored {ref}\n", ""), self.restore(ref))
+                self.assertEqual(before, self.item(ref))
+        self.assertEqual("", self.watch())
+        self.assertEqual(["1\tquestion\topen\tDecline it?", "2\tnotice\topen\tForce-pushed #12"],
+                         self.run_cli("list", "--session", "s1")[1].splitlines())
+
+    def test_refuses_an_open_answered_or_withdrawn_item_and_an_unknown_number(self) -> None:
+        self.ask("Rebase?", "--recommend", "Yes")
+        self.run_cli("answer", "1.a", "--session", "s1")
+        self.run_cli("withdraw", "3", "--session", "s1")
+        self.run_cli("snooze", "2", "--for", "0", "--session", "s1")
+        items = [self.item(ref) for ref in (1, 2, 3)]
+        for ref, said in (("1", "1 is already answered, as 1.a, and only a dismissed or snoozed item can be restored"),
+                          ("2", "2 is open, so there is nothing to restore"),
+                          ("3", "3 was withdrawn by the agent that posted it, so it is that agent's to post again")):
+            with self.subTest(ref=ref):
+                self.assertEqual((65, "", f"project: {said}\n"), self.restore(ref))
+        self.assertEqual(66, self.restore("4")[0])
+        self.assertEqual(66, self.run_cli("restore", "4")[0])
+        self.assertEqual([self.item(ref) for ref in (1, 2, 3)], items)
+        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n", self.watch())
+
+    def test_a_bare_number_looks_first_among_dismissed_and_snoozed_items(self) -> None:
+        self.ask("Other?", "--recommend", "x", session="s2")
+        self.run_cli("dismiss", "1", "--session", "s2")
+        self.assertEqual((0, "restored 1\n", ""), self.run_cli("restore", "1"))
+        self.assertNotIn("answer", self.item(1, "s2"))
+        self.run_cli("snooze", "1", "--session", "s1")
+        self.assertEqual((0, "restored 1\n", ""), self.run_cli("restore", "1"))
+        self.assertNotIn("snoozedUntil", self.item(1))
+
+    def test_two_restores_at_once_restore_once(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.assertEqual(["done", "refused"], at_once(lambda: inbox.restore("s1", "1"),
+                                                      lambda: inbox.restore("s1", "1")))
+
+    def test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75(self) -> None:
+        self.run_cli("dismiss", "1", "--session", "s1")
+        dismissed = self.item(1)
+        holder = self.hold_lock("wait")
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+            code, _, err = self.restore()
+        self.assertEqual(75, code)
+        self.assertIn("another command holds", err)
+        self.assertEqual(dismissed, self.item(1))
+        holder.stdin.close()
+        self.assertEqual(0, holder.wait())
+        self.assertEqual(0, self.restore()[0])
 
 
 if __name__ == "__main__":

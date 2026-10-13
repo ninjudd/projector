@@ -10,6 +10,7 @@ import {
   askArguments,
   forMainLoop,
   isShownAt,
+  isSnoozedAt,
   letterAt,
   liveAgent,
   needsDelivery,
@@ -18,6 +19,9 @@ import {
   readPrompt,
   relayNote,
   replyNote,
+  RESTORE_DESCRIPTION,
+  RESTORE_SCHEMA,
+  restoreArguments,
   REVISE_DESCRIPTION,
   REVISE_SCHEMA,
   reviseArguments,
@@ -45,6 +49,7 @@ const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
 const WITHDRAW_TOOL = 'mcp__projector__withdraw'
 const REVISE_TOOL = 'mcp__projector__revise'
+const RESTORE_TOOL = 'mcp__projector__restore'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 // Watching first: a pull request both loops track is listed once, where its
@@ -238,6 +243,7 @@ async function load($: Engine): Promise<void> {
     error: fetched.error,
   }))
   await update($, now, () => time)
+  await closeLeftDrawer($, time)
 }
 
 /**
@@ -278,6 +284,20 @@ const replace = ($: Engine, item: Item) =>
 const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
 
 /**
+ * Closes the open drawer once its line has left the band, so it does not
+ * open again by itself when the line comes back: a pull request a loop
+ * tracks again, or an item restored or woken from its snooze.
+ */
+async function closeLeftDrawer($: Engine, time: number): Promise<void> {
+  const opened = await read($, drawer)
+  if (opened === null) return
+  const isListed = opened.startsWith('item:')
+    ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
+    : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
+  if (!isListed) await closeDrawer($, opened)
+}
+
+/**
  * An item as the CLI prints it, without the session the band adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
  */
@@ -298,7 +318,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
   let isNew = false
   await update($, items, before => {
     const known = new Set(before.map(one => one.ref))
-    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && isShownAt(one, time))
+    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && !isSnoozedAt(one, time))
     return list
   })
   if (isNew && !(await read($, isShown))) show($)
@@ -343,16 +363,22 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
     return Object.fromEntries(Object.entries(all).filter(([key]) => key !== ref))
   })
   if (entry === undefined) return
-  const { session, token } = entry
+  const { session, token, text } = entry
   const ran = await project($, ['inbox', outcome, ref, '--claim', token, '--session', session, '--json']).catch(
     () => undefined,
   )
   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   if (outcome === 'reopen') {
-    // You never see an item's number, so the toast names the question by its subject.
+    // You never see an item's number, so the toast names the question by its
+    // subject. A restore's line is not sent again, and its question stays open.
     const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
-    const what = question === undefined ? 'an answer' : `the answer to ${quoteOf(question)}`
-    void $.ui.toast(`projector: ${what} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
+    const quoted = question === undefined ? undefined : quoteOf(question)
+    const why = reason ? ` (${reason})` : ''
+    void $.ui.toast(
+      text.startsWith('RESTORED ')
+        ? `projector: word that ${quoted ?? 'a question'} is open again did not reach its agent${why}`
+        : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+    )
   }
 }
 
@@ -439,11 +465,13 @@ async function checkInbox($: Engine): Promise<void> {
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
- * Dismisses or snoozes an item from the band; a second press finds it changed
- * and does nothing. Snoozing closes the item's drawer, since the item leaves
- * the band.
+ * Dismisses, snoozes, or restores an item from the band; a second press finds
+ * it changed and does nothing. Dismissing or snoozing closes the item's
+ * drawer, and the item stays listed, muted, for 30 seconds, so its line
+ * opens the drawer again to restore it. Restoring keeps the drawer open on
+ * the item, open again.
  */
-async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promise<void> {
+async function act($: Engine, item: Item, command: 'dismiss' | 'snooze' | 'restore'): Promise<void> {
   const { ref, session } = item
   if (acting.has(ref)) return
   acting.add(ref)
@@ -451,7 +479,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command === 'snooze') await closeDrawer($, `item:${ref}`)
+      if (command !== 'restore') await closeDrawer($, `item:${ref}`)
     } else if (ran.exitCode === 65) {
       // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
@@ -522,8 +550,9 @@ async function answerFromPrompt($: Engine, question: Question, letter: string): 
 }
 
 /**
- * Reads the inbox whether or not the band is shown, and brings a hidden band
- * back for an item whose snooze ended since the last tick. A shown band moves
+ * Reads the inbox whether or not the band is shown, closes the drawer of an
+ * item that left the band, and brings a hidden band back for an item whose
+ * snooze ended since the last tick. A shown band moves
  * its clock on, which returns that item to the list, and polls GitHub once
  * the last load is old enough.
  */
@@ -532,6 +561,7 @@ async function tick($: Engine): Promise<void> {
   // falls in the next tick's window.
   const time = await $.clock.now()
   await checkInbox($)
+  await closeLeftDrawer($, time).catch(() => undefined)
   const since = tickedAt ?? time
   tickedAt = time
   if (!(await read($, isShown))) {
@@ -661,6 +691,7 @@ export const register: Register = on => {
       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
+      { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
     ]) {
       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
     }
@@ -724,6 +755,26 @@ export const register: Register = on => {
     }
   }).catch(() => ({
     deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
+  }))
+
+  // The band takes the restored item from the CLI at once, so it is open in
+  // the band before the next read of the store.
+  on('tool.call', { tool: RESTORE_TOOL }, async ($, e) => {
+    const session = await $.session.id()
+    const instead = 'tell the person in the conversation that it could not be restored'
+    const ran = await runTool($, restoreArguments(e, session), instead)
+    if ('deny' in ran) return ran
+    const item = itemOf(ran.stdout, session)
+    await replace($, item)
+    const { ref } = item
+    return {
+      result:
+        item.kind === 'notice'
+          ? `Restored ${ref}. It is back in Projector’s band until the person dismisses it; nothing comes back to you.`
+          : `Restored ${ref}. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+    }
+  }).catch(() => ({
+    deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
   }))
 
   // These hooks only watch: the catch hands back what the event settled to,
@@ -822,7 +873,9 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     const counts = (['question', 'notice'] as const).map(kind => {
-      const count = shownItems.filter(item => item.kind === kind && item.answer === undefined).length
+      const count = shownItems.filter(
+        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+      ).length
       return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
     })
     const label = labeler(shown.rows.map(row => row.pr))
@@ -997,7 +1050,14 @@ export const register: Register = on => {
       const key = `item:${ref}`
       const isOpen = answer === undefined
       const isDismissed = answer !== undefined && 'dismissed' in answer
+      // A snoozed item stays listed for 30 seconds, muted but not struck
+      // through, so it reads as put off rather than dismissed.
+      const isSnoozed = isSnoozedAt(item, time)
+      const isMuted = !isOpen || isSnoozed
       const pull = pullOf(item)
+      // A dismissed or snoozed item's drawer offers to bring it back where it
+      // offered to dismiss or snooze it.
+      const restore = (name: string) => ({ name, onPress: () => void act($, item, 'restore') })
       const actions = [
         {
           name: 'discuss',
@@ -1009,9 +1069,11 @@ export const register: Register = on => {
         ...(isOpen
           ? [
               { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
-              { name: 'snooze', onPress: () => void act($, item, 'snooze') },
+              isSnoozed ? restore('unsnooze') : { name: 'snooze', onPress: () => void act($, item, 'snooze') },
             ]
-          : []),
+          : isDismissed
+            ? [restore('restore')]
+            : []),
       ]
 
       return (
@@ -1023,10 +1085,10 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}>
               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
               <Button key={key} plain onPress={() => toggle(key)}>
-                <Text color={isOpen ? undefined : 'subtle'} inverse={opened === key}>
+                <Text color={isMuted ? 'subtle' : undefined} inverse={opened === key}>
                   {item.kind === 'notice' ? '•' : '-'}{' '}
                 </Text>
-                <Text color={isOpen ? undefined : 'subtle'} strikethrough={isDismissed} inverse={opened === key}>
+                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={opened === key}>
                   {item.subject}
                 </Text>
               </Button>

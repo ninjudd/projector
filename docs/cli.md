@@ -1808,14 +1808,16 @@ need to decide in `--detail`, or `--detail-file`.
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
 every session's open items, and `show`, `answer`, `dismiss`, `withdraw`,
-`revise`, and `snooze` find the session that holds the number. `list` prints
-each item's number, kind, state, and subject, separated by tabs, after the
-session when it lists every session. Every session counts from 1 and keeps the
-items you resolved, so two sessions often hold the same number. Without a
-session, those six commands look first among open items, the ones with no
-answer recorded: a number that one session holds open names that session's
-item, whatever other sessions hold resolved under the same number. Only when
-no session holds the number open do they look among every item. A command that
+`revise`, `snooze`, and `restore` find the session that holds the number.
+`list` prints each item's number, kind, state, and subject, separated by tabs,
+after the session when it lists every session. Every session counts from 1 and
+keeps the items you resolved, so two sessions often hold the same number.
+Without a session, the first six of those commands look first among open
+items, the ones with no answer recorded: a number that one session holds open
+names that session's item, whatever other sessions hold resolved under the
+same number. `restore` looks first among the items it can bring back, the
+dismissed and snoozed ones. Only when no session holds such an item under the
+number do they look among every item. A command that
 still finds the number in more than one session exits 67 and names them; run
 it again with `--session` and the session that `list` prints beside the item.
 A command waits up to five seconds while another command changes the same
@@ -1858,6 +1860,8 @@ needs you.
 `project init` adds ask you before an agent runs one, in Claude Code, and
 leave them to Codex's usual approval. Otherwise an agent could answer its own
 question. Projector's band runs them itself, so answering there never asks.
+`restore` takes no choice from you, so an agent runs it without asking, in
+either host, when you say a dismissal was a mistake.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
@@ -1872,17 +1876,26 @@ loop running it hears the answer:
 $ project inbox watch --session "$SESSION"
 ANSWER 3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
 DISMISSED 2 Run project init to add the publish rule?
+RESTORED 2 Run project init to add the publish rule?
 ```
 
+`RESTORED` tells the agent that you brought back a question it already heard
+`DISMISSED` for, so the question is open again, as `restore` below describes.
 `watch --once` makes one pass and exits. A view that delivers answers itself,
 such as Projector's band in Claude Code, uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
-| `claim <number>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
+| `claim <number>` | Claims an answer, or word of a restore, for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
 | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
 | `delivered <number> --claim <token>` | Marks the claimed answer delivered |
 | `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+
+A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
+deliverer sends it again, and the question stays open. A restore, or an
+answer to a restored question, that lands while a line is being delivered
+drops that line's claim, so `delivered` and `reopen` exit 65 for it, and the
+next deliverer sends what the question owes then.
 
 A claim that is not renewed for a minute lapses, so a deliverer that stops
 halfway leaves the answer for the next one. A lapsed claim's token still
@@ -1911,9 +1924,10 @@ delivered, and `list` shows it, as `dismissed`, only with `--all`.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
 an hour, or for the whole minutes that `--for` gives, up to a day (1440
-minutes), and `--for 0` wakes it now. Projector's band leaves a snoozed item
-out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
-local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
+minutes), and `--for 0` wakes it now. Projector's band keeps a snoozed item
+listed, muted, for 30 seconds, and then leaves it out until its time passes.
+`list` shows it as `snoozed until <HH:MM>`, in local time, or as
+`snoozed until tomorrow <HH:MM>` when it returns tomorrow:
 
 ```console
 $ project inbox snooze 3 --for 30
@@ -1929,6 +1943,36 @@ A snoozed item can still be answered or dismissed, and either one clears its
 snooze, so a resolved item never returns. `snooze` refuses, with exit code
 65, an item already answered or dismissed, a negative `--for`, and a `--for`
 longer than a day, and it changes nothing when it refuses.
+
+When you dismiss or snooze an item by mistake, bring it back with `restore`:
+
+```console
+$ project inbox restore 3
+restored 3
+```
+
+`restore` reopens the item in place. It keeps its number, its text and
+options, the pull request it is about, when it was posted, and the subagent
+that posted it, and Projector's band lists it as open again. For a snoozed
+item, `restore` ends the snooze and changes nothing else. For a dismissed
+item, it clears the dismissal, so a later `answer` records an answer as if the
+item had never been dismissed. A dismissal clears any snooze, and `restore`
+does not bring that snooze back.
+
+A dismissed question owes its agent a `DISMISSED` line. When that line has
+not gone out yet, `restore` cancels it, and the agent hears nothing. When it
+was delivered, or a deliverer had claimed it, the agent may have heard it, so
+the deliverer then sends a line that starts `RESTORED 3`, and the agent knows
+the question is open again. A snooze sends the agent nothing, and neither
+does a notice's dismissal, so restoring either sends nothing too.
+
+`restore` refuses, with exit code 65, an open item, which has nothing to
+restore, an answered question, an item its agent withdrew, which is the
+agent's to post again, and an answer letter such as `3.a`. A number no
+session holds exits 66, a busy store exits 75, and `restore` changes nothing
+when it refuses. In Claude Code, the agent restores an item with Projector's
+`restore` tool when you tell it a dismissal was a mistake, and the band
+offers **restore** and **unsnooze** in the item's drawer.
 
 An agent takes back an open item that no longer needs you with `withdraw`,
 such as a question your reply settled or news that has gone stale:

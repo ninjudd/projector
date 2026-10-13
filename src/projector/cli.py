@@ -696,7 +696,7 @@ def seconds(text: str) -> float:
 
 def add_inbox_parser(subcommands) -> None:
     parser = subcommands.add_parser("inbox", help="put a question or a notice in the person's inbox, and answer, "
-                                                   "dismiss, snooze, and deliver it")
+                                                   "dismiss, snooze, restore, and deliver it")
     commands = parser.add_subparsers(dest="inbox_command", required=True)
 
     def command(name: str, help_text: str) -> argparse.ArgumentParser:
@@ -753,6 +753,9 @@ def add_inbox_parser(subcommands) -> None:
 
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
+
+    restore = command("restore", "reopen an item the person dismissed or snoozed, keeping its number")
+    restore.add_argument("reference", help="the item's number, such as 3")
     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
                         help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
 
@@ -1350,6 +1353,9 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+    elif command == "restore":
+        item = inbox.restore(inbox_session(arguments, False), ref)
+        print(json_text({"item": item}) if json_output else f"restored {item['ref']}")
     elif command == "claim":
         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
         token, text = item["claim"]["token"], inbox.message(item)
