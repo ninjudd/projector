@@ -883,8 +883,8 @@ While both hold, the summary is not optional. Summarize every pull request
 you review, whoever opened it. A summary matters most on another author's
 pull request, because that is how its reviewers read the change. Neither
 the author, a brief, nor your own judgment is a reason to skip or hold one.
-The one off switch is `review.summarize = false` in `.projector.toml`,
-and the user sets it.
+The one off switch is `review.summarize = false`, and the user sets it, or
+asks you to set it with `project config set review.summarize false`.
 
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:

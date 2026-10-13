@@ -26,7 +26,16 @@ from urllib.request import url2pathname, urlopen
 from . import inbox, loop, permissions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
-from .config import ConfigError
+from .config import (
+    CONFIG_NAME,
+    Change,
+    ConfigError,
+    parse_value,
+    same_value,
+    unset_value,
+    user_config_path,
+    write_value,
+)
 from .config import load as load_config
 from .core import (
     DISTRIBUTION,
@@ -394,13 +403,24 @@ def parser() -> argparse.ArgumentParser:
 
     add_output(subcommands.add_parser("check", help="validate all projects"))
 
-    config = subcommands.add_parser("config", help="read layered configuration")
+    config = subcommands.add_parser("config", help="read and change layered configuration")
     config_commands = config.add_subparsers(dest="config_command", required=True)
 
     config_get = config_commands.add_parser("get", help="print one value")
     config_get.add_argument("key", help="dotted key, for example review.username")
     config_get.add_argument("--default", help="printed when the key is unset")
     add_output(config_get)
+
+    config_set = config_commands.add_parser("set", help="set one value in one configuration file")
+    config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
+    config_set.add_argument("value", help="true or false, or text, as the key takes")
+    add_config_file(config_set)
+    add_output(config_set)
+
+    config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
+    config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
+    add_config_file(config_unset)
+    add_output(config_unset)
 
     config_list = config_commands.add_parser("list", help="print the merged configuration")
     add_output(config_list)
@@ -656,6 +676,15 @@ def add_output(command: argparse.ArgumentParser) -> None:
     command.add_argument("--json", action="store_true", dest="json_output")
 
 
+def add_config_file(command: argparse.ArgumentParser) -> None:
+    target = command.add_mutually_exclusive_group()
+    target.add_argument("--repo", action="store_const", const="repo", dest="scope",
+                        help=f"the repository's own {CONFIG_NAME}, the default")
+    target.add_argument("--user", action="store_const", const="user", dest="scope",
+                        help=f"~/{CONFIG_NAME}, which applies in every repository")
+    target.add_argument("--file", type=Path, help="this configuration file, such as one in a parent directory")
+
+
 def seconds(text: str) -> float:
     value = float(text)
     if not 0 < value < float("inf"):
@@ -818,7 +847,62 @@ def format_value(value: object) -> str:
     return json.dumps(value, sort_keys=True, default=json_scalar)
 
 
+def config_file(arguments: argparse.Namespace) -> Path:
+    """The file `set` and `unset` change: the repository's own unless `--user` or `--file` names another."""
+
+    if arguments.file:
+        path = arguments.file.absolute()
+        if not path.parent.is_dir():
+            raise UsageError(f"{path.parent} is not a directory; --file creates a file but not its directory")
+        return path
+    if arguments.scope == "user":
+        return user_config_path()
+    if arguments.root:
+        return arguments.root.resolve() / CONFIG_NAME
+    try:
+        return discover_git_root(Path.cwd()) / CONFIG_NAME
+    except EnvironmentError as error:
+        raise EnvironmentError(f"{error}; pass --user or --file to name a configuration file") from error
+
+
+def report_override(arguments: argparse.Namespace, change: Change) -> None:
+    """Say on stderr when the merged configuration here does not give the value just written."""
+
+    try:
+        config = load_config(config_start(arguments))
+    except ConfigError:
+        return
+    effective = config.get(change.key)
+    if same_value(effective, change.new):
+        return
+    source = config.source(change.key)
+    if source is not None:
+        print(f"project: {source} sets {change.key} = {format_value(effective)}, which applies here",
+              file=sys.stderr)
+    else:
+        print(f"project: {change.path} is not read here; 'project config paths' lists the files that are",
+              file=sys.stderr)
+
+
+def change_config(arguments: argparse.Namespace) -> int:
+    path = config_file(arguments)
+    if arguments.config_command == "set":
+        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
+    else:
+        change = unset_value(path, arguments.key)
+    if arguments.json_output:
+        print(json_text({"action": change.action, "key": change.key, "old": change.old, "new": change.new,
+                         "file": str(change.path)}), flush=True)
+    else:
+        shown = "" if change.new is None else f" = {format_value(change.new)}"
+        print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
+    report_override(arguments, change)
+    return 0
+
+
 def run_config(arguments: argparse.Namespace) -> int:
+    if arguments.config_command in ("set", "unset"):
+        return change_config(arguments)
     config = load_config(config_start(arguments))
     command = arguments.config_command
 
@@ -900,36 +984,20 @@ def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict]
 def instructions_enabled(root: Path) -> bool:
     """`instructions.enabled` from configuration; unset means enabled."""
 
-    value = load_config(root).get("instructions.enabled")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(
-            f"instructions.enabled must be true or false, not {type(value).__name__}"
-        )
-    return value
+    return load_config(root).setting("instructions.enabled") is not False
 
 
 def configured_projects_dir(root: Path) -> Optional[Path]:
     """`projects.dir` from configuration, when the flag did not supply one."""
 
-    configured = load_config(root).get("projects.dir")
-    if configured is None:
-        return None
-    if not isinstance(configured, str):
-        raise ConfigError(f"projects.dir must be a string, not {type(configured).__name__}")
-    return Path(configured)
+    configured = load_config(root).setting("projects.dir")
+    return None if configured is None else Path(configured)
 
 
 def configured_prepare(root: Path) -> Optional[str]:
     """`site.prepare` from configuration: the command that generates what the site copies."""
 
-    configured = load_config(root).get("site.prepare")
-    if configured is None or configured == "":
-        return None
-    if not isinstance(configured, str):
-        raise ConfigError(f"site.prepare must be a string, not {type(configured).__name__}")
-    return configured
+    return load_config(root).setting("site.prepare") or None
 
 
 def allowed_prepare_file() -> Path:
@@ -1024,12 +1092,7 @@ def review_rules(json_output: bool) -> int:
 def incremental_enabled(checkout: Path) -> bool:
     """`review.incremental` from the review's checkout; unset means incremental reviews are on."""
 
-    value = load_config(checkout).get("review.incremental")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"review.incremental must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(checkout).setting("review.incremental") is not False
 
 
 def review_status(root: Path, arguments: argparse.Namespace) -> int:
@@ -1738,23 +1801,13 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
 def site_enabled(root: Path) -> bool:
     """`site.enabled` from configuration; unset means `init` sets the site up."""
 
-    value = load_config(root).get("site.enabled")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"site.enabled must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(root).setting("site.enabled") is not False
 
 
 def publish_rule_enabled(root: Path) -> bool:
     """`review.publish_rule` from configuration; unset means `init` adds the rules."""
 
-    value = load_config(root).get("review.publish_rule")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(root).setting("review.publish_rule") is not False
 
 
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:

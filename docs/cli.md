@@ -163,21 +163,20 @@ and exits 0. Its `--json` document then lists `files` with no top-level
 `action` or `path`, because there is no projects README. `--site` and `--url`
 need a repository, so outside one they exit 2.
 
-To keep Projector out of your instruction files, set in `.projector.toml`:
+To keep Projector out of your instruction files, set `instructions.enabled`
+to `false` in the repository's `.projector.toml`:
 
-```toml
-[instructions]
-enabled = false
+```sh
+project config set instructions.enabled false
 ```
 
 With that key false, `init` manages only the projects README and your
 permission rules, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`.
 To leave your Claude Code settings and Codex rules alone when `init` runs in
-this repository, set:
+this repository, run:
 
-```toml
-[review]
-publish_rule = false
+```sh
+project config set review.publish_rule false
 ```
 
 Every command that reads or writes a project requires that directory. `init`
@@ -287,11 +286,10 @@ private repository is never left with a public site; it never deletes a
 site it did not create. A repository whose `origin` is not on GitHub skips
 the site without a note. `project site serve` still serves the site
 locally. Pass `--site` to make the other failures an error that exits 65,
-or `--no-site` to leave GitHub alone. To skip the site every time, set in `.projector.toml`:
+or `--no-site` to leave GitHub alone. To skip the site every time, run:
 
-```toml
-[site]
-enabled = false
+```sh
+project config set site.enabled false
 ```
 
 In `--json` mode the document gains a `site` object with `pages`,
@@ -527,10 +525,9 @@ project config get review.summarize --json
 }
 ```
 
-Keys are not validated. Any key a skill or a script agrees on works, so this
-stays useful for settings Projector itself knows nothing about.
-
-These are the keys Projector reads today:
+`get` reads any key, so a skill or a script can keep settings of its own in
+these files. [`set`](#change-configuration) accepts only the keys Projector
+reads, which are these:
 
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
@@ -560,6 +557,109 @@ account could only disagree with it. Which pull requests a loop watches is not
 an identity question either: each watcher reads its tracked set from a file of
 `owner/repo#number` lines that the conversation maintains, and sees nothing
 outside it.
+
+## Change configuration
+
+Change one setting with `set`, and remove one with `unset`:
+
+```sh
+project config set watch.auto_start false
+project config unset watch.auto_start
+```
+
+Both change the repository's own `.projector.toml` at the root of the
+checkout, which is the file nearest the code and the last one merged, so the
+value you set is the value the repository's commands read. Choose another
+file with one of these options:
+
+- **`--user`** changes `~/.projector.toml`, which applies in every
+  repository. Use it for a personal preference, such as `watch.auto_start`,
+  that should not be checked in with a repository.
+- **`--file <path>`** changes the file at that path, such as
+  `~/work/.projector.toml`, which covers every repository under `~/work`.
+  The command creates the file but not its directory, and refuses a path
+  in a directory that does not exist with exit code 2.
+- **`--repo`** names the default.
+
+Outside a Git repository, the default has no file to change, so `set` and
+`unset` exit 69 unless you pass `--user` or `--file`.
+
+`set` takes `true` or `false` for a boolean key and any text for a string
+key, and refuses any other value with exit code 2. It also refuses, with
+exit code 2 and the list of keys, a key that the table in
+[Read configuration](#read-configuration) does not list. `get` still reads
+a key that is not in the table.
+
+`unset` removes any key the file sets, including one the table does not
+list, such as a setting Projector no longer reads:
+
+```sh
+project config unset review.peer_wait
+```
+
+A key the table lists but the file does not set is reported as
+`unchanged`. A key outside the table that the file does not set, such as a
+misspelled one, is refused with exit code 2 and the list of keys.
+
+`set` and `unset` edit the file as text and change only the line that sets
+the key, so your comments, blank lines, and other settings stay as you wrote
+them:
+
+- **A key that is set** gets its new value on the same line, with any
+  comment after the value kept.
+- **A key that is not set** goes after the last setting of its table, such
+  as `[watch]`. When the file sets the table's keys with dotted names, such
+  as `watch.auto_start = true` at the top of the file, the new key is
+  written the same way, beside them.
+- **A table the file lacks** is added at the end of the file, and a missing
+  file is created.
+- **`unset`** removes the key's line and leaves its table header. It
+  removes one setting, not a table, so it refuses a key that names a
+  table, such as `review`, with exit code 65 and the file unchanged.
+
+Each command refuses a file that is not valid TOML with exit code 78, and a
+key it cannot change on its own line, such as one in an inline table
+(`watch = { auto_start = true }`), with exit code 65. Neither refusal
+changes the file. After each change, the command reads the file back and
+checks that the key has the new value and that every other key is
+unchanged. When the check fails, it restores the file and exits 65. A
+symlink, such as a `~/.projector.toml` that links into a dotfiles
+repository, stays a link, and the command changes the file it points at.
+
+A nearer file can override the value you set, as a repository's file
+overrides `~/.projector.toml`. When the merged configuration does not give
+the new value, the command names the file that wins on stderr:
+
+```console
+$ project config set watch.auto_start false --user
+set watch.auto_start = false in /Users/you/.projector.toml
+project: /Users/you/work/repo/.projector.toml sets watch.auto_start = true, which applies here
+```
+
+Setting a key to the value it already has changes nothing, and the command
+reports it as `unchanged`. With `--json`, each command prints the `action`,
+which is `set`, `unset`, or `unchanged`. It also prints the `key`, the
+`old` value and the `new` value, each `null` when the file has none, and
+the `file` it changed:
+
+```json
+{
+  "action": "set",
+  "file": "/Users/you/work/repo/.projector.toml",
+  "key": "watch.auto_start",
+  "new": false,
+  "old": true,
+  "schema_version": 2
+}
+```
+
+You can still edit a `.projector.toml` by hand. The commands write the same
+TOML, such as this for `project config set watch.auto_start false`:
+
+```toml
+[watch]
+auto_start = false
+```
 
 ## Upgrade
 
@@ -1803,8 +1903,8 @@ Each command refuses, with exit code 65, a reference that is not
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, `check`, or any `inbox` or `loop` command. Responses use stdout
-only for JSON and include `"schema_version": 2`. An `inbox` command that
+`priority`, `done`, `check`, or any `config`, `inbox`, or `loop` command.
+Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
 prints one item prints it under `item`, and `inbox list` prints `items`.
 `inbox watch --json` prints one JSON object a line, as a watcher reads it.
 

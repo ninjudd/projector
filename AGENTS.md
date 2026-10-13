@@ -46,6 +46,7 @@ project owner <name> --clear
 project done <name>
 project check
 project config get <key>
+project config set <key> <value>
 ```
 
 ## Keep the core portable

@@ -185,7 +185,8 @@ reads the new head against that history instead of rediscovering it.
 - Each subagent summarizes every pull request it reviews, as `review-pr`
   describes, another author's included. The loop never pauses or holds
   summaries on its own judgment. The one off switch is `review.summarize =
-  false` in `.projector.toml`, which the user sets. A brief that
+  false`, which the user sets, or asks you to set with
+  `project config set review.summarize false`. A brief that
   forbids editing the pull request body names the summary's link block as
   an exception, because `project summary publish` writes that block at the
   end of every description on purpose. Where the repository's own
