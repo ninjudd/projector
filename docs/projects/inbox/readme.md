@@ -386,6 +386,13 @@ sections above leave open or state loosely:
   drawer, a notice's included, has the band to itself the same way. The
   divider and its counts return when the drawer closes or the item leaves
   the list, as a snooze makes it do.
+- **A snooze lasts a day at most.** `snooze` refuses a `--for` over 1440
+  minutes before it writes anything, and a state whose wake time is not
+  today names the day, as `snoozed until tomorrow 01:30`.
+- **A dismissed question lists as `dismissed`,** as a dismissed notice
+  does, before and after its dismissal is delivered.
+- **A command that waits out the store's lock exits 75,** not 65, so the
+  band shows the failure instead of reading it as an item resolved elsewhere.
 
 The main-screen row of § 4 waits for a check by hand under tmux, so the
 project stays `in-progress`.

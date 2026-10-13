@@ -27,6 +27,7 @@ from .core import ProjectorError
 MAX_SUBJECT = 120
 MAX_OPTIONS = 5
 SNOOZE_MINUTES = 60
+MAX_SNOOZE_MINUTES = 24 * 60
 KINDS = ("question", "notice")
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
@@ -50,6 +51,12 @@ IN_TEXT = re.compile(
 
 class InboxError(ProjectorError):
     """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
+
+
+class InboxBusy(InboxError):
+    """Another command held the session's lock for the whole wait, so running the command again can work."""
+
+    exit_code = 75
 
 
 class ItemNotFound(ProjectorError):
@@ -121,7 +128,7 @@ def locked(folder: Path) -> Iterator[None]:
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
         while not try_lock(descriptor):
             if time.monotonic() > deadline:
-                raise InboxError(f"another command holds {lock}; try again once it finishes")
+                raise InboxBusy(f"another command holds {lock}; try again once it finishes")
             time.sleep(0.05)
         try:
             yield
@@ -151,24 +158,34 @@ def read_json(path: Path) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
+def item_in(path: Path) -> Optional[dict]:
+    """The item a file holds, or None for a file that does not parse, whose name does not match its
+    reference, or whose kind is neither `question` nor `notice`, so such a file never breaks a command."""
+    item = read_json(path)
+    if (item and isinstance(item.get("ref"), str) and item_file(path.parent, item["ref"]) == path
+            and item.get("kind") in KINDS):
+        return item
+    return None
+
+
+def read_item(folder: Path, ref: str) -> dict:
+    item = item_in(item_file(folder, ref))
+    if item is None:
+        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
+    return item
+
+
 def load_items(folder: Path) -> list[dict]:
-    """The session's items, oldest first; a file that does not parse, whose name does not match its
-    reference, or whose kind is neither `question` nor `notice`, is skipped rather than allowed to break
-    a view."""
-    items = []
-    if not folder.is_dir():
-        return items
-    for path in folder.glob("*.json"):
-        item = read_json(path)
-        if (item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path
-                and item.get("kind") in KINDS):
-            items.append(item)
+    """The session's items, oldest first, leaving out each file that holds none."""
+    items = [item for item in map(item_in, folder.glob("*.json")) if item] if folder.is_dir() else []
     return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
 
 
 def sessions() -> list[str]:
     root = store_root()
-    return sorted(path.name for path in root.iterdir() if path.is_dir()) if root.is_dir() else []
+    if not root.is_dir():
+        return []
+    return sorted(path.name for path in root.iterdir() if path.is_dir() and SESSION.match(path.name))
 
 
 # Asking
@@ -181,13 +198,20 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
     return f"{pull['repo']}#{pull['number']}.{count}"
 
 
+def is_one_line(text: str) -> bool:
+    """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
+    return "\n" not in text and "\r" not in text
+
+
 def check_subject(kind: str, subject: str, pr: Optional[str]) -> None:
-    """The checks every item passes: a subject of one line and at most `MAX_SUBJECT` characters,
-    and a pull request written as owner/repo#number."""
+    """The checks every item passes: a subject of one line with no tab and at most `MAX_SUBJECT`
+    characters, and a pull request written as owner/repo#number."""
     if not subject.strip():
         raise InboxError(f"the {kind} is empty")
-    if "\n" in subject or "\r" in subject:
+    if not is_one_line(subject):
         raise InboxError(f"the {kind} must be one line; put the rest in --detail")
+    if "\t" in subject:
+        raise InboxError(f"the {kind} holds a tab, which separates the columns `project inbox list` prints")
     if len(subject) > MAX_SUBJECT:
         raise InboxError(f"the {kind} is {len(subject)} characters; keep it to {MAX_SUBJECT} and put the "
                          "rest in --detail")
@@ -199,13 +223,19 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) 
     check_subject("question", question, pr)
     if not recommend.strip():
         raise InboxError("give the answer you recommend with --recommend")
+    if not is_one_line(recommend):
+        raise InboxError("the recommendation must be one line; put the rest in --detail")
     if len(options) > MAX_OPTIONS:
         raise InboxError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
-    for option in options:
+    for index, option in enumerate(options):
         if not option.strip():
             raise InboxError("an --option is empty")
+        if not is_one_line(option):
+            raise InboxError(f"the option {option!r} must be one line; put the rest in --detail")
         if option.strip() == recommend.strip():
             raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
+        if option.strip() in (other.strip() for other in options[:index]):
+            raise InboxError(f"the option {option.strip()!r} is offered twice")
 
 
 def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
@@ -297,12 +327,8 @@ def locate(session: Optional[str], ref: str) -> Path:
     return store_root() / holders[0]
 
 
-def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
-    folder = locate(session, ref)
-    item = read_json(item_file(folder, ref))
-    if item is None:
-        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
-    return folder, item
+def find(session: Optional[str], ref: str) -> dict:
+    return read_item(locate(session, ref), ref)
 
 
 def is_notice(item: dict) -> bool:
@@ -337,9 +363,7 @@ def update(session: Optional[str], ref: str, change) -> dict:
     """Read the item under the lock, let `change` alter it, and write it back."""
     folder = locate(session, ref)
     with locked(folder):
-        item = read_json(item_file(folder, ref))
-        if item is None:
-            raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
+        item = read_item(folder, ref)
         change(item)
         write_json(item_file(folder, ref), item)
         if item.get("deliveredAt"):
@@ -358,6 +382,8 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         if letter == last:
             if not (text or "").strip():
                 raise InboxError(f"{question['ref']}.{last} is a typed answer; give it with --text")
+            if not is_one_line(text):
+                raise InboxError("the typed answer must be one line")
             chosen = text.strip()
         elif text is not None:
             raise InboxError(f"--text goes with the typed answer, {question['ref']}.{last}")
@@ -378,19 +404,19 @@ def dismiss(session: Optional[str], ref: str) -> dict:
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
                              f"{answer_ref(item)}")
-        time = now_ms()
-        item["answer"] = {"dismissed": True, "answeredAt": time}
+        now = now_ms()
+        item["answer"] = {"dismissed": True, "answeredAt": now}
         item.pop("snoozedUntil", None)
         if is_notice(item):
-            item["deliveredAt"] = time
+            item["deliveredAt"] = now
 
     return update(session, ref, record)
 
 
 def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
-    """Hide an open item until `minutes` from now, or wake it now with 0."""
-    if minutes < 0:
-        raise InboxError(f"snooze for 0 minutes or more, not {minutes}")
+    """Hide an open item until `minutes` from now, a day at most, or wake it now with 0."""
+    if not 0 <= minutes <= MAX_SNOOZE_MINUTES:
+        raise InboxError(f"snooze for 0 to {MAX_SNOOZE_MINUTES} minutes, a day at most, not {minutes}")
 
     def record(item: dict) -> None:
         if item.get("answer"):
@@ -422,13 +448,12 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
             raise InboxError(f"{question['ref']} has no answer to deliver")
         if question.get("deliveredAt"):
             raise InboxError(f"{answer_ref(question)} is already delivered")
-        held = live_claim(question)
         if renew is not None:
             if (question.get("claim") or {}).get("token") != renew:
                 raise InboxError(f"{answer_ref(question)} is not claimed with that token")
             question["claim"]["renewedAt"] = now_ms()
             return
-        if held:
+        if live_claim(question):
             raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
         question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms()}
 
@@ -493,11 +518,12 @@ def context(session: str, text: str) -> list[str]:
     folder = session_dir(session)
     lines = []
     for ref, letter in references_in(text):
-        question = read_json(item_file(folder, ref))
-        if question is None:
+        try:
+            item = read_item(folder, ref)
+        except ItemNotFound:
             continue
-        subject = question["subject"]
-        if is_notice(question):
+        subject = item["subject"]
+        if is_notice(item):
             if letter is None:
                 lines.append(f"{ref} is the notice: {subject}")
             continue
@@ -505,11 +531,11 @@ def context(session: str, text: str) -> list[str]:
             lines.append(f"{ref} is the question: {subject}")
             continue
         index = ord(letter) - ord("a")
-        answered = question.get("answer") or {}
-        if index < len(question["choices"]):
-            lines.append(f"{ref}.{letter} answers {subject} with {question['choices'][index]}")
-        elif letter == typed_letter(question) and answered.get("letter") == letter:
+        answered = item.get("answer") or {}
+        if index < len(item["choices"]):
+            lines.append(f"{ref}.{letter} answers {subject} with {item['choices'][index]}")
+        elif letter == typed_letter(item) and answered.get("letter") == letter:
             lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
-        elif letter == typed_letter(question):
+        elif letter == typed_letter(item):
             lines.append(f"{ref}.{letter} is a typed answer to {subject}")
     return lines

@@ -416,6 +416,8 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
 
 const SESSION = 's1'
 const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
+/** What the CLI says, exiting 75, when another command holds the store's lock. */
+const BUSY = `another command holds ${STORE}/.lock; try again once it finishes`
 const TICK = 5_000
 
 type HeldQuestion = Omit<Question, 'session'>
@@ -458,8 +460,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   const times = new Map<string, number>()
   /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
   const refusal: { code?: number; message?: string; rejection?: string } = {}
-  /** How many of the next `list` commands fail. */
-  const failing = { lists: 0 }
+  /** How many of the next `list` commands fail, and how many of the next item commands find the lock held. */
+  const failing = { lists: 0, locks: 0 }
   /** A write that lands while the next `list` runs, after that list read the store. */
   const during: { list?: () => void } = {}
   let writes = 0
@@ -540,6 +542,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
     const item = store.get(ref)
     if (item === undefined) return failed(66, `no item ${ref}`)
+    if (failing.locks > 0) {
+      failing.locks -= 1
+      return failed(75, BUSY)
+    }
     if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
       return failed(65, `${ref} is already answered`)
     }
@@ -690,6 +696,10 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
   Object.assign(session.store.refusal, { code: 65, message: 'the question must be one line; put the rest in --detail' })
   const refused = await $.tool.call(ask)
   expect(refused.deny ?? refused.text).toBe('the question must be one line; put the rest in --detail')
+
+  Object.assign(session.store.refusal, { code: 75, message: BUSY })
+  const busy = await $.tool.call(ask)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
 
   Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'inbox'" })
   const old = await $.tool.call(ask)
@@ -1048,6 +1058,10 @@ test('the tell tool refuses what the CLI refuses, and says when it hangs', async
   const refused = await $.tool.call(tell)
   expect(refused.deny ?? refused.text).toBe('the notice must be one line; put the rest in --detail')
 
+  Object.assign(session.store.refusal, { code: 75, message: BUSY })
+  const busy = await $.tool.call(tell)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
+
   Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
   const hung = await $.tool.call(tell)
   expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); tell the person in the conversation instead$/)
@@ -1136,6 +1150,25 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
   await woken.unmount()
+})
+
+test('a dismiss or snooze that finds the store locked says so and leaves the item open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:#7.1' })
+  session.store.failing.locks = 2
+  for (const name of ['dismiss', 'snooze']) {
+    await ui.press({ key: `${name}:#7.1` })
+    await clock.settle()
+  }
+  expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
+  expect(session.store.store.get('#7.1')).toEqual(held())
+  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
