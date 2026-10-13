@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Inbox item type fix",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 287,
+  "title": "Keep each inbox item's kind when the band parses one",
+  "head": "fd56112a500838ae9c4355553b32bed7f200ddcc",
+  "headRef": "item-of-type",
+  "base": "ac4e40840e4526bb467badf360afab97061485c2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The band is the strip above Claude Code's prompt where Projector shows open pull requests and the agent's inbox: the questions and notices that agents post for you. When you answer, dismiss, or snooze an item there, the band runs a <code>project inbox … --json</code> command, and the command prints the changed item. The band's <code>itemOf</code> function reads that printed item and adds the session that the item belongs to, so the band can put it back in its list.",
+   "An inbox item is an <code>Item</code>, which is either a <code>Question</code> (<code>kind: 'question'</code>) or a <code>Notice</code> (<code>kind: 'notice'</code>). <code>itemOf</code> typed the printed item as <code>Omit&lt;Item, 'session'&gt;</code>. TypeScript's <code>Omit</code> does not apply to each member of a union separately. It merges <code>Question</code> and <code>Notice</code> into one object type whose <code>kind</code> is <code>'question' | 'notice'</code>, and that type is not assignable to <code>Item</code>. So <code>tsc</code> reported error TS2322 in <code>itemOf</code>.",
+   "This pull request types the printed item as <code>Omit&lt;Question, 'session'&gt; | Omit&lt;Notice, 'session'&gt;</code>, so each kind keeps its own <code>kind</code>. The change is to types alone. The parsed object, and what the band stores, stay the same at run time."
+  ],
+  "cards": [
+   {
+    "id": "gate",
+    "title": "Why the gate missed it",
+    "html": "<p>No step of the repository's gate type-checks <code>hooks/</code>. <code>claude plugin validate .</code> and <code>claude plugin test .</code> both pass with the error. The Claude Code typings that <code>hooks/</code> compiles against are written when the engine loads the plugin, so they are not in the repository for CI to use. This pull request leaves the gate as it is.</p>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>A Projector review of this head found it clean, with no finding threads. It confirmed the TS2322 error at the merge base and its absence at the head with <code>tsc</code>, and ran <code>claude plugin test .</code> (65 pass) and <code>claude plugin validate .</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "item-of",
+   "title": "Type the printed item one kind at a time",
+   "kicker": "How itemOf reads the item that a project inbox command prints",
+   "intro": [
+    "<code>itemOf</code> parses the JSON that a <code>project inbox</code> command prints and returns an <code>Item</code>, a <code>Question</code> or a <code>Notice</code>, with the band's session added. Four functions call it after a command succeeds: <code>settle</code>, <code>deliver</code>, <code>act</code>, and <code>answerFromPrompt</code>. Each passes the result to <code>replace</code>, which swaps the item into the band's list.",
+    "The new <code>Printed</code> type lists the two kinds separately, so spreading the parsed item and adding <code>session</code> yields a <code>Question</code> or a <code>Notice</code>, which TypeScript accepts as an <code>Item</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the <code>Printed</code> type and uses it in <code>itemOf</code>. The import of <code>Notice</code> is the only other change.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The comment above <code>Printed</code> says why the type has two <code>Omit</code>s. Without it, the type looks like it could fold back into one <code>Omit&lt;Item, 'session'&gt;</code>, which brings the error back.",
+       "line": 284
+      },
+      {
+       "kind": "verify",
+       "text": "With <code>tsc</code> 5.9.3 over <code>hooks/</code>, the merge base reports <code>register.tsx(281,60): error TS2322</code> in <code>itemOf</code>, and this head reports no error there. The typings available to the review were older than the ones the plugin loads against, so both commits also show the same set of unrelated errors.",
+       "line": 288
+      },
+      {
+       "kind": "verify",
+       "text": "The <code>as</code> assertion is erased when TypeScript compiles the file, so <code>itemOf</code> returns the same object at run time as before. <code>claude plugin test .</code> ends <code>65 pass</code> and <code>0 fail</code> at this head.",
+       "line": 287
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
