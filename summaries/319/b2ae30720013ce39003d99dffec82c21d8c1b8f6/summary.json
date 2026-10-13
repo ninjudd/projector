@@ -1,0 +1,186 @@
+{
+ "version": 1,
+ "name": "Replies and question revision",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 319,
+  "title": "Leave a replied question open, and let its agent revise it",
+  "head": "b2ae30720013ce39003d99dffec82c21d8c1b8f6",
+  "headRef": "inbox-revise",
+  "base": "2b9b089d7434d80c1b39e3095a836326bda7a696",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent ask you a question with options, or tell you something, from inside a Claude Code session. Each item shows in the <b>band</b>, the panel above your prompt. Picking an option fills your prompt with the quoted question and that option's text. When you send the prompt, the band records the answer and delivers it to the agent as a message that starts <code>ANSWER</code>.",
+   "Before this change, the band recorded <em>any</em> text under a quoted question as the answer. The first line you typed became a typed answer, and the question left the band. In practice a reply is often a question back or a clarification, so that resolved questions that still needed you.",
+   "<ul><li><b>Only an option answers.</b> The band records an answer only when the text after a quoted question, up to the next quoted item or the end of the prompt, is exactly one of its options. Anything else is a <em>reply</em>: the band records nothing, closes the drawer, and the question stays open.</li><li><b>The agent settles a replied question.</b> The Projector section of <code>AGENTS.md</code> and the <code>ask</code> tool's description tell the agent to answer what you asked, then withdraw, revise, or leave the question open.</li><li><b>Agents can revise a question in place.</b> A new <code>project inbox revise</code> command and a <code>revise</code> tool replace an open question's text and keep its number, pull request, asking subagent, and snooze.</li></ul>",
+   "Four review rounds have run. The first found that answering one of two questions with the same subject also counted as a reply to the other. The fix merged the answer and reply rules into <code>readPrompt</code>, which gives each quote in a prompt to one question. Later pushes make a quote that a drawer put in the prompt speak only to that drawer's question. A pick or <b>discuss</b> from before a revision only replies, and one whose question was resolved before you sent does nothing. The review of this head found it clean, with one narrow suggestion."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: Projector's panel above the Claude Code prompt that lists pull requests and inbox items.</li><li><b>Drawer</b>: the expanded view of one item in the band, with its detail and numbered options.</li><li><b>Proposal</b>: the option a drawer put in the prompt, which the band remembers so a quote goes to the right one of two questions with the same subject.</li><li><b>Reply</b>: anything sent under a quoted question that is not exactly one of its options.</li><li><b>Stale pick</b>: a proposal made before its question was revised. Sent as it stands, it replies to the revised question and answers nothing.</li></ul>"
+   },
+   {
+    "id": "security",
+    "title": "Can revise forge an answer?",
+    "html": "<p>No. <code>inbox.revise</code> writes only <code>subject</code>, <code>choices</code>, and <code>detail</code>, under the session's lock, and refuses any item with an <code>answer</code> recorded, including one claimed for delivery. The band matches an option by its text, not its letter, so a revision that reorders options cannot change what a pending pick means.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "revise",
+   "title": "Revising a question in the store",
+   "kicker": "A new project inbox revise command that rewrites an open question in place",
+   "intro": [
+    "The inbox stores each item as a JSON file per session, and every write happens under the session's lock. <code>revise</code> is a new write beside <code>answer</code>, <code>dismiss</code>, <code>withdraw</code>, and <code>snooze</code>. It replaces only the parts it is given and runs the same checks <code>ask</code> runs on the result.",
+    "It refuses a notice, a resolved question, an answer letter such as <code>3.a</code>, and a revision with nothing to change, each with exit 65. An unknown number exits 66, and a busy lock exits 75."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>revise</code>, which reuses <code>update</code> and <code>check</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "A revision cannot overwrite your answer: <code>record</code> raises when the item has an <code>answer</code>, before it changes anything. <code>ReviseTests</code> passes, and the full Python suite ran <code>OK</code> on this head.",
+       "line": 412
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>revise</code> parser, with <code>--option</code> and <code>--no-options</code> mutually exclusive, and dispatches to <code>inbox.revise</code>."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "rule",
+   "title": "Which prompts answer a question",
+   "kicker": "readPrompt gives each quote in a prompt to one question, as an answer or a reply",
+   "intro": [
+    "When you send a prompt, the band reads it for quoted inbox items. <code>readPrompt</code> splits the prompt at each quote and reads the text up to the next quote. That text answers a question only when it equals one of the question's options, ignoring surrounding whitespace. Any other text is a reply. A typed answer under the last letter is no longer produced from a prompt.",
+    "Each quote goes to one question. A quote that a drawer put in the prompt, with an option or alone through <b>discuss</b>, speaks to that drawer's question: one of its options answers it, and anything else replies to it. If that question was answered, dismissed, or withdrawn before you sent the prompt, the quote does nothing. A quote no drawer put there goes to the oldest question that offers the option, and otherwise replies to the oldest. A <em>stale</em> pick or discuss, made before its question was revised, only replies to the revised question.",
+    "The <code>ask</code>, <code>withdraw</code>, and new <code>revise</code> tool descriptions live in the same file."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Replaces <code>answersIn</code> with <code>readPrompt</code>, which returns both answers and replies. Adds <code>replyNote</code> and the <code>revise</code> tool's description, schema, and argument builder.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "An answer picked in question 2's drawer goes to question 2 alone, and a stale pick for a question dismissed before you send answers and replies to nothing. Both were checked with temporary tests on this code.",
+       "line": 84
+      },
+      {
+       "kind": "context",
+       "text": "When a drawer's question has been resolved, its quote falls through to no other question. That holds even when another question with the same subject is open.",
+       "line": 119
+      },
+      {
+       "kind": "context",
+       "text": "The first lookup prefers a pick with the typed option over a later <b>discuss</b>. Suppose you pick <code>Yes</code> in question 2, then discuss question 1 and type <code>Yes</code>: the answer goes to question 2. <code>main</code> does the same, so this is not a regression. The review lists it as a suggestion.",
+       "line": 113
+      },
+      {
+       "kind": "context",
+       "text": "<code>reviseArguments</code> passes each value in its flag's <code>=</code> form, so text that starts with <code>-</code> stays text, and an empty <code>options</code> list becomes <code>--no-options</code>.",
+       "line": 373
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band's prompt handler and revise tool",
+   "kicker": "How a sent prompt closes drawers, and how revise redraws a question",
+   "intro": [
+    "The band's prompt handler takes answers and replies from <code>readPrompt</code>. It closes only the drawers of the questions the prompt answers or replies to, and of the notices and resolved questions it quotes. For a subagent's question it adds a relay note for an answer, or a reply note for a reply, so the main loop knows whom to forward the prompt to.",
+    "<code>propose</code> records what a drawer put in the prompt, now including <b>discuss</b> as an empty answer, along with the quote as it read then. The <code>revise</code> tool runs <code>project inbox revise</code>, puts the revised question in the band at once, and marks that question's picks stale rather than dropping them, so an old pick cannot fall through to another question with the old words."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers the <code>revise</code> tool, adds <code>propose</code>, and reworks the prompt handler around <code>readPrompt</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A pick ends once a prompt you send answers or replies to its question, or holds the quote it was made under.",
+       "line": 781
+      },
+      {
+       "kind": "context",
+       "text": "A revision marks picks stale instead of dropping them, so <code>readPrompt</code> can recognize the old text and hold it back.",
+       "line": 721
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "What the agent is told",
+   "kicker": "The Projector section of AGENTS.md moves to begin marker 11",
+   "intro": [
+    "The generated Projector section tells every agent how to treat a reply: answer what the person asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice changed, or leave it open. The template's text is pinned by hash, so the version moves from 10 to 11."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The source of the new paragraph on replies and the <code>revise</code> tool."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "Refreshed from the template with <code>project init</code>."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and plugin docs, and the inbox plan's new section 13",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the new answer rule from the reader's side of the band, including how a quote two questions share goes to one of them. <code>docs/cli.md</code> documents <code>project inbox revise</code> and its exit codes. The inbox plan, still <code>in-progress</code>, gains section 13, which records the decision and why. It skips section 12, which a separate pull request adds, and says it supersedes section 12.4 there."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Section 13, A reply leaves a question open, records the problem, the change, and why notices are not revisable."
+    }
+   ]
+  }
+ ]
+}
