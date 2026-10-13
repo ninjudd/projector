@@ -4,7 +4,7 @@ import type { Item, Question } from './types'
 import type { Env } from './parse'
 
 /** How long a delivered item stays in the band. */
-export const RESOLVED_MS = 60_000
+export const RESOLVED_MS = 30_000
 
 /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
 export const CLAIM_MS = 60_000
@@ -27,7 +27,7 @@ const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefine
 
 /**
  * Whether the band shows an item: not snoozed, and open, being delivered, or
- * delivered under a minute ago.
+ * delivered within the last 30 seconds.
  */
 export const isShownAt = (item: Item, time: number) =>
   !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
@@ -60,13 +60,14 @@ export type Proposal = { ref: string; answer: string }
 
 /**
  * The answers a sent prompt gives, as the band wrote them. Each quoted
- * question that ends its line answers one open question with that text: the
- * choice whose text is the next line that is not blank, or else that line as
- * a typed answer. When open questions share the text, the quote goes to the
- * one whose drawer last put that same answer in the prompt, `proposed`
- * holding them oldest first, and otherwise to the oldest, so two questions
- * never take one answer. A quoted question with more on its line, as discuss
- * leaves it, answers nothing. Only questions take answers, snoozed ones
+ * question that ends its line, as an option and discuss both leave it,
+ * answers one open question with that text: the choice whose text is the
+ * next line that is not blank, or else that line as a typed answer. Spaces
+ * or tabs after the quote still end its line; any other text after it on
+ * that line answers nothing. When open questions share the text, the quote
+ * goes to the one whose drawer last put that same answer in the prompt,
+ * `proposed` holding them oldest first, and otherwise to the oldest, so two
+ * questions never take one answer. Only questions take answers, snoozed ones
  * included, so a quoted notice answers nothing either.
  */
 export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
@@ -76,9 +77,10 @@ export function answersIn(text: string, items: readonly Item[], proposed: readon
   const found: { at: number; given: Given }[] = []
   const taken = new Set<string>()
   for (const quote of new Set(open.map(quoteOf))) {
-    const lead = `${quote}\n`
-    for (let at = text.indexOf(lead); at !== -1; at = text.indexOf(lead, at + 1)) {
-      const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
+    for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+      const after = text.slice(at + quote.length)
+      if (!/^[ \t]*\n/.test(after)) continue
+      const said = (after.replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
       const asking = open.filter(question => quoteOf(question) === quote && !taken.has(question.ref))
       if (said === '') continue
       const drawer = proposed.findLast(one => one.answer === said && asking.some(question => question.ref === one.ref))

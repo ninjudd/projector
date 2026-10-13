@@ -1,8 +1,8 @@
 /** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
 export type LoopKind = 'watching' | 'reviewing'
 
-/** A tracked file this session started a watcher on, or named by hand. */
-export type SeenLoop = { kind?: LoopKind; tracked: string }
+/** A tracked file this session started a watcher on. */
+export type SeenLoop = { kind: LoopKind; tracked: string }
 
 export type Checks = 'passing' | 'failing' | 'pending'
 

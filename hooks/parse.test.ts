@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { buildQuery, parseResponse } from './github'
-import { expandPath, findWatchers, parseTracked } from './parse'
+import { findWatchers, parseTracked } from './parse'
 
 const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
 const env = (name: string) => VARIABLES[name]
@@ -52,14 +52,6 @@ describe('findWatchers', () => {
     expect(findWatchers("echo 'watch-prs.sh --tracked /x'", env)).toEqual([])
     expect(findWatchers('cat skills/start-review-loop/scripts/watch-prs.sh', env)).toEqual([])
     expect(findWatchers('my-watch-prs.sh --tracked /x', env)).toEqual([])
-  })
-})
-
-describe('expandPath', () => {
-  test('expands one word and refuses more', () => {
-    expect(expandPath('~/loops/tracked', env)).toBe('/home/ada/loops/tracked')
-    expect(expandPath('"/a b/tracked"', env)).toBe('/a b/tracked')
-    expect(expandPath('/a /b', env)).toBeUndefined()
   })
 })
 

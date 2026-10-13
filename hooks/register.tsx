@@ -3,7 +3,7 @@ import type { EngineInterface, FsEntry, Register } from 'claude-code'
 
 import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
-import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
@@ -30,7 +30,6 @@ import {
 } from './inbox'
 
 type Engine = EngineInterface
-type Loop = { kind: LoopKind; tracked: string }
 type Ran = { exitCode: number; stdout: string; stderr: string }
 
 const TICK_MS = 5_000
@@ -77,7 +76,7 @@ let isChecking = false
 /** The answers this copy of the module is claiming or delivering, by reference. */
 const delivering = new Set<string>()
 /** The items the band is dismissing or snoozing, so a second press does nothing. */
-const answering = new Set<string>()
+const acting = new Set<string>()
 /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
 let tickedAt: number | undefined
 /**
@@ -118,12 +117,15 @@ const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ra
 const errorOf = (ran: Ran) =>
   (ran.stderr.trim().split('\n').pop() ?? '').replace(/^project: /, '') || `project exited ${ran.exitCode}`
 
-/** Records a loop, answering whether the session had not seen it before. */
+/**
+ * Records a loop, answering whether the session had not seen it before. An
+ * entry an earlier version kept with no kind gives way to the watcher's.
+ */
 async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
   let isNew = false
   await update($, seen, list => {
-    isNew = !list.some(one => one.tracked === loop.tracked)
-    return isNew ? [...list, loop] : list
+    isNew = !list.some(one => one.tracked === loop.tracked && isKind(one.kind))
+    return isNew ? [...list.filter(one => one.tracked !== loop.tracked), loop] : list
   })
   return isNew
 }
@@ -142,7 +144,7 @@ async function adopt($: Engine, command: string): Promise<void> {
     if (watcher.tracked === undefined) {
       if (!unreadable.has(watcher.written)) {
         unreadable.add(watcher.written)
-        $.ui.toast(`projector: cannot tell which file ${watcher.written} names; run /projector <tracked file>`)
+        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the band does not list that loop`)
       }
       continue
     }
@@ -150,31 +152,6 @@ async function adopt($: Engine, command: string): Promise<void> {
     isAdded = (await remember($, { kind: watcher.kind, tracked })) || isAdded
   }
   if (isAdded) show($)
-}
-
-/** Watchers running anywhere on this machine, found by their arguments, which give a hand-named file its kind. */
-async function runningLoops($: Engine, env: Env): Promise<Loop[]> {
-  let stdout: string
-  try {
-    ;({ stdout } = await $.process.run(['ps', '-A', '-o', 'args='], { timeoutMs: 10_000 }))
-  } catch {
-    return []
-  }
-
-  const loops = new Map<string, Loop>()
-  for (const line of stdout.split('\n')) {
-    if (!line.includes('watch-')) continue
-    for (const watcher of findWatchers(line, env)) {
-      // A process's arguments arrive expanded, and a relative path there is
-      // relative to that process, so only an absolute one names its file.
-      if (watcher.tracked === undefined || !watcher.tracked.startsWith('/')) continue
-      const tracked = await canonical($, watcher.tracked)
-      if (tracked !== undefined && !loops.has(tracked)) {
-        loops.set(tracked, { kind: watcher.kind, tracked })
-      }
-    }
-  }
-  return [...loops.values()]
 }
 
 async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
@@ -191,16 +168,8 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
 }
 
 async function load($: Engine): Promise<void> {
-  // The band lists the session's own loops: the watchers it started, and the
-  // tracked files named with `/projector <file>`. A file named by hand takes
-  // its kind from the watcher reading it, so only then does the band look at
-  // the machine's processes.
-  const own = await read($, seen)
-  const running = own.every(loop => isKind(loop.kind)) ? [] : await runningLoops($, await envOf($))
-  const loops: Loop[] = own.map(loop => ({
-    tracked: loop.tracked,
-    kind: isKind(loop.kind) ? loop.kind : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
-  }))
+  // The band lists the session's own loops: the watchers it started.
+  const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
 
   // A tracked file that is gone belongs to a loop that ended.
   const sets = await Promise.all(
@@ -273,10 +242,11 @@ function refresh($: Engine, isForced = false): Promise<void> {
 }
 
 /** Puts an item the CLI just changed in the band's list, in place of what it showed. */
-const replace = ($: Engine, question: Item) =>
-  update($, items, list =>
-    list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
-  )
+const replace = ($: Engine, item: Item) =>
+  update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+
+/** Closes an item's drawer when it is the one open. */
+const closeDrawer = ($: Engine, ref: string) => update($, drawer, was => (was === `item:${ref}` ? null : was))
 
 /**
  * An item as the CLI prints it, without the session the band adds. Each kind
@@ -306,7 +276,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
 }
 
 /**
- * Reads the session's questions when the store's directory changed since the
+ * Reads the session's inbox when the store's directory changed since the
  * last read that succeeded. Listing a directory starts no process, so an idle
  * session, band shown or hidden, starts none. The signature is recorded only
  * once the read succeeds, so a read that fails runs again on the next tick.
@@ -407,13 +377,18 @@ async function renewClaims($: Engine): Promise<void> {
   }
 }
 
-/** Reads the store when it changed, renews the band's claims, and delivers each answer nobody is delivering. */
+/**
+ * Reads the store when it changed, renews the band's claims, and delivers
+ * each answer nobody is delivering. A store read that fails, as one still
+ * running at the CLI's timeout does, skips nothing after it, so a waiting
+ * answer's claim never lapses because of it.
+ */
 async function checkInbox($: Engine): Promise<void> {
   if (isChecking) return
   isChecking = true
   try {
     const session = await $.session.id()
-    await readStore($, session)
+    await readStore($, session).catch(() => undefined)
     await renewClaims($)
     const time = await $.clock.now()
     const pending = await read($, sending)
@@ -428,7 +403,7 @@ async function checkInbox($: Engine): Promise<void> {
   }
 }
 
-/** Checks the questions now rather than at the next tick. */
+/** Checks the inbox now rather than at the next tick. */
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
@@ -438,13 +413,13 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
  */
 async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promise<void> {
   const { ref, session } = item
-  if (answering.has(ref)) return
-  answering.add(ref)
+  if (acting.has(ref)) return
+  acting.add(ref)
   try {
     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command === 'snooze') await update($, drawer, was => (was === `item:${ref}` ? null : was))
+      if (command === 'snooze') await closeDrawer($, ref)
     } else if (ran.exitCode === 65) {
       // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
@@ -455,7 +430,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
   } catch (error) {
     void $.ui.toast(`projector: ${messageOf(error)}`)
   } finally {
-    answering.delete(ref)
+    acting.delete(ref)
   }
 }
 
@@ -515,10 +490,18 @@ async function tick($: Engine): Promise<void> {
   if (time - attemptedAt >= POLL_MS) await refresh($)
 }
 
-/** Shows the band and loads it, from a timer so no hook waits on GitHub. */
+/**
+ * Shows the band and loads it, from a timer so no hook waits on GitHub. The
+ * band's clock moves on before it shows, so an item whose snooze ended while
+ * it was hidden is drawn at once rather than after GitHub answers.
+ */
 function show($: Engine): void {
   $.clock.after(1, () => {
-    void update($, isShown, () => true).then(() => refresh($, true))
+    void $.clock
+      .now()
+      .then(time => update($, now, () => time))
+      .then(() => update($, isShown, () => true))
+      .then(() => refresh($, true))
   })
 }
 
@@ -602,8 +585,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'projector',
-      description: 'Show or hide Projector’s band of the pull requests your loops track',
-      argumentHint: '[tracked file]',
+      description: 'Show or hide Projector’s band of your loops’ pull requests and your inbox',
     })
     // A session whose engine cannot serve the tools keeps the band.
     await $.tool
@@ -674,9 +656,10 @@ export const register: Register = on => {
 
     // An answer the band put in the prompt, now sent: the prompt carries it to
     // the main loop, with a note naming the subagent that asked when one did,
-    // and the band records it once the prompt has entered. Only a prompt you
-    // sent, at the terminal or through Remote Control, answers: an agent's
-    // message or a notification can quote a question it is still waiting on.
+    // and once the prompt has entered, the band records it and closes the
+    // question's drawer. Only a prompt you sent, at the terminal or through
+    // Remote Control, answers: an agent's message or a notification can quote
+    // a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const given = isYours
@@ -687,12 +670,15 @@ export const register: Register = on => {
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = asked.map(one => relayNote(one.question, agents))
 
-    // A reference typed in the prompt reaches the agent with its question.
+    // A reference typed in the prompt reaches the agent with the item it names.
     const said = mayReference(e.text) ? await explain($, e.text) : undefined
     const added = [...(said === undefined ? [] : [said]), ...notes]
     const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
     if (entered.drop === undefined) {
-      for (const one of given) void answerFromPrompt($, one.question, one.letter, one.text)
+      for (const one of given) {
+        void closeDrawer($, one.question.ref).catch(() => undefined)
+        void answerFromPrompt($, one.question, one.letter, one.text)
+      }
     }
     return entered
   }).catch(($, e, next) => next(e))
@@ -703,16 +689,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // `/projector` shows or hides the band; `/projector <tracked file>` adds a
-  // loop and shows it.
-  on('command.run', { command: 'projector' }, async ($, e) => {
-    const written = (e.args ?? '').trim()
-    if (written !== '') {
-      const expanded = expandPath(written, await envOf($))
-      const tracked = expanded === undefined ? undefined : await canonical($, expanded)
-      if (tracked === undefined) return { text: `projector: no tracked file at ${written}.` }
-      await remember($, { tracked })
-    } else if (await read($, isShown)) {
+  // `/projector` shows or hides the band.
+  on('command.run', { command: 'projector' }, async $ => {
+    if (await read($, isShown)) {
       await update($, isShown, () => false)
       return { text: 'Hid Projector’s band.' }
     }
@@ -721,15 +700,12 @@ export const register: Register = on => {
   })
 
   // The band above the prompt spans the terminal and is as tall as its rows,
-  // so each pull request and each question takes one line, and a drawer more.
+  // so each pull request and each item takes one line, and a drawer more.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
 
-    const elements = $.ui.resolve(e)
-    const { Box, Button, Markdown, Text } = elements
+    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
     const env = await envOf($)
-    // The mobile app draws no field, so there a question takes a letter or a dismissal.
-    const Input = 'Input' in elements ? elements.Input : undefined
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
@@ -765,7 +741,7 @@ export const register: Register = on => {
     const divider =
       e.surface === 'terminal'
         ? [
-            <Text key="divider" dimColor>
+            <Text key="divider" color="subtle">
               {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
               {updated}
             </Text>,
@@ -800,10 +776,6 @@ export const register: Register = on => {
         ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
         : `https://github.com/${pull[1] ?? ''}/pull/${pull[2] ?? ''}`
     }
-    const escaped = (text: string) => text.replace(/[\\[\]*_`~]/g, '\\$&')
-    const link = (key: string, text: string, href: string, onPress: () => void) => (
-      <Markdown key={key} text={`[${escaped(text)}](${href})`} onLinkPress={onPress} />
-    )
     // An item names its pull request as the band labels it, or in full when
     // the band does not list it.
     const pullOf = (item: Item) => {
@@ -815,6 +787,8 @@ export const register: Register = on => {
     // bulleted `-`, a notice `•`. A question's drawer numbers its options;
     // choosing one puts the question and that answer in the prompt as text,
     // for you to send or change, and sending it is what answers the question.
+    // Discuss puts the question alone, for an answer in your own words, which
+    // a resolved question's drawer shows after its options.
     // Each age sits in one column as wide as the widest, so the pull requests
     // before it end in one column too.
     const ageWidth = Math.max(0, ...shownItems.map(item => span(secondsSince(time, item.postedAt)).length))
@@ -825,25 +799,26 @@ export const register: Register = on => {
       const { ref, answer } = question
       const isOpen = answer === undefined
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
-      const typed = typedLetter(question)
       const href = hrefOf(question)
       const propose = (answer: string) => {
         proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
         fill(`${proposalOf(question, answer)}\n`)
       }
-      const option = (letter: string, content: JSX.Element) => {
-        const number = `${letter.charCodeAt(0) - 'a'.charCodeAt(0) + 1}.`
+      const option = (index: number, content: JSX.Element) => {
+        const letter = letterAt(index)
+        const number = `${index + 1}.`
+        const choice = question.choices[index]
         return (
           <Box key={`option:${ref}.${letter}`} flexDirection="row" columnGap={1}>
             <Box flexShrink={0}>
-              {isOpen ? (
-                link(`answer:${ref}.${letter}`, number, href, () =>
-                  propose(question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''),
-                )
+              {isOpen && choice !== undefined ? (
+                <Markdown
+                  key={`answer:${ref}.${letter}`}
+                  text={`[${number}](${href})`}
+                  onLinkPress={() => propose(choice)}
+                />
               ) : (
-                <Text color={letter === chosen ? 'success' : undefined} dimColor={letter !== chosen}>
-                  {number}
-                </Text>
+                <Text color={letter === chosen ? 'success' : 'subtle'}>{number}</Text>
               )}
             </Box>
             <Box flexShrink={1}>{content}</Box>
@@ -856,35 +831,24 @@ export const register: Register = on => {
         ...question.choices.map((choice, index) => {
           const letter = letterAt(index)
           return option(
-            letter,
-            <Text dimColor={!isOpen && letter !== chosen}>
+            index,
+            <Text color={isOpen || letter === chosen ? undefined : 'subtle'}>
               {choice}
               {index === 0 && <Text color="success"> (recommended)</Text>}
               {letter === chosen && <Text color="success"> ✓</Text>}
             </Text>,
           )
         }),
-        chosen === typed && answer !== undefined && 'text' in answer
-          ? option(
-              typed,
-              <Text>
-                {answer.text}
-                <Text color="success"> ✓</Text>
-              </Text>,
-            )
-          : isOpen &&
-            Input !== undefined &&
-            option(
-              typed,
-              <Input
-                key={`answer:${ref}.${typed}`}
-                placeholder="Type something"
-                submitLabel="answer"
-                onSubmit={(value: string) => {
-                  if (value.trim() !== '') propose(value.trim())
-                }}
-              />,
-            ),
+        chosen === typedLetter(question) &&
+          answer !== undefined &&
+          'text' in answer &&
+          option(
+            question.choices.length,
+            <Text>
+              {answer.text}
+              <Text color="success"> ✓</Text>
+            </Text>,
+          ),
       ]
     }
     const drawItem = (item: Item) => {
@@ -894,7 +858,7 @@ export const register: Register = on => {
       const isDismissed = answer !== undefined && 'dismissed' in answer
       const pull = pullOf(item)
       const actions = [
-        { name: 'discuss', onPress: () => fill(`${quoteOf(item)} `) },
+        { name: 'discuss', onPress: () => fill(`${quoteOf(item)}\n\n`) },
         ...(isOpen
           ? [
               { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
@@ -912,10 +876,10 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}>
               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
               <Button key={key} plain onPress={() => toggle(key)}>
-                <Text dimColor={!isOpen} inverse={opened === key}>
+                <Text color={isOpen ? undefined : 'subtle'} inverse={opened === key}>
                   {item.kind === 'notice' ? '•' : '-'}{' '}
                 </Text>
-                <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
+                <Text color={isOpen ? undefined : 'subtle'} strikethrough={isDismissed} inverse={opened === key}>
                   {item.subject}
                 </Text>
               </Button>
@@ -944,7 +908,7 @@ export const register: Register = on => {
               <Text key={`before-buttons:${ref}`}> </Text>
               <Box flexDirection="row" columnGap={1}>
                 {actions.flatMap(({ name, onPress }, at) => [
-                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} dimColor>|</Text>]),
+                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} color="subtle">|</Text>]),
                   <Button key={`${name}:${ref}`} plain onPress={onPress}>
                     <Text>{name}</Text>
                   </Button>,
@@ -992,18 +956,14 @@ export const register: Register = on => {
           {opened === key && (
             <Box flexDirection="column" marginLeft={drawerIndent}>
               <Text wrap="truncate-end">
-                <Text dimColor>{factsOf(pr, kinds)}</Text>
+                <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
-                {pr.updatedAt !== null && <Text dimColor> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>}
+                {pr.updatedAt !== null && (
+                  <Text color="subtle"> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>
+                )}
               </Text>
               <Box flexDirection="row" columnGap={2}>
-                <Markdown
-                  key={`discuss:${key}`}
-                  text={`[discuss](${pr.url})`}
-                  onLinkPress={() => {
-                    $.prompt.fill({ text: `${reference(pr)} `, mode: 'insert' }).catch(() => undefined)
-                  }}
-                />
+                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
                 <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
                 {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
               </Box>
@@ -1015,9 +975,9 @@ export const register: Register = on => {
 
     // An open item's drawer has the band to itself, until it is closed or the
     // item leaves the band. The divider and the blank line under it step
-    // aside too, so the item is the top row and the drawer has two more rows
-    // before the engine, which caps the band below half the terminal, starts
-    // to scroll.
+    // aside too, so the item is the top row and, in a terminal, the drawer
+    // has two more rows before the engine, which caps the band below half the
+    // terminal, starts to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) {
       return <Box flexDirection="column">{drawItem(focused)}</Box>
@@ -1028,7 +988,9 @@ export const register: Register = on => {
         {divider}
         {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
-        {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}
+        {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+          <Text key="before-items"> </Text>
+        )}
         {[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem)}
       </Box>
     )

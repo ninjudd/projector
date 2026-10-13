@@ -130,14 +130,6 @@ export function expand(parts: readonly Part[], env: Env): string | undefined {
   return out
 }
 
-/** Expands a path typed as one shell word, such as `/projector ~/loop/tracked`. */
-export function expandPath(text: string, env: Env): string | undefined {
-  const tokens = tokenize(text.trim())
-  const [word] = tokens
-  if (tokens.length !== 1 || word === undefined || !('parts' in word)) return undefined
-  return expand(word.parts, env)
-}
-
 const raw = (parts: readonly Part[]) => parts.map(part => part.text).join('')
 
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/
