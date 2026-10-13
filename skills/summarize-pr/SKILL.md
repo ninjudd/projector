@@ -120,8 +120,10 @@ push to, or approve the pull request unless the user asks.
       beneath. A layer that starts the work of another plan records that
       plan, and the site starts a new header there.
       `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's
-      pull requests on GitHub, and the summaries ref holds what each
-      summarized layer chose. When that request answers 404 or fails, follow
+      pull requests on GitHub. To read what a summarized layer chose, copy
+      its newest summary with `project summary init --repo OWNER/NAME --pr
+      LAYER --summary WORKDIR/LAYER.json --from-published` and read its
+      `project`. When that request answers 404 or fails, follow
       the summary's `pr.basePr` down the stack instead, as the site falls
       back to base branches. Record the project's name as `project list`
       gives it, such as `"stack-header"` or `"payments/invoices"`, or `""`
@@ -310,14 +312,15 @@ summary rather than the deployment. The site's Reviews section lists
 every summary at `reviews/`, serves each pull request's newest head at
 `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
 older heads and every pull request in the same stack from each page. The
-summary on the ref is the durable copy: to update a summary later, fetch it
-with `git fetch origin refs/projector/summaries` and start from it rather
-than from a fresh `init`. A summary that an older release stored there as
-`spec.json` does not appear on the site, and the deploy reports it as
-skipped. To update one, start from its `spec.json` and publish it as
-`summary.json`. A repository that has not published since summaries were
-called walkthroughs has its summaries on `refs/projector/walkthroughs`, under
-`walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
+summary on the ref is the durable copy: to update a summary later, start
+from it with `project summary init --from-published`, as "Update the page
+when the pull request moves" describes, rather than from a fresh skeleton.
+A summary that an older release stored there as `spec.json` does not
+appear on the site, and the deploy reports it as skipped.
+`init --from-published` reads a `spec.json` too, and `publish` stores the
+copy as `summary.json`. A repository that has not published since summaries
+were called walkthroughs has its summaries on `refs/projector/walkthroughs`,
+under `walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
 carries them over to the new ref, where they stay off the site until each is
 published again.
 
@@ -355,41 +358,61 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
 
 ## Update the page when the pull request moves
 
-Start from the newest version of the summary on the summaries ref, whoever
+Start from the newest version of the pull request's summary, whoever
 published it. Another session or account can have summarized the pull
-request already, at an earlier head or at this one. To get that version,
-fetch the ref, find the folder most recently written for the pull request,
-and copy its summary. `HEAD_SHA` is the head that folder names:
+request already, at an earlier head or at this one. From a checkout whose
+`origin` is the repository, copy that version:
 
 ```sh
-git fetch origin refs/projector/summaries
-git log -1 --name-only --format= FETCH_HEAD -- summaries/NUMBER/
-git show FETCH_HEAD:summaries/NUMBER/HEAD_SHA/summary.json > WORKDIR/summary.json
+project summary init --from-published \
+  --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
 ```
 
-When that folder is already this head, revise its summary in place of
-starting a new one, and skip step 1.
+`--from-published` fetches the summaries ref and copies the summary the
+site shows as the pull request's newest. A summary an earlier `publish`
+kept in this checkout counts too, when it is newer. It also reads a summary
+that an older release stored as `spec.json`. It names the head the copy
+describes, `OLD_HEAD`. When it finds no summary, build one as "Build the
+summary" describes instead. Write the prose and choose the groups
+yourself, and let the CLI change everything else:
 
-1. List what changed since the summary's head:
+1. Bring the summary up to the pull request's current head:
+
+   ```sh
+   project summary refresh --summary WORKDIR/summary.json
+   ```
+
+   `refresh` sets every `pr` field to what GitHub reports now, and prints
+   each one it changes, such as `pr.head: OLD_HEAD → NEW_HEAD`. That
+   includes `pr.base`, the merge base the page's diff starts from, which
+   moves when the base branch is merged in. It puts each file new to the
+   diff in the `unassigned` group, drops each file that left the diff and
+   prints that file's note and checks, and lists each note whose `line` the
+   new diff no longer shows. It changes no other prose. When `pr.head` did
+   not change, the summary already describes this head: skip step 2 and
+   revise it in place. Pass `--diff` only when `refresh` reports that
+   GitHub could not serve the diff, with the local diff from the new
+   `pr.base` to `pr.head`, as for `page`.
+2. List what changed since the summary's old head:
    `git log --oneline OLD_HEAD..NEW_HEAD` and
    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
    compare against the new merge base instead.
-2. Read the new commits and any new review threads, then revise the summary:
-   set `pr.head`, move new files into groups, drop files that left the diff,
-   and rewrite every note, check and overview card the change made untrue.
+3. Read the new commits and any new review threads, then revise the prose.
+   Move each file in the `unassigned` group into the group it belongs to,
+   and remove that group once it is empty. Carry over what still applies of
+   a dropped file's prose, such as the note of a file the change renamed.
+   Rewrite every note, check and overview card the change made untrue.
    Make the two choices at the end of step 4 of "Build the summary" again: a
    summary published before summaries recorded a project has no `project`,
    and `publish` refuses it until you set one, and a `name` must still title
    the stack in at most 60 characters.
    Move each note that has a `line` to where its code sits in the new diff,
-   using step 1's diff, and remove a note whose code is gone: `build` checks
-   only that a line is still in its file's diff, not that it still holds the
-   code the note is about. Resolve or remove `flag` checks the new commits
-   fixed.
-3. `publish` the revised summary, which becomes a new version beside the old
+   using step 2's diff, starting with the notes `refresh` listed, and remove
+   a note whose code is gone: `build` checks only that a line is still in
+   its file's diff, not that it still holds the code the note is about.
+   Resolve or remove `flag` checks the new commits fixed.
+4. `publish` the revised summary, which becomes a new version beside the old
    one, pushed to a hosted site or kept in the checkout as the first time.
-   A summary kept in the checkout is found there later with
-   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/summary.json`.
    For an artifact the user asked for, rebuild and republish to the same
    one: publish the same file path again in the conversation that created
    it, or pass the artifact's URL as `url` after reading it from any other

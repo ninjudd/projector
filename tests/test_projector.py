@@ -574,6 +574,81 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual([("alpha", "Ben")], [(p["name"], p["owner"]) for p in json.loads(stdout)["projects"]])
 
+    def test_an_empty_owner_means_no_owner(self) -> None:
+        empty = {"alpha": "owner:\n", "beta": "owner: \"\"\n", "gamma": "owner: '  ' # unassigned\n"}
+        for name, line in empty.items():
+            self.plan(name, extra=line)
+        self.plan("delta", extra="owner: Ben\n")
+
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        code, stdout, stderr = self.invoke("list", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            [("alpha", None), ("beta", None), ("delta", "Ben"), ("gamma", None)],
+            [(p["name"], p["owner"]) for p in json.loads(stdout)["projects"]],
+        )
+        code, stdout, stderr = self.invoke("show", "alpha", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertIsNone(json.loads(stdout)["project"]["owner"])
+        for wanted in ("ben", "''", '""'):
+            code, stdout, stderr = self.invoke("list", "--owner", wanted, "--json")
+            self.assertEqual(0, code, stderr)
+            self.assertEqual(["delta"] if wanted == "ben" else [],
+                             [p["name"] for p in json.loads(stdout)["projects"]], wanted)
+
+    def test_owner_replaces_an_empty_owner_in_place(self) -> None:
+        for line, expected in (("owner:\n", "owner: ben\n"), ("owner:   \n", "owner: ben\n"),
+                               ('owner: ""\n', "owner: ben\n"), ("owner: # unassigned\n", "owner: ben # unassigned\n")):
+            with self.subTest(line):
+                path = self.plan("alpha", extra=line + "custom: keep-me\n")
+                before = path.read_text()
+
+                code, stdout, stderr = self.invoke("owner", "alpha", "ben", "--json")
+
+                self.assertEqual(0, code, stderr)
+                self.assertEqual("updated", json.loads(stdout)["action"])
+                self.assertEqual(before.replace(line, expected, 1), path.read_text())
+                self.assertEqual("ben", ProjectStore(self.root).resolve("alpha").owner)
+
+    def test_owner_and_status_find_their_lines_in_a_crlf_plan(self) -> None:
+        path = self.plan("alpha", extra="owner:\n")
+        before = path.read_bytes().replace(b"\n", b"\r\n")
+        path.write_bytes(before)
+
+        for arguments in (("owner", "alpha", "ben"), ("status", "alpha", "ready")):
+            code, _, stderr = self.invoke(*arguments)
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(
+            before.replace(b"status: draft\r\n", b"status: ready\r\n").replace(b"owner:\r\n", b"owner: ben\r\n"),
+            path.read_bytes(),
+        )
+
+    def test_owner_clear_removes_an_empty_owner_line(self) -> None:
+        path = self.plan("alpha", extra="owner:\ncustom: keep-me\n")
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("owner", "alpha", "--clear", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(before.replace("owner:\n", "", 1), path.read_text())
+
+    def test_status_priority_and_done_change_a_plan_with_an_empty_owner(self) -> None:
+        path = self.plan("alpha", extra="owner:\n")
+        before = path.read_text()
+
+        for arguments in (("status", "alpha", "in-progress"), ("priority", "alpha", "now"), ("done", "alpha")):
+            code, _, stderr = self.invoke(*arguments)
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(
+            before.replace("status: draft\npriority: later\n", "status: completed\npriority: now\n", 1),
+            path.read_text(),
+        )
+
     def test_done_changes_status_and_reminds_about_the_outcome(self) -> None:
         path = self.plan("alpha", "in-progress", priority="now")
         code, _, stderr = self.invoke("done", "alpha")
@@ -1456,7 +1531,7 @@ class ValidationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual("Project plans are valid.\n", stdout)
 
-    def test_check_rejects_an_empty_or_multiline_owner(self) -> None:
+    def test_check_rejects_a_multiline_owner_but_not_an_empty_one(self) -> None:
         self.plan("alpha", extra="owner:\n")
         self.plan("beta", extra="owner: |\n")
         self.plan("gamma", extra="owner: aparsuri-poly\n")
@@ -1466,8 +1541,7 @@ class ValidationTests(RepositoryTestCase):
         self.assertEqual(65, code)
         invalid = {issue["path"]: issue["message"] for issue in json.loads(stdout)["issues"]
                    if issue["code"] == "invalid-project"}
-        self.assertEqual({"docs/projects/alpha/readme.md", "docs/projects/beta/readme.md"}, set(invalid))
-        self.assertIn("owner must not be empty", invalid["docs/projects/alpha/readme.md"])
+        self.assertEqual({"docs/projects/beta/readme.md"}, set(invalid))
         self.assertIn("owner must be a single line", invalid["docs/projects/beta/readme.md"])
 
     def test_check_accepts_markdown_images(self) -> None:
@@ -1671,13 +1745,13 @@ class StoreTests(RepositoryTestCase):
         plans = {
             "alpha": PLAN.format(status="ready", priority=priority_line("next"), title="Alpha", body="Text.",
                                  extra="owner: someone\n"),
+            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
             "no-frontmatter": "# No frontmatter\n",
             "malformed": "---\nstatus ready\n---\n",
             "unclosed": "---\nstatus: ready\n",
             "bad-status": "---\nstatus: maybe\npriority: next\n---\n",
             "no-priority": "---\nstatus: ready\n---\n",
             "bad-priority": "---\nstatus: ready\npriority: soon\n---\n",
-            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
             "block-owner": "---\nstatus: ready\npriority: next\nowner: |\n---\n",
             "Bad_Name": PLAN.format(status="draft", priority=priority_line("later"), title="Bad", body="Text.", extra=""),
         }
@@ -1698,7 +1772,7 @@ class StoreTests(RepositoryTestCase):
                     self.assertEqual(str(error), str(raised.exception))
                 else:
                     self.assertEqual(expected, project_from_text(text, name, expected.path, display))
-        self.assertEqual(len(plans) - 1, failures, "every plan but alpha is a kind of bad plan")
+        self.assertEqual(len(plans) - 2, failures, "every plan but alpha and empty-owner is a kind of bad plan")
 
 
 class SelfReportingTests(unittest.TestCase):

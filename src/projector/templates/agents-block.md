@@ -1,4 +1,4 @@
-<!-- projector:begin 9 -->
+<!-- projector:begin 10 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -59,10 +59,9 @@ it. Post news they need to act on, such as a failure that needs them, and
 anything that comes up while they are away. Leave out what they already see
 elsewhere, such as a pull request's state, which the band lists. An item
 stays above their prompt until they answer or dismiss it, so keep the inbox
-for what matters, not as a log of everything you did. While items you posted
-are open, look over them each time the person writes to you, with
-`project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
-that no longer need them, such as a question they answered in the
-conversation or news that has gone stale, with
-`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
+for what matters, not as a log of everything you did. Each time the person
+writes to you, look over the items you posted that are still open, and
+withdraw any that no longer need them, such as a question they answered in
+the conversation or news that has gone stale, with the `withdraw` tool and
+the number `ask` or `tell` returned.
 <!-- projector:end -->

@@ -894,7 +894,7 @@ class WatchPrsTests(WatcherCase):
 
         self.assert_ok(closed)
         self.assertEqual(
-            ["CLOSED acme/app#1 (feature) — no longer open; drop it from the tracked file"],
+            ["CLOSED acme/app#1 (feature) — no longer open; remove it from the tracked file"],
             closed.stdout.splitlines(),
         )
         self.assertEqual([], self.state_rows())

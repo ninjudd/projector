@@ -185,19 +185,19 @@ session starts a loop's watcher for the first time.
 ──────────────────────────────────────────────────────────────── updated 12s ago [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
-#258 draft grace Name the reviewed head in a review's signature line conflict 5m
-reviewing · review-signature · +84 −12 in 5 files · checks passing
-github
-projector
-discuss | dismiss
+#258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
+     reviewing · review-signature · +84 −12 in 5 files · checks passing
+     github
+     projector
+     discuss | dismiss
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, the title, and, when the pull request has them, a
-merge conflict, a change request, or unresolved review threads. The line
-ends with how long ago the pull request last changed, in the column where
-the inbox's items end with their ages. Only the title shortens on a narrow
-terminal.
+merge conflict or a change request, then the number of unresolved review
+threads after a `⋮` in yellow, such as `⋮5`. The line ends with how long
+ago the pull request last changed, in the column where the inbox's items
+end with their ages. Only the title shortens on a narrow terminal.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
@@ -219,8 +219,9 @@ GitHub's error only when it has none of them to show.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-under the number. It says whether your loops are watching or reviewing the
-pull request, then its branch, size, and checks. Below that:
+one column past the number, under `draft` or `ready`. It says whether your
+loops are watching or reviewing the pull request, then its branch, size, and
+checks. Below that:
 
 - **github** opens the pull request on GitHub.
 - **projector** opens its Projector summary, when the pull request's
@@ -242,7 +243,7 @@ the pull request, which appends a `!owner/repo#number` line that both
 watchers honor, so the loops stop acting on it. When the command fails, the
 band shows its error and keeps the line. To bring a dismissed pull request
 back, run `project loop restore` with the same reference and tracked file,
-as [Keep a pull request out of a loop](cli.md#keep-a-pull-request-out-of-a-loop)
+as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
 describes.
 
 On the main screen, which Claude Code uses under tmux and when
@@ -269,9 +270,11 @@ is shown. The skills never depend on the band, and Codex has no equivalent.
 An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
-keeps working. An agent that runs `project inbox ask` or `project inbox tell`
-from the shell reaches the same inbox, as
-[Use the inbox](cli.md#use-the-inbox) describes.
+keeps working. When an item it posted no longer needs you, such as a question
+you answered in the conversation, the agent takes it back with the `withdraw`
+tool, `mcp__projector__withdraw`, by the number `ask` or `tell` returned. An
+agent that runs `project inbox ask`, `tell`, or `withdraw` from the shell
+reaches the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
@@ -345,9 +348,10 @@ Under the options, a question's drawer has three actions:
 - **snooze** hides the question for an hour.
 
 A notice's drawer shows its detail, then the same `discuss | dismiss |
-snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
-quotes a notice answers nothing. **dismiss** clears the notice once you have
-read it, and nothing goes back to the agent.
+snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
+that quotes a notice answers nothing, but it closes the notice's drawer; the
+notice stays in the band until you dismiss it. **dismiss** clears the notice
+once you have read it, and nothing goes back to the agent.
 
 A snoozed item leaves the band and the divider's counts at once. When its
 hour passes, it returns to the list, and the band appears if you hid it. To
@@ -358,7 +362,9 @@ dismiss from a terminal while it is snoozed does not return.
 
 A resolved item stays in the list, muted, for 30 seconds after it is
 delivered, and a dismissed one is struck through. A dismissed notice is
-delivered at once, since nothing goes back to the agent. A question's drawer
+delivered at once, since nothing goes back to the agent. An item the agent
+withdrew leaves the band at once, its drawer with it, and sends nothing back,
+not even `DISMISSED` for a question. A question's drawer
 still opens and marks the answer given with `✓`, listing an answer in your
 own words after the options. A dismissed notice's drawer keeps only
 **discuss**.
@@ -440,6 +446,11 @@ The same command upgrades what it installed. A marketplace that reads a local
 path is moved to the repository, removed and added again from that source,
 and a `moved` row names the old path and the new source. One that already
 reads a remote is refreshed from wherever it points rather than added again.
+Codex's Git clone of a marketplace can time out on a slow connection, so the
+installer runs a failed Codex `marketplace add` or `marketplace upgrade` of a
+remote source once more after five seconds, with a `retrying` row, and stops
+with Codex's exit status only when the second try fails too. A source that is
+a local directory clones nothing, so its failure stops the installer at once.
 An installed plugin is updated rather than installed again, because a host
 asked to install a plugin it already has leaves it as it is; the update is
 what moves it. Claude Code applies the update on its next start. A plugin
@@ -565,10 +576,11 @@ exact one, both refusing a version that does not go up:
 .github/scripts/release.py set 0.6.0
 ```
 
-Once the bump merges, `tag` releases it. `released` exits 0 when the merged
-version already has a tag and 3 when it does not, which is how the workflow
-decides, on every `pyproject.toml` change, whether there is anything to
-release:
+Once the bump merges, `tag` releases it. A version counts as released when
+its `v0.6.0` tag and the major tag, `v0`, name the same commit and its GitHub
+release exists. `released` exits 0 when all three are in place and 3 when any
+is missing, which is how the workflow decides, on every `pyproject.toml`
+change, whether there is anything to release:
 
 ```sh
 .github/scripts/release.py released
@@ -576,12 +588,33 @@ release:
 ```
 
 `tag` reads the version from `origin/main`, not from the checkout, so an
-unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag,
-force-moves the major tag, `v0`, to the same commit, and creates the GitHub
-release for `v0.6.0` with generated notes, which needs an authenticated `gh`.
-Pass `--no-release` to push only the tags. If the release step fails, the tags
-are already pushed, and the error prints the `gh release create` command that
-finishes the release. The immutable tag names an exact release; the major tag
+unmerged bump cannot name a release. It does only the steps the remote still
+lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
+commit, and creates the GitHub release for `v0.6.0` with generated notes. It
+prints what it did and what it found already done. `released` needs an
+authenticated `gh`, because it looks for the GitHub release, and so does `tag`
+unless you pass `--no-release`, which pushes only the tags and never calls
+`gh`.
+
+When a release stops partway, for example because GitHub rejects the push of
+`v0`, re-run the failed Release workflow job. The job's `tag` finds the steps
+that already happened and does the rest, and then the job asks the site
+workflow to rebuild with the released action. You can instead run `tag` again
+from a checkout. That finishes the tags and the GitHub release, but only the
+job asks for the rebuild, so the site stays as the previous action built it
+until you send the request yourself:
+
+```sh
+gh api repos/ninjudd/projector/dispatches -f event_type=projector-summaries
+```
+
+Once `v0.6.0` exists, its commit is the release's commit, so `tag` moves `v0`
+there even after `main` has moved past it. Both commands exit 1 rather than
+move a tag when `v0.6.0` cannot belong to this release: when `main` does not
+contain the tagged commit, or when `main` named a different version at any
+point between that commit and its head. Set a new version instead.
+
+The immutable tag names an exact release; the major tag
 is the channel that follows compatible releases, the convention GitHub's own
 actions use. A breaking change starts the next major tag. Under `0.x` a minor
 release may still break, so the `v0` channel promises less than a `v1` channel
@@ -613,9 +646,9 @@ marketplace files, and read upstream's new skill against the rules in
 
 ## Work without MCP
 
-Projector currently ships no MCP server. The `ask` and `tell` tools carry
-the `mcp__projector__` prefix, but Projector's hooks module in Claude Code
-serves them: no MCP server runs, and no skill depends on them. Every core
-skill uses the public `project` CLI and ordinary Git or GitHub commands. A
-future MCP adapter can expose the same versioned project operations without
-becoming the package that contains the skills.
+Projector currently ships no MCP server. The `ask`, `tell`, and `withdraw`
+tools carry the `mcp__projector__` prefix, but Projector's hooks module in
+Claude Code serves them: no MCP server runs, and no skill depends on them.
+Every core skill uses the public `project` CLI and ordinary Git or GitHub
+commands. A future MCP adapter can expose the same versioned project
+operations without becoming the package that contains the skills.

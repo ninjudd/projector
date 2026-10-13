@@ -48,11 +48,11 @@ what it did to each:
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
   miss to the inbox as well as saying it in the conversation, and each time
-  the person writes, dismiss any item that no longer needs them. `init`
-  appends the section to an existing file or creates the file
-  with only that section, and refreshes the section when it falls behind the
-  template this command ships. Everything outside the markers is yours and
-  is never changed.
+  the person writes, withdraw any item that no longer needs them with the
+  `withdraw` tool. `init` appends the section to an existing file or creates
+  the file with only that section, and refreshes the section when it falls
+  behind the template this command ships. Everything outside the markers is
+  yours and is never changed.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
@@ -370,6 +370,11 @@ project owner payments --clear
 and `--clear` removes the line. It refuses a value that would not read back
 unchanged, such as one with a leading `@`, a `: `, or a ` #`, with exit code 2.
 
+An `owner:` line with an empty value, such as `owner:` or `owner: ""`, names
+no one, so Projector reads the plan as having no owner: `check` accepts it,
+`list --owner` never selects it, `owner` fills in the value on that line, and
+`--clear` removes the line.
+
 `priority` adds the field when a plan has none, which happens only for a
 completed project being rescheduled. Set the priority first in that case:
 `status` refuses to move a completed plan to another status while it has no
@@ -390,7 +395,7 @@ Project plans are valid.
 ```
 
 The command reports malformed frontmatter, invalid statuses, invalid or
-missing priorities, an empty or multi-line owner, missing top-level
+missing priorities, a multi-line owner, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
@@ -629,6 +634,8 @@ else:
 
 ```sh
 project summary init --repo OWNER/NAME --pr 66 --summary summary.json
+project summary init --repo OWNER/NAME --pr 66 --summary summary.json --from-published
+project summary refresh --summary summary.json
 project summary publish --summary summary.json
 project site page --summary summary.json --out site
 project site build --out _site --summaries summaries-ref/summaries
@@ -646,6 +653,50 @@ one project the pull request carries out, as `project list` names it, or to
 `""` for none, and `name` to a short title for the stack. A project the
 checkout does not have yet publishes, because a pull request can add the
 plan it carries out. `site page` does not check either field.
+
+`summary init --from-published` starts from the pull request's newest
+published summary instead of a skeleton, so a summary carries forward from
+one head to the next. It fetches `refs/projector/summaries` from `--remote`,
+`origin` by default, and copies the summary the site shows as the pull
+request's newest. That is the summary published last, dated by the
+`spec.json` an older release stored beside it when there is one, so a
+republished old head never outranks a newer head. A summary this checkout
+keeps in its own `refs/projector/summaries` counts too, and wins when it is
+newer, so a summary previewed with `--local` carries forward. When the
+fetch fails, it reads the copy of the remote's ref that this checkout
+already has. It reads a head stored only as `spec.json` from that file, and
+reads `refs/projector/walkthroughs` while neither the remote nor this
+checkout has `refs/projector/summaries`, as `site serve` does. `--head`
+copies the summary of the head whose SHA starts with the value you pass
+instead. It refuses a `--remote` whose GitHub repository is not `--repo`,
+and fails when no summary of the pull request is stored.
+
+`summary refresh` brings a summary up to its pull request's current head
+and base. It sets every `pr` field to what GitHub reports now. That
+includes `pr.base`, the merge base the page's diff starts from, which moves
+when you merge the base branch into the pull request, and `pr.basePr`,
+which it removes once the pull request is no longer stacked. It puts each
+file new to the diff in the `unassigned` group, adding that group last when
+the summary has none, and drops each file that left the diff, printing that
+file's note and checks so you can move what still applies. It lists each
+note whose `line` the new diff does not show, leaves that note as it is,
+and changes no other prose. It replaces the file in one step, and only when
+something changed:
+
+```console
+$ project summary refresh --summary summary.json
+refreshed summary.json to owner/example#66 at 9c1d07e2a
+  pr.head: 4f2a9c107 → 9c1d07e2a
+  pr.base: 0b7e3d4c8 → 61aa2f05e
+added 1 file new to the diff to the unassigned group; move each into the group it belongs to:
+  +40    -0     src/check/name.go (new)
+1 note names a line the diff no longer shows; move each to where its code now sits, or remove it:
+  src/check/card.go line 88 (new side), in core: flag: The retry ignores the timeout.
+```
+
+Pass `--diff` to `summary refresh` when GitHub cannot serve the diff. It
+must run from the pull request's current merge base to its current head.
+
 `summary publish` then fetches the pull request's diff, checks
 that the summary builds against it, commits the summary and the diff to the
 hidden ref without touching the checkout, and starts the repository's site
@@ -1074,9 +1125,10 @@ A Markdown, MDX, reStructuredText, or AsciiDoc file is documentation, except a
 skill's `SKILL.md`. A skill is instructions an agent follows, so its
 `SKILL.md` counts as hand-written and starts expanded.
 
-`summary init` and `site page` read the attributes with `git check-attr` in
-the checkout they run in. `site build` and `site serve` read them in the
-checkout `--repo-root` names, for each summary stored without them:
+`summary init`, `summary refresh`, and `site page` read the attributes with
+`git check-attr` in the checkout they run in. `site build` and `site serve`
+read them in the checkout `--repo-root` names, for each summary stored
+without them:
 
 - **The checkout has the pull request's head commit.** The head's own
   `.gitattributes` files answer, so a pull request that changes them is
@@ -1480,12 +1532,12 @@ need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
-every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
-find the session that holds the number. `list` prints each item's number,
-kind, state, and subject, separated by tabs, after the session when it lists
-every session. Every session counts from 1 and keeps the items you resolved,
-so two sessions often hold the same number. Without a session, those four
-commands look first among open items, the ones with no answer recorded: a
+every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
+`snooze` find the session that holds the number. `list` prints each item's
+number, kind, state, and subject, separated by tabs, after the session when it
+lists every session. Every session counts from 1 and keeps the items you
+resolved, so two sessions often hold the same number. Without a session, those
+five commands look first among open items, the ones with no answer recorded: a
 number that one session holds open names that session's item, whatever other
 sessions hold resolved under the same number. Only when no session holds the
 number open do they look among every item. A command that still finds the
@@ -1588,33 +1640,79 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
 65, an item already answered or dismissed, a negative `--for`, and a `--for`
 longer than a day, and it changes nothing when it refuses.
 
-## Keep a pull request out of a loop
-
-A watch or review loop reads its tracked file, one `owner/repo#number` a
-line. A line `!owner/repo#number` keeps that pull request out of the loop
-wherever it sits in the file, and both watchers and Projector's band match it
-without regard to case. `project loop drop` writes that line, and `project
-loop restore` removes it:
+An agent takes back an open item that no longer needs you with `withdraw`,
+such as a question you answered in the conversation or news that has gone
+stale:
 
 ```console
+$ project inbox withdraw 3 --session "$SESSION"
+withdrew 3
+```
+
+`withdraw` takes either kind. In one write, it records the item as dismissed
+and withdrawn and marks it delivered, so nothing goes back to the agent, not
+even a `DISMISSED` line for a question. Projector's band drops the item at
+once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
+`dismiss` refuses: an answer letter, such as `3.a`, and an item already
+answered, dismissed, or withdrawn, with exit code 65, and a number no session
+holds, with exit code 66. In Claude Code, the agent withdraws an item with
+Projector's `withdraw` tool rather than from the shell.
+
+## Change a loop's tracked file
+
+A watch or review loop reads its tracked file, one `owner/repo#number` a
+line, and acts only on the pull requests the file lists. A line
+`!owner/repo#number` keeps that pull request out of the loop wherever it sits
+in the file, and both watchers and Projector's band match it without regard
+to case. Change the file with `project loop`, whose four commands each
+change one kind of line:
+
+| Command | What it changes | When to run it |
+| --- | --- | --- |
+| `add` | Appends an `owner/repo#number` line, and creates the file. | To bring a pull request into the loop. |
+| `remove` | Removes the lines that list the pull request, and leaves its `!` lines. | To forget a pull request that merged or closed. |
+| `drop` | Appends a `!owner/repo#number` line. | To keep an open pull request out of the loop. |
+| `restore` | Removes the pull request's `!` lines. | To let a dropped pull request back in. |
+
+```console
+$ project loop add acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+added acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
+$ project loop remove acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+removed acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 ```
 
-`drop` appends its line rather than rewriting the file, because a watcher may
-be appending a pull request it adopted at the same moment. It changes nothing
-when the file already holds an exclusion for the pull request, in any letter
-case. `restore` removes every `!` line for the pull request, and only those,
-by writing the file anew and renaming it into place. It leaves a plain
-`owner/repo#number` line alone, so the pull request returns to the loop when
-the file names it.
+Each command matches the reference without regard to case.
 
-Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
-and, with exit code 66, a tracked file that does not exist. With `--json`,
-each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
-with the `pr` and the `tracked` file.
+`add` and `drop` append their line rather than rewriting the file, because a
+watcher may be appending a pull request it adopted at the same moment. `add`
+creates the tracked file and any missing directory above it, so a loop
+builds its set from nothing by adding each pull request. It changes nothing
+when the file already lists the pull request. It refuses, with exit code 65,
+a pull request the file drops, because the `!` line would keep that pull
+request out all the same; run `project loop restore` first to let it back
+in. `drop` changes nothing when the file already holds an exclusion for the
+pull request.
+
+`restore` removes every `!` line for the pull request, and only those, by
+writing the file anew and renaming it into place. It leaves a plain
+`owner/repo#number` line alone, so the pull request returns to the loop when
+the file lists it.
+
+`remove` removes every plain line for the pull request by the same rewrite,
+and changes nothing when the file does not list it. A loop runs it when a
+pull request merges or closes. It leaves the pull request's `!` lines alone,
+so a pull request you dropped stays out even if it reopens and a review loop
+would otherwise adopt it again.
+
+Each command refuses, with exit code 65, a reference that is not
+`owner/repo#number`. `drop`, `restore`, and `remove` refuse, with exit code
+66, a tracked file that does not exist. With `--json`, each prints its
+`action`, which is `added`, `dropped`, `restored`, `removed`, or
+`unchanged`, with the `pr` and the `tracked` file.
 
 ## Consume JSON
 
@@ -1669,8 +1767,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
-| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops. |
+| `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox session's lock for five seconds; run the command again. |

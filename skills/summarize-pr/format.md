@@ -1,7 +1,8 @@
 # Summary format
 
-`project summary init` writes the skeleton and `project site page` reads
-it. The summary is JSON:
+`project summary init` writes the skeleton, `project summary refresh`
+brings it up to the pull request's current head, and `project site page`
+reads it. The summary is JSON:
 
 ```json
 {
@@ -63,11 +64,11 @@ it. The summary is JSON:
   row on the Reviews index take the pull request's title.
 - `pr.head` is the commit the page describes. `build` stops when the pull
   request has moved past it, unless `--at-head` asks for that head exactly.
-- `pr.base` is the merge base the diff is taken from. `init` records it; the
-  page shows the diff from `pr.base` to `pr.head`.
+- `pr.base` is the merge base the diff is taken from. The page shows the
+  diff from `pr.base` to `pr.head`.
 - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
   request's head, are what the site's review list uses to mark a stacked pull
-  request. `init` records both; keep them when you edit a summary by hand.
+  request.
   Each file's **View file on GitHub** link opens the file on `pr.headRef`, so
   it shows the current version. Once the site's last build found the pull
   request merged, it opens the file on the branch it merged into, since the
@@ -78,6 +79,10 @@ it. The summary is JSON:
   request was closed without merging, or has not merged and the summary has
   no `headRef`. It opens a file the pull request deleted at `pr.base`, the
   last commit that has it.
+- `init` records every `pr` field, and `refresh` sets each again from the
+  pull request as GitHub reports it. So `pr.base` moves once the base
+  branch is merged into the pull request, and `pr.basePr` goes once the pull
+  request is no longer stacked.
 - `overview.summary` is what the pull request does, in a few paragraphs.
   The page adds the line counts and the list of files itself.
 - Each item of `overview.summary` and of a group's `intro` renders as a
