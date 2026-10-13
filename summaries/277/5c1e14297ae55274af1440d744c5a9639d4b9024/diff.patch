@@ -1,0 +1,304 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0d8e32e..256d947 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -209,20 +209,15 @@ author, branch, size, checks, and when it last changed. Below that:
+ - **projector** opens its Projector summary, when the pull request's
+   description links one.
+ 
+-A ctrl, alt, or cmd click on the number skips the drawer and opens the
+-Projector summary, or the pull request on GitHub when it has no summary.
+-
+-The drawer needs Claude Code's fullscreen layout, the only one that reports
+-a click to the band. On the main screen, which Claude Code uses under tmux
+-and when `CLAUDE_CODE_NO_FLICKER=0` is set, the band still lists your pull
+-requests, but a click opens no drawer. Each number stays a link to the
+-Projector summary or the pull request, which the terminal opens the way it
+-opens any other link.
+-
+-The band finds a loop by the `--tracked` file its watcher reads. It learns
+-that file when the session runs the watcher, and it also finds watchers
+-already running on the machine, such as a loop another session started. To
+-show a tracked file by hand, name it:
++On the main screen, which Claude Code uses under tmux and when
++`CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
++then Enter on a number to open its drawer. The drawer's links take no press
++there; the terminal opens them the way it opens any other link.
++
++The band lists only this session's loops. It finds a loop by the
++`--tracked` file its watcher reads, and learns that file when the session
++runs the watcher. A loop another session runs stays out of this session's
++band. To show a tracked file by hand, such as another session's, name it:
+ 
+ ```text
+ /projector ~/loops/review/tracked
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 7ce4958..18298ba 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -323,11 +323,6 @@ them untracked.
+   its session, `fix-pr` and the loops can ask and tell through `project
+   inbox` instead of handing everything to the main loop. Deferred until the
+   question above is settled.
+-- **Opening a pull request's drawer on the main screen.** A pull request's
+-  number is a `Markdown` link, which takes no press there. Switching pull
+-  request lines to `Button`s, as inbox items use, would fix it but loses
+-  the ctrl-click that opens the Projector summary. Owner: ninjudd, after
+-  trying item lines on the main screen.
+ - **Views for Codex and Paseo.** Codex has no band, and Paseo's clients
+   could list and clear items through `project inbox list --json`,
+   `answer`, and `dismiss`. Deferred until `project inbox` ships.
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index 6ac0e17..b1709d3 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -517,11 +517,6 @@ from memory. Check the main-screen row by hand under tmux.
+   session, `fix-pr` and the loops can ask through `project question ask`
+   instead of handing questions to the main loop. Deferred until the
+   question above is settled.
+-- **Opening a pull request's drawer on the main screen.** Its number is a
+-  `Markdown` link, which takes no press there. Switching pull request lines
+-  to `Button`s, as questions use, would fix it but loses the ctrl-click that
+-  opens the Projector summary. Owner: ninjudd, after trying question lines
+-  on the main screen.
+ - **Views for Codex and Paseo.** Codex has no band, and Paseo's clients
+   could list and answer questions through `project question list --json`
+   and `answer`. Deferred until the CLI ships.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 2830afb..6b24e17 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -7,6 +7,7 @@ const HOME = '/home/ada'
+ const REVIEW = `${HOME}/loops/review/tracked`
+ const WATCH = `${HOME}/loops/watch/tracked`
+ const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
++const WATCH_COMMAND = 'bash /plugin/skills/start-fix-loop/scripts/watch-threads.sh --tracked ~/loops/watch/tracked --state s'
+ 
+ // The Bash tool's own shell shows the command single-quoted; the watcher it
+ // started shows its arguments expanded. The watch loop runs in another session.
+@@ -138,7 +139,7 @@ function world(on: On, files: Record<string, string>, ps = PS, project?: (argv:
+   return { commands, filled }
+ }
+ 
+-test('draws one line per open pull request, with no section labels', async ($, on) => {
++test('draws one line per open pull request of the session’s own loops', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const { commands } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
+@@ -147,53 +148,55 @@ test('draws one line per open pull request, with no section labels', async ($, o
+   await clock.advance(1)
+   await clock.settle()
+ 
++  // The watch loop runs in another session, so the band neither lists it nor looks for it.
+   const gh = commands.filter(argv => argv[0] === 'gh')
+   expect(gh.length).toBe(1)
+-  expect(gh[0]?.join(' ')).toContain('repository(owner: "x", name: "y") { p7: pullRequest(number: 7)')
++  expect(gh[0]?.join(' ')).not.toContain('repository(owner: "x", name: "y")')
++  expect(commands.filter(argv => argv[0] === 'ps')).toEqual([])
+ 
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+-  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+-test('a click on a pull request opens its drawer, and discuss puts it in the prompt', async ($, on) => {
++test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
+ 
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  // A ctrl, alt or cmd click opens what the label links: the summary when
+-  // there is one, the pull request otherwise.
+-  expect((await ui.find({ key: 'pr:x/y#7' }))?.props.text).toBe(`[y#7](${SUMMARY})`)
+-  expect((await ui.find({ key: 'pr:o/r#1' }))?.props.text).toBe('[r#1](https://github.com/o/r/pull/1)')
++  // The number is a plain button, so no terminal draws a URL beside it.
++  expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
++  expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
++  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+ 
+-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
++  await ui.press({ key: 'pr:x/y#7' })
+   expect(
+     await ui.find({ type: 'Text', text: 'watching · by ada · fix-branch · +12 −3 in 2 files' }),
+   ).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: ' · updated 5m ago' })).toBeDefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
+-  expect(await ui.find({ key: 'projector:x/y#7' })).toBeDefined()
++  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+ 
+   await ui.press({ key: 'discuss:x/y#7', link: { href: SEVEN } })
+   expect(filled).toEqual(['insert:x/y#7 '])
+ 
+-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
++  await ui.press({ key: 'pr:x/y#7' })
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   await ui.unmount()
+ })
+@@ -204,12 +207,13 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
+ 
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
+-  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   await ui.unmount()
+@@ -221,15 +225,32 @@ test('lists a pull request both loops track once, as watched and reviewed', asyn
+   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
+ 
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
++  await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
++test('a tracked file named by hand takes its kind from the watcher reading it', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const { commands } = world(on, { [WATCH]: 'x/y#7\n' })
++
++  await $.command.run({ ...COMMAND, args: '~/loops/watch/tracked' })
++  await clock.advance(1)
++  await clock.settle()
++
++  expect(commands.filter(argv => argv[0] === 'ps').length).toBeGreaterThanOrEqual(1)
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(await ui.find({ type: 'Text', text: /^watching · by ada/ })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('stays hidden until the session starts a watcher or asks for it', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+@@ -475,7 +496,8 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
+ 
+ async function startSession($: Engine, clock: Clock, isShown = true) {
+   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+-  if (isShown) await $.command.run(COMMAND)
++  // A shown band belongs to a session that started its review loop's watcher.
++  if (isShown) await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+ }
+@@ -508,6 +530,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts).toContain('Conflicting change')
+   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+   // The line names the question's pull request as the band labels it.
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index ceb2ce7..603203b 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -144,7 +144,7 @@ async function adopt($: Engine, command: string): Promise<void> {
+   if (isAdded) show($)
+ }
+ 
+-/** Watchers running anywhere on this machine, found by their arguments. */
++/** Watchers running anywhere on this machine, found by their arguments, which give a hand-named file its kind. */
+ async function runningLoops($: Engine, env: Env): Promise<Loop[]> {
+   let stdout: string
+   try {
+@@ -183,20 +183,16 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+ }
+ 
+ async function load($: Engine): Promise<void> {
+-  const env = await envOf($)
++  // The band lists the session's own loops: the watchers it started, and the
++  // tracked files named with `/projector <file>`. A file named by hand takes
++  // its kind from the watcher reading it, so only then does the band look at
++  // the machine's processes.
+   const own = await read($, seen)
+-  const running = await runningLoops($, env)
+-
+-  // A file named by hand takes its kind from the watcher reading it, if one runs.
+-  const loops: Loop[] = [
+-    ...own.map(loop => ({
+-      tracked: loop.tracked,
+-      kind: isKind(loop.kind)
+-        ? loop.kind
+-        : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
+-    })),
+-    ...running.filter(loop => !own.some(one => one.tracked === loop.tracked)),
+-  ]
++  const running = own.every(loop => isKind(loop.kind)) ? [] : await runningLoops($, await envOf($))
++  const loops: Loop[] = own.map(loop => ({
++    tracked: loop.tracked,
++    kind: isKind(loop.kind) ? loop.kind : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
++  }))
+ 
+   // A tracked file that is gone belongs to a loop that ended.
+   const sets = await Promise.all(
+@@ -720,11 +716,11 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    // A question's numbered options are Markdown links, drawn as a pull
+-    // request's number is: a plain click runs `onPress`, and a ctrl, alt or
+-    // cmd click opens `href`. Markdown draws only an `https:`, `http:` or
+-    // `file:` link as one, so an option links its question's pull request, or
+-    // the question's own file in the store when it has none.
++    // A question's numbered options are Markdown links: a plain click runs
++    // `onPress`, and a ctrl, alt or cmd click opens `href`. Markdown draws
++    // only an `https:`, `http:` or `file:` link as one, so an option links its
++    // question's pull request, or the question's own file in the store when it
++    // has none.
+     const store = (session: string) => storeOf(env, session) ?? ''
+     const hrefOf = (question: Question) => {
+       const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
+@@ -874,16 +870,12 @@ export const register: Register = on => {
+         <Box key={key} flexDirection="column">
+           {/* Only the title gives way when the line is short; the label column
+               is as wide as the longest label, so every title starts in one
+-              column. A plain click on the label opens the drawer; a ctrl, alt
+-              or terminal-kept cmd click opens its Projector summary, or the
+-              pull request on GitHub when it has none. */}
++              column. The label is a plain Button rather than a link, so it
++              takes a click in fullscreen and Enter on the main screen, and no
++              terminal ever draws a URL beside it. */}
+           <Box flexDirection="row" columnGap={1}>
+             <Box flexShrink={0} width={labelWidth}>
+-              <Markdown
+-                key={`pr:${key}`}
+-                text={`[${label(pr)}](${pr.summaryUrl ?? pr.url})`}
+-                onLinkPress={() => toggle(key)}
+-              />
++              <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
+             </Box>
+             <Box flexShrink={0}>
+               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>

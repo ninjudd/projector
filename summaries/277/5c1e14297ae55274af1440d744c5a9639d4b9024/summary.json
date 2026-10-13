@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "name": "Band lists own loops",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 277,
+  "title": "List only the session's own loops in Projector's band",
+  "head": "5c1e14297ae55274af1440d744c5a9639d4b9024",
+  "headRef": "band-own-loops",
+  "base": "eae49a56d86efa9808a9c2536f9056b6f49f4cc7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip above the Claude Code prompt that the plugin's hooks module (<code>hooks/register.tsx</code>) draws. It lists, one line each, the open pull requests that the session's <em>loops</em> track. A loop is a <code>start-review-loop</code> or <code>start-fix-loop</code> run, and its watcher script (<code>watch-prs.sh</code> or <code>watch-threads.sh</code>) reads a <em>tracked file</em> that names one pull request per line.",
+   "Before this change, the band also ran <code>ps</code> on every reload and adopted every watcher running anywhere on the machine. A session that started no loop of its own therefore listed another session's pull requests, sometimes dozens of them. The band now lists only the session's own loops: the watchers the session started, and the tracked files you name with <code>/projector &lt;file&gt;</code>. It runs <code>ps</code> only to learn whether a hand-named file belongs to a review loop or a watch loop.",
+   "The change also turns each pull request's number from a <code>Markdown</code> link into a plain <code>Button</code>. Some terminals draw a link as its text followed by its URL, which pushed the row's state and title out of view, and a link takes no keyboard press on the main screen. As a button, the number opens its drawer with a click in fullscreen and with Enter on the main screen. Ctrl-click on the number, which opened the Projector summary directly, goes away; the drawer's <b>projector</b> link still opens it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the list Projector draws above the Claude Code prompt.</li><li><b>Loop</b>: a review or fix loop whose watcher script polls GitHub for the pull requests in its tracked file.</li><li><b>Tracked file</b>: the file a watcher's <code>--tracked</code> argument names, one <code>owner/repo#number</code> per line.</li><li><b>Kind</b>: whether a loop is <code>reviewing</code> or <code>watching</code>, which the drawer shows.</li><li><b>Main screen</b>: Claude Code's non-fullscreen layout, used under tmux, where the band takes key presses but no clicks.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of <code>5c1e142</code> found one open finding: the <code>questions</code> plan still compares its option numbers to a pull request's number as a <code>Markdown</code> link, which this change makes false. The flag on <code>docs/projects/questions/readme.md</code> below carries it.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The band reads only the session's loops",
+   "kicker": "How the band finds its loops, and how a pull request's number is drawn",
+   "intro": [
+    "The band keeps the loops it knows about in session state, the <code>seenLoops</code> atom. A loop enters that state in two ways: when the session runs a watcher through the <code>Bash</code> or <code>Monitor</code> tool, the hook records the watcher's tracked file and its kind; and when you run <code>/projector &lt;file&gt;</code>, the command records the file with no kind.",
+    "<code>load</code> used to merge that state with every watcher <code>ps</code> found on the machine. It now builds its list from the session state alone. It calls <code>runningLoops</code>, the function that runs <code>ps</code>, only when some recorded loop has no kind, and then only to look that kind up. A hand-named file whose watcher is not running falls back to <code>watching</code>, as before."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "<code>load</code> drops the machine-wide watcher list; each pull request's number becomes a plain <code>Button</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 191,
+       "text": "<code>own.every(...)</code> is true for an empty list, so a session with no loops runs no <code>ps</code> either. Only a loop recorded by <code>/projector &lt;file&gt;</code> has no kind; <code>adopt</code> always records one."
+      },
+      {
+       "kind": "verify",
+       "line": 878,
+       "text": "Checked against the 2.1.296 <code>claude-code.d.ts</code>: <code>Button</code> takes <code>plain</code> and <code>label</code>, a plain Button draws its label alone, and a click or Enter under the focus raises <code>onPress</code>. <code>tsc</code> on <code>hooks/</code> with those typings reports no errors."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for the session's own loops",
+   "kicker": "The band tests start each loop they expect to see",
+   "intro": [
+    "The tests' shared <code>world</code> still runs a watch loop's watcher in another session, through its <code>ps</code> output. The first test now checks that the band leaves that loop out, asks GitHub only about the review loop's pull requests, and runs no <code>ps</code>. Tests that need both loops start the watch loop's watcher themselves through <code>WATCH_COMMAND</code>. The question tests' <code>startSession</code> now starts the review loop's watcher instead of running <code>/projector</code>, so the band still has a pull request to order the questions under."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Asserts the band ignores another session's watcher, presses the number as a <code>Button</code>, and adds a test for a hand-named file's kind.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 155,
+       "text": "<code>claude plugin test .</code> at this head ends <code>52 pass</code> and <code>0 fail</code>."
+      },
+      {
+       "kind": "context",
+       "line": 247,
+       "text": "The new test names the watch loop's file with <code>/projector</code>; the drawer then says <code>watching</code> because <code>ps</code> shows <code>watch-threads.sh</code> reading that file."
+      },
+      {
+       "kind": "context",
+       "line": 533,
+       "text": "This added <code>toContain</code> keeps the ordering check below it from passing when neither text is drawn, since <code>indexOf</code> then compares <code>-1</code> with <code>-1</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plans",
+   "kicker": "The band's guide and two plans' open questions",
+   "intro": [
+    "<code>docs/plugins.md</code> now says the band lists only this session's loops, that another session's loop stays out, and that you press ctrl+x tab and then Enter on a number to open a drawer on the main screen. The <code>inbox</code> plan (<code>ready</code>) and the <code>questions</code> plan (<code>in-progress</code>) each drop the open question about switching pull request numbers to buttons, which this change settles."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the band's main-screen and loop-discovery paragraphs; removes ctrl-click."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Drops the settled open question from § 7."
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "Drops the settled open question from § 7.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 520,
+       "text": "Open review finding: the plan still says option numbers are drawn &quot;as a pull request's number is&quot; (§ 2.6, line 276) and are <code>Markdown</code> links &quot;like the pull request numbers&quot; (§ 3, line 442). This change makes a pull request's number a plain <code>Button</code>, so drop the comparison in both sentences."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
