@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register } from 'claude-code'
 
-import type { Checks, Item, LoopKind, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
 import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 import {
@@ -277,9 +277,15 @@ const replace = ($: Engine, question: Item) =>
     list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
   )
 
+/**
+ * An item as the CLI prints it, without the session the band adds. Each kind
+ * is its own `Omit`, because one over the union would merge their `kind`s.
+ */
+type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'>
+
 /** The item a CLI command printed with `--json`, in the session it belongs to. */
 const itemOf = (stdout: string, session: string): Item => ({
-  ...(JSON.parse(stdout) as { item: Omit<Item, 'session'> }).item,
+  ...(JSON.parse(stdout) as { item: Printed }).item,
   session,
 })
 
