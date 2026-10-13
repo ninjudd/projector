@@ -254,7 +254,9 @@ watchers honor, so the loops stop acting on it. When the command fails, the
 band shows its error and keeps the line. To bring a dismissed pull request
 back, run `project loop restore` with the same reference and tracked file,
 as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
-describes.
+describes. A drawer closes whenever its pull request leaves the band,
+dismissed here, dropped from a terminal, or merged, so the line comes back
+with its drawer closed.
 
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
@@ -284,16 +286,19 @@ keeps working. When an item it posted no longer needs you, such as a question
 your reply settled, the agent takes it back with the `withdraw` tool,
 `mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
 reply shows that a question was unclear, the agent rewrites the question in
-place with the `revise` tool, `mcp__projector__revise`. An agent that runs
-`project inbox ask`, `tell`, `withdraw`, or `revise` from the shell reaches
-the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
+place with the `revise` tool, `mcp__projector__revise`. When you tell it you
+dismissed or snoozed an item by mistake, the agent brings the item back
+under its number with the `restore` tool, `mcp__projector__restore`, rather
+than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
+`revise`, or `restore` from the shell reaches the same inbox, as
+[Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
 want an answer and which want a read. Each line ends with the pull request
 the item is about, as the band labels it, and how long ago it was posted.
-The band appears when an item arrives, even after you hid it, and in a
-terminal the divider counts the open questions and the open notices.
+The band appears when an item arrives or is restored, even after you hid it,
+and in a terminal the divider counts the open questions and the open notices.
 
 ```text
 ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
@@ -381,18 +386,22 @@ Under the options, a question's drawer has three actions:
   while you type. Type your reply under the quote, or on the quote's own
   line, and send the prompt. The reply reaches the agent and answers
   nothing.
-- **dismiss** sets the question aside without an answer.
-- **snooze** hides the question for an hour.
+- **dismiss** sets the question aside without an answer and closes the
+  drawer.
+- **snooze** puts the question off for an hour and closes the drawer.
 
 A notice's drawer shows its detail, then the same `discuss | dismiss |
 snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
 that quotes a notice answers nothing, but it closes the notice's drawer; the
 notice stays in the band until you dismiss it. **dismiss** clears the notice
-once you have read it, and nothing goes back to the agent.
+once you have read it and closes its drawer, and nothing goes back to the
+agent.
 
-A snoozed item leaves the band and the divider's counts at once. When its
-hour passes, it returns to the list, and the band appears if you hid it. To
-pick another time, or to wake an item now, find the item's number with
+A snoozed item leaves the divider's counts at once, and stays in the list
+for 30 seconds in the `subtle` color, not struck through, so it reads as put
+off rather than dismissed. Then it leaves the band. When its hour passes, it
+returns to the list, and the band appears if you hid it. To pick another
+time, or to wake an item now, find the item's number with
 `project inbox list` in a terminal, then run
 `project inbox snooze <number> --for <minutes>`. An item you answer or
 dismiss from a terminal while it is snoozed does not return.
@@ -403,13 +412,26 @@ delivered at once, since nothing goes back to the agent. An item the agent
 withdrew leaves the band at once, its drawer with it, and sends nothing back,
 not even `DISMISSED` for a question. A question's drawer
 still opens and marks the answer given with `✓`, listing an answer typed in
-a terminal with `project inbox answer --text` after the options. A dismissed
-notice's drawer keeps only **discuss**.
+a terminal with `project inbox answer --text` after the options.
+
+While a dismissed or snoozed item is still listed, click its line to open
+its drawer again. There, **restore** takes the place of **dismiss** for a
+dismissed item, which reads `discuss | restore`, and **unsnooze** takes the
+place of **snooze** for a snoozed one, which reads
+`discuss | dismiss | unsnooze`. Either runs `project inbox restore`, and the
+item is open again at once, in its place in the list, with its drawer still
+open and **dismiss** and **snooze** back in their places. A dismissed question
+whose `DISMISSED` has not gone out sends its agent nothing; one whose agent
+already heard `DISMISSED` sends `RESTORED`. Once the item has left the band,
+ask the agent to restore it, and the band appears with the item open, even
+if you hid it. A drawer closes when its line leaves the band,
+so a pull request or an item that comes back returns with its drawer closed.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
-running receives it directly, as a message that starts `ANSWER`, or
-`DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
+running receives it directly, as a message that starts `ANSWER`,
+`DISMISSED` for a dismissal, or `RESTORED` when you restore a question
+whose agent heard `DISMISSED`. Otherwise the main loop receives it as a prompt
 of its own once its turn ends, with the name of the subagent that asked, and
 `sending` follows the question until it has gone.
 
@@ -683,9 +705,10 @@ marketplace files, and read upstream's new skill against the rules in
 
 ## Work without MCP
 
-Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`, and
-`revise` tools carry the `mcp__projector__` prefix, but Projector's hooks
-module in Claude Code serves them: no MCP server runs, and no skill depends
-on them. Every core skill uses the public `project` CLI and ordinary Git or
-GitHub commands. A future MCP adapter can expose the same versioned project
-operations without becoming the package that contains the skills.
+Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`,
+`revise`, and `restore` tools carry the `mcp__projector__` prefix, but
+Projector's hooks module in Claude Code serves them: no MCP server runs, and
+no skill depends on them. Every core skill uses the public `project` CLI and
+ordinary Git or GitHub commands. A future MCP adapter can expose the same
+versioned project operations without becoming the package that contains the
+skills.

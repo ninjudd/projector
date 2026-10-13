@@ -28,7 +28,10 @@ also cover what only the person may record: `project inbox answer`,
 posted, or their choice to dismiss or put it off, so an agent running one
 could answer its own question. Projector's band runs those commands itself,
 not through an agent's shell, so the person answering from the band is never
-asked. The rules go in the person's own settings, so they hold in every
+asked. `project inbox restore` needs no ask rule: it reopens an item the
+person dismissed or snoozed, which takes no choice from them, and an agent
+runs it when the person says a dismissal was a mistake. The rules go in the
+person's own settings, so they hold in every
 repository, clone, and worktree they open, and no repository has to carry a
 permission for everyone who opens it.
 
@@ -105,9 +108,10 @@ CODEX_ALLOW = (
     (["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
      "Runs a Projector command that works on plans, loops, or pull request summaries."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
-    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "revise", "show", "tell", "watch",
-                           "withdraw"]],
-     "Posts, revises, reads, withdraws, or delivers an inbox item, but never records the person's answer to one."),
+    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell",
+                           "watch", "withdraw"]],
+     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
+     "answer to one."),
     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules",
                             "settle", "setup", "status"]],
      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),

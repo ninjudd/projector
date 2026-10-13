@@ -1216,3 +1216,170 @@ one beside the old.
 | The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
 | `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |
 | The Projector section's new text is pinned to begin marker 11 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+
+## 14. Restore a dismissed or snoozed item
+
+You can bring back an item you dismissed or snoozed, in place, under its
+number. `project inbox restore <number>` reopens it, the band's drawer offers
+**restore** for a dismissed item and **unsnooze** for a snoozed one, and an
+agent restores an item with a `restore` tool beside `ask`, `tell`,
+`withdraw`, and `revise` when you say a dismissal was a mistake. Dismissing
+or snoozing an item from the band now closes its drawer, and the item stays
+listed, muted, for 30 seconds, which is the window in which its drawer offers
+to bring it back. This section supersedes the bullet of § 2.5 under which a
+snoozed item leaves the list at once and a dismissed notice's drawer keeps
+only **discuss**.
+
+### 14.1 Problem
+
+The owner dismissed a question by accident, and nothing brought it back.
+The only recourse was for the agent to ask the question again, which posted
+a duplicate under a new number beside the dismissed one. The owner said: "we
+need a way to undismiss. creating a duplicate question isn't good." Two more
+gaps showed in the same use. When the owner pressed **dismiss**, the drawer
+stayed open over the band on an item that no longer needed anything: "when
+it is dismissed, we should close the drawer". And a snoozed item left the
+band at once, so a snooze pressed by mistake could be undone only from a
+terminal, with `project inbox snooze <number> --for 0`. The owner asked for
+"a restore button in place of dismiss when you open a dismissed question"
+and for "unsnooze when an item is snoozed".
+
+### 14.2 What changes
+
+- **`project inbox restore <number>` reopens an item in place.** It takes
+  `--session` and `--json` as the other commands do, and works under the
+  session's lock. A dismissed item loses `answer`, `deliveredAt`, and any
+  `claim`, which is everything dismissal and its delivery recorded, and
+  keeps its number, text, options, `pr`, `postedAt`, and `agentId`. A later
+  `answer` then records an answer as if the item had never been dismissed.
+  A snoozed item loses `snoozedUntil` and `snoozedAt` and nothing else.
+  `restore` refuses, with exit `65`, an open item, an answered question, a
+  withdrawn item, and an answer letter; a number no session holds exits
+  `66`, and a busy store exits `75`. Without a session, it looks first among
+  the dismissed and snoozed items, as `answer` looks first among open ones.
+- **A restore tells the agent only what it may have heard.** A dismissed
+  question owes its agent `DISMISSED`. When no deliverer has claimed that
+  line, the restore cancels it, and nothing goes out. When the line was
+  delivered or claimed, the restore records `restoredAt`, and the deliverer
+  sends `RESTORED <number> <subject>`, the shape of the other lines, so the
+  agent knows the question is open again. `watch`, `claim`, and the band's
+  deliverer handle it as they handle `ANSWER` and `DISMISSED`. A snooze and
+  a notice's dismissal send the agent nothing, so restoring either sends
+  nothing.
+- **A change to a line in flight drops its claim.** A restore drops the
+  claim on a `DISMISSED` line being delivered, and an answer or a second
+  dismissal drops the claim on a `RESTORED` line being delivered. The
+  deliverer's `delivered` or `reopen` then exits `65`, and the next
+  deliverer sends what the question owes then. `watch` carries on past such
+  a refusal. An answer replaces a `RESTORED` line nobody has claimed, since
+  the answer tells the agent the question was open. A second dismissal
+  before anyone claimed `RESTORED` is delivered at once, since the last line
+  the agent heard already says `DISMISSED`. A claimed `RESTORED` is done
+  after `delivered` or `reopen`, so no deliverer sends it twice.
+- **Dismissing or snoozing closes the drawer.** In the band, **dismiss** and
+  **snooze** close the item's drawer, as sending an answer or a reply does.
+  A dismissed item stays listed for 30 seconds after `deliveredAt`, muted
+  and struck through, as before. A snoozed item stays listed for 30 seconds
+  after the new `snoozedAt`, which `snooze` records, in the `subtle` color
+  but not struck through, so it reads as put off rather than dismissed, and
+  out of the divider's counts. Then it leaves the band until its snooze ends.
+- **The drawer offers the way back where it offered the way out.** While
+  such an item is listed, its line opens its drawer as before. A dismissed
+  item's drawer reads `discuss | restore`, with **restore** in **dismiss**'s
+  place and no **snooze**, since a resolved item cannot be snoozed. A
+  snoozed item's drawer reads `discuss | dismiss | unsnooze`. Either
+  action runs `project inbox restore`, redraws the item open at once, and
+  leaves the drawer open on it, with `discuss | dismiss | snooze` again.
+- **A restored item brings a hidden band back, as a new item does.** The
+  band shows itself for any item that is open and not snoozed where the
+  list it last held had it otherwise: a new item, or one restored or
+  unsnoozed from a terminal. The `restore` tool shows a hidden band itself,
+  since it puts the item in the list before the band reads the store. Before,
+  only a `ref` the band had never seen counted, so an item the person had
+  asked an agent to bring back stayed out of sight behind a hidden band.
+- **A drawer closes when its line leaves the band.** The band closes the
+  open drawer once its pull request or item is no longer listed, on each
+  tick and each reload. Before, the drawer's key stayed set, so a line that
+  came back, a pull request restored to a loop or an item restored or woken,
+  came back with its drawer open. **dismiss** in a pull request's drawer
+  already closed it when every drop succeeded.
+- **The `restore` tool runs it.** It takes the item's `number`, runs
+  `project inbox restore` through `runTool`, and puts the item in the band
+  at once, as `withdraw` does. Its description tells the agent to use it
+  only when the person says a dismissal was a mistake or asks for the item
+  back, never on its own judgement, and never to ask a dismissed question
+  again as a new one. The `ask` tool's description says that `RESTORED`
+  arrives when the person restores a question its agent heard dismissed.
+- **Agents learn it from their instructions.** The Projector section of
+  `AGENTS.md`, at begin marker 12, tells the agent to restore an item the
+  person says they dismissed by mistake rather than ask again.
+- **Codex allows it by name.** `project init` adds `restore` to the `inbox`
+  subcommands its Codex rules allow. Claude Code's `Bash(project *)` rule
+  already allows it, and it takes no ask rule.
+
+### 14.3 Why this design
+
+- **Restore in place, not ask again.** A duplicate leaves two items for one
+  decision, with the dismissed one still in `list --all` and the agent
+  holding two numbers. Restoring keeps the number the agent already holds,
+  so `ANSWER` and `DISMISSED` keep arriving under it.
+- **One command for both ways back.** Restoring a dismissed item and ending
+  a snooze both answer "bring it back", so one command and one tool cover
+  them, and an agent never has to know which the person pressed. The band's
+  button reads **unsnooze** for a snoozed item because that is what it does
+  there. `snooze --for 0` still wakes an item from a terminal, so a separate
+  `unsnooze` command would add a third spelling for no new case.
+- **Cancel when unheard, tell when maybe heard.** An agent that never heard
+  `DISMISSED` has nothing to correct, so the restore sends nothing. Once the
+  line was delivered, or claimed and possibly sent, the agent may hold the
+  question as dismissed, and `RESTORED` corrects it. A duplicate `RESTORED`
+  for a question the agent still held open is harmless; a missing one would
+  leave the agent ignoring a question the person wants answered.
+- **Drop the claim rather than mark it.** Recording in each claim which line
+  it carries would let `delivered` tell an old line from a new one, but
+  every deliverer would have to carry it. Dropping the claim when the
+  question changes keeps `settle`'s rule as it was: a claim that still
+  matches settles the line it was taken for. A deliverer delivers one line
+  of a question at a time, so the band and `watch` still send `RESTORED`
+  after the `DISMISSED` it corrects.
+- **`RESTORED` is told once.** A `reopen` of a `DISMISSED` line reopens the
+  question so the person answers again, but there is nothing for the person
+  to redo after a failed `RESTORED`. Retrying it would repeat the band's
+  toast every five seconds while delivery keeps failing. The question stays
+  open, and its eventual answer or dismissal reaches the agent.
+- **A withdrawn item is the agent's.** The agent took it back, so restoring
+  it would put back an item its own agent decided it no longer needed. The
+  agent posts it again if it changes its mind. An answered question is not
+  restored either: its answer went to the agent, and `restore` is for a
+  mistaken dismissal.
+- **A dismissal's snooze is not restored.** Dismissing clears the snooze, as
+  § 2 has it, so `restore` returns the item open and in view, which is what
+  someone undoing a dismissal wants.
+- **`snoozedAt` lives in the store.** The 30 seconds a snoozed item stays
+  listed count from the snooze, as a dismissed item's count from
+  `deliveredAt`. Recording the time in the item, rather than in the band's
+  memory, gives a snooze from a terminal the same window and survives a
+  reload of the module.
+- **No ask rule for `restore`.** `answer`, `dismiss`, and `snooze` ask before
+  an agent runs them because they record the person's choice. `restore`
+  undoes a choice the person tells the agent was a mistake, and puts the
+  item back in front of the person, so it cannot answer anything for them.
+
+### 14.4 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| `restore` brings back a dismissed question exactly as it was, keeps the number, cancels the undelivered `DISMISSED`, and a later `answer` works | `test_restores_a_dismissed_question_in_place_and_cancels_its_undelivered_dismissal` in `RestoreTests`, `tests/test_inbox.py` |
+| A dismissed notice comes back and sends nothing | `test_restores_a_dismissed_notice_and_sends_nothing` |
+| `RESTORED` goes out only after `DISMISSED` was delivered or claimed, once | `test_sends_restored_only_after_its_agent_heard_dismissed`, `test_a_restore_while_dismissed_is_being_delivered_sends_restored_after_it`, `test_a_restored_line_whose_delivery_failed_is_not_sent_again` |
+| A change to a line in flight drops its claim, and `watch` carries on | `test_watch_survives_a_restore_that_lands_while_its_line_goes_out`, `test_an_answer_or_dismissal_before_restored_goes_out_replaces_it`, `test_dismissing_again_once_restored_is_claimed_sends_dismissed_after_it` |
+| A snoozed item loses its snooze and nothing else | `test_restores_a_snoozed_item_by_clearing_its_snooze` |
+| The refusals, the bare number, and the lock | `test_refuses_an_open_answered_or_withdrawn_item_and_an_unknown_number`, `test_a_bare_number_looks_first_among_dismissed_and_snoozed_items`, `test_two_restores_at_once_restore_once`, `test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75`, and `restore` in `test_refuses_an_answer_letter_on_every_other_command` |
+| **dismiss** closes the drawer and strikes the line through; the drawer then reads `discuss \| restore`; **restore** redraws it open with **dismiss** back, sends `RESTORED` only after `DISMISSED`, and a pick answers it | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place` in `hooks/band.test.tsx`, and `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
+| **snooze** closes the drawer and leaves the line in `subtle`, not struck, for 30 seconds; the drawer reads `discuss \| dismiss \| unsnooze`, and **unsnooze** brings `snooze` back | `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place`, `snooze hides either kind for an hour, then brings a hidden band back`, and `a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time` in `hooks/inbox.test.ts` |
+| A restore from the tool or a terminal brings a hidden band back | `a restore brings a hidden band back, from the tool or from a terminal, as a new item does` |
+| A drawer closes when its line leaves the band, so a returning line has it closed | `a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns`, and the restore tool's test below |
+| The `restore` tool redraws the item at once, its old drawer closed, refuses what the CLI refuses, and a failed `RESTORED` is said once | `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED`, `the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs`, `a dropped RESTORED says so without asking for an answer, and is not sent again` |
+| The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |
+| Codex allows `restore` by name | The `project inbox restore` row of `DECISIONS` and `test_the_codex_rules_name_every_command_or_leave_it_out` in `tests/test_permissions.py` |
+| The Projector section's new sentence is pinned to begin marker 12 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |

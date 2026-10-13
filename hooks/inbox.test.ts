@@ -6,6 +6,7 @@ import {
   askArguments,
   forMainLoop,
   isShownAt,
+  isSnoozedAt,
   liveAgent,
   needsDelivery,
   proposalOf,
@@ -13,12 +14,16 @@ import {
   readPrompt,
   relayNote,
   replyNote,
+  RESTORE_DESCRIPTION,
+  RESTORE_SCHEMA,
+  restoreArguments,
   reviseArguments,
   signatureOf,
   span,
   storeOf,
   tellArguments,
   typedLetter,
+  WITHDRAW_SCHEMA,
   withdrawArguments,
   wokeBetween,
   type Proposal,
@@ -76,6 +81,16 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as 
   )
   expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question, and the question stays open')
   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
+  expect(ASK_DESCRIPTION).toContain(
+    'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
+  )
+})
+
+test('the restore tool is for a dismissal the person calls a mistake, never a question asked again', () => {
+  expect(RESTORE_DESCRIPTION).toContain(
+    'Use it only when the person says a dismissal was a mistake or asks for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
+  )
+  expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
 })
 
 test('letters run from the recommendation to the typed answer', () => {
@@ -302,6 +317,14 @@ test('a call of the withdraw tool becomes `project inbox withdraw`, and only a w
   }
 })
 
+test('a call of the restore tool becomes `project inbox restore`, and only a whole number names an item', () => {
+  expect(restoreArguments({ number: 3 }, 's1')).toEqual(['inbox', 'restore', '3', '--session', 's1', '--json'])
+  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+  for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
+    expect(restoreArguments({ number }, 's1')).toEqual(refusal)
+  }
+})
+
 test('a call of the revise tool becomes `project inbox revise` with only what changes, text kept as text', () => {
   expect(
     reviseArguments(
@@ -347,6 +370,13 @@ test('an answer waits for a deliverer until a live claim holds it', () => {
   expect(needsDelivery({ ...answered, claim: { token: 't', renewedAt: NOW - 5_000 } }, NOW)).toBe(false)
   expect(needsDelivery({ ...answered, claim: { token: 't', renewedAt: NOW - 60_000 } }, NOW)).toBe(true)
   expect(needsDelivery({ ...answered, deliveredAt: NOW }, NOW)).toBe(false)
+})
+
+test('word that a question was restored waits for a deliverer until a live claim holds it', () => {
+  const restored = question({ restoredAt: NOW - 1_000 })
+  expect(needsDelivery(restored, NOW)).toBe(true)
+  expect(needsDelivery({ ...restored, claim: { token: 't', renewedAt: NOW - 5_000 } }, NOW)).toBe(false)
+  expect(needsDelivery({ ...restored, claim: { token: 't', renewedAt: NOW - 60_000 } }, NOW)).toBe(true)
 })
 
 test('the subagent’s status decides where an answer goes', () => {
@@ -434,6 +464,15 @@ test('a snoozed item leaves the band until its time, and wakes once between two 
   expect(wokeBetween([snoozed], NOW, NOW + 3_595_000)).toEqual([])
   const dismissed = notice({ snoozedUntil: NOW + 3_600_000, answer: { dismissed: true, answeredAt: NOW } })
   expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
+})
+
+test('a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time', () => {
+  const snoozed = notice({ snoozedAt: NOW, snoozedUntil: NOW + 3_600_000 })
+  expect(isSnoozedAt(snoozed, NOW + 29_000)).toBe(true)
+  expect(isShownAt(snoozed, NOW + 29_000)).toBe(true)
+  expect(isShownAt(snoozed, NOW + 30_000)).toBe(false)
+  expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
+  expect(isSnoozedAt(snoozed, NOW + 3_600_000)).toBe(false)
 })
 
 test('only a question’s answer waits for a deliverer', () => {

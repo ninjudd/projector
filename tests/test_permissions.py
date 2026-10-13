@@ -30,6 +30,7 @@ DECISIONS = (
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
     ("project inbox tell notice --session s1", "allow", "allow"),
     ("project inbox withdraw 3 --session s1", "allow", "allow"),
+    ("project inbox restore 3 --session s1", "allow", "allow"),
     ("project inbox revise 3 --question 'Merge it now?' --session s1", "allow", "allow"),
     ("project inbox watch --session s1", "allow", "allow"),
     ("project inbox claim 3 --session s1", "allow", "allow"),
