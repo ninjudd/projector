@@ -778,8 +778,12 @@ export const register: Register = on => {
           {divider}
           {failure !== undefined ? (
             <Text color="error">{failure}</Text>
+          ) : shown.fetchedAt === null ? (
+            <Text color="subtle">Looking for pull requests…</Text>
           ) : (
-            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : QUOTE}</Text>
+            <Box key="quote" justifyContent="center">
+              <Text color="subtle">{QUOTE}</Text>
+            </Box>
           )}
         </Box>
       )
