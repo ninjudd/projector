@@ -472,6 +472,10 @@ def parser() -> argparse.ArgumentParser:
     review_release = review_commands.add_parser(
         "release", help="clear a pull request's review lock when no review is running"
     )
+    review_finish = review_commands.add_parser(
+        "finish", help="end a review on this machine: delete its start comments that no longer mean a review in "
+                       "progress, and remove its scratch worktrees, locks, and state"
+    )
     review_publish = review_commands.add_parser(
         "publish", help="check and submit the review, set draft state, and delete the start comment"
     )
@@ -512,8 +516,8 @@ def parser() -> argparse.ArgumentParser:
                            help="a listed change that will not be built: remove it, and end the hold when none is "
                                 "left (repeatable); with no TEXT, end the hold, which you do once the push that "
                                 "carries every listed change succeeds, since the command does not check it")
-    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
-                    review_interdiff):
+    for command in (review_setup, review_move, review_census, review_release, review_finish, review_publish,
+                    review_gate, review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -528,11 +532,18 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True,
                               help="the model ID of this session, which names the start comment and keys the "
                                    "review's state")
-    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
+    for command in (review_move, review_census, review_release, review_finish, review_publish, review_gate,
+                    review_interdiff):
         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
                                              "of this pull request set up here)")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
+    review_setup.add_argument("--replace", type=int, metavar="COMMENT_ID",
+                              help="the start comment of this model's that a stopped session left: check that it is "
+                                   "one, and delete it once this review is set up in its place")
+    review_finish.add_argument("--force", action="store_true",
+                               help="discard a review that is set up and unpublished, as when its pull request "
+                                    "closed")
     review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
                                 help="the verdict the signature line and marker carry (required without "
                                      "--incremental)")
@@ -1029,7 +1040,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
 def review_hold(arguments: argparse.Namespace) -> int:
     """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
     repository of the checkout it runs in."""
-    repo = review.hold_repo(arguments.repo, Path.cwd())
+    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
     result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
     return 0
@@ -1045,6 +1056,10 @@ def run_review(arguments: argparse.Namespace) -> int:
         return review_status(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
+    if command == "finish":
+        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd())
+        print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.finish_lines(result)))
+        return 0
     if command == "setup":
         checkout = arguments.checkout or Path.cwd()
         try:
@@ -1053,7 +1068,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, loop, arguments.rereview)
+                             arguments.model, loop, arguments.rereview, arguments.replace)
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
@@ -1138,6 +1153,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"worktree {state['worktree']}")
         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+        if command == "setup" and arguments.replace is not None:
+            print(f"deleted start comment {arguments.replace}, which this review replaces")
     return 0
 
 

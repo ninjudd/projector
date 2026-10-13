@@ -467,6 +467,30 @@ class MoveTests(ReviewCase):
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)
 
+    def test_an_edit_that_does_not_read_back_records_nothing_and_running_move_again_retries_it(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        new = self.push_head("second head")
+        self.github.pr["head"]["sha"] = new
+        fake = self.github
+
+        def dropping_edits(args: list[str], token: str | None = None) -> str:
+            return "{}" if args[:3] == ["api", "-X", "PATCH"] else fake(args, token)
+
+        with mock.patch.object(review, "run_gh", dropping_edits):
+            code, _, err = self.later("move")
+
+        self.assertEqual(1, code)
+        self.assertIn("run `project review move 1` again", err)
+        self.assertEqual((self.head, 1), (self.read_state()["sha"], self.read_state()["heads"]))
+        self.assertTrue(self.lock(self.head).exists())
+        self.assertFalse(self.lock(new).exists())
+
+        code, _, err = self.later("move")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual((new, 2), (self.read_state()["sha"], self.read_state()["heads"]))
+        self.assertIn(f"sha={new}", self.github.comments[101])
+
 
 class GateTests(ReviewCase):
     GATE = ('printf "%s %s %s %s" "$1" "$2" "$PROJECTOR_WORKTREE" "$PROJECTOR_BASE" > "$1/gate.args"; '
@@ -1087,10 +1111,45 @@ class ModelTests(PublishCase):
 
         self.assertEqual(1, code)
         self.assertIn(f"start comment {foreign}", err)
-        self.assertIn("delete the comment", err)
+        self.assertIn(f"run `project review setup 1 --model claude-opus-5-5 --replace {foreign}`", err)
         self.assertFalse(self.lock(self.head).exists(), "a refused setup releases its lock")
         self.assertEqual([foreign], list(self.github.comments), "nothing was posted")
         self.assertEqual(0, self.as_model("gpt-5.5")[0], "another model is a second opinion")
+
+    def test_replace_deletes_a_stopped_sessions_start_comment_and_sets_up_in_its_place(self) -> None:
+        stopped = self.github.comment(review.start_comment("claude-opus-5-5[1m]", self.head))
+
+        code, out, err = self.setup_review("--loop", "l1", "--replace", str(stopped))
+
+        self.assertEqual(0, code, err)
+        posted = self.read_state()["start_comment"]["id"]
+        self.assertEqual([posted], list(self.github.comments), "the new start comment replaces the stopped one")
+        self.assertIn((["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/{stopped}"], "token-operator"),
+                      self.github.calls)
+        self.assertIn(f"deleted start comment {stopped}", out)
+
+    def test_replace_refuses_any_comment_but_this_models_start_comment_and_deletes_nothing(self) -> None:
+        cases = {
+            "another model's start comment": (self.github.comment(review.start_comment("gpt-5.5", self.head)),
+                                              "is model gpt-5.5's"),
+            "another account's start comment": (
+                self.github.comment(review.start_comment("claude-opus-5-5", self.head), login="someone"),
+                "is not a start comment operator posted"),
+            "a comment that is no start comment": (self.github.comment("Looks good to me."),
+                                                   "is not a start comment operator posted"),
+            "a comment that does not exist": (999, "is not a start comment operator posted"),
+        }
+        comments = dict(self.github.comments)
+        for name, (comment, why) in cases.items():
+            with self.subTest(name):
+                code, _, err = self.setup_review("--replace", str(comment))
+
+                self.assertEqual(1, code)
+                self.assertIn(f"comment {comment} {why}", err)
+                self.assertFalse(self.lock(self.head).exists(), "a refused setup releases its lock")
+        self.assertEqual(comments, self.github.comments)
+        self.assertEqual([], self.github.posts())
+        self.assertFalse(any(args[:3] == ["api", "-X", "DELETE"] for args, _ in self.github.calls))
 
     def test_the_same_model_at_another_context_window_is_the_same_reviewer_at_setup(self) -> None:
         self.github.comment(review.start_comment("claude-opus-5-5[1m]", self.head))
@@ -1172,6 +1231,7 @@ class ModelTests(PublishCase):
 
         self.assertEqual(1, code)
         self.assertIn("is model a/b's", err)
+        self.assertIn(f"`project review finish 1 --repo {REPO} --model a/b`", err)
         self.assertEqual("a/b", self.read_state("a/b")["model"])
 
     def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> None:
@@ -1179,7 +1239,7 @@ class ModelTests(PublishCase):
         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
                              r"runs on a pull request: (.*?)\. ", skill, re.S)
         commands = re.findall(r"`(\w+)`", sentence.group(1))
-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release"], commands)
+        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release", "finish"], commands)
         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
@@ -1189,7 +1249,8 @@ class ModelTests(PublishCase):
             extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
             ran[command] = self.later(command, *flags, *extra)[0]
 
-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
+        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0,
+                          "finish": 0},
                          ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
 
     def test_move_keeps_the_model_in_the_start_comment(self) -> None:
@@ -1199,6 +1260,215 @@ class ModelTests(PublishCase):
         self.assertEqual(0, self.later("move")[0])
 
         self.assertIn(f" sha={self.github.pr['head']['sha']} model=claude-opus-5-5 -->", self.github.comments[101])
+
+
+class FinishTests(PublishCase):
+    """`finish` ends one model's review on this machine, so nothing it made is removed by hand."""
+
+    def finish(self, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
+        return self.later("finish", *extra, cwd=cwd)
+
+    def registered(self) -> set[Path]:
+        """The worktrees Git lists for the checkout."""
+        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
+        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
+
+    def deletions(self) -> list[tuple[list[str], str | None]]:
+        return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "DELETE"]]
+
+    def test_removes_every_worktree_the_reviews_made_and_the_state_and_keeps_the_loop_record(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.pr["head"]["sha"] = self.push_head("third head")
+        self.assertEqual(0, self.later("move")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        made = [Path(path) for path in self.read_state()["worktrees"]]
+        record = (self.state / "loops" / "l1" / "published.json").read_text()
+
+        code, out, err = self.finish("--repo", REPO, "--loop", "l1", cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(3, len(made), "a later setup keeps the worktrees the earlier heads made")
+        for path in made:
+            self.assertFalse(path.exists())
+            self.assertNotIn(path.resolve(), self.registered())
+            self.assertIn(f"removed worktree {path}", out)
+        self.assertFalse(self.folder().exists(), "the state and the review's folder are gone")
+        self.assertFalse((self.state / "worktrees" / REPO / "1" / review.model_key(self.model)).exists())
+        self.assertEqual(record, (self.state / "loops" / "l1" / "published.json").read_text())
+        self.assertIn("the loop's record of published reviews stays", out)
+
+    def test_deletes_its_models_start_comments_that_no_longer_mean_a_review_in_progress(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        other = "c" * 40
+        before_verdict = self.github.comment(review.start_comment(self.model, self.head),
+                                             created_at="2026-09-27T01:00:00Z")
+        day_old = self.github.comment(review.start_comment(self.model, other), created_at="2026-09-25T01:00:00Z")
+        running = self.github.comment(review.start_comment(self.model, other))
+        second_opinion = self.github.comment(review.start_comment("gpt-5.5", self.head),
+                                             created_at="2026-09-25T01:00:00Z")
+        another_account = self.github.comment(review.start_comment(self.model, self.head), login="someone",
+                                              created_at="2026-09-25T01:00:00Z")
+        published = len(self.deletions())
+
+        code, out, err = self.finish()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({running, second_opinion, another_account}, set(self.github.comments))
+        self.assertEqual([(["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/{comment}"], "token-operator")
+                          for comment in (before_verdict, day_old)], self.deletions()[published:])
+        self.assertIn(f"deleted start comment {before_verdict}\ndeleted start comment {day_old}\n", out)
+
+    def test_refuses_an_unpublished_review_without_force_and_discards_it_with_force(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        state = self.read_state()
+        worktree = Path(state["worktree"])
+
+        code, _, err = self.finish()
+
+        self.assertEqual(1, code)
+        self.assertIn(f"review of {REPO}#1 at {self.head[:7]} is unpublished", err)
+        self.assertIn(f"`project review finish 1 --repo {REPO} --force`", err)
+        self.assertEqual(state, self.read_state())
+        self.assertTrue(worktree.is_dir())
+        self.assertTrue(self.lock(self.head).exists())
+        self.assertEqual([101], list(self.github.comments))
+        self.assertEqual([], self.deletions())
+
+        code, _, err = self.finish("--force")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({}, self.github.comments)
+        self.assertEqual([(["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/101"], "token-operator")],
+                         self.deletions())
+        self.assertFalse(worktree.exists())
+        self.assertFalse(self.folder().exists(), "the lock and the state are gone")
+
+    def test_a_second_run_finds_nothing_to_clean_and_succeeds(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        self.assertEqual(0, self.finish()[0])
+        calls = len(self.github.calls)
+
+        code, out, err = self.finish()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(f"no review of {REPO}#1 is set up here; there is nothing to finish\n", out)
+        code, out, err = self.finish("--repo", REPO, "--model", self.model, "--json", cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"repo": REPO, "number": 1, "model": self.model, "comments": [], "worktrees": [],
+                          "released": [], "state": False}, json.loads(out))
+        self.assertEqual(calls, len(self.github.calls), "with nothing set up, finish asks GitHub nothing")
+
+    def test_outside_a_checkout_it_needs_repo(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        state = self.read_state()
+
+        code, _, err = self.finish(cwd=Path(tempfile.mkdtemp()))
+
+        self.assertEqual(1, code)
+        self.assertIn("so there is no repository to finish a review in; pass --repo owner/name", err)
+        self.assertEqual(state, self.read_state())
+        self.assertTrue(Path(state["worktree"]).is_dir())
+
+    def test_a_run_in_another_repositorys_checkout_leaves_its_review_alone_and_refuses(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        state = self.read_state()
+        elsewhere = Path(tempfile.mkdtemp())
+        git(elsewhere, "init", "--quiet")
+        git(elsewhere, "remote", "add", "origin", "https://github.com/other/app.git")
+
+        for extra in (("--force", "--model", self.model), ("--model", self.model), ()):
+            with self.subTest(extra=extra):
+                code, _, err = self.finish(*extra, cwd=elsewhere)
+
+                self.assertEqual(1, code)
+                self.assertIn(f"no review of other/app#1, this checkout's origin, is set up here, and a review of #1 "
+                              f"in {REPO} is; pass --repo", err)
+        code, out, err = self.finish("--repo", "other/app", "--force", cwd=elsewhere)
+
+        self.assertEqual(0, code, err)
+        self.assertIn("no review of other/app#1 is set up here", out)
+        self.assertEqual(state, self.read_state())
+        self.assertTrue(Path(state["worktree"]).is_dir())
+        self.assertTrue(self.lock(self.head).exists())
+        self.assertEqual([101], list(self.github.comments))
+        self.assertEqual([], self.deletions())
+
+    def test_a_state_that_names_another_repository_is_left_alone(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        state = dict(self.read_state(), repo="other/app")
+        (self.folder() / "state.json").write_text(json.dumps(state))
+
+        code, _, err = self.finish("--force")
+
+        self.assertEqual(1, code)
+        self.assertIn(f"names other/app, not {REPO}, so finish leaves it alone", err)
+        self.assertEqual(state, self.read_state())
+        self.assertTrue(Path(state["worktree"]).is_dir())
+
+    def test_a_publish_that_stopped_after_posting_is_named_as_unfinished(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.fail = "pr ready"
+        self.assertEqual(1, self.publish("clean")[0])
+        self.github.fail = None
+
+        code, _, err = self.finish()
+
+        self.assertEqual(1, code)
+        self.assertIn(f"publish of its review of {REPO}#1 at {self.head[:7]} did not finish: review 901 is posted, "
+                      "and start comment 101 still stands; run the same `project review publish 1` command again",
+                      err)
+        self.assertEqual(0, self.publish("clean")[0], "the publish finishes as the refusal says")
+        self.assertEqual(0, self.finish()[0])
+
+    def test_removes_a_worktree_whose_checkout_is_gone(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        state = self.read_state()
+        state["checkout"] = str(Path(tempfile.mkdtemp()) / "gone")
+        (self.folder() / "state.json").write_text(json.dumps(state))
+
+        code, _, err = self.finish()
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(Path(state["worktree"]).exists())
+        self.assertFalse(self.folder().exists())
+
+    def test_leaves_another_models_review_alone(self) -> None:
+        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+        gpt = self.read_state("gpt-5.5")
+        self.assertEqual(0, self.publish("clean", "--model", "claude-opus-5-5", loop="claude")[0])
+
+        code, _, err = self.finish("--model", "claude-opus-5-5", "--loop", "claude")
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(self.folder("claude-opus-5-5").exists())
+        self.assertEqual(gpt, self.read_state("gpt-5.5"))
+        self.assertTrue(Path(gpt["worktree"]).is_dir())
+        self.assertTrue(self.lock(self.head, "gpt-5.5").exists())
+        self.assertIn(gpt["start_comment"]["id"], self.github.comments)
+
+    def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
+        # Removing a worktree by hand leaves the state naming it, and a raw comment deletion is what Claude
+        # Code's auto mode refuses, where one narrow rule allows the command.
+        skills = Path(cli.__file__).resolve().parents[2] / "skills"
+        review_pr = (skills / "review-pr" / "SKILL.md").read_text()
+        review_loop = (skills / "start-review-loop" / "SKILL.md").read_text()
+
+        self.assertIn("`project review finish <number>`", review_pr)
+        self.assertIn("`--replace <comment-id>`", review_pr)
+        self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", review_loop)
+        for text in (review_pr, review_loop):
+            self.assertNotIn("issues/comments", text)
+            self.assertNotIn("git worktree", text)
 
 
 def iso(at: datetime) -> str:
@@ -1979,7 +2249,8 @@ class HoldTests(ReviewCase):
 
     def test_repo_wins_over_the_checkout_it_runs_in(self) -> None:
         elsewhere = self.checkout_of("other/app")
-        self.assertEqual("other/app", review.hold_repo(None, elsewhere), "the checkout alone names another repository")
+        self.assertEqual("other/app", review.named_repo(None, elsewhere, "to hold a pull request in"),
+                         "the checkout alone names another repository")
 
         code, _, err = self.hold("--repo", REPO, "--add", self.CHANGE, cwd=elsewhere)
 
@@ -2756,7 +3027,7 @@ class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release", "publish", "gate", "interdiff"):
+        for command in ("setup", "move", "census", "release", "finish", "publish", "gate", "interdiff"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
