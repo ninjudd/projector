@@ -311,13 +311,16 @@ With a question's drawer open:
    the prompt at the cursor, and changes nothing in the store, so you can
    send it as it stands, change it, or answer several questions in one
    prompt. **discuss** puts the quoted question and a space there. When a
-   prompt is sent, the band's `prompt.submit` hook finds each open question
-   of the session whose quote ends its line, and takes the next line that
-   is not blank as its answer: the option with that text, or else a typed
-   answer under the last letter. A quote with more on its line, as discuss
-   leaves it, answers nothing. When a subagent asked, the hook adds a note
-   to the prompt's `context` naming it, so the main loop passes the answer
-   on, as the loop skills already do. Once the prompt has entered, the band
+   prompt is sent, the band's `prompt.submit` hook gives each quote that
+   ends its line to one open question of the session with that text: the
+   one whose drawer put it in the prompt, or else the oldest, so two
+   questions that share their text never take one answer. It takes the
+   next line that is not blank as that question's answer: the option with
+   that text, or else a typed answer under the last letter. A quote with
+   more on its line, as discuss leaves it, answers nothing. When a
+   subagent asked, the hook adds a note to the prompt's `context` naming
+   it, so the main loop passes the answer on, as the loop skills already
+   do. Once the prompt has entered, the band
    runs `project question answer`, `claim`, and `delivered`, because the
    prompt itself carried the answer to the main loop. **dismiss** runs
    `project question dismiss`, and a second press finds the question

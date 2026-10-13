@@ -71,6 +71,11 @@ let isChecking = false
 const delivering = new Set<string>()
 /** The questions an answer from the band is being recorded for, so a second press does nothing. */
 const answering = new Set<string>()
+/**
+ * The questions whose drawers put an answer in the prompt, in that order, so
+ * a sent quote answers the question you chose when another shares its text.
+ */
+const proposed: string[] = []
 
 /** The few variables a tracked path is written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
@@ -613,7 +618,15 @@ export const register: Register = on => {
     // the main loop, with a note naming the subagent that asked when one did,
     // and the band records it once the prompt has entered.
     const session = await $.session.id()
-    const given = answersIn(e.text, (await read($, questions)).filter(question => question.session === session))
+    const given = answersIn(
+      e.text,
+      (await read($, questions)).filter(question => question.session === session),
+      proposed,
+    )
+    for (const one of given) {
+      const at = proposed.indexOf(one.question.ref)
+      if (at !== -1) proposed.splice(at, 1)
+    }
     const asked = given.filter(one => one.question.agentId !== undefined)
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = asked.map(one => relayNote(one.question, agents))
@@ -750,6 +763,12 @@ export const register: Register = on => {
       const fill = (text: string) => {
         $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
       }
+      const propose = (answer: string) => {
+        const at = proposed.indexOf(ref)
+        if (at !== -1) proposed.splice(at, 1)
+        proposed.push(ref)
+        fill(`${proposalOf(question, answer)}\n`)
+      }
       const option = (letter: string, content: JSX.Element) => {
         const number = `${letter.charCodeAt(0) - 'a'.charCodeAt(0) + 1}.`
         return (
@@ -757,7 +776,7 @@ export const register: Register = on => {
             <Box flexShrink={0}>
               {isOpen ? (
                 link(`answer:${ref}.${letter}`, number, href, () =>
-                  fill(`${proposalOf(question, question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? '')}\n`),
+                  propose(question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''),
                 )
               ) : (
                 <Text color={letter === chosen ? 'success' : undefined} dimColor={letter !== chosen}>
@@ -836,7 +855,7 @@ export const register: Register = on => {
                       placeholder="Type something"
                       submitLabel="answer"
                       onSubmit={(value: string) => {
-                        if (value.trim() !== '') fill(`${proposalOf(question, value.trim())}\n`)
+                        if (value.trim() !== '') propose(value.trim())
                       }}
                     />,
                   )}

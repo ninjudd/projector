@@ -42,17 +42,30 @@ export const proposalOf = (question: Question, answer: string) => `${quoteOf(que
 export type Given = { question: Question; letter: string; text?: string }
 
 /**
- * The answers a sent prompt gives, as the band wrote them: for each open
- * question whose quoted text ends its line, the choice whose text is the next
- * line that is not blank, or else that line as a typed answer. A quoted
- * question with more on its line, as discuss leaves it, answers nothing.
+ * The answers a sent prompt gives, as the band wrote them. Each quoted
+ * question that ends its line answers one open question with that text: the
+ * choice whose text is the next line that is not blank, or else that line as
+ * a typed answer. A quote goes first to a question whose drawer filled the
+ * prompt, `proposed` naming them in the order they filled it, and otherwise
+ * to the oldest open question with that text, so two questions that share
+ * their text never take one answer. A quoted question with more on its line,
+ * as discuss leaves it, answers nothing.
  */
-export function answersIn(text: string, questions: readonly Question[]): Given[] {
-  return questions.flatMap(question => {
-    if (question.answer !== undefined) return []
+export function answersIn(text: string, questions: readonly Question[], proposed: readonly string[] = []): Given[] {
+  const rank = (question: Question) => {
+    const at = proposed.indexOf(question.ref)
+    return at === -1 ? proposed.length : at
+  }
+  const open = questions
+    .filter(question => question.answer === undefined)
+    .sort((one, other) => rank(one) - rank(other) || one.askedAt - other.askedAt)
+  const quoted = new Set<number>()
+  return open.flatMap(question => {
     const lead = `${quoteOf(question)}\n`
-    const at = text.indexOf(lead)
+    let at = text.indexOf(lead)
+    while (at !== -1 && quoted.has(at)) at = text.indexOf(lead, at + 1)
     if (at === -1) return []
+    quoted.add(at)
     const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
     if (said === '') return []
     const index = question.choices.indexOf(said)

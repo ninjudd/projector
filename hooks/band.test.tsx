@@ -618,6 +618,24 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.unmount()
 })
 
+test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const newer = held({ ref: '#8.1', pr: 'x/y#8', askedAt: NOW - 60_000 })
+  const session = questionWorld(on, clock, [held(), newer])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#8.1' })
+  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('#8.1')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
+  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a typed answer fills the prompt, discuss quotes the question, and dismiss resolves it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

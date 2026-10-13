@@ -285,7 +285,9 @@ Add a budget of two retries per host, and keep the total cap
 
 Sending that prompt answers the question. The band finds each quoted question
 whose quote ends its line, and takes the next line that is not blank as its
-answer: the option with that text, or else an answer you typed. Your prompt
+answer: the option with that text, or else an answer you typed. Each quote
+answers one question: when two open questions ask the same thing, it answers
+the one whose drawer put it in your prompt, or else the older one. Your prompt
 is what carries the answer to the main loop, and when a subagent asked, the
 main loop also reads a note naming it, so it can pass the answer on.
 **discuss** puts only the quoted question in the prompt, followed by a space,
