@@ -176,6 +176,23 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
+test('draws no divider on a surface that does not lay text out in columns', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts.filter(text => text.includes('─'))).toEqual([])
+  expect(texts[0]).not.toBe(' ')
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -321,7 +338,14 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await ui.unmount()
+
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts[0]).toMatch(/No open pull requests/)
+  expect(texts.filter(text => text.includes('─'))).toEqual([])
+  await desktop.unmount()
 })
 
 const SESSION = 's1'

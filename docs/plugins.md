@@ -197,7 +197,10 @@ watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
 `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
 terminal. The divider says how long ago the band reloaded, and Claude Code's
 `[-]` at its end collapses the band. A blank line sets the divider apart from
-the rows under it.
+the rows under it. Only a terminal draws the divider and that blank line.
+Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+terminal's columns, so a rule sized to them would wrap, and there the band
+starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says
@@ -243,8 +246,8 @@ The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
 want an answer and which want a read. Each line ends with the pull request
 the item is about, as the band labels it, and how long ago it was posted.
-The band appears when an item arrives, even after you hid it, and the
-divider counts the open questions and the open notices.
+The band appears when an item arrives, even after you hid it, and in a
+terminal the divider counts the open questions and the open notices.
 
 ```text
 ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
