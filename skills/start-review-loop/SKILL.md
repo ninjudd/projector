@@ -72,9 +72,10 @@ back empty, indistinguishable from a repository with nothing open.
    operator's and the requested ones, out of the repository total.
 5. Find the current heads this loop has reviewed. For each tracked pull
    request, run `project review status <number> --json`. Its `models` list
-   holds each model's newest verdict on the current head, and the head is
-   reviewed when an entry's `login` is the reviewer's, in any letter case,
-   and its `model` is the model ID the host reports for this session,
+   holds each account's newest verdict by each model on the current head,
+   so a teammate's later verdict never hides the reviewer's own. The head
+   is reviewed when an entry's `login` is the reviewer's, in any letter
+   case, and its `model` is the model ID the host reports for this session,
    lowercased and without a trailing bracketed variant such as `[1m]`.
    Another model's verdict is that model's review, and a verdict by the
    same model from a teammate's account is a review by the teammate, not

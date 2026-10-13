@@ -26,6 +26,7 @@ import os
 import re
 import socket
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1386,10 +1387,13 @@ def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -
 
 
 def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
-    """Each model's newest Projector verdict on `head` among `reviews`, newest first, so the first is the
-    head's newest verdict, whichever model gave it. Each has the `model`, by identity, its `verdict`,
-    and the `review` id, `url`, `at`, and `login` of the review that gave it."""
-    newest: dict[str, dict] = {}
+    """Each account's newest Projector verdict by each model on `head` among `reviews`, newest first, so the
+    first is the head's newest verdict, whichever account and model gave it. Each has the `model`, by
+    identity, its `verdict`, and the `review` id, `url`, `at`, and `login` of the review that gave it.
+
+    One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
+    loop runs the same model must not hide the verdict a review loop looks for as its own."""
+    newest: dict[tuple[str, str], dict] = {}
 
     def order(entry: dict) -> tuple[datetime, int]:
         return parse_time(entry["at"]), entry["review"] or 0
@@ -1400,9 +1404,10 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
             continue
         entry = {"model": identity(marker.model), "verdict": marker.verdict, "review": found.get("id"),
                  "url": found.get("url"), "at": found["at"], "login": found.get("login")}
-        known = newest.get(entry["model"])
+        key = (entry["model"], (entry["login"] or "").lower())
+        known = newest.get(key)
         if known is None or order(entry) >= order(known):
-            newest[entry["model"]] = entry
+            newest[key] = entry
     return sorted(newest.values(), key=order, reverse=True)
 
 
@@ -1417,8 +1422,8 @@ def thread_model(thread: dict) -> Optional[str]:
 
 def status(repo: str, number: int, reviewer: str) -> dict:
     """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
-    state by, with each model's newest verdict on it, every open Projector finding thread, and every
-    open hold comment."""
+    state by, with each account's newest verdict by each model on it, every open Projector finding thread,
+    and every open hold comment."""
     try:
         pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
@@ -1435,17 +1440,21 @@ def status(repo: str, number: int, reviewer: str) -> dict:
 
 
 def status_lines(result: dict) -> list[str]:
-    """`review status` without --json: whether the head is held, the newest verdict on it, each model's
-    when several gave one, the open threads, and the hold comments."""
+    """`review status` without --json: whether the head is held, the newest verdict on it, each account's
+    and model's when several gave one, naming the account where two share a model, the open threads, and
+    the hold comments."""
     newest = result["newest"]
     held = "held; " if result["held"] else ""
     lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}"
              + (f" from {newest['model']}, {newest['url'] or 'review ' + str(newest['review'])}" if newest else "")]
-    if len(result["models"]) > 1:
-        width = max(len(row["model"]) for row in result["models"]) + 3
-        for row in result["models"]:
+    rows = result["models"]
+    if len(rows) > 1:
+        shared = Counter(row["model"] for row in rows)
+        names = [row["model"] + (f" ({row['login']})" if shared[row["model"]] > 1 else "") for row in rows]
+        width = max(len(name) for name in names) + 3
+        for row, name in zip(rows, names):
             at = parse_time(row["at"]).strftime("%H:%M UTC")
-            lines.append(f"  {row['model']:<{width}}{row['verdict']:<20}review {row['review']}, {at}")
+            lines.append(f"  {name:<{width}}{row['verdict']:<20}review {row['review']}, {at}")
     threads = result["open_threads"]
     if threads:
         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
