@@ -78,6 +78,13 @@ const QUESTION_COLOR = 'permission'
  */
 const BRANCH_COLOR = 'ansi256(6)'
 
+/**
+ * The color of what a loop does with a pull request, on its drawer's facts
+ * line: watching in the terminal palette's blue, slot 4, in the same form as
+ * `BRANCH_COLOR`, and reviewing in the theme's `claude` orange.
+ */
+const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -1278,19 +1285,24 @@ export const register: Register = on => {
           {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
-              {/* The facts line: what the loops do with the pull request in
-                  `inactive`, its branch in cyan, and its size as a diff stat,
-                  insertions in `success`, deletions in `error`, and the files
-                  in `subtle`, then its checks in theirs. Each `·` between them
-                  keeps the default color. */}
+              {/* The facts line: what each loop does with the pull request in
+                  its own color, its branch in cyan, and its size as a diff
+                  stat, insertions in `success` and deletions in `error`, then
+                  its checks in theirs. The ` and ` between two loops, each
+                  `·`, and the files keep the default color. */}
               <Text wrap="truncate-end">
-                <Text color="inactive">{kinds.join(' and ')}</Text>
+                {kinds.flatMap((kind, at) => [
+                  ...(at === 0 ? [] : [' and ']),
+                  <Text key={`loop:${kind}`} color={LOOP_COLORS[kind]}>
+                    {kind}
+                  </Text>,
+                ])}
                 {pr.branch !== '' && ' · '}
                 {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
                 {' · '}
                 <Text color="success">{`+${pr.additions}`}</Text>{' '}
                 <Text color="error">{`−${pr.deletions}`}</Text>
-                <Text color="subtle">{` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}</Text>
+                {` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>

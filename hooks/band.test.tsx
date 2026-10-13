@@ -224,21 +224,21 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  // What the loops do takes `inactive`, the branch the palette's cyan, and the size reads as a diff stat: insertions
-  // green, deletions red, the files `subtle`. The checks take theirs, and each `·` keeps the default color.
+  // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+  // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
   const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
   expect(
     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
   ).toEqual([
-    ['watching', 'inactive'],
+    ['watching', 'ansi256(4)'],
     ' · ',
     ['fix-branch', 'ansi256(6)'],
     ' · ',
     ['+12', 'success'],
     ' ',
     ['−3', 'error'],
-    [' in 2 files', 'subtle'],
+    ' in 2 files',
     ' · ',
     ['checks passing', 'success'],
   ])
@@ -439,6 +439,16 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
   await ui.unmount()
 })
 
+/** What the loops do with a pull request, as its open drawer's facts line starts: each word with its color, and the `and` between. */
+async function loopsOf(ui: Pick<Mounted, 'find'>, key: string) {
+  const drawer = await ui.find({ key: `drawer:${key}` })
+  const facts = ((drawer?.children ?? []) as { children?: unknown[] }[])[0]
+  type Piece = string | { props: { color?: string }; children: string[] }
+  const pieces = (facts?.children ?? []) as Piece[]
+  const loops = pieces.slice(0, pieces.findIndex(piece => piece === ' · '))
+  return loops.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color]))
+}
+
 test('opening one drawer closes the one that was open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -451,9 +461,12 @@ test('opening one drawer closes the one that was open', async ($, on) => {
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:x/y#7' })
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  // Reviewing takes the theme's `claude` orange, as watching takes the palette's blue.
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
   await ui.unmount()
 })
 
@@ -470,6 +483,8 @@ test('lists a pull request both loops track once, as watched and reviewed', asyn
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+  // Each loop takes its own color, and the `and` between them the default color.
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
   await ui.unmount()
 })
 

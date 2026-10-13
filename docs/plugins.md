@@ -231,14 +231,14 @@ GitHub's error only when it has none of them to show.
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
-loops are watching or reviewing the pull request, in the theme's
-`inactive` color, then its branch, in the terminal palette's cyan, its
-size, and its checks.
-The size reads as a diff stat: the insertions, such as `+84`, in green, the
-deletions, such as `−12`, in red, and ` in 5 files` in `subtle`. The
-checks' state takes a color of its own, and each `·` keeps the default
-text color. Below that come two actions, a line each, on the letters `d`
-and `x`, as [Use the band from the keyboard](#use-the-band-from-the-keyboard)
+loops are watching the pull request, in the terminal palette's blue, or
+reviewing it, in Claude's orange, then its branch, in the palette's cyan,
+its size, and its checks. The size reads as a diff stat: the insertions,
+such as `+84`, in green and the deletions, such as `−12`, in red. The
+checks' state takes a color of its own, and the rest, ` in 5 files` and
+each `·` included, keeps the default text color. Below that come two
+actions, a line each, on the letters `d` and `x`, as
+[Use the band from the keyboard](#use-the-band-from-the-keyboard)
 describes, and then two links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
