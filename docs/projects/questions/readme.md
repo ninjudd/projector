@@ -53,12 +53,14 @@ working: `#337.3` for the third question on #337, `q2` for the session's
 second question about no pull request. Its answers are lettered: `a` is
 always the recommendation, then the other choices in the agent's order, and
 the last letter is a typed answer. You answer with `project question answer
-#337.3.a`, or by clicking in Claude Code's band. Either way the store
-records it, and one deliverer claims it and sends it to the agent that
-asked: in Claude Code the band, which delivers every answer in its session,
-and anywhere else `project question watch`, which any host's watcher can
-run. A reference you type in a prompt reaches the agent with its question
-and choice attached.
+#337.3.a`, or in Claude Code by sending a prompt that a question's drawer in
+the band fills with the question and your answer. The store records the
+answer, and one deliverer claims it and sends it to the agent that asked: in
+Claude Code the band, which delivers every answer in its session, and
+anywhere else `project question watch`, which any host's watcher can run. An
+answer you send in a prompt needs no deliverer, because the prompt carries it
+to the main loop. A reference you type in a prompt reaches the agent with its
+question and choice attached.
 
 The work is in two parts. § 2.1 to § 2.4 build the CLI that every host
 uses. § 2.5 to § 2.7 build Claude Code's view over it in Projector's band.
@@ -220,7 +222,10 @@ passing `--session` from `$.session.id()` and `--agent` from the call's
 reason }`, which the model reads as an error result. When the command exits
 `65`, the reason is the check that failed. On any other exit, such as `2`
 from a `project` too old to know `question`, the reason is the command's
-error and `run project upgrade`. It also shows the band and raises one
+error and `run project upgrade`. When `project` cannot start, or is still
+running when `$.process.run` gives up after 15 seconds, the reason says it
+did not finish and tells the agent to ask in the conversation instead. When
+the command succeeds, the hook also shows the band and raises one
 `$.ui.notify`. An agent can run `project question ask` itself from the shell
 too, which reaches the same store.
 
@@ -228,62 +233,105 @@ too, which reaches the same store.
 
 ```text
 ──────────────────────────────────────── 2 questions · updated 12s ago [-]
-q1 Run project init to add the publish rule?                         2m
 #337 draft Retry failed webhook deliveries with backoff
-#337.3 Decline the finding about the retry budget?                   5m
-       The review asks for a retry budget per host. The loop caps retries
-       at three in total, which covers the case the finding names.
-       a. Decline it: the total cap already bounds retries to one host
-          (recommended)
-       b. Add a budget of two retries per host, and keep the total cap
-       c. [ Type something                                            ]
-       [ dismiss ]
-#337.2.a Rebase onto main before the fix?                            40s
 #258 ready Name the reviewed head in a review's signature line
+
+- Run project init to add the publish rule?                             2m
+- Decline the finding about the retry budget?                     #337  5m
 ```
 
-- **Where a question sits.** Each question goes on the line after the pull
-  request its `pr` names, in number order, starting at the same left edge
-  as the pull request lines. A question with no `pr`, or about a pull
-  request the band does not list, goes above the pull requests and names
-  its `pr`, when it has one. The divider counts the open questions.
-- **An open question's line.** Its reference is a `Button` with `plain`,
-  underlined in the `suggestion` color so it reads as a link, then the
-  question, truncated only on a narrow terminal, then its age, dim. A
-  `Button` takes a click in fullscreen and Enter once the band has the
-  keyboard on the main screen, where the pull requests' `Markdown` links
-  take no press. Clicking the reference opens the question's drawer, and
-  opening any drawer closes any other, through the band's `bandDrawer`.
-- **The drawer.** `detail` as `Markdown`, then the choices, one line each.
-  Each letter, such as `a.`, is a `Button` styled like the reference, in a
-  column of its own, and the choice's text sits beside it in a `Text` that
-  wraps under itself. `a` ends `(recommended)` in the `success` color. The
-  last letter holds an `Input` keyed `answer` with the placeholder `Type
-  something`. A **dismiss** button follows on a line of its own. The
-  letters have no hotkeys: Claude Code presses a band `Button` whose hotkey
-  is a digit when that digit is typed first in an empty prompt, so a hotkey
-  would let `2 things first:` answer the question.
-- **An answered question's line.** Plain dim text that takes no press: the
-  chosen answer's reference, such as `#337.2.a`, the question, and its age;
-  for a dismissed question, its own reference and the question struck
-  through. Until the answer is delivered, `sending` follows the reference.
-  The line leaves the band one minute after `deliveredAt`.
+With a question's drawer open:
+
+```text
+──────────────────────────────────────── 2 questions · updated 12s ago [-]
+- Decline the finding about the retry budget?                     #337  5m
+
+  The review asks for a retry budget per host. The loop caps retries at
+  three in total, which covers the case the finding names.
+
+  1. Decline it: the total cap already bounds retries to one host
+     (recommended)
+  2. Add a budget of two retries per host, and keep the total cap
+  3. [ Type something                                                    ]
+
+  [ discuss ] [ dismiss ]
+```
+
+- **Where a question sits.** The questions are a bulleted list below the
+  pull requests, after a blank line, oldest first. A question shows no
+  reference. Each line ends with the question's pull request, as the band
+  labels it when it lists it and in full otherwise, then its age, both in
+  the `subtle` color; the ages share one right-aligned column, so the pull
+  requests end in one column too. The divider counts the open questions.
+- **An open question's line.** The bullet and the question are one plain
+  `Button`, which draws as ordinary text and takes a press anywhere on it: a
+  click in fullscreen, and Enter once the band has the keyboard on the main
+  screen. Pressing it opens the question's drawer, and opening any drawer
+  closes any other, through the band's `bandDrawer`. While its drawer is
+  open the question draws inverted, as the pointer draws it, and it has the
+  band to itself: the other questions and the pull requests return when the
+  drawer closes or the question leaves the band.
+- **The drawer.** A blank line, `detail` as `Markdown` and another blank
+  line when there is detail, then the options, numbered from `1.`, one line
+  each. Each number is a `Markdown` link, drawn as a pull request's number
+  is, in a column of its own beside the option's text. A plain click on it
+  puts the question and that option in the prompt (§ 2.7); a ctrl, alt or
+  cmd click opens the question's pull request, or the question's own file
+  in the store when it has none, since `Markdown` draws only an `https:`,
+  `http:` or `file:` link as one. The first option, the recommendation,
+  ends `(recommended)` in the `success` color. The last number holds an
+  `Input` keyed by its answer's reference, such as `answer:#337.3.c`, with
+  the placeholder `Type something`, and Enter there fills the prompt the
+  same way; the mobile app draws no `Input`, so there the drawer leaves
+  that line out. After a blank line come **discuss** and **dismiss**, both
+  buttons. Nothing in the band has a hotkey: Claude Code presses a band
+  `Button` whose hotkey is a digit when that digit is typed first in an
+  empty prompt, so a hotkey would let `2 things first:` press it.
+- **An answered question's line.** The same line, dim, and struck through
+  for a dismissed question. Until the answer is delivered, `sending`
+  follows the question. Its drawer still opens, with the options dim and
+  the one given, or the text typed, marked `✓` in the `success` color, and
+  nothing to press but **discuss**. The line leaves the band one minute
+  after `deliveredAt`.
 
 ### 2.7 Claude Code: answers and references
 
 1. **The band reads the store when it changes, shown or hidden.** On its
-   5-second tick it stats the session's question directory, whether the
-   band is shown or not, and runs `project question list --all --json` only
-   when the directory changed, so an idle session starts no process. A
-   question it has not shown before shows the band, so one asked from the
-   shell appears as surely as one asked through the tool.
-2. **Answering records the answer.** When you click a letter, type an
-   answer, or press **dismiss**, the band runs `project question answer` or
-   `dismiss`, so the store holds the answer before anything is sent, and a
-   second press finds it answered and does nothing.
-3. **The band delivers every recorded answer.** Whenever the store holds an
-   answer in its session with no `deliveredAt`, whether you gave it in the
-   band or from a terminal, and the band is not already delivering it, the
+   5-second tick it lists the session's question directory with `$.fs.list`,
+   whether the band is shown or not, and runs `project question list --all
+   --json` only when a file's name, size, or time changed since the last
+   read that succeeded, so an idle session starts no process and a read
+   that fails runs again on the next tick. A file whose claim the band
+   itself is renewing counts by its name alone, so the band's own renewals
+   never make it read the store again. A question it has not shown before
+   shows the band, so one asked from the shell appears as surely as one
+   asked through the tool.
+2. **Your prompt answers the question.** An option or a typed answer puts
+   the question, in quotes, then a blank line, then the answer's text into
+   the prompt at the cursor, and changes nothing in the store, so you can
+   send it as it stands, change it, or answer several questions in one
+   prompt. **discuss** puts the quoted question and a space there. When you
+   send a prompt, at the terminal or through Remote Control (an `origin`
+   whose `kind` is `composer` or `bridge`), the band's `prompt.submit` hook
+   gives each quote that ends its line to one open question of the session
+   with that text. It takes the next line that is not blank as the answer:
+   the option with that text, or else a typed answer under the last letter.
+   When open questions share the text, the quote goes to the one whose
+   drawer last put that same answer in the prompt, or else to the oldest,
+   so two questions never take one answer and a proposal you cleared from
+   the prompt decides nothing. A quote with more on its line, as discuss
+   leaves it, answers nothing, and so does any prompt you did not send,
+   such as another session's message, a notification, or a scheduled
+   prompt, which can quote a question its agent is still waiting on. When a
+   subagent asked, the hook adds a note to the prompt's `context` naming
+   it, so the main loop passes the answer on, as the loop skills already
+   do. Once the prompt has entered, the band runs `project question
+   answer`, `claim`, and `delivered`, because the prompt itself carried the
+   answer to the main loop. **dismiss** runs `project question dismiss`,
+   and a second press finds the question dismissed and does nothing.
+3. **The band delivers every other recorded answer.** Whenever the store
+   holds an answer in its session with no `deliveredAt`, given from a
+   terminal or a dismissal, and the band is not already delivering it, the
    band runs `project question claim` and delivers the text it prints. It
    keeps the claim's token, and on each tick while the delivery is pending
    it renews the claim with `claim --renew`, so a submit waiting behind a
@@ -303,6 +351,16 @@ q1 Run project init to add the publish rule?                         2m
    token. When the submit resolves `{ drop }` or either call rejects, it
    runs `project question reopen` with the token and raises a toast with
    the reason, and the question is open to answer again.
+
+   The band keeps each delivery's token, route, and text in the session's
+   `bandSending` state rather than in the module, because a hot reload
+   drops what the module holds while a submit it made still waits in the
+   session's queue. The band's own `prompt.submit` hook sees that submit
+   arrive, finds its text in `bandSending`, and marks it delivered, so the
+   submit settles whichever copy of the module is loaded, and a reloaded
+   copy keeps renewing each submit it finds there. A send settles at once,
+   so one that an earlier copy left is let go: its claim lapses, and the
+   band delivers the answer again a minute later.
 4. **Typed references get their context.** The `prompt.submit` hook the band
    already has tests your prompt for anything shaped like a reference. When
    one is, it runs `project question context` on the prompt and adds what
@@ -317,10 +375,10 @@ q1 Run project init to add the publish rule?                         2m
 | `src/projector/cli.py` | The `question` command and its subcommands, `--session`, and `PROJECTOR_SESSION` |
 | `tests/test_questions.py` | New: each subcommand in a temporary state directory, each check, each reference form and non-form, a second answer, a reference in two sessions, two claims at once, an abandoned claim, retention, and `watch`'s lines |
 | `docs/cli.md` | A section on asking and answering questions, and `65`, `66`, and `67` for the question commands |
-| `hooks/questions.ts` | New: the quick test for reference-shaped text, the route an answer takes, and the band's order |
-| `hooks/register.tsx` | Register `ask`; answer its `tool.call` through the CLI; read the store on the tick, shown or hidden; record answers, then claim and deliver every recorded answer; attach typed references; draw the questions, their drawers, and the open count |
-| `hooks/types.d.ts` | The `Question` type, and the band's `bandQuestions` snapshot and sending marks under the `projector` plugin's state |
-| `hooks/questions.test.ts`, `hooks/band.test.tsx` | The route by the subagent's status, the band's placement and drawer, each delivery and failure, the resolved line for a minute, and a digit typed in the empty prompt answering nothing, answering `process.run` from memory |
+| `hooks/questions.ts` | New: the quick test for reference-shaped text, the prompt's quoted question and answer and reading answers back from a sent prompt, the note naming a subagent, the route an answer takes, the store's directory and its signature, and the `ask` tool's description, schema, and arguments |
+| `hooks/register.tsx` | Register `ask`; answer its `tool.call` through the CLI; read the store on the tick, shown or hidden; fill the prompt from a drawer, and record the answers a sent prompt gives; dismiss; claim and deliver every other recorded answer; attach typed references; draw the questions, their drawers, and the open count |
+| `hooks/types.d.ts` | The `Question` and `Sending` types, and the band's `bandQuestions` snapshot and `bandSending` deliveries under the `projector` plugin's state |
+| `hooks/questions.test.ts`, `hooks/band.test.tsx` | The route by the subagent's status, the list and the drawer, filling the prompt and answering from a sent one, each delivery and failure, the resolved line for a minute, and no hotkeys, answering `process.run` from memory |
 | `docs/plugins.md` | A section on questions in Projector's band |
 
 No skill changes in this project. A skill that asks through `project
@@ -349,14 +407,15 @@ settled.
   block, so `ask` prints the reference and returns.
 - **A recommendation with every question, always `a`.** You settle most
   questions by accepting the agent's answer, and an agent that must name
-  one has thought the decision through. Making it `a` gives the common
-  answer one letter everywhere.
+  one has thought the decision through. Making it `a`, the band's first
+  option, gives the common answer one place everywhere.
 - **References with one fixed form.** You can name a question or an answer
-  when you talk it over, and the same reference appears in the delivered
-  text and on the resolved line. A bare `2` would match "rerun the 2
-  failing tests", so a question without a pull request is `q2`, and a
-  reference fixed when the agent asks cannot change when a view's labels
-  do.
+  from a terminal or in a prompt, and the same reference appears in the
+  delivered text. A bare `2` would match "rerun the 2 failing tests", so a
+  question without a pull request is `q2`, and a reference fixed when the
+  agent asks cannot change when a view's labels do. The band shows none:
+  its list reads more easily as plain questions, and the quoted question
+  it puts in the prompt names one as surely, with words the agent reads.
 - **Record, then claim, then deliver.** An answer can come from a terminal
   or from a view, and the agent can be in any host, so every answer takes
   one path: the store records it, one deliverer claims it under the lock,
@@ -367,11 +426,21 @@ settled.
   strands nothing. Claude Code's band is that deliverer in Claude Code
   because it runs in every session there; `watch` is the deliverer anywhere
   else, in the shape Projector's loops already use to hear GitHub.
-- **One line, then the drawer; the question beside its pull request.** One
-  line each keeps the band short, and a question about a pull request reads
-  best right after it, where its reference already names it.
-- **Buttons styled as links.** A `Button` takes a click in fullscreen and
-  Enter on the main screen, where a `Markdown` link takes no press.
+- **The answer travels in your prompt.** An option fills the prompt rather
+  than answering at once, so you can read the answer in context, add to
+  it, or answer several questions together before anything reaches the
+  agent. The quoted question and the answer on its own line are what the
+  agent needs, and the same text tells the band which question you
+  answered, so sending the prompt both delivers the answer and records it,
+  with no second message to the agent.
+- **One line each, in a list of their own.** One line each keeps the band
+  short, and the questions read as one list below the pull requests:
+  placed among the pull request lines they were hard to pick out. An open
+  question takes the band to itself so its drawer reads without the rest.
+- **A Button for the question, links for the options.** A question's line
+  is a plain `Button`, so a press anywhere on it opens the drawer, on the
+  main screen too. The options are `Markdown` links like the pull request
+  numbers, so they read as links without an underline drawn by hand.
 
 ## 4. Acceptance criteria
 
@@ -389,17 +458,20 @@ settled.
 | `project question watch --session s1` with one undelivered answer | Claims it, prints its `ANSWER` line once, marks it delivered, and prints nothing more for it |
 | Two `answer` commands on one question at once | One records, the other exits `65`, and the file is whole |
 | `printf 'Go with #337.3.b.' \| project question context --session s1` | Prints #337.3 and its choice `b`; `rerun the 2 failing tests` prints nothing |
-| In Claude Code, a subagent calls `mcp__projector__ask` about #337 | The call returns `#337.3`; the band shows it on the line after #337 and counts it |
+| In Claude Code, a subagent calls `mcp__projector__ask` about #337 | The call returns `#337.3`; the band lists it below the pull requests, naming `#337`, and counts it |
 | The CLI exits `65` for the tool's call | The call returns `{ deny }` with the reason |
 | The installed `project` has no `question` command, so it exits `2` | The call returns `{ deny }` with the error and `run project upgrade` |
 | An agent runs `project question ask` from the shell while the band is hidden | The band appears with the question within one tick |
-| Click `a.` in the band | The store records `a`; the line reads `#337.3.a sending`; the subagent receives the `ANSWER` text through `$.session.send`; the store records it delivered; the line shows `#337.3.a` dim for a minute; a `watch` running for the session prints nothing for it |
-| Answer after the subagent has ended | The main loop receives the text through `$.prompt.submit`, naming the subagent |
+| Open a question's drawer | The question draws inverted and has the band to itself; closing the drawer brings back the other questions and the pull requests |
+| Click option `1.` in the drawer | The prompt holds the quoted question, a blank line, and the option's text; the store records nothing |
+| Send that prompt, for a question a subagent asked | The store records `a` and marks it delivered; the main loop reads the prompt with a note naming the subagent; nothing else is sent; the line stays dim for a minute; a `watch` running for the session prints nothing for it |
+| Click **discuss**, then send the quoted question with text after it on its line | The prompt reaches the agent, and the question stays open |
+| Answer from a terminal after the subagent has ended | The main loop receives the text through `$.prompt.submit`, naming the subagent |
 | `$.prompt.submit` resolves `{ drop }` | The band runs `reopen`, a toast gives the reason, and the question is open again |
 | Answer `#337.3.a` from a terminal while the asking Claude Code session runs, its band hidden | Within one tick, the band claims and delivers it to the agent, and the store records it delivered |
 | Type `go with #337.3.b` in the prompt | The prompt reaches the agent with #337.3 and choice `b` in its `context` |
 | With a question's drawer open, type `2 things first:` in the empty prompt | The question stays unanswered |
-| On the main screen, press ctrl+x tab and Enter on a question's reference | Its drawer opens, and typing reaches the `Type something` field |
+| On the main screen, press ctrl+x tab and Enter on a question | Its drawer opens, and typing reaches the `Type something` field; an option's number, a `Markdown` link, takes no press there |
 | No questions | The band and its divider look as they do today, and the tick starts no process |
 
 `tests/test_questions.py` covers the CLI rows. `hooks/questions.test.ts`
@@ -412,14 +484,17 @@ from memory. Check the main-screen row by hand under tmux.
 - **The CLI.** Each command reads one session's directory, a few small
   files, and writes one under a lock. `watch` reads the directory once an
   interval, 5 seconds by default.
-- **The band.** Its tick stats one directory, shown or hidden, and starts
-  `project question list` only when it changed, which is when a question
-  is asked or answered. Each answer then starts a process to record it, one
-  to claim it, and one to mark it delivered, and one more each 5 seconds to
-  renew the claim while a submit waits for the main loop.
-- **Typed references.** The `prompt.submit` hook already runs on every
-  prompt. It starts `project question context` only for a prompt with
-  reference-shaped text.
+- **The band.** Its tick lists one directory, shown or hidden, which starts
+  no process, and starts `project question list` only when it changed,
+  which is when a question is asked, answered, claimed, or delivered, and
+  once more each tick while that read fails. Each
+  answer then starts a process to record it, one to claim it, and one to
+  mark it delivered, and one more each 5 seconds to renew the claim while a
+  submit waits for the main loop; a renewal starts no `list`.
+- **Prompts.** The `prompt.submit` hook already runs on every prompt.
+  Finding the answers a prompt gives reads the band's own list of
+  questions, so a prompt that answers none starts no process. It starts
+  `project question context` only for a prompt with reference-shaped text.
 - **The tool's schema.** With `isDeferred: false`, the schema rides in
   every request: a name, a short paragraph, and five properties.
 
