@@ -37,6 +37,7 @@ project status <name> <status>
 project priority <name> <priority>
 project check
 project config get <key>
+project config set <key> <value>
 ```
 
 ## Keep the core portable

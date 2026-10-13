@@ -98,8 +98,15 @@ is the GitHub repository:
 
    A page the repository generates rather than commits, such as an HTML
    explorer or a WebAssembly module a playground loads, needs building before
-   the site. Name the command that builds it as `site.prepare` in
-   `.projector.toml`, where the deploy and `project site serve` both find it:
+   the site. Name the command that builds it as `site.prepare` in the
+   repository's `.projector.toml`, where the deploy and `project site serve`
+   both find it:
+
+   ```sh
+   project config set site.prepare "make docs-wasm"
+   ```
+
+   That writes this to the file, which you can also edit by hand:
 
    ```toml
    [site]

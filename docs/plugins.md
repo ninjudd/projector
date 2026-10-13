@@ -36,8 +36,9 @@ running as a subagent hands its pull request up, through every subagent
 above it, to that conversation, which starts or joins the loop on it, and a
 subagent asked to start the loop hands that request up the same way. Where
 the host cannot keep the loop running, `implement` says so when it hands the
-pull request over. Set `watch.auto_start = false` in `.projector.toml` to
-start the loop yourself instead. `fix-pr` also implements or defers each
+pull request over. To start the loop yourself instead, run
+`project config set watch.auto_start false --user`, or leave out `--user` to
+change only the current repository. `fix-pr` also implements or defers each
 suggestion a review lists. While it builds a change that no review has read,
 such as a
 suggestion it implements or a change you ask for, it holds the pull request
@@ -50,9 +51,9 @@ findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
 what it checked rather than on who clicked resolve. In a repository with a
 Projector site, `review-pr` then runs `summarize-pr` on every pull request it
-reviews and links the summary from its review; `review.summarize = false` in
-`.projector.toml` turns that off. All three of `implement`,
-`review-pr`, and `fix-pr` share the code guidelines in
+reviews and links the summary from its review;
+`project config set review.summarize false` turns that off. All three of
+`implement`, `review-pr`, and `fix-pr` share the code guidelines in
 `skills/guidelines.md`, so the rules one follows are the rules the others
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, follows the writing
