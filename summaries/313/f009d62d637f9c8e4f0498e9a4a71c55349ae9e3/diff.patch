@@ -1,0 +1,1162 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 89808647..42de472e 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -67,16 +67,18 @@ what it did to each:
+   would change everything Claude Code reads rather than only Projector's part.
+ - `~/.claude/settings.json`, your own Claude Code settings, gains the
+   permission rules `Bash(project review publish *)`,
+-  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
+-  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
+-  `settings.json` in that directory instead. Claude Code's auto mode
+-  otherwise can refuse a review loop's clean review of your own pull request
+-  as self-approval, although the review is a `COMMENT` that moves no
+-  `reviewDecision` and a person still merges. It can refuse the deletion of
+-  the comment that holds your pull request in draft, as a write to an
+-  external system, which leaves a clean pull request stuck in draft. It can
+-  also refuse the publish of a summary you asked for. An allow rule resolves
+-  the command before the classifier runs. The rules go in your settings rather
++  `Bash(project review hold *)`, `Bash(project review finish *)`, and
++  `Bash(project summary publish *)` in `permissions.allow`. When
++  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
++  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
++  review of your own pull request as self-approval, although the review is a
++  `COMMENT` that moves no `reviewDecision` and a person still merges. It can
++  refuse the deletion of a comment as a write to an external system: the
++  comment that holds your pull request in draft, which leaves a clean pull
++  request stuck in draft, and a finished review's start comment, which leaves
++  the pull request saying a review is in progress. It can also refuse the
++  publish of a summary you asked for. An allow rule resolves the command
++  before the classifier runs. The rules go in your settings rather
+   than the repository's, so they hold in every repository, clone, and worktree
+   you open, whether or not the repository commits or ignores `.claude/`, and
+   no repository has to carry a permission for everyone who opens it. `init`
+@@ -536,7 +538,7 @@ These are the keys Projector reads today:
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
++| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, and `project summary publish` to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+@@ -1168,6 +1170,8 @@ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop
+ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+ project review release 66
++project review finish 66
++project review setup 66 --model claude-opus-5-5 --replace 4011
+ project review gate 66
+ project review status 66
+ project review hold 66 --add "Skip fenced code blocks when looking for headings"
+@@ -1201,6 +1205,14 @@ at which a lock is stale. `setup` refuses a model ID that is empty, holds
+ whitespace, or makes a folder name that starts with `.`, and deletes a start
+ comment this machine's state recorded for the model and never published.
+ 
++When the session whose start comment stops `setup` has stopped, run `setup`
++again with `--replace <comment-id>`, naming the comment the refusal named.
++`setup` checks that the comment is a start comment the reviewer posted on
++this pull request for the same model, and deletes it as the reviewer once
++this review's start comment is posted. It refuses, exiting 1 and deleting
++nothing, any other comment: another model's start comment, another account's,
++a comment that is no start comment, or one that does not exist.
++
+ The start comment and the review's signature line name the head under review
+ by its short SHA, the Projector version that `project --version` reports, the
+ model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
+@@ -1219,6 +1231,43 @@ every model's threads alike and takes `--model` like the commands around it,
+ so a review loop passes the same flags to each. `release` clears the locks of
+ one model's review of the pull request.
+ 
++`finish` ends one model's review of the pull request on this machine, once
++the review is published and its summary has run, or when the pull request
++closes. It takes these steps:
++
++1. As the reviewer, it deletes every start comment of the model's that no
++   longer means a review in progress. By the rule `setup` uses, a start
++   comment stops meaning one once its model posts a verdict on the comment's
++   head after the comment, or once a day passes since its last edit. Another
++   model's start comments, and the model's live ones from another session,
++   stay.
++2. It removes every scratch worktree the review's state lists: each one the
++   model's reviews of the pull request made on this machine since its last
++   `finish`. It removes each with `git worktree remove` in the checkout, then
++   runs `git worktree prune`. When the checkout is gone, it deletes a
++   worktree under the state directory itself.
++3. It clears the locks and deletes the state. The loop's record of published
++   reviews stays.
++
++`finish` acts on the repository `--repo` names, or else on the `origin` of
++the checkout it runs in, as `setup` does. It never takes the repository from
++review state, so a run in one repository cannot end another repository's
++review of a pull request with the same number. Outside a checkout it needs
++`--repo`. When no review of the pull request is set up for that repository
++but a review of the same number is set up for another, it refuses until
++`--repo` names the review to finish.
++
++Without `--force`, `finish` also refuses while the state records a start
++comment. That means either a review set up and not yet published, or a
++publish that posted the review and stopped before it deleted the comment,
++which running the same `publish` command again finishes. `--force` discards
++that review and deletes its start comment too. Each refusal exits 1 before
++anything is deleted. With nothing set up for the pull request on this
++machine, `finish` asks GitHub nothing, prints that there is nothing to
++finish, and exits 0, so running it twice is safe. With `--json` it prints the `repo`, `number`, and
++`model`, the `comments` it deleted, the `worktrees` it removed, the locks it
++`released`, and whether it deleted the `state`.
++
+ `publish` submits the review. `--body` names a file holding the review below
+ its signature line, with `{census}` where the census goes and, wherever used,
+ `{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills in prose and
+@@ -1453,9 +1502,9 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
+ `review.gate` is unset.
+ 
+ `rules` checks whether your own settings allow `project review publish`,
+-`project review hold`, and `project summary publish`: the rules `init` adds to
+-`~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
+-is installed. It prints
++`project review hold`, `project review finish`, and `project summary publish`:
++the rules `init` adds to `~/.claude/settings.json`, and to
++`~/.codex/rules/projector.rules` where Codex is installed. It prints
+ each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+ whole check and for each file. It writes nothing, takes no pull request, and
+ runs from any directory. It exits 0 when every file has the rules. It exits 1
+@@ -1473,14 +1522,17 @@ refuses outside one; the repository is that checkout's `origin`, and `--repo`
+ must name the same one. Every later command reads the checkout, worktree, and
+ repository from the state file, finding it by `--repo` or by the pull request's
+ number, and by `--model` or the one model with a review of the pull request
+-set up on this machine, so it runs from any directory. With several models
+-set up, it refuses, naming them, until `--model` picks one. State an earlier
+-release wrote is not read, so a review set up before an upgrade runs `setup`
+-again. A command that posts a review or a start comment runs `gh` as the
+-reviewer, `--reviewer` or `review.username` or else the authenticated user,
+-with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
+-so the account the rest of the session uses is left alone. `hold` posts as
+-the authenticated user, who must be the pull request's author.
++set up on this machine, so it runs from any directory. `finish` is the
++exception: it deletes comments, so it never takes the repository from the
++state file, and outside a checkout it needs `--repo`. With several models
++set up, each later command refuses, naming them, until `--model` picks one.
++State an earlier release wrote is not read, so a review set up before an
++upgrade runs `setup` again. A command that posts a review, or posts or
++deletes a start comment, runs `gh` as the reviewer, `--reviewer` or
++`review.username` or else the authenticated user, with `GH_TOKEN` set to
++`gh auth token --user <reviewer>` for that call alone, so the account the
++rest of the session uses is left alone. `hold` posts as the authenticated
++user, who must be the pull request's author.
+ 
+ A review holds a lock for its pull request, head, and model from `setup` until
+ it is published, recording the host, the loop, and when it was taken, so a
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index cc65982d..7bf9004e 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -240,10 +240,10 @@ state, so each model reviewing the pull request keeps its own state, lock,
+ and scratch worktree, as
+ [Review as one model among several](#review-as-one-model-among-several)
+ describes. Each later command, `move`, `census`, `interdiff`, `gate`,
+-`publish`, and `release`, takes `--model` too. Every one but `census` finds
+-the review by the pull request and the model, and refuses, naming the models,
+-when more than one model has a review of the pull request set up on this
+-machine and `--model` does not pick one.
++`publish`, `release`, and `finish`, takes `--model` too. Every one but
++`census` finds the review by the pull request and the model, and refuses,
++naming the models, when more than one model has a review of the pull request
++set up on this machine and `--model` does not pick one.
+ 
+ The review holds a lock for the pull request, head, and model from `setup`
+ until it is published, so a second instance of the same model for the same
+@@ -252,8 +252,12 @@ a day is stale and cleared; `project review release <number>` clears one left
+ by a session that stopped, and only when no review of that pull request by
+ that model is running. `setup` also refuses while a live start comment shows
+ the same model reviewing the pull request in another session, on this
+-machine or another, and names the comment; delete it only once you know that
+-session has stopped.
++machine or another, and names the comment. Once you know that session has
++stopped, run `setup` again with `--replace <comment-id>`. It checks that the
++comment is this model's start comment on this pull request, and deletes it
++once this review's start comment is posted. Never delete a start comment
++through `gh api`, which a host's automatic approval can refuse as a write to
++an external system.
+ 
+ Under `start-review-loop`, run `project review interdiff <number>` next. A head
+ that changed little since the loop's last full review can get an incremental
+@@ -356,7 +360,8 @@ session resuming mid-review looks for one on GitHub rather than in memory and
+ edits it instead of posting a second one. The exception is a leftover from a
+ session that stopped between publishing and deleting: a comment whose
+ `created_at` is earlier than the `submitted_at` of a Projector review by the
+-same model on its `sha=`. Delete that one. Compare the timestamps rather than
++same model on its `sha=`. It means no review in progress, so leave it to
++`project review finish`, which deletes it. Compare the timestamps rather than
+ testing for the review's presence, because a re-review of an unmoved head,
+ such as the one `start-review-loop` runs on `RESPONDED`, has a live start
+ comment that shares its `sha=` with the verdict that preceded it. Compare the
+@@ -836,10 +841,14 @@ publishes one. Before a `clean` verdict, settle every earlier finding first;
+ reviewer's thread, resolve a finding you have not verified at this head,
+ claim a newer SHA was reviewed, or merge.
+ 
+-Once the summary below has run or been skipped, remove the scratch worktree,
+-which a summary reads for context. A `start-review-loop` subagent may instead
+-keep it for the pull request's next head and remove it when the pull request
+-closes.
++Once the summary below has run or been skipped, run
++`project review finish <number>`, which removes the scratch worktree a
++summary reads for context. It also deletes every start comment of this
++model's that no longer means a review in progress, clears the locks, and
++deletes the review's state, keeping the loop's record. It refuses while the
++review is unpublished. A `start-review-loop` subagent may instead keep the
++worktree for the pull request's next head and run `finish` when the pull
++request closes.
+ 
+ ## Summarize the pull request
+ 
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 1bad62a3..ff08b3ec 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -55,8 +55,8 @@ a repository with nothing open.
+    review or GitHub workflow skills.
+ 2. Run `project review rules` once. It reads the user's own Claude Code
+    settings and Codex rules, writes nothing, and exits 1 when either lacks the
+-   rules that allow `project review publish`, `project review hold`, and
+-   `project summary publish`.
++   rules that allow `project review publish`, `project review hold`,
++   `project review finish`, and `project summary publish`.
+    On exit 1, tell the user once, before the first review, that the host's
+    automatic approval, such as Claude Code's auto mode or Codex's approval
+    reviewer, can refuse the loop's publishes, a summary on another author's
+@@ -99,11 +99,11 @@ a repository with nothing open.
+    and with every character but a letter, a digit, `.`, `_`, and `-` made
+    `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
+    `project review` command it runs on a pull request: `setup`, `move`,
+-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
+-   which reviews this loop published lives under that id in the review state
+-   directory, where `project review publish` keeps it. Give each model's loop
+-   an id of its own, because two loops that write one record can lose an
+-   entry.
++   `census`, `interdiff`, `gate`, `publish`, `release`, and `finish`. The
++   record of which reviews this loop published lives under that id in the
++   review state directory, where `project review publish` keeps it. Give each
++   model's loop an id of its own, because two loops that write one record can
++   lose an entry.
+ 7. Seed the state file with only the SHAs already reviewed, then run one
+    pass:
+ 
+@@ -192,9 +192,14 @@ reads the new head against that history instead of rediscovering it.
+   `--no-describe`, so the comment alone links the summary, as `review-pr`
+   describes.
+ - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+-  to finish: delete any start comment it still holds and remove its scratch
+-  worktrees. Then close the subagent and remove the pull request's line from
+-  the tracked file with `project loop remove owner/repo#number --tracked <file>`.
++  to run `project review finish <number> --repo <owner>/<repo> --force`
++  with the loop's `--loop` and `--model`. A closed pull request takes no
++  review, so `--force` discards one still in progress, and `--repo` keeps
++  the command off another repository's review of the same number. `finish`
++  deletes the subagent's start comments, clears its locks and state, and
++  removes its scratch worktrees. Then close the subagent and remove the pull
++  request's line from the tracked file with
++  `project loop remove owner/repo#number --tracked <file>`.
+ - When a subagent is lost, to a session restart for example, start a
+   replacement under the same name. It rebuilds its context from GitHub: the
+   pull request's Projector reviews, their finding threads, and the replies on
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 421607b4..5ccc17df 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -472,6 +472,10 @@ def parser() -> argparse.ArgumentParser:
+     review_release = review_commands.add_parser(
+         "release", help="clear a pull request's review lock when no review is running"
+     )
++    review_finish = review_commands.add_parser(
++        "finish", help="end a review on this machine: delete its start comments that no longer mean a review in "
++                       "progress, and remove its scratch worktrees, locks, and state"
++    )
+     review_publish = review_commands.add_parser(
+         "publish", help="check and submit the review, set draft state, and delete the start comment"
+     )
+@@ -512,8 +516,8 @@ def parser() -> argparse.ArgumentParser:
+                            help="a listed change that will not be built: remove it, and end the hold when none is "
+                                 "left (repeatable); with no TEXT, end the hold, which you do once the push that "
+                                 "carries every listed change succeeds, since the command does not check it")
+-    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
+-                    review_interdiff):
++    for command in (review_setup, review_move, review_census, review_release, review_finish, review_publish,
++                    review_gate, review_interdiff):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                              "later: default the review set up for this pull request)")
+@@ -528,11 +532,18 @@ def parser() -> argparse.ArgumentParser:
+     review_setup.add_argument("--model", required=True,
+                               help="the model ID of this session, which names the start comment and keys the "
+                                    "review's state")
+-    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
++    for command in (review_move, review_census, review_release, review_finish, review_publish, review_gate,
++                    review_interdiff):
+         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
+                                              "of this pull request set up here)")
+     review_setup.add_argument("--rereview", action="store_true",
+                               help="a re-review of a head this loop already published a verdict on")
++    review_setup.add_argument("--replace", type=int, metavar="COMMENT_ID",
++                              help="the start comment of this model's that a stopped session left: check that it is "
++                                   "one, and delete it once this review is set up in its place")
++    review_finish.add_argument("--force", action="store_true",
++                               help="discard a review that is set up and unpublished, as when its pull request "
++                                    "closed")
+     review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
+                                 help="the verdict the signature line and marker carry (required without "
+                                      "--incremental)")
+@@ -1029,7 +1040,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
+ def review_hold(arguments: argparse.Namespace) -> int:
+     """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
+     repository of the checkout it runs in."""
+-    repo = review.hold_repo(arguments.repo, Path.cwd())
++    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
+     result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
+     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
+     return 0
+@@ -1045,6 +1056,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+         return review_status(root, arguments)
+     loop = review.valid_loop(arguments.loop)
+     command = arguments.review_command
++    if command == "finish":
++        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd())
++        print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.finish_lines(result)))
++        return 0
+     if command == "setup":
+         checkout = arguments.checkout or Path.cwd()
+         try:
+@@ -1053,7 +1068,7 @@ def run_review(arguments: argparse.Namespace) -> int:
+             configured = None
+         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
+                              configured if isinstance(configured, str) else None,
+-                             arguments.model, loop, arguments.rereview)
++                             arguments.model, loop, arguments.rereview, arguments.replace)
+     else:
+         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+         if command == "census":
+@@ -1138,6 +1153,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+         print(f"worktree {state['worktree']}")
+         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
+         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
++        if command == "setup" and arguments.replace is not None:
++            print(f"deleted start comment {arguments.replace}, which this review replaces")
+     return 0
+ 
+ 
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 42f63e2e..7a50d13e 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -4,15 +4,17 @@
+ asked for. Claude Code's auto mode refuses a session's clean review of a pull
+ request its own GitHub account opened, as self-approval, although the review
+ is a COMMENT that moves no reviewDecision and a person still merges. It also
+-refuses the deletion of the comment that holds a pull request in draft, as a
+-write to an external system, which leaves a clean pull request stuck in draft.
+-Codex's approval reviewer refuses `project summary publish`, which sends a
+-pull request's diff to the repository's own site, as sending repository
+-content to another host. A rule that allows `project review publish`,
+-`project review hold`, and `project summary publish` resolves each command
+-before that review runs. The rules go in the person's own settings, so they
+-hold in every repository, clone, and worktree they open, and no repository has
+-to carry a permission for everyone who opens it.
++refuses the deletion of a comment, as a write to an external system: the
++comment that holds a pull request in draft, which leaves a clean pull request
++stuck in draft, and a finished review's start comment, which leaves the pull
++request saying a review is in progress. Codex's approval reviewer refuses
++`project summary publish`, which sends a pull request's diff to the
++repository's own site, as sending repository content to another host. A rule
++that allows `project review publish`, `project review hold`, `project review
++finish`, and `project summary publish` resolves each command before that
++review runs. The rules go in the person's own settings, so they hold in every
++repository, clone, and worktree they open, and no repository has to carry a
++permission for everyone who opens it.
+ """
+ 
+ from __future__ import annotations
+@@ -25,13 +27,15 @@
+ 
+ from .core import FileAction, write_through
+ 
+-RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)")
++RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
++         "Bash(project summary publish *)")
+ 
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+ CODEX_PREFIX_RULES = ('prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")',
+-                      'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")')
++                      'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")',
++                      'prefix_rule(pattern = ["project", "review", "finish"], decision = "allow")')
+ CODEX_RULES = """\
+ # Written by `project init`, which replaces this file. Put your own rules in another file.
+ prefix_rule(
+@@ -44,9 +48,15 @@
+     decision = "allow",
+     justification = "Holds the user's own pull request in draft while changes are built, or ends the hold.",
+ )
++prefix_rule(
++    pattern = ["project", "review", "finish"],
++    decision = "allow",
++    justification = "Ends a Projector review: deletes its start comments and removes its scratch worktrees and state.",
++)
+ """
+ 
+-COMMANDS = "`project review publish`, `project review hold`, and `project summary publish`"
++COMMANDS = ("`project review publish`, `project review hold`, `project review finish`, and "
++            "`project summary publish`")
+ 
+ 
+ def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
+@@ -141,8 +151,8 @@ def kept(reason: str) -> FileAction:
+     if not apply:
+         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
+                                         "mode can refuse a review loop's clean review of your own pull request, "
+-                                        "the end of a hold on it, or the publish of a summary, unless the "
+-                                        "repository's own settings allow it"
++                                        "the end of a hold on it, the cleanup after a review, or the publish of "
++                                        "a summary, unless the repository's own settings allow it"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+     allow.extend(missing)
+diff --git a/src/projector/review.py b/src/projector/review.py
+index b8fa4e3b..97f7ad99 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -24,8 +24,10 @@
+ import json
+ import os
+ import re
++import shutil
+ import socket
+ import subprocess
++from contextlib import suppress
+ from dataclasses import dataclass
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+@@ -235,8 +237,12 @@ def lock(self, sha: str) -> Path:
+     def locks(self) -> list[Path]:
+         return sorted(self.folder.glob("*.lock")) if self.folder.is_dir() else []
+ 
++    @property
++    def worktrees(self) -> Path:
++        return self.root / "worktrees" / self.repo / str(self.number) / self.key
++
+     def worktree(self, sha: str) -> Path:
+-        return self.root / "worktrees" / self.repo / str(self.number) / self.key / sha[:SHORT]
++        return self.worktrees / sha[:SHORT]
+ 
+ 
+ def loop_record(root: Path, loop: str) -> Path:
+@@ -259,7 +265,8 @@ def stored_state(paths: Paths) -> Optional[dict]:
+     state = json.loads(paths.state.read_text(encoding="utf-8"))
+     if state.get("identity") != identity(paths.model):
+         raise ReviewError(f"the review state in {paths.folder} is model {state.get('model')}'s, and model "
+-                          f"{paths.model} shares its folder; finish that review and remove the folder first")
++                          f"{paths.model} shares its folder; finish that review first with `project review finish "
++                          f"{paths.number} --repo {paths.repo} --model {state.get('model')}`")
+     return state
+ 
+ 
+@@ -404,7 +411,8 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
+     git("-C", str(checkout), "worktree", "add", "--quiet", "--detach", str(path), sha)
+     head = git("-C", str(path), "rev-parse", "HEAD")
+     if head != sha:
+-        raise ReviewError(f"the scratch worktree {path} is at {head[:7]}, not {sha[:7]}; remove it and run again")
++        raise ReviewError(f"the scratch worktree {path} is at {head[:7]}, not {sha[:7]}; run the command again, "
++                          "which replaces the worktree")
+ 
+ 
+ # Start comments
+@@ -511,17 +519,18 @@ def hold_listing(comments: list[dict]) -> list[str]:
+     return list(dict.fromkeys(change for comment in comments for change in comment["changes"]))
+ 
+ 
+-def hold_repo(repo: Optional[str], cwd: Path) -> str:
+-    """The repository `review hold` acts on: `repo`, else the origin of the checkout `cwd` is in. Unlike the
+-    commands that follow a review, it never takes one from review state: it posts and deletes comments, so
+-    it acts only on a repository it was given or is run in."""
++def named_repo(repo: Optional[str], cwd: Path, purpose: str) -> str:
++    """The repository `review hold` and `review finish` act on: `repo`, else the origin of the checkout `cwd`
++    is in. Unlike the commands that follow a review, they never take one from review state: they delete
++    comments, so they act only on a repository they were given or are run in. `purpose` completes the
++    refusal outside a checkout, as "to hold a pull request in"."""
+     if repo:
+         return repo
+     try:
+         return origin_repo(checkout_root(cwd))
+     except ReviewError as exc:
+-        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository to "
+-                          "hold a pull request in; pass --repo owner/name") from exc
++        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository "
++                          f"{purpose}; pass --repo owner/name") from exc
+ 
+ 
+ def hold_changes(texts: list[str], flag: str) -> list[str]:
+@@ -679,13 +688,18 @@ def valid_loop(loop: Optional[str]) -> Optional[str]:
+     return loop
+ 
+ 
++def set_up_repos(root: Path, number: int) -> list[str]:
++    """The repositories with a review of a pull request numbered `number` set up here."""
++    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
++    return sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
++
++
+ def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
+     """The repository a command after setup means: --repo, else the one with a review of this pull
+     request set up here, else the origin of the checkout the command runs in."""
+     if repo:
+         return repo
+-    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
+-    found = sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
++    found = set_up_repos(root, number)
+     if len(found) == 1:
+         return found[0]
+     if len(found) > 1:
+@@ -724,14 +738,15 @@ def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Pa
+ 
+ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
+           configured_reviewer: Optional[str], model: str, loop: Optional[str],
+-          rereview: bool) -> dict:
++          rereview: bool, replace: Optional[int] = None) -> dict:
+     checkout = checkout_root(checkout)
+     origin = origin_repo(checkout)
+     if repo and repo.lower() != origin.lower():
+         raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
+     repo = origin
+     paths = Paths(root, repo, number, model)
+-    recorded = ((stored_state(paths) or {}).get("start_comment") or {}).get("id")
++    earlier = stored_state(paths) or {}
++    recorded = (earlier.get("start_comment") or {}).get("id")
+     pr = pull_request(repo, number)
+     sha = pr["head"]["sha"]
+     lock = take_lock(paths, sha, loop)
+@@ -739,7 +754,10 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         operator = authenticated_login()
+         reviewer = reviewer_login(reviewer, configured_reviewer, operator)
+         starts = start_comments(repo, number, reviewer)
+-        check_duplicate(starts, reviewer_reviews(repo, number, reviewer), model, recorded)
++        if replace is not None:
++            check_replaceable(starts, replace, model, reviewer, repo, number)
++        check_duplicate([comment for comment in starts if comment["id"] != replace],
++                        reviewer_reviews(repo, number, reviewer), model, recorded, number)
+         merge_base = fetch_head(checkout, repo, pr)
+         worktree = paths.worktree(sha)
+         add_worktree(checkout, worktree, sha)
+@@ -750,9 +768,11 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+     except BaseException:
+         lock.unlink(missing_ok=True)
+         raise
+-    if any(comment["id"] == recorded for comment in starts):
+-        # The review this machine set up before and never published is replaced by this one.
+-        delete_comment(repo, recorded, token)
++    for comment in starts:
++        # The review this machine set up before and never published, and the stopped session's that
++        # --replace names, give way to this one.
++        if comment["id"] in (recorded, replace):
++            delete_comment(repo, comment["id"], token)
+     ensure_loop(root, loop)
+     state = {
+         "repo": repo,
+@@ -765,7 +785,8 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         "untrusted_because": why or None,
+         "checkout": str(checkout),
+         "worktree": str(worktree),
+-        "worktrees": [str(worktree)],
++        # A loop keeps each head's worktree until the pull request closes, so `finish` removes them all.
++        "worktrees": list(dict.fromkeys([*earlier.get("worktrees", []), str(worktree)])),
+         "operator": operator,
+         "reviewer": reviewer,
+         "model": model,
+@@ -779,7 +800,19 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+     return state
+ 
+ 
+-def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int]) -> None:
++def check_replaceable(starts: list[dict], comment: int, model: str, reviewer: str, repo: str, number: int) -> None:
++    """Refuse a --replace that names anything but one of this model's start comments on the pull request."""
++    found = next((start for start in starts if start["id"] == comment), None)
++    if found is None:
++        raise ReviewError(f"comment {comment} is not a start comment {reviewer} posted on {repo}#{number}, so "
++                          "--replace deletes nothing; pass the id that setup named when it refused")
++    if identity(found["model"]) != identity(model):
++        raise ReviewError(f"start comment {comment} is model {found['model']}'s, and --replace replaces only model "
++                          f"{model}'s; another model's review is a second opinion that never stops this setup")
++
++
++def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int],
++                    number: int) -> None:
+     """Refuse a review while a live start comment shows the same model reviewing the pull request in
+     another session: one this machine's state for the model does not record."""
+     at = now()
+@@ -789,7 +822,9 @@ def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorde
+             raise ReviewError(
+                 f"model {comment['model']} is already reviewing this pull request in another session: start comment "
+                 f"{comment['id']} ({comment.get('url') or 'no URL'}) names {comment['sha'][:7]}, posted "
+-                f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
++                f"{comment['created_at']}; if that session has stopped, run `project review setup {number} "
++                f"--model {model} --replace {comment['id']}` with the other flags you passed, which deletes that "
++                "comment and sets this review up in its place")
+ 
+ 
+ def delete_comment(repo: str, comment: int, token: Optional[str] = None) -> None:
+@@ -820,8 +855,9 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
+                 "-f", f"body={body}"], token)
+         reread = gh_json(["api", f"repos/{state['repo']}/issues/comments/{comment}"])
+         if f"sha={sha}" not in (reread or {}).get("body", ""):
+-            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; "
+-                              "edit it by hand")
++            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; run "
++                              f"`project review move {number}` again, which records the move only once the edit "
++                              "reads back")
+     except BaseException:
+         lock.unlink(missing_ok=True)
+         raise
+@@ -834,6 +870,117 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
+     return state
+ 
+ 
++def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path) -> dict:
++    """`review finish`: end one model's review of the pull request on this machine. As the reviewer, delete
++    the review's start comment and every other start comment of the model's that `is_live` no longer
++    counts; remove every scratch worktree the state lists; clear the locks; and delete the state, keeping
++    the loop's record. Refuses while the review is unpublished unless `force`, and succeeds when there is
++    nothing to clean, so a second run changes nothing.
++
++    The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
++    so a run in one repository cannot end another's review of a pull request with the same number. Every
++    refusal comes before anything is deleted."""
++    named = repo
++    repo = named_repo(repo, cwd, "to finish a review in")
++    model = find_model(root, repo, number, model)
++    result: dict = {"repo": repo, "number": number, "model": model, "comments": [], "worktrees": [],
++                    "released": [], "state": False}
++    paths = Paths(root, repo, number, model) if model else None
++    state = stored_state(paths) if paths else None
++    elsewhere = [found for found in set_up_repos(root, number) if found.lower() != repo.lower()]
++    if state is None and named is None and elsewhere:
++        raise ReviewError(f"no review of {repo}#{number}, this checkout's origin, is set up here, and a review of "
++                          f"#{number} in {listed(elsewhere)} is; pass --repo to name the review to finish")
++    if paths is None:
++        return result
++    if state is not None:
++        if (state.get("repo") or "").lower() != repo.lower():
++            raise ReviewError(f"the review state in {paths.folder} names {state.get('repo')}, not {repo}, so "
++                              "finish leaves it alone")
++        recorded = (state.get("start_comment") or {}).get("id")
++        if recorded and not force:
++            raise ReviewError(unfinished(state, recorded))
++        result["comments"] = finished_starts(state, recorded)
++        if result["comments"]:
++            token = reviewer_token(state["reviewer"])
++            for comment in result["comments"]:
++                delete_comment(repo, comment, token)
++        result["worktrees"] = remove_worktrees(paths, state)
++    result["released"] = [str(lock) for lock in release(paths)]
++    paths.request.unlink(missing_ok=True)
++    if state is not None:
++        paths.state.unlink(missing_ok=True)
++        result["state"] = True
++    with suppress(OSError):
++        paths.folder.rmdir()
++    return result
++
++
++def unfinished(state: dict, recorded: int) -> str:
++    """Why `finish` refuses a review whose state still records its start comment: a review set up and not
++    published, or a publish that posted the review and stopped before it deleted the comment."""
++    repo, number, model, sha = state["repo"], state["number"], state["model"], state["sha"][:7]
++    discard = f"`project review finish {number} --repo {repo} --force`"
++    published = state.get("published") or {}
++    if published.get("sha") == state["sha"]:
++        return (f"model {model}'s publish of its review of {repo}#{number} at {sha} did not finish: review "
++                f"{published['id']} is posted, and start comment {recorded} still stands; run the same "
++                f"`project review publish {number}` command again to finish it, or skip the rest with {discard}")
++    return (f"model {model}'s review of {repo}#{number} at {sha} is unpublished, and its start comment "
++            f"{recorded} still says it is in progress; publish it first, or discard it with {discard}, as when "
++            "the pull request closed")
++
++
++def finished_starts(state: dict, recorded: Optional[int]) -> list[int]:
++    """The start comments `finish` deletes: the review's own, and every other of its model's that no longer
++    means a review in progress. A pull request GitHub no longer shows has none."""
++    repo, number, reviewer = state["repo"], state["number"], state["reviewer"]
++    try:
++        starts = [comment for comment in start_comments(repo, number, reviewer)
++                  if identity(comment["model"]) == identity(state["model"])]
++        reviews = reviewer_reviews(repo, number, reviewer) if starts else []
++    except NotFound:
++        return []
++    at = now()
++    return [comment["id"] for comment in starts if comment["id"] == recorded or not is_live(comment, reviews, at)]
++
++
++def remove_worktrees(paths: Paths, state: dict) -> list[str]:
++    """Remove every scratch worktree the state lists, then prune the checkout's record of them, and return
++    those removed. When the checkout that made one is gone or no longer lists it, a worktree in the review's
++    own worktree folder is deleted outright; Git refuses to remove any other path."""
++    checkout = state["checkout"]
++    removed = []
++    for path in map(Path, dict.fromkeys(state["worktrees"])):
++        if not path.exists():
++            continue
++        try:
++            git("-C", checkout, "worktree", "remove", "--force", str(path))
++        except ReviewError:
++            if not path.is_relative_to(paths.worktrees):
++                raise
++            shutil.rmtree(path)
++        removed.append(str(path))
++    with suppress(ReviewError):
++        git("-C", checkout, "worktree", "prune")
++    with suppress(OSError):
++        paths.worktrees.rmdir()
++    return removed
++
++
++def finish_lines(result: dict) -> list[str]:
++    """`review finish` without --json: what it deleted, removed, and released."""
++    where = f"{result['repo'] or ''}#{result['number']}" + (f" by model {result['model']}" if result["model"] else "")
++    if not (result["state"] or result["comments"] or result["worktrees"] or result["released"]):
++        return [f"no review of {where} is set up here; there is nothing to finish"]
++    count = len(result["released"])
++    return ([f"finished the review of {where}"]
++            + [f"deleted start comment {comment}" for comment in result["comments"]]
++            + [f"removed worktree {path}" for path in result["worktrees"]]
++            + ([f"released {count} lock{'' if count == 1 else 's'}"] if count else [])
++            + (["deleted its state; the loop's record of published reviews stays"] if result["state"] else []))
++
++
+ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){
+   pullRequest(number:$n){ reviewThreads(first:100, after:$after){
+     pageInfo{ hasNextPage endCursor }
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 8bd88a4c..ccef7d9f 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1204,7 +1204,7 @@ def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+         self.assertIn("review.publish_rule must be true or false", stderr)
+         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
+ 
+-    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
++    def test_init_adds_the_hold_finish_and_summary_rules_beside_an_existing_review_rule(self) -> None:
+         self.at_a_terminal()
+         self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+ 
+@@ -1214,10 +1214,11 @@ def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(sel
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
+                                                     "Bash(project review hold *)",
++                                                    "Bash(project review finish *)",
+                                                     "Bash(project summary publish *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
+-    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
++    def test_init_adds_the_hold_and_finish_rules_to_settings_that_allow_both_publish_commands(self) -> None:
+         self.at_a_terminal()
+         published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
+         self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
+@@ -1226,7 +1227,20 @@ def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(se
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+-        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
++        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)",
++                                                    "Bash(project review finish *)"]}},
++                         json.loads(self.settings().read_text()))
++
++    def test_init_adds_the_finish_rule_to_settings_that_allow_the_other_commands(self) -> None:
++        self.at_a_terminal()
++        allowed = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
++        self.settings().write_text(json.dumps({"permissions": {"allow": allowed}}))
++
++        code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
+     def codex_rules(self) -> Path:
+@@ -1281,7 +1295,7 @@ def test_init_only_reports_missing_codex_rules_without_a_terminal(self) -> None:
+         self.assertFalse(self.codex_rules().exists())
+ 
+     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
+-    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
++    def test_codex_allows_exactly_the_publish_hold_and_finish_commands_under_the_rules(self) -> None:
+         rules = self.home / "projector.rules"
+         rules.write_text(permissions.CODEX_RULES)
+ 
+@@ -1293,6 +1307,7 @@ def decision(*command: str) -> str:
+         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
+         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
+         self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
++        self.assertEqual("allow", decision("project", "review", "finish", "12", "--force"))
+         self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
+         self.assertEqual("none", decision("project", "review", "release", "12"))
+         self.assertEqual("none", decision("project", "site", "serve"))
+@@ -1444,9 +1459,14 @@ def allow(*rules: str) -> None:
+             self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
+ 
+         cases = {
+-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
++            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review finish *)",
++                                                "Bash(project summary publish *)"),
+                                   "Bash(project review hold *)"),
+-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
++            "finish rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
++                                                  "Bash(project summary publish *)"),
++                                    "Bash(project review finish *)"),
++            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
++                                                   "Bash(project review finish *)"),
+                                      "Bash(project summary publish *)"),
+             "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
+         }
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 062085b3..8ca8a73e 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -467,6 +467,30 @@ def test_refuses_without_a_review_set_up(self) -> None:
+         self.assertEqual(1, code)
+         self.assertIn("project review setup 1", err)
+ 
++    def test_an_edit_that_does_not_read_back_records_nothing_and_running_move_again_retries_it(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        new = self.push_head("second head")
++        self.github.pr["head"]["sha"] = new
++        fake = self.github
++
++        def dropping_edits(args: list[str], token: str | None = None) -> str:
++            return "{}" if args[:3] == ["api", "-X", "PATCH"] else fake(args, token)
++
++        with mock.patch.object(review, "run_gh", dropping_edits):
++            code, _, err = self.later("move")
++
++        self.assertEqual(1, code)
++        self.assertIn("run `project review move 1` again", err)
++        self.assertEqual((self.head, 1), (self.read_state()["sha"], self.read_state()["heads"]))
++        self.assertTrue(self.lock(self.head).exists())
++        self.assertFalse(self.lock(new).exists())
++
++        code, _, err = self.later("move")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual((new, 2), (self.read_state()["sha"], self.read_state()["heads"]))
++        self.assertIn(f"sha={new}", self.github.comments[101])
++
+ 
+ class GateTests(ReviewCase):
+     GATE = ('printf "%s %s %s %s" "$1" "$2" "$PROJECTOR_WORKTREE" "$PROJECTOR_BASE" > "$1/gate.args"; '
+@@ -1087,11 +1111,46 @@ def test_another_sessions_live_start_comment_by_the_same_model_refuses_setup(sel
+ 
+         self.assertEqual(1, code)
+         self.assertIn(f"start comment {foreign}", err)
+-        self.assertIn("delete the comment", err)
++        self.assertIn(f"run `project review setup 1 --model claude-opus-5-5 --replace {foreign}`", err)
+         self.assertFalse(self.lock(self.head).exists(), "a refused setup releases its lock")
+         self.assertEqual([foreign], list(self.github.comments), "nothing was posted")
+         self.assertEqual(0, self.as_model("gpt-5.5")[0], "another model is a second opinion")
+ 
++    def test_replace_deletes_a_stopped_sessions_start_comment_and_sets_up_in_its_place(self) -> None:
++        stopped = self.github.comment(review.start_comment("claude-opus-5-5[1m]", self.head))
++
++        code, out, err = self.setup_review("--loop", "l1", "--replace", str(stopped))
++
++        self.assertEqual(0, code, err)
++        posted = self.read_state()["start_comment"]["id"]
++        self.assertEqual([posted], list(self.github.comments), "the new start comment replaces the stopped one")
++        self.assertIn((["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/{stopped}"], "token-operator"),
++                      self.github.calls)
++        self.assertIn(f"deleted start comment {stopped}", out)
++
++    def test_replace_refuses_any_comment_but_this_models_start_comment_and_deletes_nothing(self) -> None:
++        cases = {
++            "another model's start comment": (self.github.comment(review.start_comment("gpt-5.5", self.head)),
++                                              "is model gpt-5.5's"),
++            "another account's start comment": (
++                self.github.comment(review.start_comment("claude-opus-5-5", self.head), login="someone"),
++                "is not a start comment operator posted"),
++            "a comment that is no start comment": (self.github.comment("Looks good to me."),
++                                                   "is not a start comment operator posted"),
++            "a comment that does not exist": (999, "is not a start comment operator posted"),
++        }
++        comments = dict(self.github.comments)
++        for name, (comment, why) in cases.items():
++            with self.subTest(name):
++                code, _, err = self.setup_review("--replace", str(comment))
++
++                self.assertEqual(1, code)
++                self.assertIn(f"comment {comment} {why}", err)
++                self.assertFalse(self.lock(self.head).exists(), "a refused setup releases its lock")
++        self.assertEqual(comments, self.github.comments)
++        self.assertEqual([], self.github.posts())
++        self.assertFalse(any(args[:3] == ["api", "-X", "DELETE"] for args, _ in self.github.calls))
++
+     def test_the_same_model_at_another_context_window_is_the_same_reviewer_at_setup(self) -> None:
+         self.github.comment(review.start_comment("claude-opus-5-5[1m]", self.head))
+ 
+@@ -1172,6 +1231,7 @@ def test_two_models_that_share_a_folder_refuse_rather_than_share_state(self) ->
+ 
+         self.assertEqual(1, code)
+         self.assertIn("is model a/b's", err)
++        self.assertIn(f"`project review finish 1 --repo {REPO} --model a/b`", err)
+         self.assertEqual("a/b", self.read_state("a/b")["model"])
+ 
+     def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> None:
+@@ -1179,7 +1239,7 @@ def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> No
+         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
+                              r"runs on a pull request: (.*?)\. ", skill, re.S)
+         commands = re.findall(r"`(\w+)`", sentence.group(1))
+-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release"], commands)
++        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release", "finish"], commands)
+         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
+         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
+         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
+@@ -1189,7 +1249,8 @@ def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> No
+             extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
+             ran[command] = self.later(command, *flags, *extra)[0]
+ 
+-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0},
++        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0,
++                          "finish": 0},
+                          ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
+ 
+     def test_move_keeps_the_model_in_the_start_comment(self) -> None:
+@@ -1201,6 +1262,215 @@ def test_move_keeps_the_model_in_the_start_comment(self) -> None:
+         self.assertIn(f" sha={self.github.pr['head']['sha']} model=claude-opus-5-5 -->", self.github.comments[101])
+ 
+ 
++class FinishTests(PublishCase):
++    """`finish` ends one model's review on this machine, so nothing it made is removed by hand."""
++
++    def finish(self, *extra: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        return self.later("finish", *extra, cwd=cwd)
++
++    def registered(self) -> set[Path]:
++        """The worktrees Git lists for the checkout."""
++        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
++        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
++
++    def deletions(self) -> list[tuple[list[str], str | None]]:
++        return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "DELETE"]]
++
++    def test_removes_every_worktree_the_reviews_made_and_the_state_and_keeps_the_loop_record(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.pr["head"]["sha"] = self.push_head("third head")
++        self.assertEqual(0, self.later("move")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        made = [Path(path) for path in self.read_state()["worktrees"]]
++        record = (self.state / "loops" / "l1" / "published.json").read_text()
++
++        code, out, err = self.finish("--repo", REPO, "--loop", "l1", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(3, len(made), "a later setup keeps the worktrees the earlier heads made")
++        for path in made:
++            self.assertFalse(path.exists())
++            self.assertNotIn(path.resolve(), self.registered())
++            self.assertIn(f"removed worktree {path}", out)
++        self.assertFalse(self.folder().exists(), "the state and the review's folder are gone")
++        self.assertFalse((self.state / "worktrees" / REPO / "1" / review.model_key(self.model)).exists())
++        self.assertEqual(record, (self.state / "loops" / "l1" / "published.json").read_text())
++        self.assertIn("the loop's record of published reviews stays", out)
++
++    def test_deletes_its_models_start_comments_that_no_longer_mean_a_review_in_progress(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        other = "c" * 40
++        before_verdict = self.github.comment(review.start_comment(self.model, self.head),
++                                             created_at="2026-09-27T01:00:00Z")
++        day_old = self.github.comment(review.start_comment(self.model, other), created_at="2026-09-25T01:00:00Z")
++        running = self.github.comment(review.start_comment(self.model, other))
++        second_opinion = self.github.comment(review.start_comment("gpt-5.5", self.head),
++                                             created_at="2026-09-25T01:00:00Z")
++        another_account = self.github.comment(review.start_comment(self.model, self.head), login="someone",
++                                              created_at="2026-09-25T01:00:00Z")
++        published = len(self.deletions())
++
++        code, out, err = self.finish()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({running, second_opinion, another_account}, set(self.github.comments))
++        self.assertEqual([(["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/{comment}"], "token-operator")
++                          for comment in (before_verdict, day_old)], self.deletions()[published:])
++        self.assertIn(f"deleted start comment {before_verdict}\ndeleted start comment {day_old}\n", out)
++
++    def test_refuses_an_unpublished_review_without_force_and_discards_it_with_force(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        state = self.read_state()
++        worktree = Path(state["worktree"])
++
++        code, _, err = self.finish()
++
++        self.assertEqual(1, code)
++        self.assertIn(f"review of {REPO}#1 at {self.head[:7]} is unpublished", err)
++        self.assertIn(f"`project review finish 1 --repo {REPO} --force`", err)
++        self.assertEqual(state, self.read_state())
++        self.assertTrue(worktree.is_dir())
++        self.assertTrue(self.lock(self.head).exists())
++        self.assertEqual([101], list(self.github.comments))
++        self.assertEqual([], self.deletions())
++
++        code, _, err = self.finish("--force")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({}, self.github.comments)
++        self.assertEqual([(["api", "-X", "DELETE", f"repos/{REPO}/issues/comments/101"], "token-operator")],
++                         self.deletions())
++        self.assertFalse(worktree.exists())
++        self.assertFalse(self.folder().exists(), "the lock and the state are gone")
++
++    def test_a_second_run_finds_nothing_to_clean_and_succeeds(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        self.assertEqual(0, self.finish()[0])
++        calls = len(self.github.calls)
++
++        code, out, err = self.finish()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(f"no review of {REPO}#1 is set up here; there is nothing to finish\n", out)
++        code, out, err = self.finish("--repo", REPO, "--model", self.model, "--json", cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({"repo": REPO, "number": 1, "model": self.model, "comments": [], "worktrees": [],
++                          "released": [], "state": False}, json.loads(out))
++        self.assertEqual(calls, len(self.github.calls), "with nothing set up, finish asks GitHub nothing")
++
++    def test_outside_a_checkout_it_needs_repo(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        state = self.read_state()
++
++        code, _, err = self.finish(cwd=Path(tempfile.mkdtemp()))
++
++        self.assertEqual(1, code)
++        self.assertIn("so there is no repository to finish a review in; pass --repo owner/name", err)
++        self.assertEqual(state, self.read_state())
++        self.assertTrue(Path(state["worktree"]).is_dir())
++
++    def test_a_run_in_another_repositorys_checkout_leaves_its_review_alone_and_refuses(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        state = self.read_state()
++        elsewhere = Path(tempfile.mkdtemp())
++        git(elsewhere, "init", "--quiet")
++        git(elsewhere, "remote", "add", "origin", "https://github.com/other/app.git")
++
++        for extra in (("--force", "--model", self.model), ("--model", self.model), ()):
++            with self.subTest(extra=extra):
++                code, _, err = self.finish(*extra, cwd=elsewhere)
++
++                self.assertEqual(1, code)
++                self.assertIn(f"no review of other/app#1, this checkout's origin, is set up here, and a review of #1 "
++                              f"in {REPO} is; pass --repo", err)
++        code, out, err = self.finish("--repo", "other/app", "--force", cwd=elsewhere)
++
++        self.assertEqual(0, code, err)
++        self.assertIn("no review of other/app#1 is set up here", out)
++        self.assertEqual(state, self.read_state())
++        self.assertTrue(Path(state["worktree"]).is_dir())
++        self.assertTrue(self.lock(self.head).exists())
++        self.assertEqual([101], list(self.github.comments))
++        self.assertEqual([], self.deletions())
++
++    def test_a_state_that_names_another_repository_is_left_alone(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        state = dict(self.read_state(), repo="other/app")
++        (self.folder() / "state.json").write_text(json.dumps(state))
++
++        code, _, err = self.finish("--force")
++
++        self.assertEqual(1, code)
++        self.assertIn(f"names other/app, not {REPO}, so finish leaves it alone", err)
++        self.assertEqual(state, self.read_state())
++        self.assertTrue(Path(state["worktree"]).is_dir())
++
++    def test_a_publish_that_stopped_after_posting_is_named_as_unfinished(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.github.fail = "pr ready"
++        self.assertEqual(1, self.publish("clean")[0])
++        self.github.fail = None
++
++        code, _, err = self.finish()
++
++        self.assertEqual(1, code)
++        self.assertIn(f"publish of its review of {REPO}#1 at {self.head[:7]} did not finish: review 901 is posted, "
++                      "and start comment 101 still stands; run the same `project review publish 1` command again",
++                      err)
++        self.assertEqual(0, self.publish("clean")[0], "the publish finishes as the refusal says")
++        self.assertEqual(0, self.finish()[0])
++
++    def test_removes_a_worktree_whose_checkout_is_gone(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        state = self.read_state()
++        state["checkout"] = str(Path(tempfile.mkdtemp()) / "gone")
++        (self.folder() / "state.json").write_text(json.dumps(state))
++
++        code, _, err = self.finish()
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(Path(state["worktree"]).exists())
++        self.assertFalse(self.folder().exists())
++
++    def test_leaves_another_models_review_alone(self) -> None:
++        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
++        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++        gpt = self.read_state("gpt-5.5")
++        self.assertEqual(0, self.publish("clean", "--model", "claude-opus-5-5", loop="claude")[0])
++
++        code, _, err = self.finish("--model", "claude-opus-5-5", "--loop", "claude")
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(self.folder("claude-opus-5-5").exists())
++        self.assertEqual(gpt, self.read_state("gpt-5.5"))
++        self.assertTrue(Path(gpt["worktree"]).is_dir())
++        self.assertTrue(self.lock(self.head, "gpt-5.5").exists())
++        self.assertIn(gpt["start_comment"]["id"], self.github.comments)
++
++    def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
++        # Removing a worktree by hand leaves the state naming it, and a raw comment deletion is what Claude
++        # Code's auto mode refuses, where one narrow rule allows the command.
++        skills = Path(cli.__file__).resolve().parents[2] / "skills"
++        review_pr = (skills / "review-pr" / "SKILL.md").read_text()
++        review_loop = (skills / "start-review-loop" / "SKILL.md").read_text()
++
++        self.assertIn("`project review finish <number>`", review_pr)
++        self.assertIn("`--replace <comment-id>`", review_pr)
++        self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", review_loop)
++        for text in (review_pr, review_loop):
++            self.assertNotIn("issues/comments", text)
++            self.assertNotIn("git worktree", text)
++
++
+ def iso(at: datetime) -> str:
+     return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+ 
+@@ -1979,7 +2249,8 @@ def run(*args: str) -> dict:
+ 
+     def test_repo_wins_over_the_checkout_it_runs_in(self) -> None:
+         elsewhere = self.checkout_of("other/app")
+-        self.assertEqual("other/app", review.hold_repo(None, elsewhere), "the checkout alone names another repository")
++        self.assertEqual("other/app", review.named_repo(None, elsewhere, "to hold a pull request in"),
++                         "the checkout alone names another repository")
+ 
+         code, _, err = self.hold("--repo", REPO, "--add", self.CHANGE, cwd=elsewhere)
+ 
+@@ -2756,7 +3027,7 @@ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+         # wrong 40-character SHAs reached a publish.
+-        for command in ("setup", "move", "census", "release", "publish", "gate", "interdiff"):
++        for command in ("setup", "move", "census", "release", "finish", "publish", "gate", "interdiff"):
+             with self.subTest(command):
+                 help_text = io.StringIO()
+                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
