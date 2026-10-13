@@ -1,5 +1,5 @@
 import type { AgentInfo, FsEntry, On } from 'claude-code'
-import { expect, mock, test, type Engine } from 'claude-code/testing'
+import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
 import type { Notice, Question } from './types'
 
@@ -374,6 +374,49 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
   await ui.unmount()
 })
 
+test('a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const files: Record<string, string> = { [WATCH]: 'x/y#7\n' }
+  world(on, files, ([, , , reference = '', , tracked = '']) => {
+    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
+    return ran(`dropped ${reference} from ${tracked}\n`)
+  })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  // Hiding and showing the band reloads it, as a watcher's report does.
+  const reload = async () => {
+    await $.command.run(COMMAND)
+    await $.command.run(COMMAND)
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  const ui = await $.ui.mount(BAND)
+  // Dropped from a terminal while its drawer is open, the pull request leaves the band.
+  await ui.press({ key: 'pr:x/y#7' })
+  files[WATCH] = 'x/y#7\n!x/y#7\n'
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+  // `project loop restore` brings its line back with the drawer closed.
+  files[WATCH] = 'x/y#7\n'
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+
+  // So does dismissing it from its drawer.
+  await ui.press({ key: 'pr:x/y#7' })
+  await ui.press({ key: 'dismiss:x/y#7' })
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+  files[WATCH] = 'x/y#7\n'
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('opening one drawer closes the one that was open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -641,9 +684,12 @@ const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
   ...fields,
 })
 
+/** An item with the named fields cleared. */
+const without = <T extends Held>(item: T, ...keys: string[]): T =>
+  Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
+
 /** A question with its answer and claim cleared, as `reopen` leaves it. */
-const reopened = (question: HeldQuestion): HeldQuestion =>
-  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as HeldQuestion
+const reopened = (question: HeldQuestion): HeldQuestion => without(question, 'answer', 'claim')
 
 /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
 function questionStore(clock: Clock, seed: readonly Held[]) {
@@ -678,9 +724,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     return at === -1 ? undefined : args[at + 1]
   }
   const textOf = (question: HeldQuestion) =>
-    question.answer !== undefined && 'letter' in question.answer
-      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
-      : `DISMISSED ${question.ref} ${question.subject}`
+    question.restoredAt !== undefined
+      ? `RESTORED ${question.ref} ${question.subject}`
+      : question.answer !== undefined && 'letter' in question.answer
+        ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
+        : `DISMISSED ${question.ref} ${question.subject}`
 
   const run = (argv: string[]): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
@@ -708,7 +756,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         })
         .then(() => listed)
     }
-    if (command === 'ask' || command === 'tell' || command === 'withdraw' || command === 'revise') {
+    if (['ask', 'tell', 'withdraw', 'revise', 'restore'].includes(command)) {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
     }
@@ -745,16 +793,36 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'revise', 'snooze'].includes(command)) {
       return failed(65, `${ref} is already answered`)
     }
-    const { snoozedUntil: _, ...awake } = item
+    if (command === 'restore') {
+      if (item.answer === undefined) {
+        if (item.snoozedUntil === undefined || time >= item.snoozedUntil) {
+          return failed(65, `${ref} is open, so there is nothing to restore`)
+        }
+        return printed(put(without(item, 'snoozedUntil', 'snoozedAt')))
+      }
+      if ('withdrawn' in item.answer) {
+        return failed(65, `${ref} was withdrawn by the agent that posted it, so it is that agent's to post again`)
+      }
+      if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
+      const restored = without(item, 'answer', 'deliveredAt', 'claim')
+      if (restored.kind === 'question' && (item.deliveredAt !== undefined || 'claim' in item)) {
+        return printed(put({ ...restored, restoredAt: time }))
+      }
+      return printed(put(restored))
+    }
+    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does.
+    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', 'claim')
+    const isUnsaid = 'restoredAt' in item && !('claim' in item)
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
-      return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+      const isDelivered = awake.kind === 'notice' || isUnsaid
+      return printed(put(isDelivered ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
     }
     if (command === 'withdraw') {
       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
       return printed(put({ ...awake, answer, deliveredAt: time }))
     }
-    if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
+    if (command === 'snooze') return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + HOUR }))
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise') {
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
@@ -775,7 +843,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
     }
     if (command === 'claim') {
-      if (item.answer === undefined || item.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
+      if (item.restoredAt === undefined && (item.answer === undefined || item.deliveredAt !== undefined)) {
+        return failed(65, 'nothing to deliver')
+      }
       const renew = flag(args, 'renew')
       if (renew !== undefined) {
         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
@@ -788,6 +858,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     }
     if (command === 'delivered' || command === 'reopen') {
       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      // A restore's line is done either way.
+      if (item.restoredAt !== undefined) return printed(put(without(item, 'claim', 'restoredAt')))
       return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
     }
     return failed(2, `invalid choice: '${command}'`)
@@ -884,6 +956,7 @@ test('asks through the tool, and the band lists the question below the pull requ
     expect.objectContaining({ name: 'tell', isDeferred: false }),
     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
     expect.objectContaining({ name: 'revise', isDeferred: false }),
+    expect.objectContaining({ name: 'restore', isDeferred: false }),
   ])
   expect(session.project()).toContain(
     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
@@ -1319,6 +1392,24 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
   await ui.unmount()
 })
 
+test('a dropped RESTORED says so without asking for an answer, and is not sent again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ restoredAt: NOW - 1_000 })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
+  expect(session.toasts).toEqual([
+    'projector: word that "Decline the finding?" is open again did not reach its agent (a hook refused it)',
+  ])
+  expect(session.store.store.get('1')).toEqual(held())
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted).toHaveLength(1)
+})
+
 test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1543,9 +1634,14 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
     'inbox dismiss 2 --session s1 --json',
   ])
+  // Dismissing closes the drawer, and the line stays, muted and struck through.
   const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
+  // Its line opens the drawer again, where restore takes dismiss's place.
+  await ui.press({ key: 'item:2' })
   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'restore:2' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss:2' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'snooze:2' })).toBeUndefined()
 
@@ -1853,14 +1949,18 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   await clock.settle()
   expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
   expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
-  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+  // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
+  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
   await ui.unmount()
 
   await clock.advance(TICK)
   await clock.settle()
   await $.command.run(COMMAND)
-  await clock.advance(HOUR - TICK)
+  await clock.advance(HOUR - 2 * TICK - 30_000)
   await clock.settle()
   const hidden = await $.ui.mount(BAND)
   expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
@@ -2002,4 +2102,239 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
   await clock.settle()
   expect(await woken.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   await woken.unmount()
+})
+
+/** The keys of an item's drawer actions, in the order its row draws them. */
+async function actionsOf(ui: Pick<Mounted, 'findAll'>, ref: string): Promise<string[]> {
+  const pattern = new RegExp(`^(discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
+  return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => pattern.test(key))
+}
+
+test('dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
+
+  await ui.press({ key: 'item:1' })
+  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+  await ui.press({ key: 'dismiss:1' })
+  await clock.settle()
+  // The drawer closes, and the line stays, muted in the subtle color and struck through.
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+  const dismissed = await line()
+  expect([dismissed?.props.color, dismissed?.props.dimColor, dismissed?.props.strikethrough]).toEqual([
+    'subtle',
+    undefined,
+    true,
+  ])
+
+  // Its line opens the drawer again, where restore takes dismiss's place.
+  await ui.press({ key: 'item:1' })
+  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
+  await ui.press({ key: 'restore:1' })
+  await clock.settle()
+  expect(session.project()).toContain('inbox restore 1 --session s1 --json')
+  // The drawer stays open on the question, open again, with dismiss back in its place.
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+  expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
+  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+  const restored = await line()
+  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
+  expect(session.store.store.get('1')).toEqual(held())
+
+  // The dismissal had not gone out, so the restore sends nothing.
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted).toEqual([])
+
+  // Once the agent has heard DISMISSED, a restore sends RESTORED after it.
+  await ui.press({ key: 'dismiss:1' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.submitted.map(one => one.text)).toEqual(['DISMISSED 1 Decline the finding?'])
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'restore:1' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.submitted.map(one => one.text)).toEqual([
+    'DISMISSED 1 Decline the finding?',
+    'RESTORED 1 Decline the finding?',
+  ])
+  expect(Object.keys(session.store.store.get('1') ?? {})).not.toContain('restoredAt')
+
+  // Picking an option answers it as if it had never been dismissed.
+  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  await ui.unmount()
+})
+
+test('snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const line = () => ui.find({ type: 'Text', text: FORCE_PUSHED })
+
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'snooze:2' })
+  await clock.settle()
+  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+  // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+  const snoozed = await line()
+  expect([snoozed?.props.color, snoozed?.props.dimColor, snoozed?.props.strikethrough]).toEqual([
+    'subtle',
+    undefined,
+    false,
+  ])
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+
+  // Its line opens the drawer again, where unsnooze takes snooze's place.
+  await ui.press({ key: 'item:2' })
+  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'unsnooze:2'])
+  await ui.press({ key: 'unsnooze:2' })
+  await clock.settle()
+  expect(session.project()).toContain('inbox restore 2 --session s1 --json')
+  expect(await ui.find({ key: 'detail:2' })).toBeDefined()
+  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
+  expect((await line())?.props.color).toBeUndefined()
+  expect(session.store.store.get('2')).toEqual(notice())
+
+  // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
+  await ui.press({ key: 'snooze:2' })
+  await clock.advance(30_000 - TICK)
+  await clock.settle()
+  expect(await line()).toBeDefined()
+  await clock.advance(2 * TICK)
+  await clock.settle()
+  expect(await line()).toBeUndefined()
+  expect(session.submitted).toEqual([])
+  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+  await ui.unmount()
+})
+
+test('the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+  const heard = held({ answer: dismissed, deliveredAt: NOW - 1_000 })
+  const read = notice({ answer: dismissed, deliveredAt: NOW - 1_000 })
+  const session = questionWorld(on, clock, [heard, read])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // You open the dismissed question's drawer, and the question leaves the band 30 seconds after its dismissal.
+  await ui.press({ key: 'item:1' })
+  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
+  await clock.advance(30_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+
+  const called = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  expect(String(called.text ?? called.result)).toBe(
+    'Restored 1. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
+  )
+  expect(session.project()).toContain('inbox restore 1 --session s1 --json')
+  // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
+  const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
+  expect([line?.props.color, line?.props.strikethrough]).toEqual([undefined, false])
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
+
+  // A notice comes back too, and nothing goes to the agent.
+  const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
+  expect(String(told.text ?? told.result)).toBe(
+    'Restored 2. It is back in Projector’s band until the person dismisses it; nothing comes back to you.',
+  )
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a restore brings a hidden band back, from the tool or from a terminal, as a new item does', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 60_000 }
+  const session = questionWorld(on, clock, [
+    held({ answer: dismissed, deliveredAt: NOW - 60_000 }),
+    notice({ snoozedAt: NOW - 60_000, snoozedUntil: NOW + HOUR }),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer: dismissed, deliveredAt: NOW - 60_000 }),
+  ])
+  await startSession($, clock)
+  const isHidden = async () => {
+    const ui = await $.ui.mount(BAND)
+    const hidden = (await ui.find({ type: 'Text', text: ENGINE_BAND })) !== undefined
+    await ui.unmount()
+    return hidden
+  }
+  const hide = async () => {
+    await $.command.run(COMMAND)
+    await clock.advance(TICK)
+    await clock.settle()
+    expect(await isHidden()).toBe(true)
+  }
+
+  await hide()
+  await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  await clock.advance(1)
+  await clock.settle()
+  expect(await isHidden()).toBe(false)
+
+  // Unsnoozing or restoring from a terminal brings it back on the next tick.
+  for (const ref of ['2', '3']) {
+    await hide()
+    session.store.run(['project', 'inbox', 'restore', ref, '--session', SESSION])
+    await clock.advance(TICK)
+    await clock.settle()
+    expect(await isHidden()).toBe(false)
+  }
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ 2 questions · 1 notice · updated/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const answered = held({ answer, deliveredAt: NOW - 1_000 })
+  const session = questionWorld(on, clock, [answered, notice()])
+  await startSession($, clock)
+  const restore = { tool: 'mcp__projector__restore' as const, number: 1 }
+
+  const resolved = await $.tool.call(restore)
+  expect(resolved.deny ?? resolved.text).toBe('1 is already answered')
+
+  const open = await $.tool.call({ ...restore, number: 2 })
+  expect(open.deny ?? open.text).toBe('2 is open, so there is nothing to restore')
+
+  const unknown = await $.tool.call({ ...restore, number: 9 })
+  expect(unknown.deny ?? unknown.text).toBe('no item 9')
+
+  session.store.failing.locks = 1
+  const busy = await $.tool.call(restore)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
+
+  Object.assign(session.store.refusal, { code: 2, message: "error: argument inbox_command: invalid choice: 'restore'" })
+  const old = await $.tool.call(restore)
+  expect(old.deny ?? old.text).toBe("error: argument inbox_command: invalid choice: 'restore'; run project upgrade")
+
+  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
+  const hung = await $.tool.call(restore)
+  expect(hung.deny ?? hung.text).toMatch(
+    /^project did not finish \(.*\); tell the person in the conversation that it could not be restored$/,
+  )
+  expect(session.store.store.get('1')).toEqual(answered)
+  expect(session.store.store.get('2')).toEqual(notice())
 })

@@ -1,4 +1,4 @@
-<!-- projector:begin 11 -->
+<!-- projector:begin 12 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -68,6 +68,8 @@ instead, answer what they asked. Then withdraw the question with the
 if the reply shows it was unclear or the choice has changed, or leave it
 open while it still needs them. Each time the person writes to you, also
 look over the other items you posted that are still open, and withdraw any
-that no longer need them, such as news that has gone stale. Name an item by
-the number `ask` or `tell` returned.
+that no longer need them, such as news that has gone stale. When the person
+says they dismissed an item by mistake, restore it with the `restore` tool or
+`project inbox restore` rather than asking again. Name an item by the number
+`ask` or `tell` returned.
 <!-- projector:end -->

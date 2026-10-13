@@ -62,6 +62,8 @@ export type Posted = {
   agentId?: string
   /** When a snoozed item returns, in milliseconds; absent when it is not snoozed. */
   snoozedUntil?: number
+  /** When the item was last snoozed, in milliseconds; absent when it is not snoozed. */
+  snoozedAt?: number
   deliveredAt?: number
   session: string
 }
@@ -73,6 +75,8 @@ export type Question = Posted & {
   choices: string[]
   answer?: Answer
   claim?: { token: string; renewedAt: number }
+  /** When the person restored the question after its agent may have heard `DISMISSED`, until `RESTORED` is delivered. */
+  restoredAt?: number
 }
 
 /** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */

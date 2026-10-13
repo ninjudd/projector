@@ -257,9 +257,9 @@ external system, which leaves a clean pull request stuck in draft.
 `project init` adds `Bash(project *)` to the user's Claude Code settings,
 which allows every Projector command, and the same allowance to their Codex
 rules, so the command runs where the raw call is refused. If the host
-refuses the command anyway, do not retry it as a raw `gh api` call. Leave the hold as it is, and ask the user to run
-`project init` in a terminal, which adds the rules, or to run the command
-themselves.
+refuses the command anyway, do not retry it as a raw `gh api` call. Leave
+the hold as it is, and ask the user to run `project init` in a terminal,
+which adds the rules, or to run the command themselves.
 
 Projector reads the hold. While the pull request's author has a comment
 carrying `<!-- projector-hold v=1 -->` open on it, `project review status`
