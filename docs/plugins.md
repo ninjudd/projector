@@ -332,6 +332,7 @@ band scrolls:
   1: Decline it: the total cap already bounds retries to one host
   (recommended)
   2: Add a budget of two retries per host, and keep the total cap
+
   d: discuss this
   x: dismiss question
   s: snooze question
@@ -386,12 +387,12 @@ quotes one does neither. Your prompt is what carries the answer or the reply
 to the main loop, and when a subagent asked, the main loop also reads a note
 naming it, so it can pass the answer or the reply on.
 
-The options and the actions form one list, the actions a line each after
-the options. Each line's key is drawn in Claude Code's accent color and the
-rest of the line in the default text color, which Claude Code's own `: `
-after the key always takes, so under the pointer or the focus ring the
-line inverts as the key and one block after it. A question's drawer has
-three actions:
+The options and the actions form one list, the actions a line each under
+the options, after a blank line. Each line's key is drawn in Claude Code's
+accent color and the rest of the line in the default text color, which
+Claude Code's own `: ` after the key always takes, so under the pointer or
+the focus ring the line inverts as the key and one block after it. A
+question's drawer has three actions:
 
 - **discuss this** puts the quoted question in the prompt, followed by a
   blank line, and leaves the drawer open, so the options and detail stay in

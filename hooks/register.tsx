@@ -1219,11 +1219,12 @@ export const register: Register = on => {
           {isOpened && (
             <Box flexDirection="column" marginLeft={2}>
               {/* A blank line sets the item apart from its line, and the detail,
-                  when there is one, sits between two. A question's actions
-                  follow its options directly, as one list. */}
+                  when there is one, sits between two. Another sets the actions,
+                  or the lengths snooze offers, apart from what comes above. */}
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
-              {item.kind === 'question' ? drawAnswers(item) : <Text key={`before-buttons:${ref}`}> </Text>}
+              {item.kind === 'question' && drawAnswers(item)}
+              <Text key={`before-buttons:${ref}`}> </Text>
               {isAsking ? drawLengths(ref, lengths) : drawActions(ref, actions)}
             </Box>
           )}

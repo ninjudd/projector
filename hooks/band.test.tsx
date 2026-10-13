@@ -2473,6 +2473,17 @@ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
 }
 
+/** An item's open drawer, row by row: a Text by its text, any other element by its key or type. */
+async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.props.marginLeft === 2)
+  type Row = { type: string; props: { key?: string }; children?: unknown[] }
+  return ((drawer?.children ?? []) as Row[]).map(row =>
+    row.type === 'Text'
+      ? `text:${(row.children ?? []).filter(part => typeof part === 'string').join('')}`
+      : (row.props.key ?? row.type),
+  )
+}
+
 test('a drawer’s actions follow its options a line each, on d, x and s, named for what they act on', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -2498,12 +2509,25 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'dismiss:1 x dismiss question',
     'snooze:1 s snooze question',
   ])
-  // No blank line or `|` comes between them: the drawer's only blank lines set the detail apart.
-  expect(await ui.findAll({ type: 'Text', text: /^ $/ })).toHaveLength(2)
+  // A blank line sets the actions apart from the options, as one sets the detail apart, and no `|` joins them.
+  expect(await drawerRowsOf(ui)).toEqual([
+    'text: ',
+    'detail:1',
+    'text: ',
+    'answer:1.a',
+    'answer:1.b',
+    'text: ',
+    'discuss:1',
+    'dismiss:1',
+    'snooze:1',
+  ])
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
 
-  // Snoozed, unsnooze takes snooze's place.
+  // The blank line stays above the lengths snooze offers in the actions' place.
   await ui.press({ key: 'snooze:1' })
+  expect((await drawerRowsOf(ui)).slice(-3)).toEqual(['answer:1.b', 'text: ', 'Box'])
+
+  // Snoozed, unsnooze takes snooze's place.
   await ui.press({ key: 'snooze-60:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
@@ -2518,6 +2542,15 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss this', 'restore:1 x restore question'])
+  // A resolved question still lists its options, with the blank line under them.
+  expect((await drawerRowsOf(ui)).slice(2)).toEqual([
+    'text: ',
+    'text:Decline it',
+    'text:Add a budget',
+    'text: ',
+    'discuss:1',
+    'restore:1',
+  ])
   await ui.press({ key: 'close:1' })
 
   // A notice's actions name a notice.
@@ -2527,6 +2560,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'dismiss:2 x dismiss notice',
     'snooze:2 s snooze notice',
   ])
+  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
   await ui.press({ key: 'close:2' })
 
   // A pull request's drawer has its links above its actions, the links with no letters.
