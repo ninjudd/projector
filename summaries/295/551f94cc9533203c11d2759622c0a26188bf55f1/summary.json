@@ -1,0 +1,164 @@
+{
+ "version": 1,
+ "name": "Band answers through discuss",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 295,
+  "title": "Answer the band's questions through discuss, and drop the tracked-file argument",
+  "head": "551f94cc9533203c11d2759622c0a26188bf55f1",
+  "headRef": "band-fixes",
+  "base": "2ce7eccb947fa816c33da489f86ab38d1ec3218b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>band</b> is the strip a Claude Code plugin draws above the prompt. It lists the pull requests the session's loops track and the session's <b>inbox</b>: questions an agent asked you with the <code>ask</code> tool, and notices it posted with <code>tell</code>. Clicking an item opens its <b>drawer</b>, which shows the detail, a question's numbered options, and three actions: <b>discuss</b>, <b>dismiss</b>, and <b>snooze</b>.",
+   "Before this change, a question's drawer offered two ways to answer in your own words: a \"Type something\" field, and discuss. Discuss put the quoted question and a space in the prompt, so anything you typed after it sat on the quote's line and was never recorded as an answer. This change removes the field and makes discuss the way to give a free answer. Discuss now fills the quoted question followed by a blank line; whatever you type under it and send becomes the question's typed answer, through the same sent-prompt reader that options already used.",
+   "The change also drops <code>/projector &lt;tracked file&gt;</code>, which let a session list a loop another session runs. To learn that file's kind, the band scanned every process on the machine with <code>ps -A</code>. Now the band lists only the watchers its own session starts, and <code>/projector</code> only shows or hides the band.",
+   "The rest are small fixes found while using the band: muted text in the theme's <code>subtle</code> color, the pull request drawer's discuss as a plain <code>Button</code>, the band's clock moving before a hidden band returns, a blank line after GitHub's error, claim renewal that survives a store read past the CLI's timeout, a 30-second window for resolved items, and closing a question's drawer once a sent prompt answers it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the plugin's strip above the Claude Code prompt.</li><li><b>Drawer</b>: the detail an item or pull request row opens under itself.</li><li><b>Quote</b>: an item's subject in double quotes, as <code>quoteOf</code> writes it; a sent prompt answers a question by quoting it.</li><li><b>Tracked file</b>: the <code>--tracked</code> file a loop's watcher reads, listing the pull requests that loop follows.</li><li><b>Claim</b>: a lease on a recorded answer that the band takes while it delivers the answer, and renews while it waits.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review head, <code>b546910</code>, left two comments in <code>hooks/inbox.ts</code> describing the old discuss and the one-minute window. <code>f90f55d</code> corrects both.</li><li>The review of <code>f90f55d</code> suggested that a watcher replace a kindless seen loop an earlier version kept. <code>a2e2d10</code> does that.</li><li>The one finding, that the in-progress inbox plan described the old discuss and window, is fixed. <code>551f94c</code> merges <code>main</code>, which brings in #294's rewrite of <code>docs/projects/inbox/readme.md</code>. The review of <code>551f94c</code> is clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "answers",
+   "title": "Discuss answers a question in your own words",
+   "kicker": "The free-text field goes, and discuss leaves a blank line to type the answer under",
+   "intro": [
+    "A question is answered by a prompt you send that quotes it: <code>answersIn</code> finds each open question's quote that ends its line and takes the next non-blank line as the answer. If that line matches an option, the option's letter is recorded; otherwise it is recorded as a typed answer under the letter after the last option.",
+    "The old discuss left the quote followed by a space, and the reader required the quote to be followed directly by a newline, so an answer typed under a discussed question was dropped. Now discuss fills <code>\"quote\"\\n\\n</code>, and the reader also accepts spaces or tabs between the quote and its line's end. Text typed on the quote's own line still answers nothing, so you can still talk a question over without answering it.",
+    "With discuss carrying free answers, the drawer's <code>Input</code> field is gone. The drawer stays open while you type, so the options and detail stay in view, and closes once a sent prompt answers its question. Opened again, a resolved question's drawer lists a typed answer after the options, numbered and marked <code>✓</code>."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A discussion typed under the blank line, rather than on the quote's line, is now recorded as the answer. The docs say this, and the test <code>discuss puts the question above a blank line, what you type under it answers, and dismiss resolves it</code> pins it."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "The sent-prompt reader accepts trailing spaces or tabs after a quote, and resolved items stay 30 seconds instead of a minute.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 82,
+       "text": "The quote can match mid-line, as before; only what follows it is checked. <code>after.replace(/^\\s*\\n/, '')</code> then skips the blank line discuss leaves."
+      },
+      {
+       "kind": "verify",
+       "line": 30,
+       "text": "This docstring and the one on <code>answersIn</code> now match the code: <code>RESOLVED_MS</code> is 30 seconds, and both an option and discuss leave the quote ending its line. Checked by reading both against the functions they describe."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "loops",
+   "title": "The band lists only its own session's loops",
+   "kicker": "No more hand-named tracked files and no process scan",
+   "intro": [
+    "A loop is one of Projector's background watchers, such as <code>watch-prs.sh</code> for a review loop. The band learns a loop when the session runs its watcher and records the watcher's tracked file and kind in session state.",
+    "Before, <code>/projector &lt;tracked file&gt;</code> added a file by hand, with no kind; the band then ran <code>ps -A</code> to find the watcher reading it and borrow its kind. This change deletes that command argument, the <code>runningLoops</code> scan, and <code>expandPath</code>, which parsed the typed path. Session state from an earlier version can still hold a hand-named entry with no kind, so <code>load</code> filters to entries whose kind is known, and <code>remember</code> replaces such an entry when this session starts a watcher on the same file."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Removes the tracked-file argument and the process scan, and carries the drawer, color, clock, and claim fixes in the next group.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 124,
+       "text": "<code>remember</code> counts a path as seen only when an entry with a kind tracks it, and swaps a kindless entry for the watcher's. The test <code>leaves out a tracked file an earlier version was given by hand, until the session starts its watcher</code> checks the stored list; it passes at this head."
+      },
+      {
+       "kind": "context",
+       "line": 147,
+       "text": "The toast no longer points at the removed <code>/projector &lt;tracked file&gt;</code>; it says the band leaves that loop out."
+      },
+      {
+       "kind": "context",
+       "line": 679,
+       "text": "<code>closeDrawer</code> runs only for the questions this prompt answered, and only once the prompt has entered. It closes the drawer even when <code>answerFromPrompt</code> later fails to record the answer, which leaves the question open with its drawer closed."
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.ts",
+     "note": "Deletes <code>expandPath</code>, whose only caller was the removed command argument."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "<code>SeenLoop.kind</code> is now required, since every new entry comes from a watcher."
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "fixes",
+   "title": "Smaller band fixes",
+   "kicker": "Colors, the pull request drawer, the clock, error spacing, and claim renewal",
+   "intro": [
+    "<ul><li><b>Muted text uses <code>subtle</code>.</b> <code>dimColor</code> draws at full strength in some terminals, so the divider, resolved items and options, the <code>|</code> separators, and the pull request drawer's facts take the theme's <code>subtle</code> color.</li><li><b>The pull request drawer's discuss is a plain <code>Button</code>.</b> A Markdown link took no Enter on the main screen; a Button does.</li><li><b>Showing the band moves its clock first.</b> <code>show</code> sets the band's <code>now</code> before it shows, so an item whose snooze ended while the band was hidden draws at once instead of after GitHub answers.</li><li><b>A blank line follows GitHub's error</b> when items come under it.</li><li><b>A store read that times out no longer skips claim renewal.</b> <code>checkInbox</code> catches a failed <code>readStore</code>, so <code>renewClaims</code> still runs and a waiting answer's claim does not lapse.</li><li><b>A sent answer closes its question's drawer.</b> The new <code>closeDrawer</code> helper, which snooze also uses, returns the band to its list once the prompt has entered.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran <code>claude plugin test .</code> at this head: 72 pass, 0 fail. The new tests cover each fix, including a hung <code>inbox list</code> that still renews claims and a snooze that ends while the band is hidden. The Python suite, 905 tests, passes too."
+    },
+    {
+     "kind": "context",
+     "text": "The merge of <code>main</code> resolved one conflict, the test store's <code>failing</code> counters in <code>hooks/band.test.tsx</code>, by keeping both <code>hangs</code> from this branch and <code>locks</code> from #293."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The plugin guide describes the new discuss and drops the tracked-file argument",
+   "intro": [
+    "<code>docs/plugins.md</code> describes discuss as the way to answer in your own words, says the drawer stays open while you type and closes once you send the answer, drops the field from the drawer example and <code>/projector &lt;tracked file&gt;</code> from the band section, splits the drawer's actions into a list, and corrects the drawer's extra room to two rows, only in a terminal."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 311,
+       "text": "The in-progress inbox plan agrees with this description at this head: the merged <code>docs/projects/inbox/readme.md</code> says discuss puts \"the quoted subject and two newlines\" in the prompt and a resolved line stays 30 seconds, and its § 10 records this pull request. Checked by reading the plan at <code>551f94c</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
