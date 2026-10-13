@@ -1,0 +1,123 @@
+{
+ "version": 1,
+ "name": "Codex marketplace retry",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 304,
+  "title": "Retry the Codex marketplace once when its clone fails",
+  "head": "afe39b6354cff82cd941583453dc70b553fec21d",
+  "headRef": "upgrade-retry-codex",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>install.sh</code> installs Projector's CLI and its plugins for Claude Code and Codex, and <code>project upgrade</code> runs it to upgrade an existing install. The installer stops at the first host command that fails.",
+   "Codex keeps a Git marketplace as a clone, and it gives that clone a 30-second time limit of its own. On a slow connection, <code>codex plugin marketplace upgrade projector</code> can fail with <code>git clone marketplace source timed out after 30s</code>, and the whole upgrade fails with it. Running the upgrade again usually works.",
+   "This pull request makes the installer try again by itself. The two Codex commands that clone a marketplace, <code>marketplace add</code> and <code>marketplace upgrade</code>, now go through a wrapper. When the command fails, the wrapper prints a <code>retrying</code> row, waits five seconds, and runs the command once more. If the second try fails too, the installer stops with Codex's exit status, as it did before after the first failure. A <code>marketplace add</code> whose source is a directory on this machine clones nothing, so it is not retried."
+  ],
+  "cards": [
+   {
+    "id": "scope",
+    "title": "What is retried",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>Retried</th></tr></thead><tbody><tr><td><code>codex plugin marketplace add</code> of a remote source</td><td class=\"r\">Yes</td></tr><tr><td><code>codex plugin marketplace upgrade projector</code></td><td class=\"r\">Yes</td></tr><tr><td><code>codex plugin marketplace add</code> of a local directory</td><td class=\"r\">No</td></tr><tr><td><code>codex plugin marketplace remove</code>, <code>codex plugin add</code></td><td class=\"r\">No</td></tr><tr><td>Every Claude Code command, the CLI install</td><td class=\"r\">No</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of <code>d876ba8</code> was clean. It made one suggestion that did not block: a local-directory <code>marketplace add</code> clones nothing, yet a failure there was still retried with a message about a Git clone.</li><li><code>afe39b6</code> acts on that suggestion, and its review was clean too. Neither review opened a finding thread.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "retry",
+   "title": "The installer retries a failed Codex marketplace command once",
+   "kicker": "Two new helpers in install.sh, used where a Codex marketplace command can clone",
+   "intro": [
+    "<code>run_codex</code> runs a Codex command with the installer's Codex home directory. The new <code>run_codex_with_retry</code> runs it the same way, and on a failure runs it a second time after a five-second pause.",
+    "<code>add_codex_marketplace</code> chooses between the two for <code>marketplace add</code>. A source that is a directory on this machine is read in place, with no clone that could time out, so it runs once. Any other source gets the retry.",
+    "The installer runs under <code>set -euo pipefail</code>, so a failed command stops the script. The first try sits behind <code>||</code>, which keeps its failure from stopping the script. The second try's status becomes the wrapper's return value, so a second failure stops the installer with Codex's own exit status."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Adds <code>run_codex_with_retry</code> and <code>add_codex_marketplace</code>. <code>install_codex</code> calls <code>add_codex_marketplace</code> from both <code>add</code> branches and the retry wrapper from the Git <code>marketplace upgrade</code> branch.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 150,
+       "text": "A second failure stops the installer with Codex's status. The test whose fake Codex fails every time sees the installer exit 3, the fake's status, and run no <code>plugin add</code>. A manual run with a fake Codex that exits 1 ended with <code>exit 1</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 358,
+       "text": "Only marketplace commands that can clone are retried. <code>marketplace remove</code> and both <code>plugin add</code> calls still use <code>run_codex</code>, and a test confirms a failed Claude Code <code>marketplace update</code> runs once."
+      },
+      {
+       "kind": "verify",
+       "line": 372,
+       "text": "A local directory is added once. <code>plugin_source</code> returns the checkout's own path when the checkout has no <code>origin</code>, and the test at <code>tests/test_install.py</code> line 545 fails that <code>add</code> once and sees exit 3 with no <code>retrying</code> row and no pause. That test fails against the installer at <code>d876ba8</code>."
+      },
+      {
+       "kind": "context",
+       "line": 355,
+       "text": "This branch runs only when the source differs from the checkout, so the source is the <code>origin</code> remote. That is a URL unless <code>origin</code> names a directory on disk, which <code>add_codex_marketplace</code> then adds once."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Fake hosts that fail once, and a fake sleep",
+   "kicker": "Six installer tests for the retry, on fakes that can fail only the first time",
+   "intro": [
+    "The installer tests put fake <code>claude</code> and <code>codex</code> commands on <code>PATH</code>, and a test makes a fake fail a command by writing it to a state file. A command written to the new <code>&lt;host&gt;-fails-once</code> file fails only the first time. Both kinds of failure now exit 3, a status the installer never uses, so a test can tell Codex's status from the installer's.",
+    "A fake <code>sleep</code> logs the pause instead of taking it, so the tests run without waiting."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_install.py",
+     "collapsed": false,
+     "note": "Four tests cover the Codex upgrade: it works on the first try, works on the second, or fails twice, and Claude Code is not retried. One adds a local-directory marketplace and confirms it is not retried. One more, in <code>ReleaseInstallTests</code>, retries a failed <code>marketplace add</code> from a piped install.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 513,
+       "text": "Against <code>install.sh</code> from <code>main</code>, the tests at lines 513, 532 and 853 fail. At this head all 49 installer tests pass, and so does the full suite, 928 tests with 1 skipped."
+      },
+      {
+       "kind": "verify",
+       "line": 50,
+       "text": "The installer never exits 3 itself: every literal <code>exit</code> and <code>return</code> in <code>install.sh</code> uses 0, 1, 64 or 69."
+      },
+      {
+       "kind": "context",
+       "line": 853,
+       "text": "<code>ReleaseInstallTests</code> reuses <code>InstallTests.setUp</code>, so this piped test gets the fake <code>sleep</code> too and never pauses."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plugin guide describes the retry",
+   "kicker": "One sentence in the paragraph on upgrades",
+   "intro": [
+    "The paragraph on how the installer upgrades what it installed gains two sentences. They name the two retried commands, the five-second pause, the <code>retrying</code> row, and the exit status after a second failure. They also say that a local directory clones nothing, so its failure stops the installer at once."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The new sentences match <code>run_codex_with_retry</code> and <code>add_codex_marketplace</code>. The rest of the paragraph is rewrapped, not changed."
+    }
+   ]
+  }
+ ]
+}
