@@ -1,0 +1,2118 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 5d17f97..54fbd4d 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -233,6 +233,88 @@ when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
+ for every pull request in one `gh api graphql` call, and only while the band
+ is shown. The skills never depend on the band, and Codex has no equivalent.
+ 
++### Answer your agents' questions in Projector's band
++
++An agent in Claude Code asks you a question with Projector's `ask` tool,
++which the model sees as `mcp__projector__ask`, and keeps working. An agent
++that runs `project question ask` from the shell reaches the same questions,
++as [Ask and answer questions](cli.md#ask-and-answer-questions) describes.
++The questions are a bulleted list below the pull requests, oldest first.
++Each line ends with the pull request the question is
++about, as the band labels it, and how long ago it was asked. The band appears
++when a question arrives, even after you hid it, and the divider counts the
++questions still open.
++
++```text
++──────────────────────────────────────── 2 questions · updated 12s ago [-]
++#337 draft Retry failed webhook deliveries with backoff
++
++- Run project init to add the publish rule?                             2m
++- Decline the finding about the retry budget?                     #337  5m
++```
++
++Click anywhere on a question to open its drawer, and click it again to close
++it. On the main screen, press ctrl+x tab to move into the band, then Enter on
++a question. While its drawer is open, the question stays highlighted and has
++the band to itself:
++
++```text
++──────────────────────────────────────── 2 questions · updated 12s ago [-]
++- Decline the finding about the retry budget?                     #337  5m
++
++  The review asks for a retry budget per host. The loop caps retries at
++  three in total, which covers the case the finding names.
++
++  1. Decline it: the total cap already bounds retries to one host
++     (recommended)
++  2. Add a budget of two retries per host, and keep the total cap
++  3. [ Type something                                                    ]
++
++  [ discuss ] [ dismiss ]
++```
++
++The first option is always the agent's recommendation. Click an option, or
++type an answer and press Enter, and the band puts the question and that
++answer in your prompt, for you to send as it stands or change first:
++
++```text
++"Decline the finding about the retry budget?"
++
++Add a budget of two retries per host, and keep the total cap
++```
++
++Sending that prompt answers the question. The band finds each quoted question
++whose quote ends its line, and takes the next line that is not blank as its
++answer: the option with that text, or else an answer you typed. Each quote
++answers one question: when two open questions ask the same thing, it answers
++the one whose drawer put it in your prompt, or else the older one. Only a
++prompt you send, at the terminal or through Remote Control, answers a
++question. Another session's message or a notification that quotes one
++answers nothing. Your prompt is what carries the answer to the main loop,
++and when a subagent asked, the main loop also reads a note naming it, so it
++can pass the answer on.
++**discuss** puts only the quoted question in the prompt, followed by a space,
++so what you type after it on the same line talks the question over and
++answers nothing. **dismiss** sets the question aside without an answer.
++
++An answered question stays in the list, dim, for a minute after its answer is
++delivered; a dismissed one is struck through. Its drawer still opens and
++marks the answer given with `✓`.
++
++An answer you give from a terminal with `project question answer` reaches the
++agent through the band of the session that asked. A subagent that is still
++running receives it directly, as a message that starts `ANSWER`, or
++`DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
++of its own once its turn ends, with the name of the subagent that asked, and
++`sending` follows the question until it has gone. A reference to a question
++in a prompt, such as `#337.3.b`, reaches the agent with the question it
++names.
++
++Shown or hidden, the band lists the session's question directory every 5
++seconds and runs `project question` only when the directory changed since
++its last successful read or an answer is on its way, so a session with no
++questions starts no process. A read that fails runs again 5 seconds later.
++
+ ## Install for Codex
+ 
+ Add the same repository as a Codex marketplace and install the plugin:
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index bd2101c..3dcb600 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -53,12 +53,14 @@ working: `#337.3` for the third question on #337, `q2` for the session's
+ second question about no pull request. Its answers are lettered: `a` is
+ always the recommendation, then the other choices in the agent's order, and
+ the last letter is a typed answer. You answer with `project question answer
+-#337.3.a`, or by clicking in Claude Code's band. Either way the store
+-records it, and one deliverer claims it and sends it to the agent that
+-asked: in Claude Code the band, which delivers every answer in its session,
+-and anywhere else `project question watch`, which any host's watcher can
+-run. A reference you type in a prompt reaches the agent with its question
+-and choice attached.
++#337.3.a`, or in Claude Code by sending a prompt that a question's drawer in
++the band fills with the question and your answer. The store records the
++answer, and one deliverer claims it and sends it to the agent that asked: in
++Claude Code the band, which delivers every answer in its session, and
++anywhere else `project question watch`, which any host's watcher can run. An
++answer you send in a prompt needs no deliverer, because the prompt carries it
++to the main loop. A reference you type in a prompt reaches the agent with its
++question and choice attached.
+ 
+ The work is in two parts. § 2.1 to § 2.4 build the CLI that every host
+ uses. § 2.5 to § 2.7 build Claude Code's view over it in Projector's band.
+@@ -220,7 +222,10 @@ passing `--session` from `$.session.id()` and `--agent` from the call's
+ reason }`, which the model reads as an error result. When the command exits
+ `65`, the reason is the check that failed. On any other exit, such as `2`
+ from a `project` too old to know `question`, the reason is the command's
+-error and `run project upgrade`. It also shows the band and raises one
++error and `run project upgrade`. When `project` cannot start, or is still
++running when `$.process.run` gives up after 15 seconds, the reason says it
++did not finish and tells the agent to ask in the conversation instead. When
++the command succeeds, the hook also shows the band and raises one
+ `$.ui.notify`. An agent can run `project question ask` itself from the shell
+ too, which reaches the same store.
+ 
+@@ -228,62 +233,104 @@ too, which reaches the same store.
+ 
+ ```text
+ ──────────────────────────────────────── 2 questions · updated 12s ago [-]
+-q1 Run project init to add the publish rule?                         2m
+ #337 draft Retry failed webhook deliveries with backoff
+-#337.3 Decline the finding about the retry budget?                   5m
+-       The review asks for a retry budget per host. The loop caps retries
+-       at three in total, which covers the case the finding names.
+-       a. Decline it: the total cap already bounds retries to one host
+-          (recommended)
+-       b. Add a budget of two retries per host, and keep the total cap
+-       c. [ Type something                                            ]
+-       [ dismiss ]
+-#337.2.a Rebase onto main before the fix?                            40s
+ #258 ready Name the reviewed head in a review's signature line
++
++- Run project init to add the publish rule?                             2m
++- Decline the finding about the retry budget?                     #337  5m
++```
++
++With a question's drawer open:
++
++```text
++──────────────────────────────────────── 2 questions · updated 12s ago [-]
++- Decline the finding about the retry budget?                     #337  5m
++
++  The review asks for a retry budget per host. The loop caps retries at
++  three in total, which covers the case the finding names.
++
++  1. Decline it: the total cap already bounds retries to one host
++     (recommended)
++  2. Add a budget of two retries per host, and keep the total cap
++  3. [ Type something                                                    ]
++
++  [ discuss ] [ dismiss ]
+ ```
+ 
+-- **Where a question sits.** Each question goes on the line after the pull
+-  request its `pr` names, in number order, starting at the same left edge
+-  as the pull request lines. A question with no `pr`, or about a pull
+-  request the band does not list, goes above the pull requests and names
+-  its `pr`, when it has one. The divider counts the open questions.
+-- **An open question's line.** Its reference is a `Button` with `plain`,
+-  underlined in the `suggestion` color so it reads as a link, then the
+-  question, truncated only on a narrow terminal, then its age, dim. A
+-  `Button` takes a click in fullscreen and Enter once the band has the
+-  keyboard on the main screen, where the pull requests' `Markdown` links
+-  take no press. Clicking the reference opens the question's drawer, and
+-  opening any drawer closes any other, through the band's `bandDrawer`.
+-- **The drawer.** `detail` as `Markdown`, then the choices, one line each.
+-  Each letter, such as `a.`, is a `Button` styled like the reference, in a
+-  column of its own, and the choice's text sits beside it in a `Text` that
+-  wraps under itself. `a` ends `(recommended)` in the `success` color. The
+-  last letter holds an `Input` keyed `answer` with the placeholder `Type
+-  something`. A **dismiss** button follows on a line of its own. The
+-  letters have no hotkeys: Claude Code presses a band `Button` whose hotkey
+-  is a digit when that digit is typed first in an empty prompt, so a hotkey
+-  would let `2 things first:` answer the question.
+-- **An answered question's line.** Plain dim text that takes no press: the
+-  chosen answer's reference, such as `#337.2.a`, the question, and its age;
+-  for a dismissed question, its own reference and the question struck
+-  through. Until the answer is delivered, `sending` follows the reference.
+-  The line leaves the band one minute after `deliveredAt`.
++- **Where a question sits.** The questions are a bulleted list below the
++  pull requests, after a blank line, oldest first. A question shows no
++  reference. Each line ends with the question's pull request, as the band
++  labels it when it lists it and in full otherwise, then its age, both in
++  the `subtle` color; the ages share one right-aligned column, so the pull
++  requests end in one column too. The divider counts the open questions.
++- **An open question's line.** The bullet and the question are one plain
++  `Button`, which draws as ordinary text and takes a press anywhere on it: a
++  click in fullscreen, and Enter once the band has the keyboard on the main
++  screen. Pressing it opens the question's drawer, and opening any drawer
++  closes any other, through the band's `bandDrawer`. While its drawer is
++  open the question draws inverted, as the pointer draws it, and it has the
++  band to itself: the other questions and the pull requests return when the
++  drawer closes or the question leaves the band.
++- **The drawer.** A blank line, `detail` as `Markdown` and another blank
++  line when there is detail, then the options, numbered from `1.`, one line
++  each. Each number is a `Markdown` link, drawn as a pull request's number
++  is, in a column of its own beside the option's text. A plain click on it
++  puts the question and that option in the prompt (§ 2.7); a ctrl, alt or
++  cmd click opens the question's pull request, or the question's own file
++  in the store when it has none, since `Markdown` draws only an `https:`,
++  `http:` or `file:` link as one. The first option, the recommendation,
++  ends `(recommended)` in the `success` color. The last number holds an
++  `Input` keyed by its answer's reference, such as `answer:#337.3.c`, with
++  the placeholder `Type something`, and Enter there fills the prompt the
++  same way; the mobile app draws no `Input`, so there the drawer leaves
++  that line out. After a blank line come **discuss** and **dismiss**, both
++  buttons. Nothing in the band has a hotkey: Claude Code presses a band
++  `Button` whose hotkey is a digit when that digit is typed first in an
++  empty prompt, so a hotkey would let `2 things first:` press it.
++- **An answered question's line.** The same line, dim, and struck through
++  for a dismissed question. Until the answer is delivered, `sending`
++  follows the question. Its drawer still opens, with the options dim and
++  the one given, or the text typed, marked `✓` in the `success` color, and
++  nothing to press but **discuss**. The line leaves the band one minute
++  after `deliveredAt`.
+ 
+ ### 2.7 Claude Code: answers and references
+ 
+ 1. **The band reads the store when it changes, shown or hidden.** On its
+-   5-second tick it stats the session's question directory, whether the
+-   band is shown or not, and runs `project question list --all --json` only
+-   when the directory changed, so an idle session starts no process. A
+-   question it has not shown before shows the band, so one asked from the
+-   shell appears as surely as one asked through the tool.
+-2. **Answering records the answer.** When you click a letter, type an
+-   answer, or press **dismiss**, the band runs `project question answer` or
+-   `dismiss`, so the store holds the answer before anything is sent, and a
+-   second press finds it answered and does nothing.
+-3. **The band delivers every recorded answer.** Whenever the store holds an
+-   answer in its session with no `deliveredAt`, whether you gave it in the
+-   band or from a terminal, and the band is not already delivering it, the
++   5-second tick it lists the session's question directory with `$.fs.list`,
++   whether the band is shown or not, and runs `project question list --all
++   --json` only when a file's name, size, or time changed since the last
++   read that succeeded, so an idle session starts no process and a read
++   that fails runs again on the next tick. A file whose claim the band
++   itself is renewing counts by its name alone, so the band's own renewals
++   never make it read the store again. A question it has not shown before
++   shows the band, so one asked from the shell appears as surely as one
++   asked through the tool.
++2. **Your prompt answers the question.** An option or a typed answer puts
++   the question, in quotes, then a blank line, then the answer's text into
++   the prompt at the cursor, and changes nothing in the store, so you can
++   send it as it stands, change it, or answer several questions in one
++   prompt. **discuss** puts the quoted question and a space there. When you
++   send a prompt, at the terminal or through Remote Control (an `origin`
++   whose `kind` is `composer` or `bridge`), the band's `prompt.submit` hook
++   gives each quote that ends its line to one open question of the session
++   with that text: the one whose drawer put it in the prompt, or else the
++   oldest, so two questions that share their text never take one answer. It
++   takes the next line that is not blank as that question's answer: the
++   option with that text, or else a typed answer under the last letter. A
++   quote with more on its line, as discuss leaves it, answers nothing, and
++   so does any prompt you did not send, such as another session's message,
++   a notification, or a scheduled prompt, which can quote a question its
++   agent is still waiting on. When a subagent asked, the hook adds a note
++   to the prompt's `context` naming it, so the main loop passes the answer
++   on, as the loop skills already do. Once the prompt has entered, the band
++   runs `project question answer`, `claim`, and `delivered`, because the
++   prompt itself carried the answer to the main loop. **dismiss** runs
++   `project question dismiss`, and a second press finds the question
++   dismissed and does nothing.
++3. **The band delivers every other recorded answer.** Whenever the store
++   holds an answer in its session with no `deliveredAt`, given from a
++   terminal or a dismissal, and the band is not already delivering it, the
+    band runs `project question claim` and delivers the text it prints. It
+    keeps the claim's token, and on each tick while the delivery is pending
+    it renews the claim with `claim --renew`, so a submit waiting behind a
+@@ -303,6 +350,16 @@ q1 Run project init to add the publish rule?                         2m
+    token. When the submit resolves `{ drop }` or either call rejects, it
+    runs `project question reopen` with the token and raises a toast with
+    the reason, and the question is open to answer again.
++
++   The band keeps each delivery's token, route, and text in the session's
++   `bandSending` state rather than in the module, because a hot reload
++   drops what the module holds while a submit it made still waits in the
++   session's queue. The band's own `prompt.submit` hook sees that submit
++   arrive, finds its text in `bandSending`, and marks it delivered, so the
++   submit settles whichever copy of the module is loaded, and a reloaded
++   copy keeps renewing each submit it finds there. A send settles at once,
++   so one that an earlier copy left is let go: its claim lapses, and the
++   band delivers the answer again a minute later.
+ 4. **Typed references get their context.** The `prompt.submit` hook the band
+    already has tests your prompt for anything shaped like a reference. When
+    one is, it runs `project question context` on the prompt and adds what
+@@ -317,10 +374,10 @@ q1 Run project init to add the publish rule?                         2m
+ | `src/projector/cli.py` | The `question` command and its subcommands, `--session`, and `PROJECTOR_SESSION` |
+ | `tests/test_questions.py` | New: each subcommand in a temporary state directory, each check, each reference form and non-form, a second answer, a reference in two sessions, two claims at once, an abandoned claim, retention, and `watch`'s lines |
+ | `docs/cli.md` | A section on asking and answering questions, and `65`, `66`, and `67` for the question commands |
+-| `hooks/questions.ts` | New: the quick test for reference-shaped text, the route an answer takes, and the band's order |
+-| `hooks/register.tsx` | Register `ask`; answer its `tool.call` through the CLI; read the store on the tick, shown or hidden; record answers, then claim and deliver every recorded answer; attach typed references; draw the questions, their drawers, and the open count |
+-| `hooks/types.d.ts` | The `Question` type, and the band's `bandQuestions` snapshot and sending marks under the `projector` plugin's state |
+-| `hooks/questions.test.ts`, `hooks/band.test.tsx` | The route by the subagent's status, the band's placement and drawer, each delivery and failure, the resolved line for a minute, and a digit typed in the empty prompt answering nothing, answering `process.run` from memory |
++| `hooks/questions.ts` | New: the quick test for reference-shaped text, the prompt's quoted question and answer and reading answers back from a sent prompt, the note naming a subagent, the route an answer takes, the store's directory and its signature, and the `ask` tool's description, schema, and arguments |
++| `hooks/register.tsx` | Register `ask`; answer its `tool.call` through the CLI; read the store on the tick, shown or hidden; fill the prompt from a drawer, and record the answers a sent prompt gives; dismiss; claim and deliver every other recorded answer; attach typed references; draw the questions, their drawers, and the open count |
++| `hooks/types.d.ts` | The `Question` and `Sending` types, and the band's `bandQuestions` snapshot and `bandSending` deliveries under the `projector` plugin's state |
++| `hooks/questions.test.ts`, `hooks/band.test.tsx` | The route by the subagent's status, the list and the drawer, filling the prompt and answering from a sent one, each delivery and failure, the resolved line for a minute, and no hotkeys, answering `process.run` from memory |
+ | `docs/plugins.md` | A section on questions in Projector's band |
+ 
+ No skill changes in this project. A skill that asks through `project
+@@ -349,14 +406,15 @@ settled.
+   block, so `ask` prints the reference and returns.
+ - **A recommendation with every question, always `a`.** You settle most
+   questions by accepting the agent's answer, and an agent that must name
+-  one has thought the decision through. Making it `a` gives the common
+-  answer one letter everywhere.
++  one has thought the decision through. Making it `a`, the band's first
++  option, gives the common answer one place everywhere.
+ - **References with one fixed form.** You can name a question or an answer
+-  when you talk it over, and the same reference appears in the delivered
+-  text and on the resolved line. A bare `2` would match "rerun the 2
+-  failing tests", so a question without a pull request is `q2`, and a
+-  reference fixed when the agent asks cannot change when a view's labels
+-  do.
++  from a terminal or in a prompt, and the same reference appears in the
++  delivered text. A bare `2` would match "rerun the 2 failing tests", so a
++  question without a pull request is `q2`, and a reference fixed when the
++  agent asks cannot change when a view's labels do. The band shows none:
++  its list reads more easily as plain questions, and the quoted question
++  it puts in the prompt names one as surely, with words the agent reads.
+ - **Record, then claim, then deliver.** An answer can come from a terminal
+   or from a view, and the agent can be in any host, so every answer takes
+   one path: the store records it, one deliverer claims it under the lock,
+@@ -367,11 +425,21 @@ settled.
+   strands nothing. Claude Code's band is that deliverer in Claude Code
+   because it runs in every session there; `watch` is the deliverer anywhere
+   else, in the shape Projector's loops already use to hear GitHub.
+-- **One line, then the drawer; the question beside its pull request.** One
+-  line each keeps the band short, and a question about a pull request reads
+-  best right after it, where its reference already names it.
+-- **Buttons styled as links.** A `Button` takes a click in fullscreen and
+-  Enter on the main screen, where a `Markdown` link takes no press.
++- **The answer travels in your prompt.** An option fills the prompt rather
++  than answering at once, so you can read the answer in context, add to
++  it, or answer several questions together before anything reaches the
++  agent. The quoted question and the answer on its own line are what the
++  agent needs, and the same text tells the band which question you
++  answered, so sending the prompt both delivers the answer and records it,
++  with no second message to the agent.
++- **One line each, in a list of their own.** One line each keeps the band
++  short, and the questions read as one list below the pull requests:
++  placed among the pull request lines they were hard to pick out. An open
++  question takes the band to itself so its drawer reads without the rest.
++- **A Button for the question, links for the options.** A question's line
++  is a plain `Button`, so a press anywhere on it opens the drawer, on the
++  main screen too. The options are `Markdown` links like the pull request
++  numbers, so they read as links without an underline drawn by hand.
+ 
+ ## 4. Acceptance criteria
+ 
+@@ -389,17 +457,20 @@ settled.
+ | `project question watch --session s1` with one undelivered answer | Claims it, prints its `ANSWER` line once, marks it delivered, and prints nothing more for it |
+ | Two `answer` commands on one question at once | One records, the other exits `65`, and the file is whole |
+ | `printf 'Go with #337.3.b.' \| project question context --session s1` | Prints #337.3 and its choice `b`; `rerun the 2 failing tests` prints nothing |
+-| In Claude Code, a subagent calls `mcp__projector__ask` about #337 | The call returns `#337.3`; the band shows it on the line after #337 and counts it |
++| In Claude Code, a subagent calls `mcp__projector__ask` about #337 | The call returns `#337.3`; the band lists it below the pull requests, naming `#337`, and counts it |
+ | The CLI exits `65` for the tool's call | The call returns `{ deny }` with the reason |
+ | The installed `project` has no `question` command, so it exits `2` | The call returns `{ deny }` with the error and `run project upgrade` |
+ | An agent runs `project question ask` from the shell while the band is hidden | The band appears with the question within one tick |
+-| Click `a.` in the band | The store records `a`; the line reads `#337.3.a sending`; the subagent receives the `ANSWER` text through `$.session.send`; the store records it delivered; the line shows `#337.3.a` dim for a minute; a `watch` running for the session prints nothing for it |
+-| Answer after the subagent has ended | The main loop receives the text through `$.prompt.submit`, naming the subagent |
++| Open a question's drawer | The question draws inverted and has the band to itself; closing the drawer brings back the other questions and the pull requests |
++| Click option `1.` in the drawer | The prompt holds the quoted question, a blank line, and the option's text; the store records nothing |
++| Send that prompt, for a question a subagent asked | The store records `a` and marks it delivered; the main loop reads the prompt with a note naming the subagent; nothing else is sent; the line stays dim for a minute; a `watch` running for the session prints nothing for it |
++| Click **discuss**, then send the quoted question with text after it on its line | The prompt reaches the agent, and the question stays open |
++| Answer from a terminal after the subagent has ended | The main loop receives the text through `$.prompt.submit`, naming the subagent |
+ | `$.prompt.submit` resolves `{ drop }` | The band runs `reopen`, a toast gives the reason, and the question is open again |
+ | Answer `#337.3.a` from a terminal while the asking Claude Code session runs, its band hidden | Within one tick, the band claims and delivers it to the agent, and the store records it delivered |
+ | Type `go with #337.3.b` in the prompt | The prompt reaches the agent with #337.3 and choice `b` in its `context` |
+ | With a question's drawer open, type `2 things first:` in the empty prompt | The question stays unanswered |
+-| On the main screen, press ctrl+x tab and Enter on a question's reference | Its drawer opens, and typing reaches the `Type something` field |
++| On the main screen, press ctrl+x tab and Enter on a question | Its drawer opens, and typing reaches the `Type something` field; an option's number, a `Markdown` link, takes no press there |
+ | No questions | The band and its divider look as they do today, and the tick starts no process |
+ 
+ `tests/test_questions.py` covers the CLI rows. `hooks/questions.test.ts`
+@@ -412,14 +483,17 @@ from memory. Check the main-screen row by hand under tmux.
+ - **The CLI.** Each command reads one session's directory, a few small
+   files, and writes one under a lock. `watch` reads the directory once an
+   interval, 5 seconds by default.
+-- **The band.** Its tick stats one directory, shown or hidden, and starts
+-  `project question list` only when it changed, which is when a question
+-  is asked or answered. Each answer then starts a process to record it, one
+-  to claim it, and one to mark it delivered, and one more each 5 seconds to
+-  renew the claim while a submit waits for the main loop.
+-- **Typed references.** The `prompt.submit` hook already runs on every
+-  prompt. It starts `project question context` only for a prompt with
+-  reference-shaped text.
++- **The band.** Its tick lists one directory, shown or hidden, which starts
++  no process, and starts `project question list` only when it changed,
++  which is when a question is asked, answered, claimed, or delivered, and
++  once more each tick while that read fails. Each
++  answer then starts a process to record it, one to claim it, and one to
++  mark it delivered, and one more each 5 seconds to renew the claim while a
++  submit waits for the main loop; a renewal starts no `list`.
++- **Prompts.** The `prompt.submit` hook already runs on every prompt.
++  Finding the answers a prompt gives reads the band's own list of
++  questions, so a prompt that answers none starts no process. It starts
++  `project question context` only for a prompt with reference-shaped text.
+ - **The tool's schema.** With `isDeferred: false`, the schema rides in
+   every request: a name, a short paragraph, and five properties.
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index a3fad23..1408e36 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1,5 +1,7 @@
+-import type { On } from 'claude-code'
+-import { expect, mock, test } from 'claude-code/testing'
++import type { AgentInfo, FsEntry, On } from 'claude-code'
++import { expect, mock, test, type Engine } from 'claude-code/testing'
++
++import type { Question } from './types'
+ 
+ const HOME = '/home/ada'
+ const REVIEW = `${HOME}/loops/review/tracked`
+@@ -97,8 +99,16 @@ const ran = (stdout: string) => ({
+ /** What the engine draws in the band when the plugin hands it on. */
+ const ENGINE_BAND = 'the engine’s own band'
+ 
+-/** Answers the files, processes, prompt and Bash calls beneath the plugin. */
+-function world(on: On, files: Record<string, string>, ps = PS) {
++type Ran = ReturnType<typeof ran>
++
++/** Answers the files, processes, prompt and Bash calls beneath the plugin, and `project` when given. */
++/**
++ * What a `project` command comes to: its output, or `{ deny }` for a call that
++ * rejects, as one still running at its timeout does.
++ */
++type Outcome = Ran | { deny: string }
++
++function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Outcome) {
+   const commands: string[][] = []
+   const filled: string[] = []
+   on('fs.stat', ($, e) => ({
+@@ -107,6 +117,10 @@ function world(on: On, files: Record<string, string>, ps = PS) {
+   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
+   on('process.run', ($, e) => {
+     commands.push([...e.argv])
++    if (e.argv[0] === 'project' && project !== undefined) {
++      const outcome = project([...e.argv], e.init?.stdin ?? '')
++      return 'deny' in outcome ? outcome : { value: outcome }
++    }
+     return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
+   })
+   on('prompt.fill', ($, e) => {
+@@ -279,3 +293,533 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
+   expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
+   await ui.unmount()
+ })
++
++const SESSION = 's1'
++const STORE = `${HOME}/.local/state/projector/questions/${SESSION}`
++const TICK = 5_000
++
++type Held = Omit<Question, 'session'>
++type Clock = ReturnType<typeof mock.clock>
++
++const held = (fields: Partial<Held> = {}): Held => ({
++  ref: '#7.1',
++  number: 1,
++  pr: 'x/y#7',
++  askedAt: NOW - 120_000,
++  question: 'Decline the finding?',
++  detail: 'The loop caps retries at three.',
++  choices: ['Decline it', 'Add a budget'],
++  ...fields,
++})
++
++/** A question with its answer and claim cleared, as `reopen` leaves it. */
++const reopened = (question: Held): Held =>
++  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as Held
++
++/** `project question`, answered from questions held in memory the way the CLI keeps them. */
++function questionStore(clock: Clock, seed: readonly Held[]) {
++  const store = new Map<string, Held>()
++  const times = new Map<string, number>()
++  /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
++  const refusal: { code?: number; message?: string; rejection?: string } = {}
++  /** How many of the next `list` commands fail. */
++  const failing = { lists: 0 }
++  let writes = 0
++  let asked = 0
++  const put = (question: Held) => {
++    writes += 1
++    store.set(question.ref, question)
++    times.set(question.ref, writes)
++    return question
++  }
++  for (const question of seed) put(question)
++
++  const failed = (exitCode: number, message: string): Ran => ({ ...ran(''), exitCode, stderr: `project: ${message}\n` })
++  const printed = (question: Held, extra: Record<string, unknown> = {}) =>
++    ran(JSON.stringify({ schema_version: 2, ...extra, question }))
++  const flag = (args: readonly string[], name: string) => {
++    const joined = args.find(arg => arg.startsWith(`--${name}=`))
++    if (joined !== undefined) return joined.slice(name.length + 3)
++    const at = args.indexOf(`--${name}`)
++    return at === -1 ? undefined : args[at + 1]
++  }
++  const textOf = (question: Held) =>
++    question.answer !== undefined && 'letter' in question.answer
++      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.question} → ${question.answer.text}`
++      : `DISMISSED ${question.ref} ${question.question}`
++
++  const run = (argv: string[], stdin: string): Outcome => {
++    const [, , command = '', ...args] = argv
++    const time = clock.now()
++    if (command === 'list') {
++      if (failing.lists > 0) {
++        failing.lists -= 1
++        return failed(1, 'the store could not be read')
++      }
++      const questions = [...store.values()].map(one => ({ ...one, session: SESSION }))
++      return ran(JSON.stringify({ schema_version: 2, questions }))
++    }
++    if (command === 'ask') {
++      if (refusal.rejection !== undefined) return { deny: refusal.rejection }
++      if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
++      const pr = flag(args, 'pr') ?? null
++      asked += 1
++      const ref = pr === null ? `q${asked}` : `#${pr.split('#')[1] ?? ''}.${asked}`
++      const agentId = flag(args, 'agent')
++      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
++      put({
++        ref,
++        number: asked,
++        pr,
++        askedAt: time,
++        question: args[args.indexOf('--') + 1] ?? '',
++        detail: flag(args, 'detail') ?? '',
++        choices: [flag(args, 'recommend') ?? '', ...options],
++        ...(agentId === undefined ? {} : { agentId }),
++      })
++      return ran(`${ref}\n`)
++    }
++    if (command === 'context') {
++      return ran(stdin.includes('#7.1.b') ? '#7.1.b answers Decline the finding? with Add a budget\n' : '')
++    }
++
++    const written = args[0] ?? ''
++    const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
++    const question = store.get(ref)
++    if (question === undefined) return failed(66, `no question ${ref}`)
++    if (command === 'answer' || command === 'dismiss') {
++      if (question.answer !== undefined) return failed(65, `${ref} is already answered`)
++      const letter = written.slice(written.lastIndexOf('.') + 1)
++      const text = flag(args, 'text') ?? question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
++      const answer =
++        command === 'dismiss' ? { dismissed: true as const, answeredAt: time } : { letter, text, answeredAt: time }
++      return printed(put({ ...question, answer }))
++    }
++    if (command === 'claim') {
++      if (question.answer === undefined || question.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
++      const renew = flag(args, 'renew')
++      if (renew !== undefined) {
++        if (question.claim?.token !== renew) return failed(65, 'not claimed with that token')
++        put({ ...question, claim: { token: renew, renewedAt: time } })
++        return ran('')
++      }
++      if (question.claim !== undefined && time - question.claim.renewedAt < 60_000) return failed(65, 'already claimed')
++      const claim = { token: `token-${writes}`, renewedAt: time }
++      return printed(put({ ...question, claim }), { token: claim.token, text: textOf(question) })
++    }
++    if (command === 'delivered' || command === 'reopen') {
++      if (question.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      return printed(put(command === 'delivered' ? { ...question, deliveredAt: time } : reopened(question)))
++    }
++    return failed(2, `invalid choice: '${command}'`)
++  }
++
++  const files = (): FsEntry[] =>
++    [...store.keys()].map(ref => ({
++      name: `${encodeURIComponent(ref)}.json`,
++      kind: 'file' as const,
++      size: 100,
++      mtimeMs: times.get(ref) ?? 0,
++      isLink: false,
++    }))
++
++  return { run, files, store, refusal, failing }
++}
++
++type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
++
++/** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
++function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
++  const store = questionStore(clock, seed)
++  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n' }, PS, store.run)
++  const registered: unknown[] = []
++  const notified: string[] = []
++  const toasts: string[] = []
++  const sent: { to: string; text: string }[] = []
++  const submitted: { text: string; context: readonly string[] }[] = []
++  on('session.start', ($, e) => ({ cwd: e.cwd }))
++  on('session.id', () => ({ value: SESSION }))
++  on('command.register', () => ({ value: { command: 'projector' } }))
++  on('tool.register', ($, e) => {
++    registered.push(e)
++    return { value: { tool: `mcp__projector__${e.name}` } }
++  })
++  on('fs.list', ($, e) => ({ value: e.path === STORE ? store.files() : [] }))
++  on('agent.list', () => ({ value: options.agents ?? [] }))
++  on('session.send', ($, e) => {
++    sent.push({ to: e.to, text: e.text })
++    return { isDelivered: true as const }
++  })
++  // A submit waits for the running turn; `release` ends that turn.
++  let release = () => undefined as void
++  const turn = new Promise<void>(resolve => {
++    release = resolve
++  })
++  if (options.isTurnRunning !== true) release()
++  on('prompt.submit', async ($, e) => {
++    submitted.push({ text: e.text, context: e.context ?? [] })
++    await turn
++    return options.drop === undefined ? { text: e.text } : { drop: options.drop }
++  })
++  on('ui.notify', ($, e) => {
++    notified.push(e.text)
++    return { value: { isSent: true as const, channel: 'terminal_bell' as const } }
++  })
++  on('ui.toast', ($, e) => {
++    toasts.push(e.text)
++    return { value: undefined }
++  })
++  const project = () => commands.filter(argv => argv[0] === 'project').map(argv => argv.slice(1).join(' '))
++  return { store, registered, notified, toasts, sent, submitted, filled, project, release }
++}
++
++async function startSession($: Engine, clock: Clock, isShown = true) {
++  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
++  if (isShown) await $.command.run(COMMAND)
++  await clock.advance(1)
++  await clock.settle()
++}
++
++const running = (status: AgentInfo['status']): AgentInfo =>
++  ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
++
++test('asks through the tool, and the band lists the question below the pull requests', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++
++  const called = await $.tool.call({
++    tool: 'mcp__projector__ask',
++    question: 'Decline the finding?',
++    recommendation: 'Decline it',
++    options: ['Add a budget'],
++    pr: 'x/y#7',
++  })
++  expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
++  expect(session.registered).toEqual([expect.objectContaining({ name: 'ask', isDeferred: false })])
++  expect(session.project()).toContain(
++    'question ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
++  )
++  expect(session.notified).toEqual(['#7.1 Decline the finding?'])
++
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
++  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
++  // The line names the question's pull request as the band labels it.
++  expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++  const ask = { tool: 'mcp__projector__ask' as const, question: 'Decline the finding?', recommendation: 'Decline it' }
++
++  Object.assign(session.store.refusal, { code: 65, message: 'the question must be one line; put the rest in --detail' })
++  const refused = await $.tool.call(ask)
++  expect(refused.deny ?? refused.text).toBe('the question must be one line; put the rest in --detail')
++
++  Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'question'" })
++  const old = await $.tool.call(ask)
++  expect(old.deny ?? old.text).toBe("error: argument command: invalid choice: 'question'; run project upgrade")
++
++  Object.assign(session.store.refusal, { rejection: 'project timed out after 15000 ms' })
++  const hung = await $.tool.call(ask)
++  expect(hung.deny ?? hung.text).toMatch(
++    /^project did not finish \(.*project timed out after 15000 ms\); ask in the conversation instead$/,
++  )
++})
++
++test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held({ ref: 'q1', pr: null, question: 'Run project init?' })])
++  await startSession($, clock, false)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: 'Run project init?' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeDefined()
++  await ui.unmount()
++})
++
++test('an idle session with no questions starts no project process', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++  await clock.advance(3 * TICK)
++  await clock.settle()
++
++  expect(session.project()).toEqual([])
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
++  await ui.unmount()
++})
++
++test('an option puts the question and its answer in the prompt, and sending it answers the question', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const later = held({ ref: '#7.2', number: 2, question: 'Rebase first?', askedAt: NOW - 60_000 })
++  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'question:#7.1' })
++  // The open question has the band to itself.
++  expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
++  expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
++  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
++  expect((await ui.find({ type: 'Input', key: 'answer:#7.1.c' }))?.props.placeholder).toBe('Type something')
++  expect(await ui.find({ type: 'Button', key: 'discuss:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
++  // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
++  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
++
++  // Choosing an option answers nothing yet: it fills the prompt.
++  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
++  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
++  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++
++  const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
++  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.submitted).toEqual([
++    {
++      text,
++      context: ['The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.'],
++    },
++  ])
++  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  // The prompt delivered it, so the band sends nothing more.
++  expect(session.sent).toEqual([])
++
++  // The resolved question still opens, its choice marked and nothing left to press.
++  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
++  expect(await ui.find({ key: 'answer:#7.1.a' })).toBeUndefined()
++  expect(await ui.find({ type: 'Input', key: 'answer:#7.1.c' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeUndefined()
++
++  await ui.press({ key: 'question:#7.1' })
++  expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
++  await clock.advance(60_000 + TICK)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const newer = held({ ref: '#8.1', pr: 'x/y#8', askedAt: NOW - 60_000 })
++  const session = questionWorld(on, clock, [held(), newer])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'question:#8.1' })
++  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('#8.1')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
++  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++  await ui.unmount()
++})
++
++test('only a prompt you sent answers a question', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()])
++  await startSession($, clock)
++
++  const text = 'Waiting on the person for:\n"Decline the finding?"\nI will keep fixing the other threads meanwhile.'
++  const others = [
++    { kind: 'peer-send-message' },
++    { kind: 'peer' },
++    { kind: 'task-notification' },
++    { kind: 'scheduled-trigger' },
++    { kind: 'channel', server: 'chat' },
++    { kind: 'unclassified' },
++  ] as const
++  for (const origin of others) await $.prompt.submit({ text, wait: false, origin })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('question answer'))).toEqual([])
++  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget', wait: false, origin: { kind: 'bridge' } })
++  await clock.settle()
++  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++})
++
++test('a typed answer fills the prompt, discuss quotes the question, and dismiss resolves it', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, question: 'Rebase first?' })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'question:#7.1' })
++  await ui.input({ key: 'answer:#7.1.c', text: 'keep the cap' })
++  await ui.press({ key: 'discuss:#7.1' })
++  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nkeep the cap\n', 'insert:"Decline the finding?" '])
++
++  // Text after the quoted question on its own line discusses it and answers nothing.
++  const discussed = '"Decline the finding?" what does the cap cover?'
++  await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
++  expect(session.project()).toContain('question answer #7.1.c --text=keep the cap --session s1 --json')
++
++  await ui.press({ key: 'question:#7.1' })
++  await ui.press({ key: 'question:#7.2' })
++  await ui.press({ key: 'dismiss:#7.2' })
++  expect(session.project()).toContain('question dismiss #7.2 --session s1 --json')
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.submitted.map(one => one.text)).toContain('DISMISSED #7.2 Rebase first?')
++  await ui.unmount()
++})
++
++test('an answer from a terminal reaches the live subagent that asked', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('running')] })
++  await startSession($, clock, false)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.sent).toEqual([
++    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
++  ])
++  expect(session.submitted).toEqual([])
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++})
++
++test('an answer from a terminal for a subagent that ended goes to the main loop, naming it', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'b', text: 'Add a budget', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('completed')] })
++  await startSession($, clock, false)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.sent).toEqual([])
++  expect(session.submitted[0]?.text).toContain('ANSWER #7.1.b Decline the finding? → Add a budget')
++  expect(session.submitted[0]?.text).toContain('The subagent Fix #7 (agent-1) asked this')
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++})
++
++test('a dropped submit reopens the question and says why', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ answer })], { drop: 'a hook refused it' })
++  await startSession($, clock)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
++  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ answer })], { isTurnRunning: true })
++  await startSession($, clock, false)
++  await clock.advance(TICK)
++  await clock.settle()
++  const lists = () => session.project().filter(command => command.startsWith('question list')).length
++  const before = lists()
++
++  for (let at = 0; at < 6; at += 1) await clock.advance(TICK)
++  await clock.settle()
++  const claims = session.project().filter(command => command.startsWith('question claim'))
++  expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
++  expect(claims.filter(command => command.includes('--renew')).length).toBeGreaterThanOrEqual(6)
++  expect(lists()).toBe(before)
++  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
++
++  session.release()
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.submitted).toHaveLength(1)
++})
++
++test('a store read that fails runs again on the next tick', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ answer })])
++  session.store.failing.lists = 1
++  await startSession($, clock, false)
++  for (let at = 0; at < 3; at += 1) await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.project().filter(command => command.startsWith('question list')).length).toBeGreaterThanOrEqual(2)
++  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++})
++
++test('a submit an earlier copy of the module left keeps its claim and settles when its prompt arrives', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const text = 'ANSWER #7.1.a Decline the finding? → Decline it'
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
++  let pending: Record<string, unknown> = { '#7.1': { ref: '#7.1', session: SESSION, token: 'old', route: 'submit', text } }
++  let version = 1
++  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
++  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
++    pending = e.value as Record<string, unknown>
++    version += 1
++    return { value: { isSet: true as const, version } }
++  })
++  await startSession($, clock, false)
++  await clock.advance(2 * TICK)
++  await clock.settle()
++
++  const claims = session.project().filter(command => command.startsWith('question claim'))
++  expect(claims.length).toBeGreaterThanOrEqual(2)
++  for (const claim of claims) expect(claim).toBe('question claim #7.1 --renew old --session s1')
++  await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
++  expect(session.project()).toContain('question delivered #7.1 --claim old --session s1 --json')
++  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(pending).toEqual({})
++})
++
++test('a reference typed in the prompt reaches the agent with its question', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()])
++  await startSession($, clock)
++
++  await $.prompt.submit({ text: 'go with #7.1.b', wait: false, origin: { kind: 'composer' } })
++  await $.prompt.submit({ text: 'rerun the 2 failing tests', wait: false, origin: { kind: 'composer' } })
++  expect(session.submitted).toEqual([
++    { text: 'go with #7.1.b', context: ['#7.1.b answers Decline the finding? with Add a budget'] },
++    { text: 'rerun the 2 failing tests', context: [] },
++  ])
++  expect(session.project().filter(command => command.startsWith('question context'))).toHaveLength(1)
++})
+diff --git a/hooks/questions.test.ts b/hooks/questions.test.ts
+new file mode 100644
+index 0000000..4c8c830
+--- /dev/null
++++ b/hooks/questions.test.ts
+@@ -0,0 +1,179 @@
++import type { AgentInfo } from 'claude-code'
++import { expect, test } from 'claude-code/testing'
++
++import {
++  answersIn,
++  askArguments,
++  forMainLoop,
++  isShownAt,
++  liveAgent,
++  mayReference,
++  needsDelivery,
++  proposalOf,
++  quoteOf,
++  relayNote,
++  signatureOf,
++  span,
++  storeOf,
++  typedLetter,
++} from './questions'
++import type { Question } from './types'
++
++const NOW = Date.UTC(2026, 9, 12, 12, 0)
++
++const question = (fields: Partial<Question> = {}): Question => ({
++  ref: '#7.1',
++  number: 1,
++  pr: 'o/r#7',
++  askedAt: NOW - 60_000,
++  question: 'Decline the finding?',
++  detail: '',
++  choices: ['Decline it', 'Add a budget'],
++  session: 's1',
++  ...fields,
++})
++
++const agent = (status: AgentInfo['status']): AgentInfo =>
++  ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
++
++const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, size: 10, mtimeMs, isLink: false })
++
++test('only text shaped like a reference starts the CLI', () => {
++  for (const text of ['go with #337.3.b', 'Let’s do q2.a.', 'o/r#12.1', 'q1']) expect(mayReference(text)).toBe(true)
++  for (const text of ['rerun the 2 failing tests', 'see #337', 'eq2 holds', 'Q2']) expect(mayReference(text)).toBe(false)
++})
++
++test('letters run from the recommendation to the typed answer', () => {
++  expect(typedLetter(question())).toBe('c')
++})
++
++test('the prompt carries a question in quotes, and an answer on a line of its own', () => {
++  expect(quoteOf(question())).toBe('"Decline the finding?"')
++  expect(proposalOf(question(), 'Add a budget')).toBe('"Decline the finding?"\n\nAdd a budget')
++})
++
++test('a sent prompt answers each question whose quote ends its line', () => {
++  const open = [question(), question({ ref: '#7.2', question: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
++  expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
++  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
++    { question: open[0], letter: 'a' },
++    { question: open[1], letter: 'c', text: 'keep it' },
++  ])
++  // Discussing a question, or leaving its answer empty, answers nothing.
++  expect(answersIn('"Decline the finding?" what does the cap cover?', open)).toEqual([])
++  expect(answersIn('"Decline the finding?"\n\n', open)).toEqual([])
++  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
++  expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
++})
++
++test('a quote two questions share answers one: the one whose drawer filled it, else the oldest', () => {
++  const newer = question({ ref: '#8.1', pr: 'o/r#8' })
++  const older = question({ askedAt: NOW - 120_000 })
++  const once = '"Decline the finding?"\n\nAdd a budget'
++  expect(answersIn(once, [newer, older])).toEqual([{ question: older, letter: 'b' }])
++  expect(answersIn(once, [newer, older], ['#8.1'])).toEqual([{ question: newer, letter: 'b' }])
++  // Quoted twice, each quote answers its own question, in the order the drawers filled the prompt.
++  expect(answersIn(`${once}\n"Decline the finding?"\n\nDecline it`, [older, newer], ['#8.1', '#7.1'])).toEqual([
++    { question: newer, letter: 'b' },
++    { question: older, letter: 'a' },
++  ])
++})
++
++test('the note beside an answer names the subagent that asked', () => {
++  const asked = question({ agentId: 'agent-1' })
++  expect(relayNote(asked, [agent('completed')])).toBe(
++    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.',
++  )
++  expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
++})
++
++test('a delivered question leaves the band after a minute', () => {
++  expect(isShownAt(question(), NOW)).toBe(true)
++  expect(isShownAt(question({ deliveredAt: NOW - 59_000 }), NOW)).toBe(true)
++  expect(isShownAt(question({ deliveredAt: NOW - 60_000 }), NOW)).toBe(false)
++})
++
++test('an answer waits for a deliverer until a live claim holds it', () => {
++  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
++  expect(needsDelivery(question(), NOW)).toBe(false)
++  expect(needsDelivery(answered, NOW)).toBe(true)
++  expect(needsDelivery({ ...answered, claim: { token: 't', renewedAt: NOW - 5_000 } }, NOW)).toBe(false)
++  expect(needsDelivery({ ...answered, claim: { token: 't', renewedAt: NOW - 60_000 } }, NOW)).toBe(true)
++  expect(needsDelivery({ ...answered, deliveredAt: NOW }, NOW)).toBe(false)
++})
++
++test('the subagent’s status decides where an answer goes', () => {
++  const asked = question({ agentId: 'agent-1' })
++  for (const status of ['pending', 'running', 'waiting', 'idle'] as const) {
++    expect(liveAgent(asked, [agent(status)])).toBe('agent-1')
++  }
++  for (const status of ['completed', 'failed', 'killed'] as const) {
++    expect(liveAgent(asked, [agent(status)])).toBeUndefined()
++  }
++  expect(liveAgent(asked, [])).toBeUndefined()
++  expect(liveAgent(question(), [agent('running')])).toBeUndefined()
++})
++
++test('the main loop is told which subagent asked', () => {
++  expect(forMainLoop('ANSWER #7.1.a', question(), [])).toBe('ANSWER #7.1.a')
++  expect(forMainLoop('ANSWER #7.1.a', question({ agentId: 'agent-1' }), [agent('completed')])).toContain(
++    'The subagent Fix #7 (agent-1) asked this',
++  )
++  expect(forMainLoop('ANSWER #7.1.a', question({ agentId: 'gone' }), [])).toContain('The subagent gone asked this')
++})
++
++test('the store is where the CLI keeps it', () => {
++  const env = (values: Record<string, string>) => (name: string) => values[name]
++  expect(storeOf(env({ HOME: '/home/ada' }), 's1')).toBe('/home/ada/.local/state/projector/questions/s1')
++  expect(storeOf(env({ HOME: '/home/ada', XDG_STATE_HOME: '/state' }), 's1')).toBe('/state/projector/questions/s1')
++  expect(storeOf(env({}), 's1')).toBeUndefined()
++})
++
++test('the band’s own renewal leaves the store’s signature alone', () => {
++  const before = [file('%237.1.json', 1), file('counts.json', 1), file('.lock', 1)]
++  const renewed = [file('%237.1.json', 2), file('counts.json', 1)]
++  const asked = [...renewed, file('q1.json', 3)]
++  const renewing = new Set(['#7.1'])
++  expect(signatureOf(renewed, renewing)).toBe(signatureOf(before, renewing))
++  expect(signatureOf(renewed, new Set())).not.toBe(signatureOf(before, new Set()))
++  expect(signatureOf(asked, renewing)).not.toBe(signatureOf(renewed, renewing))
++  expect(signatureOf([file('.%237.1.json.abc', 1)], new Set())).toBe('')
++  expect(signatureOf([file('100%.json', 1)], renewing)).toBe('100%.json 10 1')
++})
++
++test('ages are short', () => {
++  expect([span(40), span(300), span(7200), span(3 * 86_400)]).toEqual(['40s', '5m', '2h', '3d'])
++})
++
++test('a call of the tool becomes `project question ask`, text kept as text', () => {
++  expect(
++    askArguments(
++      { question: '-Ship it?', recommendation: '--yes', options: ['no'], detail: 'Why', pr: 'o/r#7' },
++      's1',
++      'agent-1',
++    ),
++  ).toEqual([
++    'question',
++    'ask',
++    '--session=s1',
++    '--recommend=--yes',
++    '--option=no',
++    '--detail=Why',
++    '--pr=o/r#7',
++    '--agent=agent-1',
++    '--',
++    '-Ship it?',
++  ])
++  expect(askArguments({ question: 'Ship it?', recommendation: 'Yes' }, 's1', undefined)).toEqual([
++    'question',
++    'ask',
++    '--session=s1',
++    '--recommend=Yes',
++    '--',
++    'Ship it?',
++  ])
++  expect(askArguments({ recommendation: 'Yes' }, 's1', undefined)).toEqual({ error: '`question` must be a string' })
++  expect(askArguments({ question: 'Q', recommendation: 'Yes', options: 'no' }, 's1', undefined)).toEqual({
++    error: '`options` must be a list of strings',
++  })
++})
+diff --git a/hooks/questions.ts b/hooks/questions.ts
+new file mode 100644
+index 0000000..bae9932
+--- /dev/null
++++ b/hooks/questions.ts
+@@ -0,0 +1,194 @@
++import type { AgentInfo, FsEntry } from 'claude-code'
++
++import type { Question } from './types'
++import type { Env } from './parse'
++
++/** How long a delivered question stays in the band. */
++export const RESOLVED_MS = 60_000
++
++/** How long a claim lasts without renewal, as `project question claim` counts it. */
++export const CLAIM_MS = 60_000
++
++const LIVE: ReadonlySet<AgentInfo['status']> = new Set(['pending', 'running', 'waiting', 'idle'])
++
++/**
++ * Whether text holds anything shaped like a reference, `#337.3` or `q2`, so
++ * that only such a prompt starts `project question context`, which decides.
++ */
++export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
++
++export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
++
++/** The letter of a typed answer: the one after the last choice. */
++export const typedLetter = (question: Question) => letterAt(question.choices.length)
++
++/** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
++export const isShownAt = (question: Question, time: number) =>
++  question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
++
++/** Whether an answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
++export const needsDelivery = (question: Question, time: number) =>
++  question.answer !== undefined &&
++  question.deliveredAt === undefined &&
++  (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
++
++/** What the band puts in the prompt to discuss a question: its text, in quotes. */
++export const quoteOf = (question: Question) => `"${question.question}"`
++
++/** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
++export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
++
++/** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
++export type Given = { question: Question; letter: string; text?: string }
++
++/**
++ * The answers a sent prompt gives, as the band wrote them. Each quoted
++ * question that ends its line answers one open question with that text: the
++ * choice whose text is the next line that is not blank, or else that line as
++ * a typed answer. A quote goes first to a question whose drawer filled the
++ * prompt, `proposed` naming them in the order they filled it, and otherwise
++ * to the oldest open question with that text, so two questions that share
++ * their text never take one answer. A quoted question with more on its line,
++ * as discuss leaves it, answers nothing.
++ */
++export function answersIn(text: string, questions: readonly Question[], proposed: readonly string[] = []): Given[] {
++  const rank = (question: Question) => {
++    const at = proposed.indexOf(question.ref)
++    return at === -1 ? proposed.length : at
++  }
++  const open = questions
++    .filter(question => question.answer === undefined)
++    .sort((one, other) => rank(one) - rank(other) || one.askedAt - other.askedAt)
++  const quoted = new Set<number>()
++  return open.flatMap(question => {
++    const lead = `${quoteOf(question)}\n`
++    let at = text.indexOf(lead)
++    while (at !== -1 && quoted.has(at)) at = text.indexOf(lead, at + 1)
++    if (at === -1) return []
++    quoted.add(at)
++    const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
++    if (said === '') return []
++    const index = question.choices.indexOf(said)
++    return [index === -1 ? { question, letter: typedLetter(question), text: said } : { question, letter: letterAt(index) }]
++  })
++}
++
++/** Names the subagent that asked, by its description and id when the session still lists it. */
++function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
++  const agent = agents.find(one => one.id === question.agentId)
++  return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
++}
++
++/** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
++export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
++  `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
++
++/** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
++export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
++  const agent = agents.find(one => one.id === question.agentId)
++  return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
++}
++
++/** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
++export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
++  if (question.agentId === undefined) return text
++  return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
++}
++
++/** Where a session's questions live: `project question`'s store, found by the CLI's own rule. */
++export function storeOf(env: Env, session: string): string | undefined {
++  const home = env('HOME')
++  const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
++  return base === undefined ? undefined : `${base}/projector/questions/${session}`
++}
++
++/**
++ * What the store's directory holds: each question file's name, size and
++ * time, leaving out the lock and any file being written. A file whose claim
++ * the band itself renews counts by name alone, so the band's own renewal
++ * never makes it read the store again.
++ */
++export function signatureOf(entries: readonly FsEntry[], renewing: ReadonlySet<string>): string {
++  return entries
++    .filter(entry => entry.kind === 'file' && !entry.name.startsWith('.'))
++    .map(entry => (renewing.has(refOf(entry.name)) ? entry.name : `${entry.name} ${entry.size} ${entry.mtimeMs}`))
++    .sort()
++    .join('\n')
++}
++
++/** The reference a question file is named for, the CLI having quoted it; empty for any other file. */
++function refOf(name: string): string {
++  if (!name.endsWith('.json')) return ''
++  try {
++    return decodeURIComponent(name.slice(0, -'.json'.length))
++  } catch {
++    return ''
++  }
++}
++
++/** A short age: `40s`, `5m`, `2h`, `3d`. */
++export const span = (seconds: number) =>
++  seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m`
++    : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
++
++export const ASK_DESCRIPTION = [
++  'Ask the person a question without stopping: it appears in Projector’s band above their prompt, and you keep working.',
++  'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
++  'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
++  'Name the pull request the question is about in `pr`, as owner/repo#number.',
++  'Keep working on anything the answer does not block. The call returns the question’s reference, such as #337.3,',
++  'and the answer arrives later as a message that starts `ANSWER #337.3.<letter>` or `DISMISSED #337.3`.',
++].join(' ')
++
++export const ASK_SCHEMA = {
++  type: 'object',
++  properties: {
++    question: { type: 'string', description: 'The question, in one line of at most 120 characters.' },
++    recommendation: { type: 'string', description: 'The answer you recommend, written in full; it is answer a.' },
++    options: {
++      type: 'array',
++      items: { type: 'string' },
++      maxItems: 5,
++      description: 'Up to five other answers, each written in full, lettered b, c, and on in this order.',
++    },
++    detail: {
++      type: 'string',
++      description: 'What the person needs to decide, as Markdown; leave it out when the question says it all.',
++    },
++    pr: { type: 'string', description: 'The pull request the question is about, as owner/repo#number.' },
++  },
++  required: ['question', 'recommendation'],
++  additionalProperties: false,
++}
++
++const isText = (value: unknown): value is string => typeof value === 'string'
++
++/**
++ * The arguments of `project question ask` for one call of the tool, or why
++ * the call cannot be one. Each value rides in its flag's `=` form and the
++ * question after `--`, so text that starts with `-` stays text.
++ */
++export function askArguments(
++  input: Readonly<Record<string, unknown>>,
++  session: string,
++  agentId: string | undefined,
++): string[] | { error: string } {
++  const { question, recommendation, options = [], detail, pr } = input
++  if (!isText(question)) return { error: '`question` must be a string' }
++  if (!isText(recommendation)) return { error: '`recommendation` must be a string' }
++  if (!Array.isArray(options) || !options.every(isText)) return { error: '`options` must be a list of strings' }
++  if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
++  if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
++  return [
++    'question',
++    'ask',
++    `--session=${session}`,
++    `--recommend=${recommendation}`,
++    ...options.map(option => `--option=${option}`),
++    ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
++    ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
++    ...(agentId === undefined ? [] : [`--agent=${agentId}`]),
++    '--',
++    question,
++  ]
++}
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6863de2..3524e4b 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,16 +1,37 @@
+ import { atom, read, update } from 'claude-code'
+-import type { EngineInterface, Register } from 'claude-code'
++import type { EngineInterface, FsEntry, Register } from 'claude-code'
+ 
+-import type { Checks, LoopKind, PullRequest, Row, SeenLoop, Snapshot } from './types'
++import type { Checks, LoopKind, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+ import { buildQuery, parseResponse, type Fetched } from './github'
+ import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
++import {
++  ASK_DESCRIPTION,
++  ASK_SCHEMA,
++  answersIn,
++  askArguments,
++  forMainLoop,
++  isShownAt,
++  letterAt,
++  liveAgent,
++  mayReference,
++  needsDelivery,
++  proposalOf,
++  quoteOf,
++  relayNote,
++  signatureOf,
++  span,
++  storeOf,
++  typedLetter,
++} from './questions'
+ 
+ type Engine = EngineInterface
+ type Loop = { kind: LoopKind; tracked: string }
++type Ran = { exitCode: number; stdout: string; stderr: string }
+ 
+ const TICK_MS = 5_000
+ const POLL_MS = 30_000
+ const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
++const ASK_TOOL = 'mcp__projector__ask'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+ // watch loop puts it.
+@@ -27,18 +48,35 @@ const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMP
+ const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
+ const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
++const questions = atom({ plugin: 'projector', key: 'bandQuestions' } as const, [])
++const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+ 
+ // The session keeps its state across a reload or an update of the plugin,
+ // so a value an earlier version wrote can have another shape.
+ const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+ const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
+ 
++const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
++
+ let envLoad: Promise<Env> | undefined
+ let inFlight: Promise<void> | undefined
+ let isQueued = false
+ let attemptedAt = 0
+ const unreadable = new Set<string>()
+ 
++/** The store's directory as the band last read it, so it reads again only after a change. */
++let listed: string | undefined
++let isChecking = false
++/** The answers this copy of the module is claiming or delivering, by reference. */
++const delivering = new Set<string>()
++/** The questions an answer from the band is being recorded for, so a second press does nothing. */
++const answering = new Set<string>()
++/**
++ * The questions whose drawers put an answer in the prompt, in that order, so
++ * a sent quote answers the question you chose when another shares its text.
++ */
++const proposed: string[] = []
++
+ /** The few variables a tracked path is written with, read once per load. */
+ function envOf($: Engine): Promise<Env> {
+   envLoad ??= (async () => {
+@@ -63,6 +101,14 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
+   }
+ }
+ 
++/** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
++const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
++  $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
++
++/** The CLI's error, as its last line of standard error says it. */
++const errorOf = (ran: Ran) =>
++  (ran.stderr.trim().split('\n').pop() ?? '').replace(/^project: /, '') || `project exited ${ran.exitCode}`
++
+ /** Records a loop, answering whether the session had not seen it before. */
+ async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
+   let isNew = false
+@@ -131,7 +177,7 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+     })
+     return parseResponse(query, result)
+   } catch (error) {
+-    return { prs: new Map(), error: error instanceof Error ? error.message : String(error) }
++    return { prs: new Map(), error: messageOf(error) }
+   }
+ }
+ 
+@@ -208,7 +254,7 @@ function refresh($: Engine, isForced = false): Promise<void> {
+         await load($)
+       }
+     } catch (error) {
+-      const message = error instanceof Error ? error.message : String(error)
++      const message = messageOf(error)
+       await update($, snapshot, last => ({ ...current(last), error: message })).catch(() => undefined)
+     }
+   })().finally(() => {
+@@ -221,8 +267,219 @@ function refresh($: Engine, isForced = false): Promise<void> {
+   return inFlight
+ }
+ 
+-/** Moves the band's clock on, and polls GitHub once the last load is old enough. */
++/** Puts a question the CLI just answered for in the band's list, in place of what it showed. */
++const replace = ($: Engine, question: Question) =>
++  update($, questions, list =>
++    list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
++  )
++
++/** The question a CLI command printed with `--json`, in the session it belongs to. */
++const questionOf = (stdout: string, session: string): Question => ({
++  ...(JSON.parse(stdout) as { question: Omit<Question, 'session'> }).question,
++  session,
++})
++
++/** Takes the band's list from the store, and shows the band for a question it has not shown before. */
++async function setQuestions($: Engine, list: Question[]): Promise<void> {
++  let isNew = false
++  await update($, questions, before => {
++    const known = new Set(before.map(one => one.ref))
++    isNew = list.some(one => one.answer === undefined && !known.has(one.ref))
++    return list
++  })
++  if (isNew && !(await read($, isShown))) show($)
++}
++
++/**
++ * Reads the session's questions when the store's directory changed since the
++ * last read that succeeded. Listing a directory starts no process, so an idle
++ * session, band shown or hidden, starts none. The signature is recorded only
++ * once the read succeeds, so a read that fails runs again on the next tick.
++ */
++async function readStore($: Engine, session: string): Promise<void> {
++  const store = storeOf(await envOf($), session)
++  if (store === undefined) return
++  const entries = await $.fs.list(store).catch(() => [] as FsEntry[])
++  const files = signatureOf(entries, new Set(Object.keys(await read($, sending))))
++  const signature = `${session}\n${files}`
++  if (signature === listed) return
++  if (files === '') {
++    await setQuestions($, [])
++  } else {
++    const ran = await project($, ['question', 'list', '--all', '--json', '--session', session])
++    if (ran.exitCode !== 0) return
++    const { questions: list } = JSON.parse(ran.stdout) as { questions: Question[] }
++    await setQuestions($, list)
++  }
++  listed = signature
++}
++
++/** Remembers an answer the band is delivering, in the session's state so a reloaded module finds it. */
++const track = ($: Engine, entry: Sending) => update($, sending, all => ({ ...all, [entry.ref]: entry }))
++
++/**
++ * Ends a delivery: marks the answer delivered, or reopens its question and
++ * says why. Whichever of the submit's own answer and the prompt hook comes
++ * first takes the delivery out of the state, and the other finds it gone.
++ */
++async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', reason?: string): Promise<void> {
++  let entry: Sending | undefined
++  await update($, sending, all => {
++    entry = all[ref]
++    return Object.fromEntries(Object.entries(all).filter(([key]) => key !== ref))
++  })
++  if (entry === undefined) return
++  const { session, token } = entry
++  const ran = await project($, ['question', outcome, ref, '--claim', token, '--session', session, '--json']).catch(
++    () => undefined,
++  )
++  if (ran?.exitCode === 0) await replace($, questionOf(ran.stdout, session))
++  if (outcome === 'reopen') {
++    void $.ui.toast(`projector: ${ref} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
++  }
++}
++
++/**
++ * Claims a recorded answer and delivers it: to the subagent that asked while
++ * it can still read a message, otherwise to the main loop as a prompt of its
++ * own, which waits for the session to be idle.
++ */
++async function deliver($: Engine, question: Question): Promise<void> {
++  const { ref, session } = question
++  delivering.add(ref)
++  try {
++    const ran = await project($, ['question', 'claim', ref, '--session', session, '--json'])
++    // Another deliverer holds it, or it was delivered since the band read the store.
++    if (ran.exitCode !== 0) return
++    const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
++    await replace($, questionOf(ran.stdout, session))
++
++    const agents = question.agentId === undefined ? [] : await $.agent.list().catch(() => [])
++    const agentId = liveAgent(question, agents)
++    if (agentId !== undefined) {
++      await track($, { ref, session, token: claimed.token, route: 'send', text: claimed.text })
++      const sent = await $.session.send({ to: { agentId }, text: claimed.text }).catch(() => undefined)
++      if (sent?.isDelivered === true) return await settle($, ref, 'delivered')
++    }
++
++    const text = forMainLoop(claimed.text, question, agents)
++    await track($, { ref, session, token: claimed.token, route: 'submit', text })
++    const submitted = await $.prompt.submit({ text }).catch((error: unknown) => ({ drop: messageOf(error) }))
++    await settle($, ref, submitted.drop === undefined ? 'delivered' : 'reopen', submitted.drop)
++  } catch (error) {
++    await settle($, ref, 'reopen', messageOf(error))
++  } finally {
++    delivering.delete(ref)
++  }
++}
++
++/**
++ * Keeps each delivery's claim live while it waits, as a submit behind a long
++ * turn does. A submit that an earlier copy of the module made still waits in
++ * the session's queue, so its claim is kept until the prompt hook sees it
++ * arrive. A send settles at once, so one an earlier copy left is let go, and
++ * its claim lapses for the band to deliver again.
++ */
++async function renewClaims($: Engine): Promise<void> {
++  for (const entry of Object.values(await read($, sending))) {
++    if (entry.route === 'send' && !delivering.has(entry.ref)) {
++      await update($, sending, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== entry.ref)))
++      continue
++    }
++    await project($, ['question', 'claim', entry.ref, '--renew', entry.token, '--session', entry.session]).catch(
++      () => undefined,
++    )
++  }
++}
++
++/** Reads the store when it changed, renews the band's claims, and delivers each answer nobody is delivering. */
++async function checkQuestions($: Engine): Promise<void> {
++  if (isChecking) return
++  isChecking = true
++  try {
++    const session = await $.session.id()
++    await readStore($, session)
++    await renewClaims($)
++    const time = await $.clock.now()
++    const pending = await read($, sending)
++    for (const question of await read($, questions)) {
++      if (question.session !== session || delivering.has(question.ref) || question.ref in pending) continue
++      if (needsDelivery(question, time)) void deliver($, question)
++    }
++  } catch {
++    // The next tick tries again.
++  } finally {
++    isChecking = false
++  }
++}
++
++/** Checks the questions now rather than at the next tick. */
++const checkSoon = ($: Engine) => $.clock.after(1, () => void checkQuestions($))
++
++/** Dismisses a question from the band; a second press finds it dismissed and does nothing. */
++async function dismiss($: Engine, question: Question): Promise<void> {
++  const { ref, session } = question
++  if (answering.has(ref)) return
++  answering.add(ref)
++  try {
++    const ran = await project($, ['question', 'dismiss', ref, '--session', session, '--json'])
++    if (ran.exitCode === 0) {
++      await replace($, questionOf(ran.stdout, session))
++    } else if (ran.exitCode === 65) {
++      // Answered elsewhere since the band read the store: read it again.
++      listed = undefined
++    } else {
++      void $.ui.toast(`projector: ${errorOf(ran)}`)
++    }
++    checkSoon($)
++  } catch (error) {
++    void $.ui.toast(`projector: ${messageOf(error)}`)
++  } finally {
++    answering.delete(ref)
++  }
++}
++
++/**
++ * Records an answer a sent prompt gave and marks it delivered, because the
++ * prompt itself carries it to the main loop. The band's own deliverer leaves
++ * the question alone meanwhile, so the agent hears the answer once.
++ */
++async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
++  const { ref, session } = question
++  delivering.add(ref)
++  try {
++    const typed = text === undefined ? [] : [`--text=${text}`]
++    const answered = await project($, ['question', 'answer', `${ref}.${letter}`, ...typed, '--session', session, '--json'])
++    if (answered.exitCode !== 0) return
++    const claimed = await project($, ['question', 'claim', ref, '--session', session, '--json'])
++    if (claimed.exitCode !== 0) return
++    const { token } = JSON.parse(claimed.stdout) as { token: string }
++    const ran = await project($, ['question', 'delivered', ref, '--claim', token, '--session', session, '--json'])
++    if (ran.exitCode === 0) await replace($, questionOf(ran.stdout, session))
++  } catch {
++    // An answer recorded but not marked delivered is the band's to deliver on a later tick.
++  } finally {
++    delivering.delete(ref)
++  }
++}
++
++/** What the CLI says about each question a prompt refers to, or undefined when it names none. */
++async function explain($: Engine, text: string): Promise<string | undefined> {
++  try {
++    const ran = await project($, ['question', 'context', '--session', await $.session.id()], text)
++    const said = ran.exitCode === 0 ? ran.stdout.trim() : ''
++    return said === '' ? undefined : said
++  } catch {
++    return undefined
++  }
++}
++
++/**
++ * Reads the questions whether or not the band is shown, then moves the band's
++ * clock on and polls GitHub once the last load is old enough.
++ */
+ async function tick($: Engine): Promise<void> {
++  await checkQuestions($)
+   if (!(await read($, isShown))) return
+   const time = await $.clock.now()
+   await update($, now, () => time)
+@@ -275,9 +532,7 @@ function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
+     .join(' · ')
+ }
+ 
+-const ago = (seconds: number) =>
+-  seconds < 5 ? 'just now' : seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago`
+-    : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86_400)}d ago`
++const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
+ 
+ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
+ 
+@@ -297,11 +552,37 @@ export const register: Register = on => {
+       description: 'Show or hide Projector’s band of the pull requests your loops track',
+       argumentHint: '[tracked file]',
+     })
++    // A session whose engine cannot serve the tool keeps the band.
++    await $.tool
++      .register({ name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA, isDeferred: false })
++      .catch(() => undefined)
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
++    checkSoon($)
+     return next(e)
+   })
+ 
++  // The tool asks through the CLI, so a question asked here and one asked
++  // from the shell land in the same store.
++  on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
++    const args = askArguments(e, await $.session.id(), e.agentId)
++    if (!Array.isArray(args)) return { deny: args.error }
++    let ran: Ran
++    try {
++      ran = await project($, args)
++    } catch (error) {
++      return { deny: `project did not finish (${messageOf(error)}); ask in the conversation instead` }
++    }
++    if (ran.exitCode === 65) return { deny: errorOf(ran) }
++    if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
++    const ref = ran.stdout.trim()
++    checkSoon($)
++    void $.ui.notify(`${ref} ${String(e.question)}`, { title: 'Projector question' }).catch(() => undefined)
++    return {
++      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
++    }
++  }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
++
+   // These hooks only watch: the catch hands back what the event settled to,
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+@@ -316,11 +597,49 @@ export const register: Register = on => {
+     return ran
+   }).catch(($, e, next) => next(e))
+ 
+-  // A watcher's line reaches the session as a task notification: the moment
+-  // a pull request it tracks has changed.
+-  on('prompt.submit', ($, e, next) => {
++  on('prompt.submit', async ($, e, next) => {
++    // A watcher's line reaches the session as a task notification: the moment
++    // a pull request it tracks has changed.
+     if (e.origin.kind === 'task-notification') soon($)
+-    return next(e)
++
++    // An answer the band submitted for the main loop has arrived. Seeing it
++    // here, rather than only where the band submitted it, settles it after a
++    // reload of the module too.
++    if (e.origin.kind === 'plugin' && e.origin.name === 'projector') {
++      const entered = await next(e)
++      if (entered.drop === undefined) {
++        const entry = Object.values(await read($, sending)).find(one => one.route === 'submit' && one.text === e.text)
++        if (entry !== undefined) await settle($, entry.ref, 'delivered')
++      }
++      return entered
++    }
++
++    // An answer the band put in the prompt, now sent: the prompt carries it to
++    // the main loop, with a note naming the subagent that asked when one did,
++    // and the band records it once the prompt has entered. Only a prompt you
++    // sent, at the terminal or through Remote Control, answers: an agent's
++    // message or a notification can quote a question it is still waiting on.
++    const session = await $.session.id()
++    const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
++    const given = isYours
++      ? answersIn(e.text, (await read($, questions)).filter(question => question.session === session), proposed)
++      : []
++    for (const one of given) {
++      const at = proposed.indexOf(one.question.ref)
++      if (at !== -1) proposed.splice(at, 1)
++    }
++    const asked = given.filter(one => one.question.agentId !== undefined)
++    const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
++    const notes = asked.map(one => relayNote(one.question, agents))
++
++    // A reference typed in the prompt reaches the agent with its question.
++    const said = mayReference(e.text) ? await explain($, e.text) : undefined
++    const added = [...(said === undefined ? [] : [said]), ...notes]
++    const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
++    if (entered.drop === undefined) {
++      for (const one of given) void answerFromPrompt($, one.question, one.letter, one.text)
++    }
++    return entered
+   }).catch(($, e, next) => next(e))
+ 
+   // A turn may have pushed, replied or resolved threads.
+@@ -347,21 +666,36 @@ export const register: Register = on => {
+   })
+ 
+   // The band above the prompt spans the terminal and is as tall as its rows,
+-  // so each pull request takes one line, and its drawer two more.
++  // so each pull request and each question takes one line, and a drawer more.
+   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+ 
+-    const { Box, Markdown, Text } = $.ui.resolve(e)
++    const elements = $.ui.resolve(e)
++    const { Box, Button, Markdown, Text } = elements
++    const env = await envOf($)
++    // The mobile app draws no field, so there a question takes a letter or a dismissal.
++    const Input = 'Input' in elements ? elements.Input : undefined
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
++    const asked = (await read($, questions)).filter(question => isShownAt(question, time))
++    const open = asked.filter(question => question.answer === undefined).length
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+     // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
+     const drawerIndent = labelWidth + 1 + 'draft'.length + 1
+-    const updated = shown.fetchedAt === null ? '' : ` updated ${ago(secondsSince(time, shown.fetchedAt))}`
++    const heading = [
++      open === 0 ? undefined : `${open} question${open === 1 ? '' : 's'}`,
++      shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
++    ]
++      .filter(part => part !== undefined)
++      .join(' · ')
++    const updated = heading === '' ? '' : ` ${heading}`
+     const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
++    const toggle = (key: string) => {
++      update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
++    }
+ 
+     // The engine draws the band's `[-]` just past `bodyColumns` on the first
+     // row, so a divider that fills the body ends at the mark.
+@@ -372,7 +706,7 @@ export const register: Register = on => {
+       </Text>
+     )
+ 
+-    if (shown.rows.length === 0) {
++    if (shown.rows.length === 0 && asked.length === 0) {
+       return (
+         <Box flexDirection="column">
+           {divider}
+@@ -388,6 +722,155 @@ export const register: Register = on => {
+       )
+     }
+ 
++    // A question's numbered options are Markdown links, drawn as a pull
++    // request's number is: a plain click runs `onPress`, and a ctrl, alt or
++    // cmd click opens `href`. Markdown draws only an `https:`, `http:` or
++    // `file:` link as one, so an option links its question's pull request, or
++    // the question's own file in the store when it has none.
++    const store = (session: string) => storeOf(env, session) ?? ''
++    const hrefOf = (question: Question) => {
++      const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
++      return pull === null || pull === undefined
++        ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
++        : `https://github.com/${pull[1] ?? ''}/pull/${pull[2] ?? ''}`
++    }
++    const escaped = (text: string) => text.replace(/[\\[\]*_`~]/g, '\\$&')
++    const link = (key: string, text: string, href: string, onPress: () => void) => (
++      <Markdown key={key} text={`[${escaped(text)}](${href})`} onLinkPress={onPress} />
++    )
++    // A question names its pull request as the band labels it, or in full
++    // when the band does not list it.
++    const pullOf = (question: Question) => {
++      const row = shown.rows.find(one => keyOf(one.pr) === question.pr?.toLowerCase())
++      return row === undefined ? (question.pr ?? '') : label(row.pr)
++    }
++
++    // The questions are a bulleted list below the pull requests, oldest
++    // first. A question's drawer numbers its options; choosing one puts the
++    // question and that answer in the prompt as text, for you to send or
++    // change, and sending it is what answers the question.
++    // Each age sits in one column as wide as the widest, so the pull requests
++    // before it end in one column too.
++    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.askedAt)).length))
++    const drawQuestion = (question: Question) => {
++      const { ref, answer } = question
++      const key = `question:${ref}`
++      const isOpen = answer === undefined
++      const isDismissed = answer !== undefined && 'dismissed' in answer
++      const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
++      const typed = typedLetter(question)
++      const href = hrefOf(question)
++      const pull = pullOf(question)
++      const fill = (text: string) => {
++        $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
++      }
++      const propose = (answer: string) => {
++        const at = proposed.indexOf(ref)
++        if (at !== -1) proposed.splice(at, 1)
++        proposed.push(ref)
++        fill(`${proposalOf(question, answer)}\n`)
++      }
++      const option = (letter: string, content: JSX.Element) => {
++        const number = `${letter.charCodeAt(0) - 'a'.charCodeAt(0) + 1}.`
++        return (
++          <Box key={`option:${ref}.${letter}`} flexDirection="row" columnGap={1}>
++            <Box flexShrink={0}>
++              {isOpen ? (
++                link(`answer:${ref}.${letter}`, number, href, () =>
++                  propose(question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''),
++                )
++              ) : (
++                <Text color={letter === chosen ? 'success' : undefined} dimColor={letter !== chosen}>
++                  {number}
++                </Text>
++              )}
++            </Box>
++            <Box flexShrink={1}>{content}</Box>
++          </Box>
++        )
++      }
++
++      return (
++        <Box key={`line:${ref}`} flexDirection="column">
++          <Box flexDirection="row" columnGap={1}>
++            {/* The whole question is one plain Button, so a press anywhere on
++                it opens its drawer: a click in fullscreen, Enter on the main
++                screen. */}
++            <Box flexGrow={1} flexShrink={1}>
++              {/* An open drawer keeps its question inverted, as the pointer draws it. */}
++              <Button key={key} plain onPress={() => toggle(key)}>
++                <Text dimColor={!isOpen} inverse={opened === key}>
++                  -{' '}
++                </Text>
++                <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
++                  {question.question}
++                </Text>
++              </Button>
++            </Box>
++            {!isOpen && question.deliveredAt === undefined && (
++              <Box flexShrink={0}>
++                <Text color="subtle">sending</Text>
++              </Box>
++            )}
++            {pull !== '' && (
++              <Box flexShrink={0}>
++                <Text color="subtle">{pull}</Text>
++              </Box>
++            )}
++            <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
++              <Text color="subtle">{span(secondsSince(time, question.askedAt))}</Text>
++            </Box>
++          </Box>
++          {opened === key && (
++            <Box flexDirection="column" marginLeft={2}>
++              {/* A blank line sets the answers apart from the question, and the
++                  detail, when there is one, sits between two. */}
++              {question.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
++              {question.detail !== '' && <Markdown key={`detail:${ref}`} text={question.detail} />}
++              <Text key={`before-answers:${ref}`}> </Text>
++              {question.choices.map((choice, index) => {
++                const letter = letterAt(index)
++                return option(
++                  letter,
++                  <Text dimColor={!isOpen && letter !== chosen}>
++                    {choice}
++                    {index === 0 && <Text color="success"> (recommended)</Text>}
++                    {letter === chosen && <Text color="success"> ✓</Text>}
++                  </Text>,
++                )
++              })}
++              {chosen === typed && answer !== undefined && 'text' in answer
++                ? option(
++                    typed,
++                    <Text>
++                      {answer.text}
++                      <Text color="success"> ✓</Text>
++                    </Text>,
++                  )
++                : isOpen &&
++                  Input !== undefined &&
++                  option(
++                    typed,
++                    <Input
++                      key={`answer:${ref}.${typed}`}
++                      placeholder="Type something"
++                      submitLabel="answer"
++                      onSubmit={(value: string) => {
++                        if (value.trim() !== '') propose(value.trim())
++                      }}
++                    />,
++                  )}
++              <Text key={`before-buttons:${ref}`}> </Text>
++              <Box flexDirection="row" columnGap={1}>
++                <Button key={`discuss:${ref}`} label="discuss" onPress={() => fill(`${quoteOf(question)} `)} />
++                {isOpen && <Button key={`dismiss:${ref}`} label="dismiss" onPress={() => void dismiss($, question)} />}
++              </Box>
++            </Box>
++          )}
++        </Box>
++      )
++    }
++
+     const drawRow = ({ pr, kinds }: Row) => {
+       const key = keyOf(pr)
+       const notes = notesOf(pr)
+@@ -403,9 +886,7 @@ export const register: Register = on => {
+               <Markdown
+                 key={`pr:${key}`}
+                 text={`[${label(pr)}](${pr.summaryUrl ?? pr.url})`}
+-                onLinkPress={() => {
+-                  update($, drawer, open => (open === key ? null : key)).catch(() => undefined)
+-                }}
++                onLinkPress={() => toggle(key)}
+               />
+             </Box>
+             <Box flexShrink={0}>
+@@ -451,11 +932,26 @@ export const register: Register = on => {
+       )
+     }
+ 
++    // An open question's drawer has the band to itself, until it is closed or
++    // the question leaves the band.
++    const focused = asked.find(question => opened === `question:${question.ref}`)
++    if (focused !== undefined) {
++      return (
++        <Box flexDirection="column">
++          {divider}
++          {drawQuestion(focused)}
++        </Box>
++      )
++    }
++
++    // Otherwise the pull requests come first, then a blank line, then the questions.
+     return (
+       <Box flexDirection="column">
+         {divider}
+         {shown.rows.map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
++        {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}
++        {[...asked].sort((a, b) => a.askedAt - b.askedAt).map(drawQuestion)}
+       </Box>
+     )
+   })
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index a875d91..f26b671 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -38,6 +38,40 @@ export type Snapshot = {
+   error: string | null
+ }
+ 
++/** How a question was answered: a lettered choice or typed text, or dismissed. */
++export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
++
++/** One question as `project question list --json` gives it, with the session whose store holds it. */
++export type Question = {
++  ref: string
++  number: number
++  /** The pull request it is about, as `owner/repo#number`; null when none. */
++  pr: string | null
++  askedAt: number
++  question: string
++  detail: string
++  /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
++  choices: string[]
++  agentId?: string
++  answer?: Answer
++  claim?: { token: string; renewedAt: number }
++  deliveredAt?: number
++  session: string
++}
++
++/**
++ * An answer the band claimed and is delivering: the claim's token, the route
++ * it took, and the text sent, so a later copy of the module keeps renewing
++ * the claim and knows the prompt when it arrives.
++ */
++export type Sending = {
++  ref: string
++  session: string
++  token: string
++  route: 'send' | 'submit'
++  text: string
++}
++
+ declare module 'claude-code' {
+   interface PluginState {
+     projector: {
+@@ -45,8 +79,12 @@ declare module 'claude-code' {
+       bandSnapshot: Snapshot
+       bandNow: number
+       isBandShown: boolean
+-      /** The pull request whose drawer is open, by `keyOf`. */
++      /** The drawer that is open: a pull request's by `keyOf`, or `question:` and a question's reference. */
+       bandDrawer: string | null
++      /** The session's questions, as the band last read them. */
++      bandQuestions: Question[]
++      /** The answers the band is delivering, by reference. */
++      bandSending: Record<string, Sending>
+     }
+   }
+ }
