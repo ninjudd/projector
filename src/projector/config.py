@@ -67,15 +67,6 @@ class ConfigError(ProjectorError):
     exit_code = 78
 
 
-def _describe(kind: type) -> str:
-    return {bool: "true or false", int: "an integer"}.get(kind, "a string")
-
-
-def _has_type(value: Any, kind: type) -> bool:
-    # `bool` subclasses `int`, so `true` must not pass for an integer.
-    return isinstance(value, kind) and (kind is bool or not isinstance(value, bool))
-
-
 def same_value(one: Any, other: Any) -> bool:
     return type(one) is type(other) and one == other
 
@@ -94,18 +85,15 @@ def setting_type(key: str) -> type:
 def parse_value(key: str, text: str) -> Any:
     """`text` from the command line as the type `key` takes."""
 
-    kind = setting_type(key)
-    if kind is bool and text in ("true", "false"):
+    if setting_type(key) is bool:
+        if text not in ("true", "false"):
+            raise UsageError(f"{key} must be true or false, not {text!r}")
         return text == "true"
-    if kind is int and re.fullmatch(r"[+-]?[0-9]+", text):
-        return int(text)
-    if kind is str:
-        try:
-            text.encode("utf-8")
-        except UnicodeEncodeError:
-            raise UsageError(f"{key} must be text that UTF-8 can encode") from None
-        return text
-    raise UsageError(f"{key} must be {_describe(kind)}, not {text!r}")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise UsageError(f"{key} must be text that UTF-8 can encode") from None
+    return text
 
 
 def user_config_path(environ: Optional[dict[str, str]] = None) -> Path:
@@ -226,8 +214,9 @@ class Config:
 
         value = self.get(key)
         kind = SETTINGS[key]
-        if value is not None and not _has_type(value, kind):
-            raise ConfigError(f"{key} must be {_describe(kind)}, not {type(value).__name__}")
+        if value is not None and not isinstance(value, kind):
+            expected = "true or false" if kind is bool else "a string"
+            raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
         return value
 
     def source(self, key: str) -> Optional[Path]:
@@ -435,8 +424,6 @@ def _value_end(statement: str, value_start: int) -> int:
 def _toml_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
     # JSON escapes every control character TOML does except DEL, which a TOML
     # basic string may not hold unescaped.
     return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007F")

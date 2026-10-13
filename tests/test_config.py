@@ -326,21 +326,17 @@ class ConfigSetTests(unittest.TestCase):
         return stdout
 
     def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
-        with mock.patch.dict(SETTINGS, {"limits.retries": int}):
-            self.assert_set("watch.auto_start", "false")
-            self.assert_set("review.username", 'mi"n\\judd')
-            self.assert_set("limits.retries", "-3")
+        self.assert_set("watch.auto_start", "false")
+        self.assert_set("review.username", 'mi"n\\judd')
 
-            self.assertEqual(
-                "[watch]\nauto_start = false\n\n"
-                '[review]\nusername = "mi\\"n\\\\judd"\n\n'
-                "[limits]\nretries = -3\n",
-                self.repo_file.read_text(),
-            )
-            config = load(self.root)
-            self.assertIs(False, config.get("watch.auto_start"))
-            self.assertEqual('mi"n\\judd', config.get("review.username"))
-            self.assertEqual(-3, config.get("limits.retries"))
+        self.assertEqual(
+            "[watch]\nauto_start = false\n\n"
+            '[review]\nusername = "mi\\"n\\\\judd"\n',
+            self.repo_file.read_text(),
+        )
+        config = load(self.root)
+        self.assertIs(False, config.get("watch.auto_start"))
+        self.assertEqual('mi"n\\judd', config.get("review.username"))
 
     def test_only_the_changed_line_differs_in_a_file_a_person_wrote(self) -> None:
         original = (
@@ -508,13 +504,11 @@ class ConfigSetTests(unittest.TestCase):
             ("watch.auto_start", "True", "must be true or false"),
             ("review.username", "\udcff", "must be text that UTF-8 can encode"),
         ]
-        with mock.patch.dict(SETTINGS, {"limits.retries": int}):
-            cases.append(("limits.retries", "3.5", "must be an integer"))
-            for key, value, message in cases:
-                code, _, stderr = self.invoke("config", "set", key, value)
+        for key, value, message in cases:
+            code, _, stderr = self.invoke("config", "set", key, value)
 
-                self.assertEqual(2, code)
-                self.assertIn(message, stderr)
+            self.assertEqual(2, code)
+            self.assertIn(message, stderr)
         self.assertFalse(self.repo_file.exists())
 
     def test_a_file_that_is_not_valid_toml_is_refused_untouched(self) -> None:
@@ -631,7 +625,7 @@ class ConfigSetTests(unittest.TestCase):
 
     def test_the_documented_keys_are_the_known_keys(self) -> None:
         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|integer) \|", documentation, re.MULTILINE)
-        names = {bool: "boolean", str: "string", int: "integer"}
+        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string) \|", documentation, re.MULTILINE)
+        names = {bool: "boolean", str: "string"}
 
         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
