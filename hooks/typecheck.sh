@@ -2,7 +2,7 @@
 # Type-checks the hooks module against the declarations Claude Code writes to
 # .claude-plugin/types/ when an interactive session loads a checkout with
 # --plugin-dir. Nothing else provides them, so CI cannot run this check. They
-# depend only on the Claude Code version, so a worktree that has none borrows
+# depend mainly on the Claude Code version, so a worktree that has none borrows
 # the main checkout's.
 set -eu
 cd "$(dirname "$0")/.."

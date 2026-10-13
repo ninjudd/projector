@@ -112,7 +112,7 @@ git diff --check
 
 `hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
 `tsconfig.json`, which extends the one Claude Code writes beside its
-declarations. The declarations depend only on the Claude Code version, so in
+declarations. The declarations depend mainly on the Claude Code version, so in
 a linked worktree that has none, the script uses the main checkout's, the
 first one `git worktree list` prints, and names it. It writes nothing to
 either checkout. When neither has the declarations, the script fails and says
