@@ -1215,6 +1215,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
                                                     "Bash(project review hold *)",
                                                     "Bash(project review finish *)",
+                                                    "Bash(project review settle *)",
                                                     "Bash(project summary publish *)"]}},
                          json.loads(self.settings().read_text()))
 
@@ -1228,10 +1229,11 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)",
-                                                    "Bash(project review finish *)"]}},
+                                                    "Bash(project review finish *)",
+                                                    "Bash(project review settle *)"]}},
                          json.loads(self.settings().read_text()))
 
-    def test_init_adds_the_finish_rule_to_settings_that_allow_the_other_commands(self) -> None:
+    def test_init_adds_the_finish_and_settle_rules_to_settings_that_allow_the_other_commands(self) -> None:
         self.at_a_terminal()
         allowed = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
         self.settings().write_text(json.dumps({"permissions": {"allow": allowed}}))
@@ -1240,7 +1242,8 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)"]}},
+        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)",
+                                                    "Bash(project review settle *)"]}},
                          json.loads(self.settings().read_text()))
 
     def codex_rules(self) -> Path:
@@ -1295,7 +1298,7 @@ class MutationTests(RepositoryTestCase):
         self.assertFalse(self.codex_rules().exists())
 
     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
-    def test_codex_allows_exactly_the_publish_hold_and_finish_commands_under_the_rules(self) -> None:
+    def test_codex_allows_exactly_the_publish_hold_finish_and_settle_commands_under_the_rules(self) -> None:
         rules = self.home / "projector.rules"
         rules.write_text(permissions.CODEX_RULES)
 
@@ -1308,6 +1311,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
         self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
         self.assertEqual("allow", decision("project", "review", "finish", "12", "--force"))
+        self.assertEqual("allow", decision("project", "review", "settle", "12", "--thread", "T", "--result", "fixed"))
         self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
         self.assertEqual("none", decision("project", "review", "release", "12"))
         self.assertEqual("none", decision("project", "site", "serve"))
@@ -1458,18 +1462,9 @@ class ReviewRulesTests(RepositoryTestCase):
         def allow(*rules: str) -> None:
             self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
 
-        cases = {
-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review finish *)",
-                                                "Bash(project summary publish *)"),
-                                  "Bash(project review hold *)"),
-            "finish rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
-                                                  "Bash(project summary publish *)"),
-                                    "Bash(project review finish *)"),
-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
-                                                   "Bash(project review finish *)"),
-                                     "Bash(project summary publish *)"),
-            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
-        }
+        cases = {f"{rule} missing": ((lambda rule=rule: allow(*(r for r in permissions.RULES if r != rule))), rule)
+                 for rule in permissions.RULES}
+        cases["settings absent"] = (self.settings().unlink, "Bash(project review hold *)")
         for name, (arrange, missing) in cases.items():
             with self.subTest(name):
                 arrange()

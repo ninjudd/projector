@@ -657,24 +657,37 @@ keeps `originalLine`. Outdated says the code changed, not that the finding was
 addressed, so verify it like any other.
 
 Read each thread's replies with the finding, verify by `method.md` § 5 against
-this head, and settle it in one of these ways. Every reply you post opens with
-`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
-naming the model running this review, so neither loop reads it back as a new
-finding or as the author answering:
+this head, and settle it in one of the ways below. Write the reply's text to a
+file, and settle the thread with one command, passing the thread's `id` from
+the census:
 
-- **Fixed:** the head addresses the finding. Resolve an open thread with
-  `resolveReviewThread`, replying `result=fixed` with what at this head
-  settles it. A thread already resolved and fixed needs nothing more.
+```sh
+project review settle <number> --thread <thread-id> --result <result> --body <file>
+```
+
+The command opens the reply with
+`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
+filled from the review's state with the head under review and the model
+running it, so neither loop reads the reply back as a new finding or as the
+author answering. It posts the reply as the reviewer, resolves or unresolves
+the thread as the result asks, and reads both back. It refuses a thread that
+is not a Projector finding thread on this pull request. Never write the
+marker yourself or resolve a thread through `gh api`: a reply whose marker
+is mistyped reads to the review loop as the author answering.
+
+- **Fixed:** the head addresses the finding. Run `--result fixed` on an open
+  thread, saying what at this head settles it; the command resolves the
+  thread. A thread already resolved and fixed needs nothing more.
 - **Accepted:** the author declined in a reply and the reasoning holds, or the
-  finding was wrong. Resolve it, replying `result=accepted` or
-  `result=withdrawn` with the guard or behavior that settles it.
-- **Kept:** the author declined and the reasoning does not hold. Leave the
-  thread open and reply `result=kept` once, saying what still fails and why.
-  Do not repeat the reply on a later head unless something changed; an open
-  disagreement is the user's merge decision.
+  finding was wrong. Run `--result accepted` or `--result withdrawn` with the
+  guard or behavior that settles it; the command resolves the thread.
+- **Kept:** the author declined and the reasoning does not hold. Run
+  `--result kept` once, saying what still fails and why; the thread stays
+  open. Do not repeat the reply on a later head unless something changed; an
+  open disagreement is the user's merge decision.
 - **Reopened:** the thread is resolved but the finding is not addressed at
-  this head. Unresolve it with `unresolveReviewThread`, and reply
-  `result=reopened` with what still fails.
+  this head. Run `--result reopened` with what still fails; the command
+  unresolves the thread.
 - **Still open:** open, not fixed, and not answered. Leave it; the finding
   already says what to do.
 

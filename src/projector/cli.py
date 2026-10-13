@@ -469,6 +469,10 @@ def parser() -> argparse.ArgumentParser:
         "move", help="follow a head that moved mid-review and update the start comment in place"
     )
     review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
+    review_settle = review_commands.add_parser(
+        "settle", help="reply on a Projector finding thread with the verify marker, as the reviewer, and resolve or "
+                       "unresolve the thread as the result asks"
+    )
     review_release = review_commands.add_parser(
         "release", help="clear a pull request's review lock when no review is running"
     )
@@ -516,8 +520,8 @@ def parser() -> argparse.ArgumentParser:
                            help="a listed change that will not be built: remove it, and end the hold when none is "
                                 "left (repeatable); with no TEXT, end the hold, which you do once the push that "
                                 "carries every listed change succeeds, since the command does not check it")
-    for command in (review_setup, review_move, review_census, review_release, review_finish, review_publish,
-                    review_gate, review_interdiff):
+    for command in (review_setup, review_move, review_census, review_settle, review_release, review_finish,
+                    review_publish, review_gate, review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -532,10 +536,16 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True,
                               help="the model ID of this session, which names the start comment and keys the "
                                    "review's state")
-    for command in (review_move, review_census, review_release, review_finish, review_publish, review_gate,
-                    review_interdiff):
+    for command in (review_move, review_census, review_settle, review_release, review_finish, review_publish,
+                    review_gate, review_interdiff):
         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
                                              "of this pull request set up here)")
+    review_settle.add_argument("--thread", required=True, help="the finding thread's id, as `census --json` lists it")
+    review_settle.add_argument("--result", required=True, choices=tuple(review.SETTLED),
+                               help="how the finding stands at the head under review: fixed, accepted, and "
+                                    "withdrawn resolve the thread, reopened unresolves it, and kept leaves it open")
+    review_settle.add_argument("--body", type=Path, required=True,
+                               help="the reply's text, without the marker, which settle writes")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
     review_setup.add_argument("--replace", type=int, metavar="COMMENT_ID",
@@ -1091,6 +1101,10 @@ def run_review(arguments: argparse.Namespace) -> int:
                       + (f" by model {model}" if model else ""))
             return 0
         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
+        if command == "settle":
+            result = review.settle(paths, arguments.thread, arguments.result, arguments.body)
+            print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.settle_lines(result)))
+            return 0
         if command == "interdiff":
             state = review.read_state(paths)
             enabled = incremental_enabled(Path(state["checkout"]))

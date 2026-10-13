@@ -67,17 +67,19 @@ what it did to each:
   would change everything Claude Code reads rather than only Projector's part.
 - `~/.claude/settings.json`, your own Claude Code settings, gains the
   permission rules `Bash(project review publish *)`,
-  `Bash(project review hold *)`, `Bash(project review finish *)`, and
-  `Bash(project summary publish *)` in `permissions.allow`. When
-  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
-  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
-  review of your own pull request as self-approval, although the review is a
-  `COMMENT` that moves no `reviewDecision` and a person still merges. It can
-  refuse the deletion of a comment as a write to an external system: the
-  comment that holds your pull request in draft, which leaves a clean pull
-  request stuck in draft, and a finished review's start comment, which leaves
-  the pull request saying a review is in progress. It can also refuse the
-  publish of a summary you asked for. An allow rule resolves the command
+  `Bash(project review hold *)`, `Bash(project review finish *)`,
+  `Bash(project review settle *)`, and `Bash(project summary publish *)` in
+  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
+  `settings.json` in that directory instead. Claude Code's auto mode
+  otherwise can refuse a review loop's clean review of your own pull request
+  as self-approval, although the review is a `COMMENT` that moves no
+  `reviewDecision` and a person still merges. It can refuse the deletion of a
+  comment as a write to an external system: the comment that holds your pull
+  request in draft, which leaves a clean pull request stuck in draft, and a
+  finished review's start comment, which leaves the pull request saying a
+  review is in progress. The reply and resolution that settle a finding
+  thread are writes of the same kind. It can also refuse the publish of a
+  summary you asked for. An allow rule resolves the command
   before the classifier runs. The rules go in your settings rather
   than the repository's, so they hold in every repository, clone, and worktree
   you open, whether or not the repository commits or ignores `.claude/`, and
@@ -538,7 +540,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, and `project summary publish` to your Claude Code settings and Codex rules |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, `project review settle`, and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
@@ -1166,6 +1168,7 @@ a review loop does not rebuild them as helpers of its own:
 project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
 project review move 66
 project review census 66 --json
+project review settle 66 --thread PRRT_kwDOAbc123 --result fixed --body reply.md
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
 project review interdiff 66
 project review publish 66 --incremental --body body.md
@@ -1230,6 +1233,38 @@ every page, and prints how many are resolved and open and each open thread's
 every model's threads alike and takes `--model` like the commands around it,
 so a review loop passes the same flags to each. `release` clears the locks of
 one model's review of the pull request.
+
+`settle` answers one finding thread once the review has verified it at the
+head under review. `--thread` is the thread's `id` from `census --json`,
+`--result` says how the finding stands, and `--body` names a file holding the
+reply's text. `settle` opens the reply with the verify marker, filled from
+the review's state with the head and the model:
+
+```
+<!-- projector-verify v=1 result=fixed sha=<full-sha> model=claude-opus-5-5 -->
+```
+
+The watchers read that marker to tell the reviewer's reply from the author's
+answer. `settle` posts the reply as the reviewer, then sets the thread by the
+result:
+
+| `--result` | The thread |
+| --- | --- |
+| `fixed`, `accepted`, `withdrawn` | Resolved |
+| `reopened` | Unresolved |
+| `kept` | Left as it is |
+
+It reads the reply and the thread back, and exits 1 when the reply does not
+open with the marker or the thread is not resolved or unresolved as the
+result asks. When the thread's last comment already opens with the same
+marker, as after a run that stopped once it replied, `settle` posts no
+second reply and only sets the thread. It refuses, exiting 1 and posting
+nothing, a thread that is not a review thread on the pull request, one whose
+first comment carries no finding marker, an empty body, and a body that
+carries a Projector marker of its own. A `--result` outside the five exits 2.
+With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
+marker names, the reply's `comment` id and `url`, and whether the thread is
+`resolved`.
 
 `finish` ends one model's review of the pull request on this machine, once
 the review is published and its summary has run, or when the pull request
@@ -1502,9 +1537,10 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `review.gate` is unset.
 
 `rules` checks whether your own settings allow `project review publish`,
-`project review hold`, `project review finish`, and `project summary publish`:
-the rules `init` adds to `~/.claude/settings.json`, and to
-`~/.codex/rules/projector.rules` where Codex is installed. It prints
+`project review hold`, `project review finish`, `project review settle`, and
+`project summary publish`: the rules `init` adds to
+`~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
+is installed. It prints
 each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
 whole check and for each file. It writes nothing, takes no pull request, and
 runs from any directory. It exits 0 when every file has the rules. It exits 1
@@ -1527,12 +1563,12 @@ exception: it deletes comments, so it never takes the repository from the
 state file, and outside a checkout it needs `--repo`. With several models
 set up, each later command refuses, naming them, until `--model` picks one.
 State an earlier release wrote is not read, so a review set up before an
-upgrade runs `setup` again. A command that posts a review, or posts or
-deletes a start comment, runs `gh` as the reviewer, `--reviewer` or
-`review.username` or else the authenticated user, with `GH_TOKEN` set to
-`gh auth token --user <reviewer>` for that call alone, so the account the
-rest of the session uses is left alone. `hold` posts as the authenticated
-user, who must be the pull request's author.
+upgrade runs `setup` again. A command that posts a review, posts or deletes
+a start comment, or settles a finding thread runs `gh` as the reviewer,
+`--reviewer` or `review.username` or else the authenticated user, with
+`GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone, so
+the account the rest of the session uses is left alone. `hold` posts as the
+authenticated user, who must be the pull request's author.
 
 A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a

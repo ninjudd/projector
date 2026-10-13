@@ -7,14 +7,15 @@ is a COMMENT that moves no reviewDecision and a person still merges. It also
 refuses the deletion of a comment, as a write to an external system: the
 comment that holds a pull request in draft, which leaves a clean pull request
 stuck in draft, and a finished review's start comment, which leaves the pull
-request saying a review is in progress. Codex's approval reviewer refuses
-`project summary publish`, which sends a pull request's diff to the
+request saying a review is in progress. The reply and resolution that settle
+a finding thread are writes of the same kind. Codex's approval reviewer
+refuses `project summary publish`, which sends a pull request's diff to the
 repository's own site, as sending repository content to another host. A rule
 that allows `project review publish`, `project review hold`, `project review
-finish`, and `project summary publish` resolves each command before that
-review runs. The rules go in the person's own settings, so they hold in every
-repository, clone, and worktree they open, and no repository has to carry a
-permission for everyone who opens it.
+finish`, `project review settle`, and `project summary publish` resolves each
+command before that review runs. The rules go in the person's own settings,
+so they hold in every repository, clone, and worktree they open, and no
+repository has to carry a permission for everyone who opens it.
 """
 
 from __future__ import annotations
@@ -28,14 +29,15 @@ from typing import Optional
 from .core import FileAction, write_through
 
 RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
-         "Bash(project summary publish *)")
+         "Bash(project review settle *)", "Bash(project summary publish *)")
 
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in
 # a file of its own and rewrites that file whole.
 CODEX_PREFIX_RULES = ('prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")',
                       'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")',
-                      'prefix_rule(pattern = ["project", "review", "finish"], decision = "allow")')
+                      'prefix_rule(pattern = ["project", "review", "finish"], decision = "allow")',
+                      'prefix_rule(pattern = ["project", "review", "settle"], decision = "allow")')
 CODEX_RULES = """\
 # Written by `project init`, which replaces this file. Put your own rules in another file.
 prefix_rule(
@@ -53,10 +55,15 @@ prefix_rule(
     decision = "allow",
     justification = "Ends a Projector review: deletes its start comments and removes its scratch worktrees and state.",
 )
+prefix_rule(
+    pattern = ["project", "review", "settle"],
+    decision = "allow",
+    justification = "Replies on a Projector finding thread as the reviewer and resolves or reopens the thread.",
+)
 """
 
-COMMANDS = ("`project review publish`, `project review hold`, `project review finish`, and "
-            "`project summary publish`")
+COMMANDS = ("`project review publish`, `project review hold`, `project review finish`, `project review settle`, "
+            "and `project summary publish`")
 
 
 def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
@@ -151,8 +158,9 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
     if not apply:
         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
                                         "mode can refuse a review loop's clean review of your own pull request, "
-                                        "the end of a hold on it, the cleanup after a review, or the publish of "
-                                        "a summary, unless the repository's own settings allow it"
+                                        "the end of a hold on it, the settling of a finding, the cleanup after a "
+                                        "review, or the publish of a summary, unless the repository's own "
+                                        "settings allow it"
                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
                                            "add them" if hint else ""))
     allow.extend(missing)

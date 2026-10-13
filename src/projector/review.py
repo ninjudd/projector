@@ -1030,6 +1030,103 @@ def census_lines(result: dict) -> list[str]:
     return lines
 
 
+# Settling a finding thread
+
+# What each result does to the thread, as review-pr/SKILL.md § Verify earlier findings describes: resolve it,
+# unresolve it, or leave it as it is.
+SETTLED = {"fixed": True, "accepted": True, "withdrawn": True, "kept": None, "reopened": False}
+# A Projector marker at the start of a line, which a reply's body leaves to `settle`.
+ANY_MARKER = re.compile(r"^\s*<!--\s*projector-", re.M)
+THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved
+  pullRequest{ number repository{ nameWithOwner } }
+  first: comments(first:1){ nodes{ body } }
+  last: comments(last:1){ nodes{ databaseId body } } } } }"""
+REPLY_MUTATION = """mutation($t:ID!,$b:String!){
+  addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t, body:$b}){ comment{ databaseId } } }"""
+RESOLVE_MUTATION = """mutation($t:ID!){ resolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }"""
+UNRESOLVE_MUTATION = """mutation($t:ID!){ unresolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }"""
+
+
+def verify_marker(result: str, sha: str, model: str) -> str:
+    """The line that opens a reviewer's reply on a finding thread, so neither loop reads the reply as a new
+    finding or as the author answering."""
+    return f"<!-- projector-verify v=1 result={result} sha={sha} model={model} -->"
+
+
+def finding_thread(repo: str, number: int, thread: str) -> dict:
+    """The Projector finding thread `thread` on the pull request as GitHub has it now: whether it is
+    `resolved`, and its `last` comment. Refuses any other thread, comment, or id."""
+    wrong = (f"{thread} is not a review thread on {repo}#{number}; pass a thread's id from "
+             f"`project review census {number} --json`")
+    try:
+        found = gh_json(["api", "graphql", "-f", f"query={THREAD_QUERY}", "-f", f"t={thread}"])
+    except NotFound as exc:
+        raise ReviewError(wrong) from exc
+    node = ((found or {}).get("data") or {}).get("node") or {}
+    pr = node.get("pullRequest") or {}
+    if pr.get("number") != number or ((pr.get("repository") or {}).get("nameWithOwner") or "").lower() != repo.lower():
+        raise ReviewError(wrong)
+    first = (node["first"]["nodes"] or [{}])[0]
+    if FINDING_MARKER not in (first.get("body") or ""):
+        raise ReviewError(f"thread {thread} on {repo}#{number} carries no Projector finding; another reviewer's "
+                          "thread is theirs to settle")
+    return {"resolved": bool(node.get("isResolved")), "last": (node["last"]["nodes"] or [{}])[-1]}
+
+
+def reply_text(body_path: Path) -> str:
+    if not body_path.is_file():
+        raise ReviewError(f"the body file {body_path} does not exist; write the reply there first")
+    text = body_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ReviewError("the body is empty; say what at this head settles the finding, or what still fails")
+    if ANY_MARKER.search(text):
+        raise ReviewError("leave the marker out of the body; settle writes it from the review's state")
+    return text
+
+
+def settle(paths: Paths, thread: str, result: str, body_path: Path) -> dict:
+    """`review settle`: as the reviewer, reply on a finding thread with the verify marker filled from the
+    review's state, resolve or unresolve the thread as `result` asks, and read both back. A reply already
+    carrying the same marker as the thread's last comment is not posted again, so a run that stopped after
+    replying finishes when it runs again."""
+    if result not in SETTLED:
+        raise ReviewError(f"--result must be one of {', '.join(SETTLED)}, not {result}")
+    state = read_state(paths)
+    repo, number = state["repo"], state["number"]
+    text = reply_text(body_path)
+    marker = verify_marker(result, state["sha"], state["model"])
+    found = finding_thread(repo, number, thread)
+    token = reviewer_token(state["reviewer"])
+    if (found["last"].get("body") or "").startswith(marker):
+        comment = found["last"]["databaseId"]
+    else:
+        posted = gh_json(["api", "graphql", "-f", f"query={REPLY_MUTATION}", "-f", f"t={thread}",
+                          "-f", f"b={marker}\n{text}\n"], token)
+        comment = posted["data"]["addPullRequestReviewThreadReply"]["comment"]["databaseId"]
+    wanted = SETTLED[result]
+    if wanted is not None:
+        run_gh(["api", "graphql", "-f", f"query={RESOLVE_MUTATION if wanted else UNRESOLVE_MUTATION}",
+                "-f", f"t={thread}"], token)
+    reply = gh_json(["api", f"repos/{repo}/pulls/comments/{comment}"]) or {}
+    if not (reply.get("body") or "").startswith(marker):
+        raise ReviewError(f"reply {comment} on thread {thread} does not open with {marker} when read back; check it "
+                          f"at {reply.get('html_url') or 'the pull request'} and run settle again")
+    resolved = finding_thread(repo, number, thread)["resolved"]
+    if wanted is not None and resolved != wanted:
+        raise ReviewError(f"thread {thread} is {'resolved' if resolved else 'open'} after {result}; run settle "
+                          "again")
+    return {"repo": repo, "number": number, "thread": thread, "result": result, "sha": state["sha"],
+            "model": state["model"], "comment": comment, "url": reply.get("html_url"), "resolved": resolved}
+
+
+def settle_lines(result: dict) -> list[str]:
+    """`review settle` without --json: the reply it posted and where the thread stands."""
+    stands = "resolved" if result["resolved"] else "open"
+    return [f"replied {result['result']} on thread {result['thread']} of {result['repo']}#{result['number']} at "
+            f"{result['sha'][:7]}: {result['url'] or 'comment ' + str(result['comment'])}",
+            f"the thread is {stands}"]
+
+
 # Incremental reviews
 
 class Unmeasurable(ReviewError):
