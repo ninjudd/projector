@@ -101,7 +101,7 @@ removed, so `project question ...` exits `2` as any unknown command does.
 | `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` removes it. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
 | `project inbox claim`, `delivered`, `reopen` | Renamed; `claim` exits `65` for a notice, which has nothing to deliver |
 | `project inbox watch` | Renamed; unchanged, since a dismissed notice already has `deliveredAt` |
-| `project inbox context` | Renamed; a notice's reference prints `<ref> is the notice: <subject>` |
+| `project inbox context` | Renamed; a notice's reference prints `<ref> is the notice: <subject>`. With a letter, such as `#12.2.a`, it prints nothing, because a notice has no answers to name |
 
 `tell` refuses, with exit `65`, a notice of more than one line or longer
 than 120 characters, an empty notice, and a `--pr` that is not
@@ -193,7 +193,7 @@ first:
 | File | Layer | Change |
 | --- | --- | --- |
 | `src/projector/questions.py` → `src/projector/inbox.py` | 1 | `git mv`; the store root `projector/inbox`; `QuestionError`, `QuestionNotFound`, `AmbiguousQuestion` → `InboxError`, `ItemNotFound`, `AmbiguousItem`; `question_file`, `load_questions` → `item_file`, `load_items`; `kind`, `postedAt`, and `subject` in every record it writes and reads |
-| `src/projector/inbox.py` | 2 | `tell`, `snooze`, a notice's `dismiss`, the kind check in `answer` and `claim`, the notice line in `context`, and `answer` and `dismiss` clearing `snoozedUntil`; `check` splits into the subject and pull request checks both kinds share, which `tell` reuses, and the recommendation and option checks only `ask` makes |
+| `src/projector/inbox.py` | 2 | `tell`, `snooze`, a notice's `dismiss`, the kind check in `answer` and `claim`, the notice line in `context` and its silence on a notice's reference with a letter, and `answer` and `dismiss` clearing `snoozedUntil`; `check` splits into the subject and pull request checks both kinds share, which `tell` reuses, and the recommendation and option checks only `ask` makes |
 | `src/projector/cli.py` | 1, 2 | The `question` command becomes `inbox`, with `{ "item" }` and `{ "items" }` in its JSON; layer 2 adds `tell`, `snooze`, the kind column, the snoozed state, and a notice's `show` |
 | `tests/test_questions.py` → `tests/test_inbox.py` | 1, 2 | `git mv` and rename in layer 1, every existing test passing under the new names; layer 2 adds the notice and snooze tests in § 4 |
 | `docs/cli.md` | 1, 2 | "Ask and answer questions" becomes "Use the inbox", with `project inbox` throughout; layer 2 adds `tell` and `snooze` and a notice's `dismiss` |
@@ -267,6 +267,7 @@ session's id in every host, which § 7 leaves open.
 | `project inbox dismiss` on a snoozed notice, and on a snoozed question | Each records the dismissal and clears `snoozedUntil`; `list` shows the notice `dismissed` and neither as `snoozed until` |
 | `project inbox watch --once` with only a dismissed notice | Prints nothing |
 | `printf 'see #12.2' \| project inbox context --session s1` | Prints `#12.2 is the notice: Force-pushed #12 to drop a stray file` |
+| `printf 'see #12.2.a' \| project inbox context --session s1` | Prints nothing and exits `0` |
 | A subagent calls `mcp__projector__tell` about #7 | Returns `Posted #7.1. …`; the band lists a `•` line naming `#7`, the divider counts `1 notice`, and one `$.ui.notify` is raised |
 | Open a notice's drawer | Its detail, then `discuss \| dismiss \| snooze` as three plain buttons |
 | Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns dim and struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band a minute later |
