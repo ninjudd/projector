@@ -1,0 +1,136 @@
+{
+ "version": 1,
+ "name": "Broad project permission rule",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 318,
+  "title": "Have init allow every project command except init, upgrade, and config changes",
+  "head": "68876414d381ed38b9e29d525325e4f419f9c89a",
+  "headRef": "allow-every-project-command",
+  "base": "2b9b089d7434d80c1b39e3095a836326bda7a696",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes permission rules into your own Claude Code settings (<code>~/.claude/settings.json</code>) and your Codex rules (<code>~/.codex/rules/projector.rules</code>). Those rules decide which <code>project</code> commands an agent can run without a prompt or a refusal from the host's automatic approval, such as Claude Code's auto mode or Codex's approval reviewer. Until this change, <code>init</code> allowed only three commands: <code>project review publish</code>, <code>project review hold</code>, and <code>project summary publish</code>. Every other <code>project</code> command could stop for a prompt, which pushes agents toward editing Projector's files by hand or calling <code>gh api</code> directly.",
+   "This change allows every <code>project</code> command and asks only before the few that the author judges to reach outside Projector's own state. The two hosts get different shapes of rule, because their rule languages differ:",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Host</th><th>Allowed</th><th>Still asks or falls through</th></tr></thead><tbody><tr><td>Claude Code</td><td><code>Bash(project *)</code> in <code>permissions.allow</code></td><td><code>project init</code>, <code>project upgrade</code>, <code>project config set</code> and <code>unset</code>, <code>project site</code> with <code>--prepare</code> or <code>--allow-prepare</code>, and any command line that starts with an option, such as <code>project --root . init</code>, through rules in <code>permissions.ask</code></td></tr><tr><td>Codex</td><td>Named commands and subcommands, listed in <code>CODEX_ALLOW</code></td><td><code>init</code>, <code>upgrade</code>, <code>config set</code> and <code>unset</code>, <code>create</code> and <code>edit</code>, <code>review gate</code>, <code>site build</code> and <code>serve</code>, and any line that starts with an option. These match no rule and fall to Codex's usual approval, inside its sandbox.</td></tr></tbody></table></div>",
+   "<code>init</code> also removes the older, narrower allow rules it wrote before, and only from <code>permissions.allow</code>. <code>site build</code> and <code>site serve</code> refuse abbreviated options, so the ask rule for <code>--prepare</code> matches every spelling an agent can use. The documentation and three skills now describe the broad rule."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Allow rule</b>: a host setting that runs a matching command with no prompt and, in Claude Code's auto mode, no classifier check.</li><li><b>Ask rule</b>: a Claude Code setting that prompts for a matching command. Claude Code checks ask rules before allow rules, so an ask rule wins.</li><li><b><code>prefix_rule</code></b>: a Codex rule that matches a command's first words exactly, with no wildcard.</li><li><b>Superseded rules</b>: the narrow allow rules, such as <code>Bash(project review publish *)</code>, that <code>Bash(project *)</code> now covers.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><b>At <code>18cd80f</code></b>: a P1 on <code>site build</code> and <code>serve</code> running any shell command through <code>--prepare</code> or self-approving <code>--allow-prepare</code>, and a P2 on <code>inbox answer</code> and <code>dismiss</code> running without a prompt.</li><li><b>At <code>6887641</code></b>: the P1 is fixed by the <code>Bash(project site *prepare*)</code> ask rule, <code>allow_abbrev=False</code> on both subcommands, and narrower Codex rules. The P2 is still open.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rules",
+   "title": "The rules init writes",
+   "kicker": "What each host now allows, asks for, and drops",
+   "intro": [
+    "<code>src/projector/permissions.py</code> holds the rules as constants and the two functions that write them. <code>ALLOW</code> is the one Claude Code allow rule, <code>ASK</code> the six Claude Code ask rules, and <code>SUPERSEDED</code> the narrow rules that <code>init</code> removes. <code>CODEX_ALLOW</code> pairs each Codex pattern with the justification Codex shows, and builds the Codex file, which <code>init</code> rewrites whole.",
+    "<code>Bash(project -*)</code> exists because the CLI accepts <code>--root</code> and <code>--projects-dir</code> before the command name. Without it, <code>project --root . init</code> would match the allow rule and none of the command ask rules. Codex has no wildcard to express the same thing, so the Codex side lists the commands it allows. It leaves out every command that can run another program, because Codex runs an allowed command outside its sandbox.",
+    "<code>tests/test_permissions.py</code> pins one table of command lines to the decision each host reaches, including leading variable assignments such as <code>VISUAL=…</code>. A test fails when the parser gains a command or subcommand that the Codex rules neither allow nor leave out on purpose, and another checks that <code>site build</code> and <code>serve</code> refuse abbreviated prepare flags."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The question to hold while reading: does every command the broad rule now allows stay inside Projector's own state? The excluded set is <code>init</code>, <code>upgrade</code>, <code>config set</code> and <code>unset</code>, and the prepare flags of <code>site build</code> and <code>serve</code>. One open finding names another pair, <code>inbox answer</code> and <code>dismiss</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The rule constants, the module docstring that explains each choice, the Claude settings rewrite that adds <code>ASK</code> and drops <code>SUPERSEDED</code>, and the Codex rules.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 76,
+       "text": "Open P2 finding: <code>ASK</code> has no rule for <code>project inbox answer</code> or <code>dismiss</code>, and the first <code>CODEX_ALLOW</code> pattern allows <code>inbox</code> whole. Those commands record the person's answer to an agent's question, and the band delivers that answer to the asking agent as the person's decision, so an agent can answer its own question with no prompt. The finding asks for ask rules on both and a Codex <code>inbox</code> entry that leaves them out."
+      },
+      {
+       "kind": "verify",
+       "line": 221,
+       "text": "Superseded rules leave only <code>permissions.allow</code>. The review ran <code>init</code> against a scratch <code>HOME</code>: the narrow allow rules were replaced by <code>Bash(project *)</code>, <code>deny</code> and existing <code>ask</code> entries stayed, and all six ask rules were added."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "The decision table for both hosts, and the test that ties the Codex list to the parser.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 48,
+       "text": "<code>site build</code> and <code>serve</code> without a prepare flag stay allowed in Claude Code. They then run only a <code>site.prepare</code> command the person already allowed for that checkout."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "init and review rules",
+   "kicker": "The CLI's callers of the rules and their messages",
+   "intro": [
+    "<code>project init</code> and <code>project review rules</code> call <code>allow_commands</code>, the renamed <code>allow_publish</code>. <code>review rules</code> only reports, so a review loop can learn before its first publish that the rules are missing. The messages now describe Projector's commands in general instead of naming three. The parser now builds <code>site build</code> and <code>site serve</code> with <code>allow_abbrev=False</code>, so <code>--prep</code> no longer parses as <code>--prepare</code>.",
+    "<code>tests/test_projector.py</code> replaces the three-rule expectations with a <code>granted()</code> helper and adds tests for the superseded rules and for ask rules added beside an existing allow rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The rename to <code>allow_commands</code>, reworded help and refusal messages, and <code>allow_abbrev=False</code> on <code>site build</code> and <code>site serve</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 561,
+       "text": "The review ran <code>site build</code> with <code>--prep</code>, <code>--pre</code>, and <code>--prepar</code>, and <code>site serve</code> with <code>--allow-prep</code>, at this head with Python 3.12. Each exited with <code>unrecognized arguments</code>, and none ran its command."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Settings fixtures move to <code>granted()</code>; new tests cover removal of superseded rules and the report-only path."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "What readers and agents are told about the new rules",
+   "intro": [
+    "<code>docs/cli.md</code> lists the ask rules, explains why <code>Bash(project -*)</code> exists, and shows the Codex file. The README and the <code>fix-pr</code>, <code>review-pr</code>, and <code>start-review-loop</code> skills now refer to <code>Bash(project *)</code> instead of the narrow rules."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The settings and Codex sections of <code>init</code>, the <code>review.publish_rule</code> row, and the <code>review rules</code> description."
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The hold paragraph now names <code>Bash(project *)</code>. One line in it runs to 116 characters, which the review of <code>18cd80f</code> listed as a suggestion."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md"
+    }
+   ]
+  }
+ ]
+}
