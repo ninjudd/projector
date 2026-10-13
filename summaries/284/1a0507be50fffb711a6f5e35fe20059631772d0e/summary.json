@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "name": "Terminal-only band divider",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 284,
+  "title": "Draw the band's divider only in a terminal",
+  "head": "1a0507be50fffb711a6f5e35fe20059631772d0e",
+  "headRef": "band-divider-terminal",
+  "base": "836443657ac72c5d69cdc5f7f27ff0afda4c58d2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip above the Claude Code prompt that lists the open pull requests your review and fix loops track, plus questions and notices from agents. It opens with a <b>divider</b>: a dim rule of <code>─</code> characters as wide as the band, ending in a heading such as <code>2 questions · updated 12s ago</code>, with a blank line under it.",
+   "In a terminal, the band's width is a count of character columns, <code>bodyColumns</code>, so the rule fills the row exactly and ends at Claude Code's <code>[-]</code> collapse mark. Claude Desktop sets the same text in its own proportional font, so a rule sized in columns runs wider than the row and wraps: the band showed one full rule and a second, shorter line carrying the heading.",
+   "This pull request draws the divider and its blank line only when the hook's <code>e.surface</code> is <code>terminal</code>. On Claude Desktop, VS Code, and the mobile app, the band starts with its first pull request or item. The heading's counts and <code>updated …</code> time are part of the divider, so those surfaces no longer show them. The pull request body states that trade-off as intended."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the <code>AbovePrompt</code> component Projector's hook draws above the prompt.</li><li><b>Surface</b>: where Claude Code renders the band, one of <code>terminal</code>, <code>desktop</code>, <code>vscode</code>, or <code>mobile</code>.</li><li><b>Divider</b>: the band's first row, a rule plus the heading's counts and <code>updated …</code> time.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review of <code>1a0507b</code> found it clean, with no finding threads. It suggested noting in <code>docs/plugins.md</code> that the divider's question and notice counts appear only in a terminal.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "render",
+   "title": "Draw the divider only on the terminal surface",
+   "kicker": "The band's render hook builds the divider as an empty list off the terminal.",
+   "intro": [
+    "The band's <code>ui.render</code> hook in <code>hooks/register.tsx</code> returns one of two layouts: an empty layout when nothing is tracked, and a normal layout with pull request rows and items. Before this change, both layouts drew the divider and then their own blank <code>under-divider</code> line.",
+    "Now <code>divider</code> is a list. On the <code>terminal</code> surface it holds the rule and the blank line, and on every other surface it is empty. Both layouts spread that list, and neither draws its own blank line any more, so the terminal output is unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The band's render hook: <code>divider</code> becomes a keyed two-element list on the terminal and an empty list elsewhere, and both layouts drop their own blank line.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>bodyColumns</code> counts character cells, which only a terminal lays text out in. That is why the hook checks the surface rather than measuring the width.",
+       "line": 755
+      },
+      {
+       "kind": "verify",
+       "text": "An open item's drawer returns before either layout and never drew the divider, on any surface, so its comment about the divider stepping aside still holds. No other code in the file counts the divider's rows for scrolling or placement; a search for <code>scroll</code>, <code>maxRows</code>, and <code>surface</code> found none."
+      },
+      {
+       "kind": "verify",
+       "text": "With this file replaced by <code>main</code>'s version, the two new desktop assertions in <code>hooks/band.test.tsx</code> fail, because a <code>─</code> row is drawn. At this head, <code>claude plugin test .</code> passes 65 of 65."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and documentation",
+   "kicker": "Desktop mounts of both layouts, and the band's documentation.",
+   "intro": [
+    "The tests mount the band with <code>surface: 'desktop'</code> in both layouts and check that no row contains <code>─</code> and that the first row is content, not a blank line. The empty-layout test also gains a terminal assertion that the rule is still drawn. <code>docs/plugins.md</code> says which surfaces draw the divider, and why."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "A new desktop test for the normal layout, and a desktop mount added to the empty-layout test."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds that only a terminal draws the divider and its blank line.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Further down, at the inbox section, the page still says the divider counts the open questions and notices. That is now true only in a terminal; the review suggested saying so there too.",
+       "line": 200
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
