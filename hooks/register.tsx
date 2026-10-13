@@ -743,10 +743,10 @@ export const register: Register = on => {
       .filter(part => part !== undefined)
       .join(' · ')
     const updated = heading === '' ? '' : ` ${heading}`
-    // Once GitHub has answered, the band keeps drawing what it last said through
-    // a failed poll, and the divider's time says how old that is, so only a
-    // band that has never loaded says why.
-    const failure = shown.error === null || shown.fetchedAt !== null ? undefined : `GitHub: ${shown.error}`
+    // A failed poll keeps drawing the pull requests GitHub last gave, and the
+    // divider's time says how old they are, so the band says why it failed
+    // only when it has none of them to draw.
+    const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
     const toggle = (key: string) => {
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
     }
