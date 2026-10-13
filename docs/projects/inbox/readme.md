@@ -1389,14 +1389,15 @@ and for "unsnooze when an item is snoozed".
 You can work the band from the keyboard as you answer Claude Code's own
 surveys. An open question's options are Buttons on the digits `1` to `6`,
 and a digit presses one from the band or typed first into an empty prompt.
-Each drawer action takes a letter by its place: `d` for **discuss**, `x`
-for **dismiss** or **restore**, and `s` for **snooze** or **unsnooze**.
+A drawer's options and actions form one list, a line each, and each
+action takes a letter by its place: `d` for **discuss**, `x` for
+**dismiss** or **restore**, and `s` for **snooze** or **unsnooze**.
 Enter on a line opens its drawer and moves the focus ring into it, and
 Enter on the open line closes the drawer with the ring on the line.
 `docs/plugins.md` gains a section on the band's keys. This section
-supersedes the bullets of § 2.5 that draw a drawer's actions as their labels
-alone, and the last row of § 4's table, under which an option's number
-takes no press on the main screen.
+supersedes the bullets of § 2.5 that draw a drawer's actions on one row,
+`discuss | dismiss | snooze`, and the last row of § 4's table, under which
+an option's number takes no press on the main screen.
 
 ### 15.1 Problem
 
@@ -1431,18 +1432,24 @@ does: digits for the options and letters for the actions.
   with no digits and nothing to press, the answer given at full strength
   and marked `✓`, the rest in `subtle`, and an answer typed with
   `project inbox answer --text` after them.
-- **Actions take letters by their place.** In the open drawer, **discuss**
-  takes `d`, the second place takes `x`, whether it holds **dismiss** or
-  **restore**, and the third takes `s`, whether it holds **snooze** or
-  **unsnooze**. A pull request's drawer has `d` for **discuss** and `x` for
-  **dismiss**. The engine draws each as `d: discuss`.
-- **The letters show whenever a drawer is open.** The owner wanted them
-  set only while the band holds the keyboard. Claude Code tells the band
-  when it takes the keyboard but not when it gives it back, as § 15.3
-  explains, so the band uses the fallback the owner accepted: it sets the
-  letters on every drawer it draws. A letter presses its action only while
-  the band holds the keyboard, so the fallback changes the drawing, not
-  what a key does.
+- **Options and actions form one list.** The `discuss | dismiss | snooze`
+  row is gone. Each action is a line of its own after the options, with no
+  blank line between: a `plain` Button whose letter the engine draws before
+  its label in the accent color, the label in `subtle`. A notice's actions
+  follow its detail after a blank line.
+- **Actions take letters by their place.** **discuss** takes `d`, the
+  second place takes `x`, whether it holds **dismiss** or **restore**, and
+  the third takes `s`, whether it holds **snooze** or **unsnooze**.
+- **Each label names what it acts on.** A question's drawer reads
+  `d: discuss this`, `x: dismiss question`, and `s: snooze question`, and a
+  notice's reads `notice` in place of `question`. A dismissed item's `x`
+  line reads `x: restore question` or `x: restore notice`, and it has no
+  `s` line, since the CLI refuses to snooze a resolved item. A snoozed
+  item's `s` line reads `s: unsnooze question` or `s: unsnooze notice`. A
+  pull request's drawer keeps its links above its actions, without keys,
+  and reads `d: discuss this` and `x: dismiss pull request`.
+- **The letters always show.** A letter presses its action only while the
+  band holds the keyboard; typed in the prompt, it is text.
 - **Enter takes the ring into the drawer.** A `ui.focus` hook records the
   band element the ring last landed on. When a line is pressed with the
   ring on it, the press came from Enter, and the band moves the ring with
@@ -1480,10 +1487,15 @@ does: digits for the options and letters for the actions.
   band's first element; on a click on the band outside its Buttons; on Tab
   and the arrows; and on `$.ui.focus`. Esc and a click into the prompt
   move nothing the band hears, and the band is not drawn again. So the band
-  learns when it takes the keyboard but not when it loses it, and the
-  owner chose the fallback in § 15.2 rather than a guess. If Claude Code
-  comes to report the keyboard leaving the band, the letters can show only
-  while it is there.
+  learns when it takes the keyboard but not when it loses it, and cannot
+  show the letters only while it holds it, as the owner first asked.
+- **Every action is a line, its letter drawn.** A `plain` Button with a
+  hotkey always draws the hotkey before its label, a Button without
+  `plain` draws `[ label ]` in bold, and no prop hides the hotkey, so the
+  engine offers no way to keep a letter undrawn on a plain label. The owner
+  chose to make the letters part of the drawer: options and actions as one
+  list a key each, like a survey's rows, with the actions' labels in
+  `subtle` so the options stay the drawer's main content.
 - **The ring tells Enter from a click.** `ui.press` does not say what
   pressed a Button. A click on a Button presses it without moving the ring
   or taking the keyboard, and Enter presses the Button under the ring, so a
@@ -1508,9 +1520,9 @@ does: digits for the options and letters for the actions.
 | --- | --- |
 | An open question's options are plain Buttons on `1` to `6` with no number of the band's; the digits are set only while its drawer is open; pressing the sixth fills the prompt and sending it answers; a resolved question's options have no digits | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer` in `hooks/band.test.tsx` |
 | A pick through a Button speaks to its question as a pick through the link did | The tests § 13.4 lists, which now press the Buttons |
-| A drawer's actions take `d`, `x`, and `s` by place, **restore** and **unsnooze** included, and no line takes a letter | `a drawer’s actions take d, x and s by their place, restore and unsnooze included` |
+| A drawer's actions follow its options a line each, with no blank line or `|`; they take `d`, `x`, and `s` by place, labelled by kind, **restore** and **unsnooze** included, with no `s` line on a dismissed item; their labels are `subtle`; a pull request's drawer reads `discuss this` and `dismiss pull request` under its links; no line of the band takes a letter | `a drawer’s actions follow its options a line each, on d, x and s, named for what they act on`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
-| The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the letters' drawing | Checked by hand by the owner in a preview session |
+| The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the drawer's lines | Checked by hand by the owner in a preview session |
 
 ## 16. Smaller changes to the band
 
@@ -1543,9 +1555,9 @@ for the CLI's default hour.
   The color lives in one constant, `QUESTION_COLOR`, in
   `hooks/register.tsx`.
 - **Snooze asks how long.** Pressing **snooze** in an item's drawer
-  snoozes nothing. It replaces the row of actions with
-  `15 min | 1 hour | 4 hours | 1 day | cancel`, plain Buttons in the same
-  `|`-separated style. A length runs
+  snoozes nothing. It replaces the action lines with
+  `15 min | 1 hour | 4 hours | 1 day | cancel`, plain Buttons on one row,
+  `|` between them. A length runs
   `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or
   1440, and **cancel** puts the actions back. The question lives in the
   open drawer only, in the `bandSnoozing` atom keyed by the drawer: closing

@@ -1036,18 +1036,27 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
-    // A drawer's row is plain Buttons, `|` between them. Its actions are
-    // pressed by their letters while the band holds the keyboard: `d`
-    // discusses, `x` sets the line aside or brings it back, and `s` puts it
-    // off or ends the snooze. The engine draws the letter before the name, as
-    // `d: discuss`.
-    type Action = { name: string; label?: string; hotkey?: 'd' | 'x' | 's'; onPress: () => void }
-    const drawActions = (id: string, actions: readonly Action[]) => (
+    // A drawer's actions follow its options, a line each: a plain Button on
+    // its letter, which the engine draws before the label in the accent
+    // color, as `d: discuss this`, the label in `subtle`. A letter presses its
+    // action while the band holds the keyboard: `d` discusses, `x` sets the
+    // line aside or brings it back, and `s` puts it off or ends the snooze.
+    type Action = { name: string; label: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
+    const drawActions = (id: string, actions: readonly Action[]) =>
+      actions.map(({ name, label, hotkey, onPress }) => (
+        <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
+          <Text color="subtle">{label}</Text>
+        </Button>
+      ))
+    // The lengths snooze offers share one row, `|` between them, with no
+    // keys, since the digits belong to a question's options.
+    type Length = { name: string; label: string; onPress: () => void }
+    const drawLengths = (id: string, lengths: readonly Length[]) => (
       <Box flexDirection="row" columnGap={1}>
-        {actions.flatMap(({ name, label, hotkey, onPress }, at) => [
+        {lengths.flatMap(({ name, label, onPress }, at) => [
           ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
-          <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
-            <Text>{label ?? name}</Text>
+          <Button key={`${name}:${id}`} plain onPress={onPress}>
+            <Text>{label}</Text>
           </Button>,
         ])}
       </Box>
@@ -1101,16 +1110,19 @@ export const register: Register = on => {
       const isSnoozed = isSnoozedAt(item, time)
       const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
       const pull = pullOf(item)
-      // A dismissed or snoozed item's drawer offers to bring it back where it
-      // offered to dismiss or snooze it, on the same letter.
+      // Each action names the kind of item it acts on. A dismissed or snoozed
+      // item's drawer offers to bring it back where it offered to dismiss or
+      // snooze it, on the same letter; a resolved item cannot be snoozed.
       const restore = (name: string, hotkey: Action['hotkey']): Action => ({
         name,
+        label: `${name} ${item.kind}`,
         hotkey,
         onPress: () => void act($, item, 'restore'),
       })
       const actions: Action[] = [
         {
           name: 'discuss',
+          label: 'discuss this',
           hotkey: 'd',
           onPress: () => {
             if (item.kind === 'question') propose(item, '')
@@ -1119,11 +1131,17 @@ export const register: Register = on => {
         },
         ...(isOpen
           ? [
-              { name: 'dismiss', hotkey: 'x' as const, onPress: () => void act($, item, 'dismiss') },
+              {
+                name: 'dismiss',
+                label: `dismiss ${item.kind}`,
+                hotkey: 'x' as const,
+                onPress: () => void act($, item, 'dismiss'),
+              },
               isSnoozed
                 ? restore('unsnooze', 's')
                 : {
                     name: 'snooze',
+                    label: `snooze ${item.kind}`,
                     hotkey: 's' as const,
                     onPress: () => {
                       update($, snoozing, () => key).catch(() => undefined)
@@ -1135,11 +1153,10 @@ export const register: Register = on => {
             ? [restore('restore', 'x')]
             : []),
       ]
-      // Snooze asks how long before it snoozes anything: the row of actions
-      // gives way to the lengths and cancel, which puts the actions back.
-      // The lengths take no digits, which belong to a question's options.
+      // Snooze asks how long before it snoozes anything: the action lines
+      // give way to the lengths and cancel, which puts the actions back.
       const isAsking = asking === key && isOpen && !isSnoozed
-      const lengths: Action[] = [
+      const lengths: Length[] = [
         ...SNOOZES.map(({ label, minutes }) => ({
           name: `snooze-${minutes}`,
           label,
@@ -1150,6 +1167,7 @@ export const register: Register = on => {
         })),
         {
           name: 'cancel',
+          label: 'cancel',
           onPress: () => {
             update($, snoozing, () => null).catch(() => undefined)
             carry(`cancel:${ref}`, `snooze:${ref}`)
@@ -1196,12 +1214,12 @@ export const register: Register = on => {
           {isOpened && (
             <Box flexDirection="column" marginLeft={2}>
               {/* A blank line sets the item apart from its line, and the detail,
-                  when there is one, sits between two. */}
+                  when there is one, sits between two. A question's actions
+                  follow its options directly, as one list. */}
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
-              {item.kind === 'question' && drawAnswers(item)}
-              <Text key={`before-buttons:${ref}`}> </Text>
-              {drawActions(ref, isAsking ? lengths : actions)}
+              {item.kind === 'question' ? drawAnswers(item) : <Text key={`before-buttons:${ref}`}> </Text>}
+              {isAsking ? drawLengths(ref, lengths) : drawActions(ref, actions)}
             </Box>
           )}
         </Box>
@@ -1271,8 +1289,8 @@ export const register: Register = on => {
                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
               )}
               {drawActions(key, [
-                { name: 'discuss', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
-                { name: 'dismiss', hotkey: 'x', onPress: () => void dismissPr($, pr) },
+                { name: 'discuss', label: 'discuss this', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
+                { name: 'dismiss', label: 'dismiss pull request', hotkey: 'x', onPress: () => void dismissPr($, pr) },
               ])}
             </Box>
           )}
