@@ -266,7 +266,8 @@ Then assign a priority, as `SKILL.md` defines them: P1 and P2 are defects the
 change introduces or worsens and violations of a written rule, a section of
 `../guidelines.md` included, and they post as threads and block; P3 is a
 change the code is correct without and no written rule requires, and it goes
-in the review body under a `Suggestions` heading, never as a thread.
+to `publish` as a P3 entry, which lists it in the review body as a
+suggestion, never as a thread.
 
 There is no cap on the number of findings. The rules above are the filter,
 and every thread is one the author must answer, so post nothing you would not
@@ -296,9 +297,26 @@ reads in this order:
 4. Disclosures, when any: an advisory check skipped for a new dependency, a
    file too large for a pass to read in full, a test that could not run, a
    head reviewed without running its code because the head is not trusted.
-5. `Suggestions`, the P3 list, when any, each as one line naming the
-   `path:line` and the change.
-6. On a clean head, what was checked, as `SKILL.md` requires.
+5. On a clean head, what was checked, as `SKILL.md` requires.
+
+Never write the suggestions into the body yourself. Give each P3 to
+`publish` as an entry of the threads file, with priority `P3`, the file's
+`path`, a `line` when the suggestion has one, and a `body` of one sentence
+saying the change. `publish` ends the review body with them in one form, a
+`### Suggestions` heading and an item for each, opening with its
+`path:line` in code font, after a line that counts them:
+
+```markdown
+<!-- projector-suggestions v=1 count=2 -->
+### Suggestions
+
+- `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
+- `README.md`: Say that a cold start warms the cache.
+```
+
+The one form is what lets `project review suggestions` hand `fix-pr` every
+item: a section written by hand comes out in whatever label and list style
+the reviewing model chose.
 
 Each P1 or P2 thread's first comment, after its marker, has three parts:
 

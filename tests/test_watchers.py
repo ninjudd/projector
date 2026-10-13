@@ -289,6 +289,30 @@ class WatchThreadsTests(WatcherCase):
             {tuple(row[:3]) for row in self.state_rows()},
         )
 
+    def test_a_projector_review_says_how_many_suggestions_its_body_counts(self) -> None:
+        def projector_review(review_id, count):
+            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model=claude-opus-5-5 sha={SHA_A} "
+                      "findings=0 seconds=60 covered=1/1 -->")
+            counted = "" if count is None else f"<!-- projector-suggestions v=1 count={count} -->\n"
+            return review(review_id, who="operator", body=f"Projector review\n\n{marker}\n\n{counted}Clean.")
+
+        self.pull_request(1, reviews=[projector_review(81, 2), projector_review(82, 1), projector_review(83, 0),
+                                      projector_review(84, None)])
+        self.track("acme/app#1")
+
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(
+            [
+                "REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions — Projector review Clean.",
+                "REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion — Projector review Clean.",
+                "REVIEW acme/app#1 by [operator] on aaaaaaaa — Projector review Clean.",
+                "REVIEW acme/app#1 by [operator] on aaaaaaaa — Projector review Clean.",
+            ],
+            result.stdout.splitlines(),
+        )
+
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
         self.pull_request(1, draft=True, threads=[thread("T1")], reviews=[review(5)])
         self.track("acme/app#1")

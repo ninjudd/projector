@@ -15,7 +15,8 @@
 #             verdict can land it until the base is merged in
 #   REVIEW    a submitted review carrying a body — the shape every COMMENT
 #             review posts, Projector's own included, which never moves
-#             reviewDecision
+#             reviewDecision. A Projector review whose body counts its
+#             suggestions says how many it lists
 #   TRACKED   a problem with the tracked file: a line that is not
 #             owner/repo#number, or a number that names no pull request.
 #             Announced once each, so a mistake in the file is heard rather
@@ -200,11 +201,15 @@ not_found() {
 # empty COMMENTED review, so `last:10` returns ten replies and the bot review
 # has been displaced. Bodies empty once HTML comments are stripped are
 # skipped, which is also what keeps the loop's own replies from coming back
-# to it as work.
+# to it as work. The fourth field is the count `project review publish` writes
+# before a review's suggestions, and 0 where there is none, as in a review an
+# earlier release published: parsing the list itself is the CLI's job, and
+# `project review suggestions` does it for fix-pr.
 REVIEWS_JQ='.[] | select(.state == "COMMENTED")
+  | ((.body // "" | capture("<!-- projector-suggestions v=1 count=(?<n>[0-9]+) -->") | .n) // "0") as $suggestions
   | (.body // "" | gsub("<!--([^-]|-[^-]|--[^>])*-->"; "") | gsub("<[^>]*>"; "") | gsub("[\r\n]+"; " ")) as $body
   | select(($body | gsub("[[:space:]]+"; "")) != "")
-  | "\(.id)\t\(.user.login // "?")\t\(.commit_id // "?")\t\($body[0:130])"'
+  | "\(.id)\t\(.user.login // "?")\t\(.commit_id // "?")\t\($suggestions)\t\($body[0:130])"'
 fetch_reviews() {
   gh api "repos/$1/pulls/$2/reviews" --paginate --jq "$REVIEWS_JQ" 2>/dev/null
 }
@@ -394,12 +399,17 @@ EOF
     # nothing, so its body-only findings are lost. Never re-announced: a
     # COMMENTED review has no resolved state to clear, so "(still open)" would
     # be a reminder with no off switch.
-    while IFS=$'\t' read -r crid cwho csha csnip; do
+    while IFS=$'\t' read -r crid cwho csha csug csnip; do
       [ -n "${crid:-}" ] || continue
       cid="review:$crid"
       last=$(awk -v t="$cid" '$1==t {print $4}' "$STATE" 2>/dev/null)
+      case "$csug" in
+        0) listing="" ;;
+        1) listing=", listing 1 suggestion" ;;
+        *) listing=", listing $csug suggestions" ;;
+      esac
       if [ -z "$last" ]; then
-        echo "REVIEW $slug#$n by [$cwho] on ${csha:0:8} — $csnip"
+        echo "REVIEW $slug#$n by [$cwho] on ${csha:0:8}$listing — $csnip"
         last=$now
       fi
       new_state="$new_state$cid $slug $n $last

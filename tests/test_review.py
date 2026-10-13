@@ -720,6 +720,7 @@ class PublishTests(PublishCase):
             review_body.splitlines()[0])
         self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
+        self.assertNotIn("projector-suggestions", review_body, "a review that lists none counts none")
         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
         self.assertEqual(("COMMENT", self.head, "token-operator"),
                          (self.posted()["event"], self.posted()["commit_id"], "token-" + self.posted()["user"]["login"]))
@@ -1045,6 +1046,146 @@ class PublishRefusalTests(PublishCase):
 
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)
+
+
+# A full review's body below its marker, in the order method.md § 7 gives, and the suggestions sections
+# reviewers have written by hand, which the label forms below wrap.
+INTENT = ("This change caches the parsed configuration, so each command reads `.projector.toml` once.\n\n"
+          "2 finding threads: 2 resolved, 0 open\n\nCovered 4 of 4 changed files; none generated.\n")
+CHECKED = ("- **The cache.** `load_config` keys the cache on the checkout's path, and nothing writes the file "
+           "between two reads.\n"
+           "- **The gate.** The unit tests pass at this head.\n")
+ITEMS = ("- `src/app/config.py:42`: name the cache `_parsed`, as the module's other caches are named.\n"
+         "- `docs/cli.md`, the configuration section: say that an edit to `.projector.toml` takes effect on the\n"
+         "  next command, not the next session.\n"
+         "- Split `load` in two, so reading and checking the file can be tested apart.")
+WRITTEN = [{"path": "src/app/config.py", "line": 42,
+            "text": "name the cache `_parsed`, as the module's other caches are named."},
+           {"path": "docs/cli.md", "line": None,
+            "text": "the configuration section: say that an edit to `.projector.toml` takes effect on the next "
+                    "command, not the next session."},
+           {"path": None, "line": None, "text": "Split `load` in two, so reading and checking the file can be "
+                                               "tested apart."}]
+LABELED = {
+    "level 2 heading": f"{INTENT}\nThe rest holds at this head:\n\n{CHECKED}\n## Suggestions\n\n{ITEMS}\n",
+    "level 3 heading": f"{INTENT}\n### Suggestions\n\n{ITEMS}\n\n### What was checked\n\n{CHECKED}",
+    "bold line": f"{INTENT}\n**Suggestions**\n\n{ITEMS}\n\n**What was checked**\n\n{CHECKED}",
+    "plain line": f"{INTENT}\nSuggestions:\n{ITEMS}\nWhat was checked:\n{CHECKED}",
+}
+P3 = [{"path": "src/x.py", "line": 12, "priority": "P3", "body": "Name the helper `warm`, as\nthe cache calls it."},
+      {"path": "README.md", "priority": "P3", "body": "Say that a cold start warms the cache."}]
+LISTED = [{"path": "src/x.py", "line": 12, "text": "Name the helper `warm`, as the cache calls it."},
+          {"path": "README.md", "line": None, "text": "Say that a cold start warms the cache."}]
+
+
+# The review marker as release 0.7.19 reads it, copied from that release. A review loop on another machine
+# may run it, and it reads a marker with any field it does not know as no verdict at all.
+MARKER_0_7_19 = re.compile(
+    r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
+    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+)
+
+
+def verdict_0_7_19(body: str) -> tuple[str, str] | None:
+    """The verdict and head release 0.7.19 reads from a review body, or None when it reads none."""
+    found = next(filter(None, map(MARKER_0_7_19.match, body.splitlines())), None)
+    return (found.group(1), found.group(5)) if found else None
+
+
+class PublishSuggestionTests(PublishCase):
+    def test_a_release_from_before_suggestions_reads_the_verdict_of_every_review_this_one_writes(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("changes-requested", "--threads", str(self.threads(*P3, finding())))[0])
+        listing = self.posted()["body"]
+        # The fake's census reads no thread the first review opened, so the re-review may be clean.
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+
+        self.assertEqual(("changes-requested", self.head), verdict_0_7_19(listing))
+        self.assertEqual(("clean", self.head), verdict_0_7_19(self.posted()["body"]))
+
+    def test_lists_p3_entries_in_one_form_after_the_body_and_counts_them_before_the_list(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(P3[0], finding(), P3[1])))
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()
+        self.assertTrue(posted["body"].endswith(
+            "Covered 3 of 3 changed files.\n\n"
+            "<!-- projector-suggestions v=1 count=2 -->\n"
+            "### Suggestions\n\n"
+            "- `src/x.py:12`: Name the helper `warm`, as the cache calls it.\n"
+            "- `README.md`: Say that a cold start warms the cache.\n"), posted["body"])
+        self.assertIn(" covered=3/3 -->\n", posted["body"], "the review's marker keeps the shape every release reads")
+        self.assertIn(" findings=1 ", posted["body"], "a P3 is no finding")
+        self.assertIn("1 finding thread: 0 resolved, 1 open", posted["body"])
+        self.assertEqual([("src/x.py", 3)], [(c["path"], c["line"]) for c in posted["comments"]],
+                         "a P3 opens no thread, and its line need not be in the diff")
+        self.assertEqual(LISTED, review.parse_suggestions(posted["body"]))
+        self.assertEqual(2, review.listed_suggestions(posted))
+
+    def test_a_head_whose_only_entries_are_p3_is_clean(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("clean", "--threads", str(self.threads(*P3)))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(([], "COMMENT"), (self.posted()["comments"], self.posted()["event"]))
+        self.assertIn(" findings=0 seconds=754 covered=3/3 -->", self.posted()["body"])
+        self.assertIn("\n<!-- projector-suggestions v=1 count=2 -->\n### Suggestions\n", self.posted()["body"])
+        self.assertFalse(self.github.pr["draft"])
+
+    def test_a_body_that_lists_suggestions_by_hand_publishes_as_written_and_is_counted(self) -> None:
+        # Another host may run a skill that predates P3 entries and write the section itself.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        text = LABELED["level 3 heading"].replace("2 finding threads: 2 resolved, 0 open", "{census}")
+
+        code, _, err = self.publish("clean", body=self.body(text))
+
+        self.assertEqual(0, code, err)
+        self.assertIn("\n<!-- projector-suggestions v=1 count=3 -->\n### Suggestions\n", self.posted()["body"],
+                      "the count goes directly before the body's own label")
+        self.assertTrue(self.posted()["body"].endswith(CHECKED), "the body publishes as written")
+        self.assertEqual(WRITTEN, review.parse_suggestions(self.posted()["body"]))
+
+    def test_refuses_a_body_that_lists_suggestions_beside_p3_entries(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        for label, text in LABELED.items():
+            with self.subTest(label):
+                body = self.body(text.replace("2 finding threads: 2 resolved, 0 open", "{census}"))
+
+                code, _, err = self.publish("clean", "--threads", str(self.threads(*P3)), body=body)
+
+                self.assertEqual(1, code)
+                self.assertIn("the body has a suggestions section of its own, and the threads file gives P3 "
+                              "entries", err)
+                self.assertEqual([], self.github.reviews, "nothing was posted")
+                self.assertTrue(self.lock(self.head).exists(), "the refusal keeps the lock")
+
+    def test_refuses_a_p3_entry_the_list_could_not_show(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        for entry, words in (({"priority": "P3", "body": "Rename it."}, "finding 2 is a P3 and needs the path"),
+                             ({"path": "a b.py", "priority": "P3", "body": "Rename it."}, "with no space"),
+                             ({"path": "a.py", "line": 0, "priority": "P3", "body": "Rename it."},
+                              "a P3's line is a line number"),
+                             ({"path": "a.py", "priority": "P3", "body": " \n"}, "a P3 needs a body"),
+                             ({"path": "a.py", "priority": "P3", "body": "<!-- projector-finding v=1 --> x"},
+                              "leave Projector's markers out")):
+            with self.subTest(words):
+                code, _, err = self.publish("clean", "--threads", str(self.threads(P3[0], entry)))
+
+                self.assertEqual(1, code)
+                self.assertIn(words, err)
+                self.assertEqual([], self.github.reviews, "nothing was posted")
+
+    def test_a_priority_outside_p1_p2_and_p3_is_refused(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding(priority="P4"))))
+
+        self.assertEqual(1, code)
+        self.assertIn("priority must be P1, P2, or P3", err)
 
 
 def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
@@ -2097,7 +2238,7 @@ class StatusTests(LatestWinsCase):
         self.assertEqual((REPO, 1, self.head, True, "clean"),
                          (as_json["repo"], as_json["number"], as_json["head"], as_json["draft"], as_json["verdict"]))
         self.assertEqual({"model": "claude-opus-5-5", "verdict": "clean", "review": newest, "url": review_page(newest),
-                          "at": "2026-09-27T14:20:00Z", "login": "operator"}, as_json["newest"])
+                          "at": "2026-09-27T14:20:00Z", "login": "operator", "suggestions": 0}, as_json["newest"])
         self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
                          [(m["model"], m["verdict"], m["review"]) for m in as_json["models"]],
                          "a verdict on an earlier head and a start comment are not on the list")
@@ -2149,6 +2290,27 @@ class StatusTests(LatestWinsCase):
 
         self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(newest)}"],
                          self.status()[1].splitlines())
+
+    def test_shows_how_many_suggestions_each_review_lists_from_its_count_or_else_its_list(self) -> None:
+        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z")
+        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
+        counted, written = self.github.reviews
+        counted["body"] += "\n<!-- projector-suggestions v=1 count=1 -->\nThe list this line counts is not read.\n"
+        written["body"] += "\n" + LABELED["bold line"]
+
+        code, out, err = self.status()
+        result = json.loads(self.status("--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"#1 at {self.head[:7]}: clean with 3 suggestions from claude-opus-5-5, "
+                          f"{review_page(newest)}",
+                          f"  claude-opus-5-5   clean               review {newest}, 14:20 UTC, 3 suggestions",
+                          f"  gpt-5.5           clean               review {older}, 14:02 UTC, 1 suggestion"],
+                         out.splitlines())
+        self.assertEqual([(newest, 3), (older, 1)], [(m["review"], m["suggestions"]) for m in result["models"]],
+                         "a review with no count line, as 0.7.19 publishes, is counted by its list")
+        self.assertEqual((3, 4), (result["newest"]["suggestions"], result["suggestions"]),
+                         "the head's count is every model's, as `review suggestions` lists them")
 
     def test_every_account_the_repository_lets_in_counts_so_fix_pr_runs_it_once(self) -> None:
         skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
@@ -2237,6 +2399,85 @@ class StatusTests(LatestWinsCase):
 
         self.assertEqual(1, code)
         self.assertIn("does not exist", err)
+
+
+class SuggestionsCommandTests(LatestWinsCase):
+    def suggestions(self, *extra: str) -> tuple[int, str, str]:
+        return self.project("suggestions", "1", "--repo", REPO, *extra, cwd=Path(tempfile.mkdtemp()))
+
+    def add_review(self, model: str, listing: str, at: str, sha: str | None = None, login: str = "operator") -> int:
+        """A full review by `model` on `sha` whose body, below its marker, is `listing`."""
+        review_id = self.add_verdict(model, at=at, sha=sha, login=login)
+        self.github.reviews[-1]["body"] += f"\n{listing}"
+        return review_id
+
+    def test_prints_nothing_and_exits_0_when_no_review_lists_a_suggestion(self) -> None:
+        self.assertEqual((0, ""), self.suggestions()[:2], "an unreviewed head")
+        self.add_review("claude-opus-5-5", f"{INTENT}\n### What was checked\n\n{CHECKED}", "2026-09-27T14:02:00Z")
+
+        self.assertEqual((0, ""), self.suggestions()[:2])
+        self.assertEqual((0, []), (self.suggestions("--json")[0], json.loads(self.suggestions("--json")[1])))
+
+    def test_lists_each_suggestion_of_the_newest_review_by_each_model_on_the_head(self) -> None:
+        self.add_review("claude-opus-5-5", LABELED["level 2 heading"], "2026-09-27T14:00:00Z")
+        newest = self.add_review("claude-opus-5-5", LABELED["plain line"], "2026-09-27T14:20:00Z")
+        other = self.add_review("gpt-5.5", "### Suggestions\n\n- `src/z.py:11`: Return early.\n",
+                                "2026-09-27T14:10:00Z")
+        self.add_review("gpt-5.5", "### Suggestions\n\n- `src/z.py:3`: A suggestion on an earlier head.\n",
+                        "2026-09-27T14:30:00Z", sha=self.base)
+
+        code, out, err = self.suggestions()
+        listed = json.loads(self.suggestions("--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([dict(item, url=review_page(newest), sha=self.head) for item in WRITTEN]
+                         + [{"url": review_page(other), "sha": self.head, "path": "src/z.py", "line": 11,
+                             "text": "Return early."}], listed,
+                         "the older review by the same model and a review of an earlier head give none")
+        self.assertEqual(
+            f"src/app/config.py:42, in the review of {self.head[:7]}: {review_page(newest)}\n"
+            "name the cache `_parsed`, as the module's other caches are named.\n\n"
+            f"docs/cli.md, in the review of {self.head[:7]}: {review_page(newest)}\n"
+            "the configuration section: say that an edit to `.projector.toml` takes effect on the next command, "
+            "not the next session.\n\n"
+            f"(no file named), in the review of {self.head[:7]}: {review_page(newest)}\n"
+            "Split `load` in two, so reading and checking the file can be tested apart.\n\n"
+            f"src/z.py:11, in the review of {self.head[:7]}: {review_page(other)}\n"
+            "Return early.\n", out)
+
+    def test_reads_every_label_a_reviewer_has_written(self) -> None:
+        for label, text in LABELED.items():
+            with self.subTest(label):
+                self.github.reviews = []
+                found = self.add_review("claude-opus-5-5", text, "2026-09-27T14:20:00Z")
+
+                listed = json.loads(self.suggestions("--json")[1])
+
+                self.assertEqual([dict(item, url=review_page(found), sha=self.head) for item in WRITTEN], listed)
+
+    def test_reads_the_review_publish_wrote(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
+
+        listed = json.loads(self.suggestions("--json")[1])
+
+        self.assertEqual([dict(item, url=review_page(901), sha=self.head) for item in LISTED], listed)
+
+    def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+        self.github.missing = True
+
+        code, out, err = self.suggestions()
+
+        self.assertEqual((1, ""), (code, out))
+        self.assertIn("does not exist", err)
+
+    def test_a_github_failure_exits_one(self) -> None:
+        self.github.fail = "pulls/1/reviews"
+
+        code, out, err = self.suggestions()
+
+        self.assertEqual((1, ""), (code, out))
+        self.assertIn("HTTP 502", err)
 
 
 class HoldTests(ReviewCase):
@@ -3183,6 +3424,81 @@ class KindPhraseTests(unittest.TestCase):
                 self.assertIsNotNone(review.INCREMENTAL.match(
                     f"<!-- projector-incremental v=1 from={'f' * 40} kind={kind} insertions=1 deletions=1 files=1 "
                     "conflicts=0 -->"))
+
+
+class IncrementalSuggestionsTests(IncrementalCase):
+    def build_on_suggestions(self) -> tuple[int, str]:
+        """Publish a full review of the reviewed head that lists two suggestions, then an incremental review of a
+        push that builds on it, and return the full review's id and the new head. The setup's full review listed
+        none; the re-review of the same head is the newest full review, which the incremental review links."""
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
+        full = self.posted()["id"]
+        head = self.pushed()
+        self.assertEqual(0, self.publish_incremental()[0])
+        self.assertIn(f"({review_page(full)})", self.posted()["body"])
+        self.assertIsNotNone(verdict_0_7_19(self.posted()["body"]), "0.7.19 reads the incremental verdict")
+        self.assertNotIn("projector-suggestions", self.posted()["body"])
+        return full, head
+
+    def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
+        full, head = self.build_on_suggestions()
+
+        code, out, err = self.project("suggestions", "1", "--repo", REPO, "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([dict(item, url=review_page(full), sha=self.reviewed) for item in LISTED], json.loads(out),
+                         f"the suggestions name the full review's head, not {head[:7]}")
+
+    def test_status_counts_the_suggestions_of_the_full_review_an_incremental_review_builds_on(self) -> None:
+        # The incremental review lists none of its own, so a count of its own would read 0 while fix-pr still
+        # has the full review's two to decide.
+        _, head = self.build_on_suggestions()
+        incremental = self.posted()["id"]
+
+        code, out, err = self.project("status", "1", "--repo", REPO)
+        result = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+        listed = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"#1 at {head[:7]}: clean with 2 suggestions from claude-opus-5-5, "
+                          f"{review_page(incremental)}"], out.splitlines())
+        self.assertEqual((incremental, 2, 2, len(listed)),
+                         (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"], 2))
+
+
+class SuggestionParsingTests(unittest.TestCase):
+    def test_reads_each_label_a_reviewer_has_written_in_any_case(self) -> None:
+        for label, text in LABELED.items():
+            for body in (text, text.replace("Suggestions", "SUGGESTIONS")):
+                with self.subTest(label, body=body[len(INTENT):len(INTENT) + 30]):
+                    self.assertEqual(WRITTEN, review.parse_suggestions(body))
+
+    def test_reads_the_form_publish_writes_back_as_it_was_given(self) -> None:
+        self.assertEqual(LISTED, review.parse_suggestions(f"{INTENT}\n{review.suggestions_section(LISTED)}\n"))
+
+    def test_a_body_without_the_section_has_none(self) -> None:
+        for body in (f"{INTENT}\n### What was checked\n\n{CHECKED}",
+                     f"{INTENT}\nThe suggestions below are optional.\n\n{CHECKED}",
+                     f"{INTENT}\n```markdown\n## Suggestions\n\n- `a.py:1`: quoted, not listed.\n```\n",
+                     f"{INTENT}\n##### Suggestions\n\n{ITEMS}\n"):
+            with self.subTest(body[len(INTENT):len(INTENT) + 40]):
+                self.assertIsNone(review.parse_suggestions(body))
+
+    def test_an_empty_section_lists_none(self) -> None:
+        self.assertEqual([], review.parse_suggestions(f"{INTENT}\n### Suggestions\n\n### What was checked\n"))
+
+    def test_the_section_ends_at_a_paragraph_and_a_deeper_list_joins_its_item(self) -> None:
+        body = (f"{INTENT}\n### Suggestions (P3)\n\n"
+                "- `src/x.py:3-9`: Inline the helper.\n"
+                "  - It has one caller.\n"
+                "1. src/y.py:4 — Drop the unused import.\n\n"
+                "The rest holds at this head.\n\n"
+                "- **The gate.** It passes.\n")
+
+        self.assertEqual([{"path": "src/x.py", "line": 3, "text": "Inline the helper. - It has one caller."},
+                          {"path": "src/y.py", "line": 4, "text": "Drop the unused import."}],
+                         review.parse_suggestions(body))
 
 
 class VerdictMarkerTests(unittest.TestCase):

@@ -67,8 +67,8 @@ are resolved. The work outstanding on the head is:
 - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
   one whose findings exist only in its body.
 - **A body-only finding** in a `COMMENT` review.
-- **Every suggestion you have not decided** in the newest Projector review
-  of the current head by each model, as
+- **Every suggestion you have not decided** among those
+  `project review suggestions <number>` lists, as
   [Decide each suggestion](#decide-each-suggestion) describes.
 - **A change the owner asks for** in the conversation.
 - **Your open hold comment.** The changes it lists are outstanding until a
@@ -89,9 +89,10 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
 of a body-only finding in a pull-request-level comment because there is no
 thread to reply to or resolve.
 
-A `Suggestions` list in a Projector review body is not a body-only finding.
-Its items never hold a head back from clean and need no reply, but you
-decide each one.
+The suggestions a Projector review lists in its body are not body-only
+findings. They never hold a head back from clean and need no reply, but you
+decide each one, and you take them from `project review suggestions` rather
+than from the body you read.
 
 Draft state is not itself a finding. It says the head has not been signed
 off, so look for the work in the threads and review bodies. A draft with no
@@ -138,12 +139,23 @@ can change a count or a path they name.
 ## Decide each suggestion
 
 A Projector review lists its P3 items, changes the code is correct without,
-under a `## Suggestions` heading in its body. A suggestion never holds a head
-back from clean, so a review can sign a head off and mark the pull request
-ready above a list of them. Each one still gets a decision: you implement it
-or you defer it. Decide every suggestion in the newest Projector review of
-the current head by each model. An incremental review lists none, so read
-its suggestions from the full review it builds on, which its lead links.
+as suggestions in its body. A suggestion never holds a head back from clean,
+so a review can sign a head off and mark the pull request ready above a list
+of them. Each one still gets a decision: you implement it or you defer it.
+List them with the command, never by reading review bodies yourself, whose
+label and list style vary with the model and the release that wrote them:
+
+```sh
+project review suggestions <number> --repo <owner>/<repo>
+```
+
+It lists every suggestion in the newest Projector review of the current head
+by each model. An incremental review lists none of its own, so the command
+also lists those of the full review it builds on. Each block names the file
+and line, the head of the review the suggestion comes from, and that review's
+URL, with the suggestion below them. With `--json` it gives each as an
+object with `url`, `sha`, `path`, `line`, and `text`. It prints nothing when
+no review lists a suggestion. Decide every suggestion it lists.
 
 - **Implement** a suggestion that is small and clearly right. That is the
   default. Verify it first, as you verify a finding under
