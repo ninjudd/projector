@@ -458,8 +458,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   const times = new Map<string, number>()
   /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
   const refusal: { code?: number; message?: string; rejection?: string } = {}
-  /** How many of the next `list` commands fail. */
-  const failing = { lists: 0 }
+  /** How many of the next `list` commands fail, and how many of the next item commands find the lock held. */
+  const failing = { lists: 0, locks: 0 }
   /** A write that lands while the next `list` runs, after that list read the store. */
   const during: { list?: () => void } = {}
   let writes = 0
@@ -540,6 +540,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
     const item = store.get(ref)
     if (item === undefined) return failed(66, `no item ${ref}`)
+    if (failing.locks > 0) {
+      failing.locks -= 1
+      return failed(75, `another command holds ${STORE}/.lock; try again once it finishes`)
+    }
     if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
       return failed(65, `${ref} is already answered`)
     }
@@ -1136,6 +1140,26 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
   await woken.unmount()
+})
+
+test('a dismiss or snooze that finds the store locked says so and leaves the item open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:#7.1' })
+  session.store.failing.locks = 2
+  for (const name of ['dismiss', 'snooze']) {
+    await ui.press({ key: `${name}:#7.1` })
+    await clock.settle()
+  }
+  const busy = `projector: another command holds ${STORE}/.lock; try again once it finishes`
+  expect(session.toasts).toEqual([busy, busy])
+  expect(session.store.store.get('#7.1')).toEqual(held())
+  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {

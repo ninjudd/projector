@@ -669,7 +669,7 @@ def add_inbox_parser(subcommands) -> None:
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
-                        help="minutes until it returns (default: 60); 0 wakes it now")
+                        help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
 
     claim = command("claim", "claim a recorded answer for delivery and print its token and text")
     claim.add_argument("reference")
@@ -1102,13 +1102,23 @@ def checkout_repo(checkout: Path) -> Optional[str]:
         return None
 
 
+def wake_time(until: int) -> str:
+    """When a snoozed item returns, in local time, with its day when that is not today."""
+    wake = datetime.datetime.fromtimestamp(until / 1000)
+    days = (wake.date() - datetime.datetime.fromtimestamp(inbox.now_ms() / 1000).date()).days
+    if days == 0:
+        return f"{wake:%H:%M}"
+    return f"tomorrow {wake:%H:%M}" if days == 1 else f"{wake:%Y-%m-%d %H:%M}"
+
+
 def item_state(item: dict) -> str:
     until = inbox.snoozed_until(item)
     if until is not None:
-        return f"snoozed until {time.strftime('%H:%M', time.localtime(until / 1000))}"
-    if not item.get("answer"):
+        return f"snoozed until {wake_time(until)}"
+    answered = item.get("answer")
+    if not answered:
         return "open"
-    if inbox.is_notice(item):
+    if answered.get("dismissed"):
         return "dismissed"
     if item.get("deliveredAt"):
         return f"delivered {inbox.answer_ref(item)}"
@@ -1137,16 +1147,16 @@ def print_choices(question: dict) -> None:
 def run_inbox(arguments: argparse.Namespace) -> int:
     command = arguments.inbox_command
     json_output = arguments.json_output
-    if command == "ask":
+    written = getattr(arguments, "reference", None)
+    ref, letter = inbox.parse_reference(written) if written is not None else (None, None)
+    if letter is not None and command != "answer":
+        raise inbox.InboxError(f"`{command}` takes the item's reference, {ref}, without an answer letter")
+    if command in ("ask", "tell"):
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
-        item = inbox.ask(inbox_session(arguments, True), arguments.question, arguments.recommend,
-                         arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
-                         repo=checkout_repo(Path.cwd()))
-        print(json_text({"item": item}) if json_output else item["ref"])
-    elif command == "tell":
-        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
-        item = inbox.tell(inbox_session(arguments, True), arguments.notice, detail=detail, pr=arguments.pr,
-                          agent=arguments.agent, repo=checkout_repo(Path.cwd()))
+        session = inbox_session(arguments, True)
+        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent, "repo": checkout_repo(Path.cwd())}
+        item = (inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
+                if command == "ask" else inbox.tell(session, arguments.notice, **posted))
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
@@ -1160,31 +1170,26 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
     elif command == "show":
-        ref, _ = inbox.parse_reference(arguments.reference)
-        _, item = inbox.find(inbox_session(arguments, False), ref)
+        item = inbox.find(inbox_session(arguments, False), ref)
         if json_output:
             print(json_text({"item": item}))
         else:
             print_item(item)
     elif command in ("answer", "dismiss"):
-        ref, letter = inbox.parse_reference(arguments.reference)
         session = inbox_session(arguments, False)
         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
                 else inbox.dismiss(session, ref))
         print(json_text({"item": item}) if json_output
               else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
     elif command == "snooze":
-        ref, _ = inbox.parse_reference(arguments.reference)
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
     elif command == "claim":
-        ref, _ = inbox.parse_reference(arguments.reference)
         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
         token, text = item["claim"]["token"], inbox.message(item)
         print(json_text({"token": token, "text": text, "item": item}) if json_output
               else f"{token}\t{text}")
     elif command in ("delivered", "reopen"):
-        ref, _ = inbox.parse_reference(arguments.reference)
         item = inbox.settle(inbox_session(arguments, False), ref, arguments.claim,
                             delivered=command == "delivered")
         print(json_text({"item": item}) if json_output

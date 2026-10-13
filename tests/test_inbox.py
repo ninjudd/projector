@@ -128,12 +128,16 @@ class AskTests(InboxCase):
 
     def test_refuses_a_question_that_fails_a_check_and_writes_nothing(self) -> None:
         for args in (["Two\nlines?", "--recommend", "x"],
+                     ["A\ttab?", "--recommend", "x"],
                      ["x" * 121, "--recommend", "x"],
                      ["Empty?", "--recommend", " "],
+                     ["Two-line answer?", "--recommend", "line one\nline two"],
+                     ["Two-line option?", "--recommend", "x", "--option", "line one\rline two"],
                      ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcdef"], "--option=g"],
                      ["Repeat?", "--recommend", "Same", "--option", "Same"],
+                     ["Twice?", "--recommend", "a", "--option", "Other", "--option", " Other "],
                      ["Bad pull?", "--recommend", "x", "--pr", "app#12"]):
-            with self.subTest(args=args[0][:12]):
+            with self.subTest(args=args[0][:16]):
                 code, _, err = self.run_cli("ask", *args, "--session", "s1")
                 self.assertEqual(65, code, err)
         self.assertFalse((self.folder() / "counts.json").exists())
@@ -195,6 +199,22 @@ class AnswerTests(InboxCase):
             with self.subTest(args=args):
                 self.assertEqual(65, self.run_cli("answer", *args, "--session", "s1")[0])
 
+    def test_refuses_a_typed_answer_of_more_than_one_line(self) -> None:
+        code, _, err = self.run_cli("answer", "#337.1.c", "--text", "line one\nline two", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("one line", err)
+        self.assertNotIn("answer", json.loads((self.folder() / "%23337.1.json").read_text()))
+
+    def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
+        for args in (["show", "#337.1.a"], ["dismiss", "#337.1.a"], ["snooze", "#337.1.a"], ["claim", "#337.1.a"],
+                     ["delivered", "#337.1.a", "--claim", "x"], ["reopen", "#337.1.a", "--claim", "x"]):
+            with self.subTest(command=args[0]):
+                code, out, err = self.run_cli(*args, "--session", "s1")
+                self.assertEqual((65, ""), (code, out))
+                self.assertIn("#337.1, without an answer letter", err)
+        question = json.loads((self.folder() / "%23337.1.json").read_text())
+        self.assertEqual([], [key for key in ("answer", "snoozedUntil", "claim") if key in question])
+
     def test_finds_the_session_without_one_and_refuses_an_ambiguous_reference(self) -> None:
         self.assertEqual(0, self.run_cli("answer", "#337.1.a")[0])
         self.ask("Same reference?", "--recommend", "x", "--pr", "acme/app#337", session="s2")
@@ -229,13 +249,13 @@ class AnswerTests(InboxCase):
         self.assertEqual("held\n", holder.stdout.readline())
         return holder
 
-    def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) -> None:
+    def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) -> None:
         holder = self.hold_lock("wait")
         with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
             started = time.monotonic()
             code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
         self.assertGreaterEqual(time.monotonic() - started, 0.3)
-        self.assertEqual(65, code)
+        self.assertEqual(75, code)
         self.assertIn("another command holds", err)
         holder.stdin.close()
         self.assertEqual(0, holder.wait())
@@ -357,6 +377,34 @@ class ListTests(InboxCase):
         (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
         self.assertEqual(["q1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
 
+    def test_every_command_refuses_a_file_that_is_not_an_item(self) -> None:
+        self.ask("One?", "--recommend", "x")
+        (self.folder() / "q7.json").write_text(json.dumps({"ref": "q7", "subject": "No kind?"}))
+        (self.folder() / "q8.json").write_text(json.dumps({"ref": "q9", "kind": "notice", "subject": "Misnamed?"}))
+        for ref in ("q7", "q8"):
+            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["snooze", ref]):
+                with self.subTest(args=args):
+                    code, _, err = self.run_cli(*args, "--session", "s1")
+                    self.assertEqual(66, code)
+                    self.assertIn("is not an inbox item", err)
+            with self.subTest(context=ref):
+                self.assertEqual((0, ""), self.run_cli("context", "--session", "s1", stdin=f"see {ref}")[:2])
+        self.assertEqual({"ref": "q7", "subject": "No kind?"}, json.loads((self.folder() / "q7.json").read_text()))
+
+    def test_lists_every_session_past_a_directory_that_is_not_one(self) -> None:
+        self.ask("One?", "--recommend", "x")
+        (self.folder().parent / "not a session").mkdir()
+        self.assertEqual((0, "s1\tq1\tquestion\topen\tOne?\n", ""), self.run_cli("list"))
+
+    def test_lists_and_shows_a_dismissed_question_as_dismissed(self) -> None:
+        self.ask("One?", "--recommend", "x")
+        self.run_cli("dismiss", "q1", "--session", "s1")
+        self.assertEqual(["q1\tquestion\tdismissed\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertEqual("DISMISSED q1 One?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
+        self.assertEqual(["q1\tquestion\tdismissed\tOne?"],
+                         self.run_cli("list", "--all", "--session", "s1")[1].splitlines())
+        self.assertTrue(self.run_cli("show", "q1")[1].endswith("\ndismissed\n"))
+
     def test_show_prints_the_lettered_answers(self) -> None:
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
         out = self.run_cli("show", "q1")[1]
@@ -429,7 +477,7 @@ class NoticeTests(InboxCase):
 
     def test_refuses_a_notice_that_fails_a_check_and_writes_nothing(self) -> None:
         counts = (self.folder() / "counts.json").read_text()
-        for args in (["Two\nlines"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
+        for args in (["Two\nlines"], ["A\ttab"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
             with self.subTest(args=args[0][:12]):
                 code, _, err = self.run_cli("tell", *args, "--session", "s1")
                 self.assertEqual(65, code, err)
@@ -509,6 +557,25 @@ class SnoozeTests(InboxCase):
         self.assertEqual(65, self.run_cli("snooze", "#12.2", "--session", "s1")[0])
         self.assertEqual(65, self.run_cli("snooze", "#12.1", "--for", "-1", "--session", "s1")[0])
 
+    def test_refuses_a_snooze_longer_than_a_day_and_writes_nothing(self) -> None:
+        for minutes in ("1441", "99999999999999"):
+            with self.subTest(minutes=minutes):
+                code, out, err = self.run_cli("snooze", "#12.1", "--for", minutes, "--session", "s1")
+                self.assertEqual((65, ""), (code, out))
+                self.assertIn("1440", err)
+        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
+        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
+
+    def test_names_the_day_of_a_snooze_that_ends_after_today(self) -> None:
+        tomorrow = time.strftime("%H:%M", time.localtime(self.NOW / 1000 + 86_400))
+        self.assertEqual((0, f"#12.1 snoozed until tomorrow {tomorrow}\n", ""),
+                         self.run_cli("snooze", "#12.1", "--for", "1440", "--session", "s1"))
+        path = self.folder() / "%2312.2.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "snoozedUntil": self.NOW + 3 * 86_400_000}))
+        later = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.NOW / 1000 + 3 * 86_400))
+        self.assertEqual({"#12.1": f"snoozed until tomorrow {tomorrow}", "#12.2": f"snoozed until {later}"},
+                         self.states())
+
     def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
         self.run_cli("snooze", "#12.1", "--session", "s1")
         self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
@@ -518,7 +585,7 @@ class SnoozeTests(InboxCase):
         for ref in ("#12.1", "#12.2"):
             self.run_cli("snooze", ref, "--session", "s1")
             self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
-        self.assertEqual({"#12.1": "answered #12.1", "#12.2": "dismissed"}, self.states("--all"))
+        self.assertEqual({"#12.1": "dismissed", "#12.2": "dismissed"}, self.states("--all"))
 
 
 class NoticeContextTests(InboxCase):
