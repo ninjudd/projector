@@ -190,7 +190,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status"]],
+      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
       decision = "allow",
   )
   prefix_rule(
@@ -1364,6 +1364,7 @@ project review finish 66
 project review setup 66 --model claude-opus-5-5 --replace 4011
 project review gate 66
 project review status 66
+project review suggestions 66
 project review hold 66 --add "Skip fenced code blocks when looking for headings"
 project review hold 66 --drop
 project review rules
@@ -1498,16 +1499,44 @@ code; `--threads` names a JSON list
 of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
 files read over the files changed. `publish` writes the signature line and
 marker itself from the review's state and one reading of the clock, and adds
-the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
-when the pull request closed or its head moved, when a finding's line is
-outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
-line, when the body is empty, carries its own signature or marker comment, or
-has no `{census}` outside quoted code, when the verdict disagrees with the finding
-count, or when the reviewer already has a verdict by this model on the head
-that this loop's record does not account for. A verdict by another model is a
-second opinion and never collides, and one whose marker names no model
-collides with every model. Outside a loop, `--second-verdict <review-id>`
-publishes beside an earlier verdict the body names.
+the finding marker to each thread.
+
+A finding whose priority is `P3` is a suggestion, which opens no thread. Its
+`line` may be left out and need not be in the diff, and its `body` is the
+suggestion, which `publish` joins onto one line. `publish` ends the review
+body with the suggestions in one form, which `review suggestions` reads back:
+
+```markdown
+### Suggestions
+
+- `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
+- `README.md`: Say that a cold start warms the cache.
+```
+
+The review's marker ends with `suggestions=<n>`, how many the body lists. A
+body that carries a suggestions section of its own, as a review-pr skill
+from before P3 entries writes, publishes as written, and the marker counts
+its items.
+
+`publish` refuses, exiting 1 and keeping the lock, when:
+
+- the pull request closed or its head moved;
+- a finding's line is outside the diff's hunks, or its text lacks a priority
+  header or a `**Fix:**` line;
+- a P3 has no path, a path holding a space, a colon, or a backtick, a `line`
+  that is not a line number, or an empty body;
+- the body is empty, carries its own signature or marker comment, or has no
+  `{census}` outside quoted code;
+- the threads file gives P3 entries and the body carries a suggestions
+  section of its own, which would list them twice;
+- the verdict disagrees with the finding count;
+- the reviewer already has a verdict by this model on the head that this
+  loop's record does not account for.
+
+A verdict by another model is a second opinion and never collides, and one
+whose marker names no model collides with every model. Outside a loop,
+`--second-verdict <review-id>` publishes beside an earlier verdict the body
+names.
 
 On a self-review `publish` submits a `COMMENT`, re-reads it, and sets draft
 state by the newest Projector verdict on the head, whichever model gave it:
@@ -1544,16 +1573,17 @@ dismissal GitHub refuses, exits non-zero, and running it again finishes that
 review rather than posting another.
 
 `status` prints the newest Projector verdict on the pull request's current
-head, the one `publish` sets draft state by, with the model and the review it
-came from. When several models gave a verdict on the head, it adds each
-model's newest one, newest first. Two accounts that run the same model each
-keep their own line, with the account in parentheses after the model, as
+head, the one `publish` sets draft state by, with how many suggestions that
+review lists when it lists any, and the model and the review it came from.
+When several models gave a verdict on the head, it adds each model's newest
+one, newest first. Two accounts that run the same model each keep their own
+line, with the account in parentheses after the model, as
 `claude-opus-5-5 (teammate)`. Then it lists the open finding threads, and
 any hold comment the author has open:
 
 ```
 $ project review status 66
-#66 at 4f2a9c1: clean from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
+#66 at 4f2a9c1: clean with 2 suggestions from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
   claude-opus-5-5   clean               review 3301, 14:20 UTC
   gpt-5.5           changes-requested   review 3290, 14:02 UTC
 ```
@@ -1575,11 +1605,47 @@ it cannot read the pull request. With `--json` it prints one object:
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
-| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, or `null` when the head is `unreviewed`. |
+| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` its review lists, which the marker's `suggestions=` gives, or the body's list where the marker gives no count. It is `null` when the head is `unreviewed`. |
 | `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
 | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+
+`suggestions` lists the suggestions the `fix-pr` skill decides on the pull
+request's current head: those of each account's newest Projector review by
+each model on the head, among the reviews `status` counts, newest first. An
+incremental review lists none of its own, so after one it also lists those
+of the full review whose link opens its lead. It prints a block for each
+suggestion, naming the file and line, the head of the review it comes from,
+and that review's URL, with the suggestion below:
+
+```
+$ project review suggestions 66
+src/cache.py:42, in the review of 4f2a9c1: https://github.com/example/app/pull/66#pullrequestreview-3301
+Name the helper `warm`, as the cache module calls it.
+
+README.md, in the review of 4f2a9c1: https://github.com/example/app/pull/66#pullrequestreview-3301
+Say that a cold start warms the cache.
+```
+
+It reads the section `publish` writes and every form a reviewer has written by
+hand: a `Suggestions` heading of level 1 to 4, a `**Suggestions**` line in
+bold, or a plain `Suggestions:` line, in any case. The section ends at the
+next heading, line in bold, or label line such as `What was checked:`, or at
+a paragraph after a blank line. Each list item is one suggestion, with the
+lines under it joined to its text. An item that opens with no `path:line`, in
+code font or bare, names no file. It finds the repository and the reviewer as
+`status` does, and runs from any directory. With no suggestion it prints
+nothing and exits 0. It exits 1 only when it cannot read the pull request or
+its reviews. With `--json` it prints a list, empty when there is none, of one
+object for each suggestion:
+
+| Field | Value |
+| --- | --- |
+| `url` | The review that lists the suggestion. |
+| `sha` | The head that review read, which for a full review an incremental review builds on is an earlier head. |
+| `path`, `line` | The file and line the suggestion names, or `null` where it names none. |
+| `text` | The suggestion, on one line. |
 
 `hold` holds your pull request in draft while you build changes no review has
 read, as the `fix-pr` skill does, and ends the hold once a push carries them.
@@ -1699,11 +1765,12 @@ passes and 1 otherwise. With `--json` it prints one object:
 `publish --incremental` publishes the incremental review. It applies the same
 rules to the live state, and `--body` names a file of at most 600 characters,
 once its placeholders are filled, on what changed and what was checked. It
-writes the signature line with `incremental from <short-sha>`, the review
-marker with `verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files
-the change touches, a `projector-incremental` line naming the full review's
-head, the kind, and the counts, and a lead that links the full review and
-states the change's size, the kind, and any resolved conflict. It always posts
+writes the signature line with `incremental from <short-sha>`, and the review
+marker with `verdict=clean`, `findings=0`, `covered=<n>/<n>` for the files
+the change touches, and `suggestions=0`. After them it writes a
+`projector-incremental` line naming the full review's head, the kind, and the
+counts, and a lead that links the full review and states the change's size,
+the kind, and any resolved conflict. It always posts
 a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
 approval is what remains." on another author's pull request, and on a
 self-review marks the pull request ready, as any clean verdict does. It

@@ -516,18 +516,23 @@ def parser() -> argparse.ArgumentParser:
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
+    review_suggestions = review_commands.add_parser(
+        "suggestions", help="list the suggestions the newest Projector reviews of a pull request's current head "
+                            "give, for fix-pr to implement or defer"
+    )
     review_hold = review_commands.add_parser(
         "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
                      "are pushed"
     )
-    review_status.add_argument("pr", type=int, help="the pull request number")
-    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
-                                              "this checkout's origin)")
-    review_status.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
-                                                  "members, and collaborators (default: review.username, then you)")
-    review_status.add_argument("--state-dir", type=Path,
-                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
-    add_output(review_status)
+    for command in (review_status, review_suggestions):
+        command.add_argument("pr", type=int, help="the pull request number")
+        command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                            "this checkout's origin)")
+        command.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
+                                                "members, and collaborators (default: review.username, then you)")
+        command.add_argument("--state-dir", type=Path,
+                             help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+        add_output(command)
     review_hold.add_argument("pr", type=int, help="the pull request number")
     review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
     add_output(review_hold)
@@ -1110,18 +1115,35 @@ def incremental_enabled(checkout: Path) -> bool:
     return load_config(checkout).setting("review.incremental") is not False
 
 
-def review_status(root: Path, arguments: argparse.Namespace) -> int:
-    """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
-    when the pull request cannot be read. The reviewer is found as `setup` finds it."""
-    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+def counted_reviewer(arguments: argparse.Namespace) -> str:
+    """The reviewer whose reviews `review status` and `review suggestions` count beside the repository's
+    accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated user."""
     try:
         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
     except ProjectorError:
         configured = None
-    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
+    return arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
         or review.authenticated_login()
-    result = review.status(repo, arguments.pr, reviewer)
+
+
+def review_status(root: Path, arguments: argparse.Namespace) -> int:
+    """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
+    when the pull request cannot be read."""
+    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+    result = review.status(repo, arguments.pr, counted_reviewer(arguments))
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
+    return 0
+
+
+def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
+    """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
+    there are none; exit 1 only when the pull request cannot be read."""
+    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments))
+    if arguments.json_output:
+        print(json.dumps(items, indent=2))
+    elif items:
+        print(review.suggestions_text(items))
     return 0
 
 
@@ -1142,6 +1164,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
+    if arguments.review_command == "suggestions":
+        return review_suggestions(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "finish":

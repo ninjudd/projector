@@ -478,7 +478,7 @@ run `project review gate <number>`, and go on only when it exits 0. Where
 Then write the body: a few sentences on what changed and what you checked
 about it, at most 600 characters once its placeholders are filled. Leave out
 the intent paragraph, the census, the coverage line, disclosures,
-`Suggestions`, and the list of checks, because the full review already says
+suggestions, and the list of checks, because the full review already says
 them. Publish it:
 
 ```sh
@@ -525,7 +525,7 @@ this skill — nothing in GitHub enforces them.
 ```
 📽️ **Projector review** of `<short-sha>` · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
+<!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> suggestions=<n> -->
 ```
 
 The short SHA names the head the review read, the first seven characters of
@@ -572,15 +572,17 @@ findings. `clean` requires that last number to be zero, and printing it
 lets a reader see the verdict was earned.
 
 `findings=` is the number of P1 and P2 threads this review opens. P3 items
-are listed in the body rather than posted as threads, and are not counted.
-`covered=` is how many of the changed files a pass or the reviewer read, over
-how many files the head changed; the body's coverage line prints the same two
-numbers.
+are listed in the body rather than posted as threads, and `findings=` does
+not count them. `covered=` is how many of the changed files a pass or the
+reviewer read, over how many files the head changed; the body's coverage
+line prints the same two numbers. `suggestions=` is how many P3 items the
+body lists. A marker an earlier release wrote leaves it out, and a reader
+then counts the body's list.
 
 The body follows the order `method.md` § 7 gives: the signature line and
 marker, the intent paragraph, the census, the coverage line, any disclosures,
-a `Suggestions` list of P3 items when there are any, and on a clean head what
-was checked.
+on a clean head what was checked, and last the suggestions `publish` lists
+from the P3 entries you give it.
 
 **An incremental review adds one line.** Its signature line carries
 `incremental from <short-sha>` between the verdict word and the duration, and
@@ -593,9 +595,10 @@ the line directly after its marker names the full review it builds on:
 `from=` is the head of that full review, `kind=` is how the head moved since
 it, the counts are the change's size, and `conflicts=` is how many files the
 author resolved a conflict in. Its review marker keeps the grammar above, with
-`verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files the change
-touches, so everything that reads a verdict reads it. A lead linking the full
-review follows the two lines, and then the reviewer's short body, as
+`verdict=clean`, `findings=0`, `covered=<n>/<n>` for the files the change
+touches, and `suggestions=0`, so everything that reads a verdict reads it. A
+lead linking the full review follows the two lines, and then the reviewer's
+short body, as
 [Review a minimal push incrementally](#review-a-minimal-push-incrementally)
 describes. `publish --incremental` writes all of it except that body.
 
@@ -618,8 +621,8 @@ threads:
   `../guidelines.md`. A thread; blocks.
 - **P3.** A change the code is correct without: a simplification, dead code,
   a gap between a written rule and practice, a defect already present at the
-  base that the change does not worsen. One line in the body's `Suggestions`
-  list; never a thread, never blocks.
+  base that the change does not worsen. An entry of the threads file that
+  `publish` lists in the body as a suggestion; never a thread, never blocks.
 
 The visible text of a thread's first comment has three parts, the shape
 `method.md` § 7 shows with an example:
@@ -700,8 +703,9 @@ author speaking, and it is what you weigh when a finding is declined.
 
 P1 and P2 findings always go out as inline threads in **one** review, each
 carrying the finding marker, and every review body carries the signature and
-verdict line. P3 items are not threads: list them in the body under a
-`Suggestions` heading, as `method.md` § 7 describes. Do not drip-feed findings
+verdict line. P3 items are not threads: give them to `publish` as P3
+entries, and it lists them in the body, as `method.md` § 7 describes. Never
+write a suggestions section into the body yourself. Do not drip-feed findings
 or use ordinary issue comments for them. What differs between the modes is
 only the review state and what marks the outcome.
 
@@ -723,24 +727,42 @@ project review publish <number> --verdict <clean|changes-requested> \
 ```
 
 The body file is the review below its signature line: the intent paragraph,
-the census, the coverage line, disclosures, `Suggestions`, and what was
-checked. Put `{census}` where the census goes; `publish` fills it with the
-count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
+the census, the coverage line, disclosures, and what was checked. Put
+`{census}` where the census goes; `publish` fills it with the count the
+verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
 `{short_sha}` where you use them. It fills them in prose and in a backtick
 span that holds one placeholder alone, so `` `{short_sha}` `` shows the SHA in
 code font. Longer code in backticks, a fenced block, and any other text in
 braces go out exactly as written. The threads file is a JSON list of findings,
 each `{"path", "line", "priority", "body"}`, where `body` is the visible text
-below — `publish` adds the finding marker with the head's SHA. It refuses,
-exiting 1 with what to fix and keeping the lock so you can correct the input
-and run it again, when:
+below — `publish` adds the finding marker with the head's SHA. A P3 entry has
+the same shape, with `"priority": "P3"`, a `line` you may leave out, and a
+`body` of one sentence saying the change:
+
+```json
+{"path": "src/cache.py", "line": 42, "priority": "P3", "body": "Name the helper `warm`, as the cache module calls it."}
+```
+
+`publish` opens no thread for a P3 entry and needs no diff line for it. It
+ends the body with a `### Suggestions` list of them, each item opening with
+its `path:line` in code font, and writes their number to the marker's
+`suggestions=`. A body that carries a suggestions section of its own, as one
+an older release of this skill wrote, still publishes as written, and
+`publish` counts its items.
+
+`publish` refuses, exiting 1 with what to fix and keeping the lock so you
+can correct the input and run it again, when:
 
 - the pull request is closed or its head moved since `setup`;
 - a finding's line is outside the pull request's diff hunks, it has no line,
   its text does not open with its priority header or lacks a `**Fix:**` line,
   or it opens a `<!-- projector-… -->` marker comment of its own;
+- a P3 entry has no path, a path holding a space, a colon, or a backtick, a
+  `line` that is not a line number, or an empty body;
 - the body is missing or empty, opens with its own signature line or carries
   a marker comment, or has no `{census}` outside quoted code;
+- the threads file gives P3 entries and the body carries a suggestions
+  section of its own, which would list them twice;
 - the verdict disagrees with the census: `clean` with a finding open or
   being posted, or `changes-requested` with none;
 - the collision check below trips.
@@ -769,9 +791,9 @@ and a second verdict on a head this loop already published needs
 
 A head is *clean* only when, after you have settled every earlier finding as
 above, no Projector finding thread is open **and this review posts no P1 or P2
-thread**. A `Suggestions` list in the body does not count against it: a review
-whose only output is that list is clean. Settle the earlier findings now,
-before choosing a branch, and re-run the query to confirm none is open. Both
+thread**. Suggestions do not count against it: a review whose only output is
+P3 entries is clean. Settle the earlier findings now, before choosing a
+branch, and re-run the query to confirm none is open. Both
 tests are one-way: a finding you kept or reopened makes the head not clean
 whatever else inspection found, and a new thread makes it not clean whatever
 the earlier findings came to. Because you resolve what you verify, a clean
@@ -846,13 +868,13 @@ fails partway exits non-zero and running it again finishes that review
 instead of posting a second one.
 
 Report the review as done only after `publish` exits 0. Report the SHA, the
-verdict, the review id, how many threads it opened, the head of the full
-review an incremental review builds on, a newer verdict that set the draft
-state when `publish` names one, and the summary's URL when the next section
-publishes one. Before a `clean` verdict, settle every earlier finding first;
-`publish` refuses one while a finding is open. Never resolve another
-reviewer's thread, resolve a finding you have not verified at this head,
-claim a newer SHA was reviewed, or merge.
+verdict, the review id, how many threads it opened and suggestions it
+listed, the head of the full review an incremental review builds on, a newer
+verdict that set the draft state when `publish` names one, and the summary's
+URL when the next section publishes one. Before a `clean` verdict, settle
+every earlier finding first; `publish` refuses one while a finding is open.
+Never resolve another reviewer's thread, resolve a finding you have not
+verified at this head, claim a newer SHA was reviewed, or merge.
 
 Once the summary below has run or been skipped, run
 `project review finish <number>`, which removes the scratch worktree a

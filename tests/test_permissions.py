@@ -25,6 +25,7 @@ DECISIONS = (
     ("project review setup 12 --model claude", "allow", "allow"),
     ("project review finish 12 --force", "allow", "allow"),
     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
+    ("project review suggestions 12 --json", "allow", "allow"),
     ("project review gate 12", "allow", "none"),
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),

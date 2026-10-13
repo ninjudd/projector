@@ -376,12 +376,17 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
 
 # The pull request
 
-def pull_request(repo: str, number: int) -> dict:
-    """The open pull request, or a refusal saying why it cannot be reviewed."""
+def read_pull_request(repo: str, number: int) -> dict:
+    """The pull request as GitHub's REST API gives it, open or not, or a refusal when it cannot be read."""
     try:
-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+        return gh_json(["api", f"repos/{repo}/pulls/{number}"])
     except NotFound as exc:
         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+
+
+def pull_request(repo: str, number: int) -> dict:
+    """The open pull request, or a refusal saying why it cannot be reviewed."""
+    pr = read_pull_request(repo, number)
     if pr.get("state") != "open":
         raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is reviewed")
     return pr
@@ -558,10 +563,7 @@ def hold(repo: str, number: int, add: list[str], drop: list[Optional[str]]) -> d
         raise ReviewError("a bare --drop ends the whole hold, so it cannot be combined with --drop TEXT; run "
                           "--drop TEXT to remove a change, or --drop alone to end the hold")
     changes = hold_changes(add, "--add") if add else [] if end else hold_changes(drop, "--drop")
-    try:
-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
-    except NotFound as exc:
-        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+    pr = read_pull_request(repo, number)
     author = (pr.get("user") or {}).get("login") or ""
     login = authenticated_login()
     if login.lower() != author.lower():
@@ -1375,11 +1377,12 @@ SIGNATURE = re.compile(
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
-# A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
-# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives.
+# A review's marker line. Publish writes `projector=`, `clean`, and `suggestions=`, but a marker an earlier
+# release wrote may name no version, spell a clean verdict `approved`, or leave the count out, and it still
+# reads as the verdict it gives.
 MARKER = re.compile(
     r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
-    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+(?: suggestions=(\d+))? -->$"
 )
 # How a head moved since the full review, by kind: `interdiff` prints the phrase, and an incremental
 # review's lead names every kind but a push as "across a <phrase>".
@@ -1398,9 +1401,9 @@ INCREMENTAL_BODY_LIMIT = 600
 
 @dataclass(frozen=True)
 class Verdict:
-    """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
-    incremental review, the head of the full review it builds on. `projector` is None for a marker
-    that names no version."""
+    """What a review's marker says: the verdict, the head it judged, what produced it, for an incremental
+    review the head of the full review it builds on, and how many suggestions the body lists. `projector`
+    is None for a marker that names no version, and `suggestions` for one that gives no count."""
 
     verdict: str
     sha: str
@@ -1408,6 +1411,7 @@ class Verdict:
     model: str
     effort: Optional[str]
     incremental_from: Optional[str]
+    suggestions: Optional[int] = None
 
 
 def verdict_marker(body: str) -> Optional[Verdict]:
@@ -1421,10 +1425,10 @@ def verdict_marker(body: str) -> Optional[Verdict]:
         marker = MARKER.match(line)
         if marker is None:
             continue
-        verdict, projector, model, effort, sha = marker.groups()
+        verdict, projector, model, effort, sha, counted = marker.groups()
         incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
         return Verdict("clean" if verdict == "approved" else verdict, sha, projector, model, effort,
-                       incremental.group(1) if incremental else None)
+                       incremental.group(1) if incremental else None, None if counted is None else int(counted))
     return None
 
 
@@ -1474,12 +1478,20 @@ def load_threads(path: Optional[Path]) -> list[dict]:
     return threads
 
 
+def is_suggestion(entry: object) -> bool:
+    """Whether an entry of the threads file is a P3, which `publish` lists in the body rather than posting."""
+    return isinstance(entry, dict) and entry.get("priority") == "P3"
+
+
 def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
-    """Refuse a finding GitHub could not anchor or a reader could not act on."""
+    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `suggestion_entries`
+    checks the P3 entries."""
     for i, t in enumerate(threads, 1):
         where = f"finding {i}"
         if not isinstance(t, dict):
             raise ReviewError(f"{where} is not an object with path, line, priority, and body")
+        if is_suggestion(t):
+            continue
         path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
         if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
             raise ReviewError(f"{where} needs a path and a line number (got {path!r}:{line!r}); "
@@ -1493,7 +1505,7 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
                               "anchor it to a changed line")
         if priority not in ("P1", "P2"):
-            raise ReviewError(f"{where}: priority must be P1 or P2; a P3 goes in the body's Suggestions list")
+            raise ReviewError(f"{where}: priority must be P1, P2, or P3")
         if OWN_MARKER.search(body):
             raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
                               "the head's SHA")
@@ -1502,6 +1514,122 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: the body must open with `**{priority} · <what goes wrong>**`")
         if "**Fix:**" not in body:
             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+
+
+# Suggestions
+
+# The label of a review body's suggestions section, in every form a reviewer has written one: a heading of
+# level 1 to 4, a line in bold, or a plain `Suggestions:` line, in any case, with an aside such as `(P3)`.
+SUGGESTIONS_NAME = r"suggestions(?:\s*\([^)\n]*\))?"
+SUGGESTIONS_LABEL = re.compile(rf"^(?:#{{1,4}}\s*{SUGGESTIONS_NAME}:?|\*\*{SUGGESTIONS_NAME}:?\*\*:?|"
+                               rf"{SUGGESTIONS_NAME}:)$", re.I)
+# A line that ends the section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
+SECTION_END = re.compile(r"^(?:#{1,6}(?:\s|$)|\*\*[^*\n].*\*\*:?$|[A-Z][^:\n]*:$)")
+# A list item's indent and text.
+LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
+FENCE = re.compile(r"^(```|~~~)")
+# The file and line a suggestion opens with: in code font, as `publish` writes it, or bare as path:line.
+CODE_PLACE = re.compile(r"`([^`\s:]+)(?::(\d+)(?:[-–]\d+)?)?`(\s*:)?")
+BARE_PLACE = re.compile(r"([^`\s:]+):(\d+)(?:[-–]\d+)?(?=[\s:,;.]|$)")
+# What joins that place to the suggestion's text.
+SEPARATOR = re.compile(r"^\s*(?:[:,;.—–]|--?(?=\s))?\s*")
+SUGGESTION_PATH = re.compile(r"[^\s`:]+")
+
+
+def suggestion_entries(threads: list) -> list[dict]:
+    """The threads file's P3 entries, as the suggestions `publish` lists in the review body: each its `path`,
+    its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list could not
+    show as `suggestions_section` writes it."""
+    entries = []
+    for i, t in enumerate(threads, 1):
+        if not is_suggestion(t):
+            continue
+        where, path, line, body = f"finding {i}", t.get("path"), t.get("line"), t.get("body")
+        text = " ".join(part.strip() for part in body.splitlines() if part.strip()) if isinstance(body, str) else ""
+        if not isinstance(path, str) or not SUGGESTION_PATH.fullmatch(path):
+            raise ReviewError(f"{where} is a P3 and needs the path of the file it suggests changing, with no space, "
+                              f"colon, or backtick (got {path!r})")
+        if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
+            raise ReviewError(f"{where}: a P3's line is a line number, or left out (got {line!r})")
+        if not text:
+            raise ReviewError(f"{where}: a P3 needs a body that says the change")
+        if re.search(r"<!--\s*projector-", text):
+            raise ReviewError(f"{where}: leave Projector's markers out of a P3's body")
+        entries.append({"path": path, "line": line, "text": text})
+    return entries
+
+
+def place(item: dict) -> str:
+    """The file and line a suggestion names, as `path:line`, or `path` when it names no line."""
+    return item["path"] + ("" if item["line"] is None else f":{item['line']}")
+
+
+def suggestions_section(entries: list[dict]) -> str:
+    """The suggestions section `publish` ends a review body with, in the one form `method.md` § 7 gives: a
+    `### Suggestions` heading and an item per suggestion, opening with its `path:line` in code font."""
+    return "### Suggestions\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
+
+
+def parse_suggestions(body: str) -> Optional[list[dict]]:
+    """The items of a review body's suggestions section, each its `path` and `line`, None where the item names
+    none, and its `text`, or None when the body has no such section.
+
+    The section opens at the first line outside fenced code that `SUGGESTIONS_LABEL` matches, and ends at a
+    line `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent
+    is a suggestion, and the lines under it, a deeper list included, join its text."""
+    lines = body.splitlines()
+    fenced = False
+    for start, line in enumerate(lines):
+        if FENCE.match(line.strip()):
+            fenced = not fenced
+        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
+            break
+    else:
+        return None
+    items: list[list[str]] = []
+    indent: Optional[int] = None
+    blank = fenced = False
+    for line in lines[start + 1:]:
+        stripped = line.strip()
+        fence = bool(FENCE.match(stripped))
+        fenced = fenced != fence
+        item = LIST_ITEM.match(line)
+        if fenced or fence:
+            if items:
+                items[-1].append(stripped)
+        elif item and (indent is None or len(item.group(1)) <= indent):
+            indent = len(item.group(1)) if indent is None else indent
+            items.append([item.group(2).strip()])
+            blank = False
+        elif not stripped:
+            blank = True
+        elif SECTION_END.match(stripped) or blank and items and not line[0].isspace():
+            break
+        elif items:
+            items[-1].append(stripped)
+            blank = False
+    return [suggestion_item(" ".join(parts)) for parts in items]
+
+
+def suggestion_item(text: str) -> dict:
+    """A suggestion's `path`, `line`, and `text`, from an item that opens with the place it names, or with
+    neither when it opens with none. A code span opens with a place when it holds a line number, a `/` or a
+    `.`, or a colon follows it."""
+    code, bare = CODE_PLACE.match(text), BARE_PLACE.match(text)
+    if code and (code.group(2) or code.group(3) or re.search(r"[/.]", code.group(1))):
+        path, line, rest = code.group(1), code.group(2), text[code.end():]
+    elif bare:
+        path, line, rest = bare.group(1), bare.group(2), text[bare.end():]
+    else:
+        return {"path": None, "line": None, "text": text}
+    return {"path": path, "line": int(line) if line else None, "text": SEPARATOR.sub("", rest)}
+
+
+def listed_suggestions(body: str, marker: Optional[Verdict]) -> int:
+    """How many suggestions a review lists: the count its marker gives, or the items of its body's section."""
+    if marker is not None and marker.suggestions is not None:
+        return marker.suggestions
+    return len(parse_suggestions(body) or [])
 
 
 def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
@@ -1633,7 +1761,8 @@ def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -
 def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
     """Each account's newest Projector verdict by each model on `head` among `reviews`, newest first, so the
     first is the head's newest verdict, whichever account and model gave it. Each has the `model`, by
-    identity, its `verdict`, and the `review` id, `url`, `at`, and `login` of the review that gave it.
+    identity, its `verdict`, the `review` id, `url`, `at`, and `login` of the review that gave it, and how
+    many `suggestions` that review lists.
 
     One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
     loop runs the same model must not hide the verdict a review loop looks for as its own."""
@@ -1647,7 +1776,8 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
         if marker is None or marker.sha != head or not found.get("at"):
             continue
         entry = {"model": identity(marker.model), "verdict": marker.verdict, "review": found.get("id"),
-                 "url": found.get("url"), "at": found["at"], "login": found.get("login")}
+                 "url": found.get("url"), "at": found["at"], "login": found.get("login"),
+                 "suggestions": listed_suggestions(found.get("body") or "", marker)}
         key = (entry["model"], (entry["login"] or "").lower())
         known = newest.get(key)
         if known is None or order(entry) >= order(known):
@@ -1668,10 +1798,7 @@ def status(repo: str, number: int, reviewer: str) -> dict:
     """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
     state by, with each account's newest verdict by each model on it, every open Projector finding thread,
     and every open hold comment."""
-    try:
-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
-    except NotFound as exc:
-        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
+    pr = read_pull_request(repo, number)
     head = pr["head"]["sha"]
     models = newest_verdicts(head, verdicts(repo, number, reviewer, repo_visibility(pr)))
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
@@ -1689,7 +1816,9 @@ def status_lines(result: dict) -> list[str]:
     the hold comments."""
     newest = result["newest"]
     held = "held; " if result["held"] else ""
-    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}"
+    count = newest["suggestions"] if newest else 0
+    listing = f" with {count} suggestion{'' if count == 1 else 's'}" if count else ""
+    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}{listing}"
              + (f" from {newest['model']}, {newest['url'] or 'review ' + str(newest['review'])}" if newest else "")]
     rows = result["models"]
     if len(rows) > 1:
@@ -1706,6 +1835,35 @@ def status_lines(result: dict) -> list[str]:
     for hold in result["holds"]:
         lines.append(f"  held in draft by comment {hold['id']} until the changes it lists are pushed")
     return lines
+
+
+def suggestions(repo: str, number: int, reviewer: str) -> list[dict]:
+    """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head. They come
+    from each account's newest Projector review by each model on the head, among the reviews `status`
+    counts, newest first, and, after an incremental review, which lists none, from the full review its lead
+    links. Each has that review's `url` and the head `sha` its marker names, and the item's `path`, `line`, and
+    `text`."""
+    pr = read_pull_request(repo, number)
+    found = verdicts(repo, number, reviewer, repo_visibility(pr))
+    by_id, by_url = {r.get("id"): r for r in found}, {r.get("url"): r for r in found}
+    chosen: dict = {}
+    for entry in newest_verdicts(pr["head"]["sha"], found):
+        newest = by_id[entry["review"]]
+        chosen.setdefault(newest["id"], newest)
+        body = newest.get("body") or ""
+        link = FULL_REVIEW_LINK.search(body) if verdict_marker(body).incremental_from else None
+        full = by_url.get(link.group(1)) if link else None
+        if full is not None:
+            chosen.setdefault(full["id"], full)
+    return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
+            for r in chosen.values() for item in parse_suggestions(r.get("body") or "") or []]
+
+
+def suggestions_text(items: list[dict]) -> str:
+    """`review suggestions` without --json: a block for each suggestion, naming the place it names and the
+    head of the review it comes from, with its text below."""
+    return "\n\n".join(f"{place(item) if item['path'] else '(no file named)'}, in the review of {item['sha'][:7]}: "
+                       f"{item['url']}\n{item['text']}" for item in items)
 
 
 def check_body(body: str) -> None:
@@ -1738,7 +1896,7 @@ def fill(body: str, values: dict[str, str]) -> str:
     return "".join(pieces)
 
 
-def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime,
+def heading(state: dict, verdict: str, findings: int, covered: str, suggestion_count: int, at: datetime,
             incremental_from: Optional[str] = None) -> tuple[str, str, dict[str, str]]:
     """The signature line, the marker, and the placeholders' values, from one clock reading, so the
     duration and `seconds=` cannot disagree."""
@@ -1752,7 +1910,8 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
                  + f"took {took}")
     marker = (f"<!-- projector-review v=1 verdict={verdict} projector={version} model={state['model']} "
               + (f"effort={effort} " if effort else "")
-              + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
+              + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} "
+              f"suggestions={suggestion_count} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
         raise ReviewError("the signature line or marker does not match review-pr/SKILL.md; check the "
                           f"model in the review's state ({state['model']})")
@@ -1761,21 +1920,33 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
 
 
 def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
-            at: datetime) -> str:
-    """The review's text: the signature line and marker, then the body with its placeholders filled."""
+            at: datetime, entries: list[dict]) -> str:
+    """The review's text: the signature line and marker, then the body with its placeholders filled, then
+    the section listing the suggestions `entries` gives. A body that lists suggestions of its own, as one an
+    older skill wrote, publishes as written, with its items counted in the marker, but never beside `entries`."""
     check_body(body)
     if "{census}" not in prose(body):
         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
                           "outside code")
-    signature, marker, values = heading(state, verdict, findings, covered, at)
-    filled = fill(body, dict(values, census=census_line))
-    return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
+    written = parse_suggestions(body)
+    if entries and written is not None:
+        raise ReviewError("the body has a suggestions section of its own, and the threads file gives P3 entries; "
+                          "take the section out of the body, and publish lists the P3 entries in its place")
+    count = len(entries) if entries else len(written or [])
+    signature, marker, values = heading(state, verdict, findings, covered, count, at)
+    filled = fill(body, dict(values, census=census_line)).strip()
+    listing = f"\n\n{suggestions_section(entries)}" if entries else ""
+    return f"{signature}\n\n{marker}\n\n{filled}{listing}\n"
 
 
 def listed(items: list[str]) -> str:
     if len(items) < 3:
         return " and ".join(items)
     return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+# The link `incremental_lead` writes to the full review an incremental review builds on.
+FULL_REVIEW_LINK = re.compile(r"since the full review of \[`[0-9a-f]{7}`\]\((\S+?)\)")
 
 
 def incremental_lead(rules: dict, base_ref: str) -> str:
@@ -1798,7 +1969,8 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
     if "{census}" in prose(body):
         raise ReviewError("an incremental review prints no census; take {census} out of the body")
     count = len(rules["files"])
-    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", at, rules["from"])
+    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", len(parse_suggestions(body) or []),
+                                        at, rules["from"])
     filled = fill(body, values).strip()
     if len(filled) > INCREMENTAL_BODY_LIMIT:
         raise ReviewError(f"the body holds {len(filled)} characters once filled, and an incremental review's "
@@ -1856,6 +2028,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
         body = body_path.read_text(encoding="utf-8")
         threads = load_threads(threads_path)
+        entries = suggestion_entries(threads)
         pr = pull_request(repo, number)
         if pr["head"]["sha"] != sha:
             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
@@ -1873,7 +2046,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             text = compose_incremental(state, body, rules, not mine, now())
             event = "COMMENT"
         else:
-            check_threads(threads, diff_lines(repo, number) if threads else {})
+            check_threads(threads, diff_lines(repo, number) if any(not is_suggestion(t) for t in threads) else {})
+            threads = [t for t in threads if not is_suggestion(t)]
             tally = census(repo, number)
             open_now = tally["open"] + len(threads)
             if verdict == "clean" and open_now:
@@ -1885,7 +2059,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             total = tally["total"] + len(threads)
             noun = "thread" if total == 1 else "threads"
             census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
-            text = compose(state, verdict, body, covered, len(threads), census_line, now())
+            text = compose(state, verdict, body, covered, len(threads), census_line, now(), entries)
             if mine or verdict == "clean" and not allow_approve:
                 event = "COMMENT"
             elif verdict == "changes-requested":
