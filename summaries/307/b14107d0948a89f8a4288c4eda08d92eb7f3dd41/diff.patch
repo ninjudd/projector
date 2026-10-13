@@ -1,0 +1,637 @@
+diff --git a/.github/scripts/release.py b/.github/scripts/release.py
+index b7eecea0..ae2de1e3 100755
+--- a/.github/scripts/release.py
++++ b/.github/scripts/release.py
+@@ -3,7 +3,7 @@
+ 
+     .github/scripts/release.py bump patch|minor|major   raise one part of the version and write it
+     .github/scripts/release.py set X.Y.Z                write an exact version instead
+-    .github/scripts/release.py released                 exit 0 if origin/main's version is tagged, 3 if not
++    .github/scripts/release.py released                 exit 0 if origin/main's version is fully released, 3 if not
+     .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+ 
+ The Release workflow runs these. Started by hand with patch, minor, or major,
+@@ -12,6 +12,10 @@
+ exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, force-moves the
+ major tag that marketplaces and the site action follow, and creates the
+ GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
++
++A version is released once its tag and the major tag name the same commit and
++its GitHub release exists. `tag` does only the steps the remote lacks, so
++running it again finishes a release that stopped partway.
+ """
+ 
+ from __future__ import annotations
+@@ -23,9 +27,11 @@
+ import sys
+ import tomllib
+ from pathlib import Path
++from typing import NamedTuple
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
++VERSION_FILES = ("pyproject.toml", *MANIFESTS)
+ SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+ 
+ 
+@@ -99,48 +105,138 @@ def repo_slug(url: str) -> str:
+     return ""
+ 
+ 
+-def create_release(root: Path, remote: str, release: str) -> None:
++def gh(root: Path, remote: str, *args: str) -> subprocess.CompletedProcess[str]:
+     slug = repo_slug(git(root, "remote", "get-url", remote))
+     if not slug:
+         raise ReleaseError(f"{remote} is not a GitHub repository")
+     try:
+-        subprocess.run(["gh", "release", "create", release, "--repo", slug, "--verify-tag", "--generate-notes"],
+-                       cwd=root, check=True, capture_output=True, text=True)
++        return subprocess.run(["gh", *args, "--repo", slug], cwd=root, capture_output=True, text=True)
+     except FileNotFoundError as exc:
+         raise ReleaseError("the gh CLI is not installed") from exc
+-    except subprocess.CalledProcessError as exc:
+-        raise ReleaseError(f"gh release create failed: {exc.stderr.strip()}") from exc
++
++
++def published(root: Path, remote: str, release: str) -> bool:
++    result = gh(root, remote, "release", "view", release, "--json", "tagName")
++    if result.returncode == 0:
++        return True
++    if "release not found" in result.stderr:
++        return False
++    raise ReleaseError(f"gh release view failed: {result.stderr.strip()}")
++
++
++def create_release(root: Path, remote: str, release: str) -> None:
++    result = gh(root, remote, "release", "create", release, "--verify-tag", "--generate-notes")
++    if result.returncode:
++        raise ReleaseError(f"gh release create failed: {result.stderr.strip()}")
+ 
+ 
+ NOT_RELEASED = 3
+ 
+ 
+-def merged(root: Path, remote: str, branch: str) -> tuple[str, str, bool]:
+-    """The branch's commit on the remote, the version it names, and whether that version is tagged."""
+-    git(root, "fetch", "--quiet", "--tags", remote, branch)
+-    commit = git(root, "rev-parse", f"refs/remotes/{remote}/{branch}")
+-    version = current(root, read=lambda path: git(root, "show", f"{commit}:{path.relative_to(root).as_posix()}"))
+-    return commit, version, bool(git(root, "tag", "--list", f"v{version}"))
++class Merged(NamedTuple):
++    """The version a branch names, the commit that releases it, and which of its tags the remote has."""
++
++    version: str
++    name: str
++    major: str
++    commit: str
++    tagged: bool
++    major_moved: bool
++
++
++def version_at(root: Path, commit: str) -> str:
++    return current(root, read=lambda path: git(root, "show", f"{commit}:{path.relative_to(root).as_posix()}"))
++
++
++def remote_tags(root: Path, remote: str, *names: str) -> dict[str, str]:
++    """The commit each named tag peels to on the remote, for the names the remote has."""
++    patterns = [pattern for name in names for pattern in (f"refs/tags/{name}", f"refs/tags/{name}^{{}}")]
++    commits: dict[str, str] = {}
++    for line in git(root, "ls-remote", "--tags", remote, *patterns).splitlines():
++        sha, ref = line.split("\t")
++        name = ref.removeprefix("refs/tags/")
++        if name.endswith("^{}"):
++            commits[name.removesuffix("^{}")] = sha
++        else:
++            commits.setdefault(name, sha)
++    return commits
++
++
++def check_tagged(root: Path, remote: str, branch: str, head: str, version: str, commit: str) -> None:
++    """Refuse a version tag unless the branch has named that version from the tagged commit to its head."""
++    if subprocess.run(["git", "merge-base", "--is-ancestor", commit, head], cwd=root, capture_output=True).returncode:
++        raise ReleaseError(f"v{version} already names {commit[:9]}, which is not on {remote}/{branch}; "
++                           "set a new version first")
++    changes = git(root, "log", "--format=%H", f"{commit}..{head}", "--", *VERSION_FILES).split()
++    for change in (commit, *changes):
++        named = version_at(root, change)
++        if named != version:
++            raise ReleaseError(f"v{version} already names {commit[:9]}, but {remote}/{branch} names {named} "
++                               f"at {change[:9]}, so that tag belongs to another release; set a new version first")
++
++
++def merged(root: Path, remote: str, branch: str) -> Merged:
++    """Read the branch's version on the remote and which of its tags the remote already has.
++
++    Until the version tag exists, the release commit is the branch's head. Once
++    it exists, the release commit is the tagged one, so a release that stopped
++    partway finishes there even after the branch has moved past it.
++    """
++    # A failed push can leave this checkout with a tag the remote refused.
++    # --force replaces it with the remote's rather than failing the fetch.
++    git(root, "fetch", "--quiet", "--force", "--tags", remote, branch)
++    head = git(root, "rev-parse", f"refs/remotes/{remote}/{branch}")
++    version = version_at(root, head)
++    name, major = f"v{version}", f"v{parse(version)[0]}"
++    tags = remote_tags(root, remote, name, major)
++    commit = tags.get(name, head)
++    if name in tags:
++        check_tagged(root, remote, branch, head, version, commit)
++    return Merged(version, name, major, commit, tagged=name in tags, major_moved=tags.get(major) == commit)
++
++
++def released(root: Path, remote: str = "origin", branch: str = "main") -> tuple[Merged, list[str]]:
++    """The merged version and the parts of its release the remote still lacks."""
++    state = merged(root, remote, branch)
++    missing = [] if state.tagged else [f"the {state.name} tag"]
++    if not state.major_moved:
++        missing.append(f"{state.major} at {state.commit[:9]}")
++    if not published(root, remote, state.name):
++        missing.append("the GitHub release")
++    return state, missing
+ 
+ 
+ def tag(root: Path, remote: str = "origin", branch: str = "main", github_release: bool = True) -> str:
+-    commit, version, tagged = merged(root, remote, branch)
+-    release, major = f"v{version}", f"v{parse(version)[0]}"
+-    if tagged:
+-        raise ReleaseError(f"{release} already exists; set a new version first")
+-    git(root, "tag", "-a", release, commit, "-m", f"Projector {version}")
+-    git(root, "tag", "-f", "-a", major, commit, "-m", f"Projector {version}")
+-    git(root, "push", "--quiet", remote, f"refs/tags/{release}")
+-    git(root, "push", "--quiet", "--force", remote, f"refs/tags/{major}")
+-    done = f"tagged {release} and moved {major} to {commit[:9]} on {remote}/{branch}"
+-    if not github_release:
+-        return done
++    state = merged(root, remote, branch)
++    did: list[str] = []
++    found: list[str] = []
+     try:
+-        create_release(root, remote, release)
++        if state.tagged:
++            found.append(f"the {state.name} tag")
++        else:
++            # --force replaces only a local tag that a failed push left behind.
++            # The push has no --force, so it never replaces a version tag.
++            git(root, "tag", "--force", "-a", state.name, state.commit, "-m", f"Projector {state.version}")
++            git(root, "push", "--quiet", remote, f"refs/tags/{state.name}")
++            did.append(f"tagged {state.name}")
++        if state.major_moved:
++            found.append(state.major)
++        else:
++            git(root, "tag", "--force", "-a", state.major, state.commit, "-m", f"Projector {state.version}")
++            git(root, "push", "--quiet", "--force", remote, f"refs/tags/{state.major}")
++            did.append(f"moved {state.major}")
++        if github_release:
++            if published(root, remote, state.name):
++                found.append("the GitHub release")
++            else:
++                create_release(root, remote, state.name)
++                did.append("published the GitHub release")
+     except ReleaseError as exc:
+-        raise ReleaseError(f"{release} and {major} are pushed, but the GitHub release was not created ({exc}); "
+-                           f"finish with: gh release create {release} --verify-tag --generate-notes") from exc
+-    return f"{done}, and published the {release} GitHub release"
++        before = f" Before that it {', '.join(did)}." if did else ""
++        raise ReleaseError(f"{exc}.{before} Run tag again, or re-run the Release workflow, "
++                           f"to finish {state.name}") from exc
++    summary = f"{state.name} at {state.commit[:9]} on {remote}/{branch}: {', '.join(did) or 'nothing to do'}"
++    return summary + (f" (already done: {', '.join(found)})" if found else "")
+ 
+ 
+ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+@@ -150,10 +246,10 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+     s.add_argument("version")
+     b = sub.add_parser("bump", help="raise the patch, minor, or major number and print the new version")
+     b.add_argument("part", choices=("patch", "minor", "major"))
+-    r = sub.add_parser("released", help=f"exit 0 when the merged version is tagged, {NOT_RELEASED} when it is not")
++    r = sub.add_parser("released", help=f"exit 0 when the merged version is fully released, {NOT_RELEASED} when it is not")
+     r.add_argument("--remote", default="origin")
+     r.add_argument("--branch", default="main")
+-    t = sub.add_parser("tag", help="tag the merged version and move the major tag")
++    t = sub.add_parser("tag", help="do the release steps the remote lacks: the version tag, the major tag, the GitHub release")
+     t.add_argument("--remote", default="origin")
+     t.add_argument("--branch", default="main")
+     t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
+@@ -165,9 +261,11 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+         elif args.command == "bump":
+             print(bump(root, args.part))
+         elif args.command == "released":
+-            _, version, tagged = merged(root, args.remote, args.branch)
+-            print(f"v{version} is {'released' if tagged else 'not released yet'}")
+-            return 0 if tagged else NOT_RELEASED
++            state, missing = released(root, args.remote, args.branch)
++            if missing:
++                print(f"{state.name} is not released yet; it still needs {', '.join(missing)}")
++                return NOT_RELEASED
++            print(f"{state.name} is released")
+         else:
+             print(tag(root, args.remote, args.branch, github_release=not args.no_release))
+     except ReleaseError as exc:
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index f3c6fca6..f272d6f9 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -49,7 +49,7 @@ jobs:
+ 
+           ## Testing
+ 
+-          The Release workflow ran \`python3 .github/scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. It then dispatched the Check workflow on this branch, and its checks appear on this pull request. After the merge, the publish job runs \`python3 .github/scripts/release.py tag\`. A failure there names the step that failed, and a failed GitHub release prints the \`gh release create\` command that finishes it.
++          The Release workflow ran \`python3 .github/scripts/release.py bump $BUMP\` from the repository root, which printed \`$version\` and wrote it to the three version files; the packaging tests fail if those files disagree. It then dispatched the Check workflow on this branch, and its checks appear on this pull request. After the merge, the publish job runs \`python3 .github/scripts/release.py tag\`. A failure there names the step that failed, and re-running the failed job finishes the release.
+           EOF
+           # A pull request someone opened by hand from the branch after a failed run
+           # already carries the force-pushed commit.
+@@ -71,9 +71,13 @@ jobs:
+         with:
+           fetch-depth: 0
+       # A pyproject.toml change that leaves the version alone, or one whose version is
+-      # already tagged, releases nothing. A release moves the major tag the site
+-      # action runs at, and a release merge touches no docs, so the job asks the
+-      # site workflow to rebuild with the released action.
++      # already released, releases nothing. A version is released once its tag, the
++      # major tag, and its GitHub release agree, and `tag` does only the steps still
++      # missing, so re-running a failed job finishes the release. A release moves
++      # the major tag the site action runs at, and a release merge touches no docs,
++      # so the job asks the site workflow to rebuild with the released action. A
++      # re-run asks again even when the release is complete, because the run it
++      # repeats may have failed between `tag` and that request.
+       - name: Tag and publish the merged version
+         env:
+           GH_TOKEN: ${{ github.token }}
+@@ -85,9 +89,8 @@ jobs:
+           status=0
+           python3 .github/scripts/release.py released || status=$?
+           case "$status" in
+-            0) exit 0 ;;
+-            3) ;;
++            0) [ "$GITHUB_RUN_ATTEMPT" -gt 1 ] || exit 0 ;;
++            3) python3 .github/scripts/release.py tag ;;
+             *) exit "$status" ;;
+           esac
+-          python3 .github/scripts/release.py tag
+           gh api "repos/$REPO/dispatches" -f event_type=projector-summaries
+diff --git a/docs/develop.md b/docs/develop.md
+index fc650a64..34b89300 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -108,5 +108,7 @@ the Release workflow from the Actions page, or with
+ opens. The workflow dispatches the Check workflow on that pull request, because
+ GitHub runs no workflow for a pull request that a workflow's own token opened.
+ Merging tags the release and moves `v0`, which is what the installer,
+-`project upgrade`, and every repository's site workflow use. See
++`project upgrade`, and every repository's site workflow use. When the publish
++job fails partway, re-run it from the Actions page. It finishes the steps the
++failed run left undone. See
+ [Release an update](plugins.md#release-an-update).
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd40..0156fd00 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -565,10 +565,11 @@ exact one, both refusing a version that does not go up:
+ .github/scripts/release.py set 0.6.0
+ ```
+ 
+-Once the bump merges, `tag` releases it. `released` exits 0 when the merged
+-version already has a tag and 3 when it does not, which is how the workflow
+-decides, on every `pyproject.toml` change, whether there is anything to
+-release:
++Once the bump merges, `tag` releases it. A version counts as released when
++its `v0.6.0` tag and the major tag, `v0`, name the same commit and its GitHub
++release exists. `released` exits 0 when all three are in place and 3 when any
++is missing, which is how the workflow decides, on every `pyproject.toml`
++change, whether there is anything to release:
+ 
+ ```sh
+ .github/scripts/release.py released
+@@ -576,12 +577,23 @@ release:
+ ```
+ 
+ `tag` reads the version from `origin/main`, not from the checkout, so an
+-unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag,
+-force-moves the major tag, `v0`, to the same commit, and creates the GitHub
+-release for `v0.6.0` with generated notes, which needs an authenticated `gh`.
+-Pass `--no-release` to push only the tags. If the release step fails, the tags
+-are already pushed, and the error prints the `gh release create` command that
+-finishes the release. The immutable tag names an exact release; the major tag
++unmerged bump cannot name a release. It does only the steps the remote still
++lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
++commit, and creates the GitHub release for `v0.6.0` with generated notes. It
++prints what it did and what it found already done. Both commands need an
++authenticated `gh`, because both look for the GitHub release. Pass
++`--no-release` to `tag` to push only the tags.
++
++When a release stops partway, for example because GitHub rejects the push of
++`v0`, re-run the failed Release workflow job, or run `tag` again from a
++checkout. It finds the steps that already happened and does the rest. Once
++`v0.6.0` exists, its commit is the release's commit, so `tag` moves `v0` there
++even after `main` has moved past it. Both commands exit 1 rather than move a
++tag when `v0.6.0` cannot belong to this release: when `main` does not contain
++the tagged commit, or when `main` named a different version at any point
++between that commit and its head. Set a new version instead.
++
++The immutable tag names an exact release; the major tag
+ is the channel that follows compatible releases, the convention GitHub's own
+ actions use. A breaking change starts the next major tag. Under `0.x` a minor
+ release may still break, so the `v0` channel promises less than a `v1` channel
+diff --git a/tests/test_release.py b/tests/test_release.py
+index 88dc20db..4d3aec21 100644
+--- a/tests/test_release.py
++++ b/tests/test_release.py
+@@ -3,6 +3,8 @@
+ import importlib.util
+ import io
+ import json
++import os
++import re
+ import shutil
+ import subprocess
+ import tempfile
+@@ -18,6 +20,40 @@
+ 
+ FILES = ("pyproject.toml", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+ 
++FAKE_GH = r"""#!/usr/bin/env bash
++# Plays GitHub's releases: $FAKE_GH_DIR/releases lists the tags that have one.
++# Logs one line per call to $FAKE_GH_DIR/calls.log. With FAKE_GH_FAIL set to a
++# command such as "release create", that command fails as GitHub refusing it.
++set -u
++printf '%s\n' "$*" >> "$FAKE_GH_DIR/calls.log"
++if [ "$1 $2" = "${FAKE_GH_FAIL:-}" ]; then
++  echo "HTTP 403: Resource not accessible by integration" >&2
++  exit 1
++fi
++case "$1 $2" in
++  "release view")
++    if grep -qxF "$3" "$FAKE_GH_DIR/releases" 2>/dev/null; then
++      printf '{"tagName":"%s"}\n' "$3"
++    else
++      echo "release not found" >&2
++      exit 1
++    fi ;;
++  "release create") printf '%s\n' "$3" >> "$FAKE_GH_DIR/releases" ;;
++  *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
++esac
++"""
++
++# A pre-receive hook that rejects every update to v0. It stands in for GitHub
++# rejecting the push of the major tag after it accepted the version tag.
++REFUSE_MAJOR_TAG = r"""#!/usr/bin/env bash
++while read -r old new ref; do
++  if [ "$ref" = refs/tags/v0 ]; then
++    echo "fatal error in commit_refs" >&2
++    exit 1
++  fi
++done
++"""
++
+ 
+ def copy_version_files(dest: Path) -> None:
+     for name in FILES:
+@@ -80,6 +116,7 @@ def test_refuses_files_that_disagree(self) -> None:
+ class TagTests(unittest.TestCase):
+     def setUp(self) -> None:
+         tmp = Path(tempfile.mkdtemp())
++        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+         self.remote = tmp / "remote.git"
+         run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
+         self.repo = tmp / "repo"
+@@ -89,10 +126,29 @@ def setUp(self) -> None:
+             run(self.repo, "git", "config", key, value)
+         copy_version_files(self.repo)
+         self.commit("0.5.0")
+-        self.releases: list[tuple[str, str]] = []
+-        patcher = mock.patch.object(release, "create_release", side_effect=lambda root, remote, tag: self.releases.append((remote, tag)))
+-        patcher.start()
+-        self.addCleanup(patcher.stop)
++        self.github = tmp / "github"
++        self.github.mkdir()
++        bin_dir = tmp / "bin"
++        bin_dir.mkdir()
++        (bin_dir / "gh").write_text(FAKE_GH)
++        (bin_dir / "gh").chmod(0o755)
++        env = mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
++                                           "FAKE_GH_DIR": str(self.github)})
++        env.start()
++        self.addCleanup(env.stop)
++        os.environ.pop("FAKE_GH_FAIL", None)
++        # The test remote is a local path, which names no GitHub repository.
++        slug = mock.patch.object(release, "repo_slug", return_value="test/projector")
++        slug.start()
++        self.addCleanup(slug.stop)
++
++    def releases(self) -> list[str]:
++        path = self.github / "releases"
++        return path.read_text().split() if path.exists() else []
++
++    def gh_calls(self) -> list[str]:
++        path = self.github / "calls.log"
++        return path.read_text().splitlines() if path.exists() else []
+ 
+     def commit(self, version: str) -> str:
+         for name in FILES:
+@@ -109,70 +165,166 @@ def commit(self, version: str) -> str:
+         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+         return run(self.repo, "git", "rev-parse", "HEAD")
+ 
++    def commit_other_change(self) -> None:
++        (self.repo / "notes.txt").write_text("not a release\n")
++        run(self.repo, "git", "add", "-A")
++        run(self.repo, "git", "commit", "--quiet", "-m", "notes")
++        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
++
++    def tag_by_hand(self, name: str, commit: str) -> None:
++        run(self.repo, "git", "tag", "-a", name, commit, "-m", name)
++        run(self.repo, "git", "push", "--quiet", "origin", f"refs/tags/{name}")
++
+     def remote_tag(self, name: str) -> str:
+         return run(self.remote, "git", "rev-parse", f"{name}^{{commit}}")
+ 
+-    def test_tags_the_release_and_moves_the_major_tag(self) -> None:
++    def remote_tag_object(self, name: str) -> str:
++        return run(self.remote, "git", "rev-parse", f"refs/tags/{name}")
++
++    def tag(self, **kwargs) -> str:
++        return release.tag(self.repo, branch="trunk", **kwargs)
++
++    def released(self) -> tuple[int, str]:
++        out = io.StringIO()
++        with redirect_stdout(out):
++            code = release.main(["released", "--branch", "trunk"], root=self.repo)
++        return code, out.getvalue()
++
++    def test_a_fresh_release_tags_moves_the_major_tag_and_publishes(self) -> None:
+         first = run(self.repo, "git", "rev-parse", "HEAD")
+-        release.tag(self.repo, branch="trunk")
++        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, moved v0, published the GitHub release",
++                         self.tag())
+         self.assertEqual(first, self.remote_tag("v0.5.0"))
+         self.assertEqual(first, self.remote_tag("v0"))
++        self.assertEqual(["v0.5.0"], self.releases())
+ 
+         second = self.commit("0.5.1")
+-        release.tag(self.repo, branch="trunk")
++        self.tag()
+         self.assertEqual(first, self.remote_tag("v0.5.0"), "a release tag never moves")
+         self.assertEqual(second, self.remote_tag("v0.5.1"))
+         self.assertEqual(second, self.remote_tag("v0"))
++        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+ 
+     def test_creates_the_github_release_for_the_exact_tag(self) -> None:
+-        release.tag(self.repo, branch="trunk")
+-        self.assertEqual([("origin", "v0.5.0")], self.releases)
++        self.tag()
++        self.assertIn("release create v0.5.0 --verify-tag --generate-notes --repo test/projector", self.gh_calls())
+ 
+     def test_no_release_pushes_only_the_tags(self) -> None:
+-        release.tag(self.repo, branch="trunk", github_release=False)
+-        self.assertEqual([], self.releases)
+-        self.assertTrue(self.remote_tag("v0.5.0"))
+-
+-    def test_a_failed_release_says_the_tags_are_pushed_and_how_to_finish(self) -> None:
+-        with mock.patch.object(release, "create_release", side_effect=release.ReleaseError("gh release create failed: HTTP 403")):
+-            with self.assertRaisesRegex(release.ReleaseError, r"v0\.5\.0 and v0 are pushed.*gh release create v0\.5\.0"):
+-                release.tag(self.repo, branch="trunk")
++        self.tag(github_release=False)
++        self.assertEqual([], self.gh_calls())
+         self.assertTrue(self.remote_tag("v0.5.0"))
++        commit = self.remote_tag("v0")
++        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the GitHub release\n"),
++                         self.released())
++        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
++                         "(already done: the v0.5.0 tag, v0)", self.tag())
+ 
+-    def test_refuses_to_retag_a_released_version(self) -> None:
+-        release.tag(self.repo, branch="trunk")
+-        with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
+-            release.tag(self.repo, branch="trunk")
+-
+-    def released(self) -> tuple[int, str]:
+-        out = io.StringIO()
+-        with redirect_stdout(out):
+-            code = release.main(["released", "--branch", "trunk"], root=self.repo)
+-        return code, out.getvalue()
+-
+-    def test_released_says_whether_the_merged_version_is_tagged(self) -> None:
+-        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet\n"), self.released())
++    def test_finishes_a_release_whose_major_tag_push_failed(self) -> None:
++        first = run(self.repo, "git", "rev-parse", "HEAD")
++        self.tag()
++        second = self.commit("0.5.1")
++        hook = self.remote / "hooks" / "pre-receive"
++        hook.write_text(REFUSE_MAJOR_TAG)
++        hook.chmod(0o755)
++        # A developer's global core.hooksPath would hide the remote's own hooks.
++        run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
++        with self.assertRaisesRegex(release.ReleaseError,
++                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1\. "
++                                    r"Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
++            self.tag()
++        self.assertEqual(second, self.remote_tag("v0.5.1"))
++        self.assertEqual(first, self.remote_tag("v0"))
++        self.assertEqual(["v0.5.0"], self.releases())
++        tagged = self.remote_tag_object("v0.5.1")
+ 
+-        release.tag(self.repo, branch="trunk")
++        hook.unlink()
++        self.commit_other_change()
++        # This clone still has the v0 it moved before the push failed, which
++        # the remote's v0 has to replace.
++        self.assertEqual((release.NOT_RELEASED,
++                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}, the GitHub release\n"),
++                         self.released())
++        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0, published the GitHub release "
++                         "(already done: the v0.5.1 tag)", self.tag())
++        self.assertEqual(tagged, self.remote_tag_object("v0.5.1"), "finishing a release never retags it")
++        self.assertEqual(second, self.remote_tag("v0"), "v0 follows the release, not the branch's newer head")
++        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
++        self.assertEqual((0, "v0.5.1 is released\n"), self.released())
++
++    def test_a_failed_github_release_is_finished_by_running_tag_again(self) -> None:
++        commit = run(self.repo, "git", "rev-parse", "HEAD")
++        os.environ["FAKE_GH_FAIL"] = "release create"
++        with self.assertRaisesRegex(release.ReleaseError,
++                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.0, moved v0\."):
++            self.tag()
++        del os.environ["FAKE_GH_FAIL"]
++        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
++                         "(already done: the v0.5.0 tag, v0)", self.tag())
++        self.assertEqual(["v0.5.0"], self.releases())
++
++    def test_tag_does_nothing_once_the_version_is_released(self) -> None:
++        commit = run(self.repo, "git", "rev-parse", "HEAD")
++        self.tag()
++        tagged, major = self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")
++        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: nothing to do "
++                         "(already done: the v0.5.0 tag, v0, the GitHub release)", self.tag())
++        self.assertEqual((tagged, major), (self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")))
++        self.assertEqual(1, sum(call.startswith("release create") for call in self.gh_calls()))
++
++    def test_released_needs_the_tag_the_major_tag_and_the_github_release(self) -> None:
++        head = run(self.repo, "git", "rev-parse", "HEAD")
++        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the v0.5.0 tag, "
++                          f"v0 at {head[:9]}, the GitHub release\n"), self.released())
++
++        self.tag()
+         self.commit_other_change()
+         self.assertEqual((0, "v0.5.0 is released\n"), self.released())
+ 
+-        self.commit("0.5.1")
+-        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet\n"), self.released())
++        bump = self.commit("0.5.1")
++        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the v0.5.1 tag, "
++                          f"v0 at {bump[:9]}, the GitHub release\n"), self.released())
+ 
+-    def test_released_fails_as_an_error_when_it_cannot_tell(self) -> None:
+-        run(self.repo, "git", "remote", "set-url", "origin", str(self.repo.parent / "missing.git"))
++    def assert_refused(self, message: str) -> None:
++        major = run(self.remote, "git", "tag", "--list", "v0")
+         err = io.StringIO()
+-        with redirect_stderr(err):
+-            code = release.main(["released", "--branch", "trunk"], root=self.repo)
+-        self.assertEqual(1, code, "an error is not an answer the workflow can act on")
+-        self.assertIn("git fetch", err.getvalue())
++        with redirect_stderr(err), redirect_stdout(io.StringIO()):
++            self.assertEqual(1, release.main(["released", "--branch", "trunk"], root=self.repo))
++        self.assertIn(message, err.getvalue())
++        with self.assertRaisesRegex(release.ReleaseError, re.escape(message)):
++            self.tag()
++        self.assertEqual(major, run(self.remote, "git", "tag", "--list", "v0"), "a refusal moves no tag")
++        self.assertFalse(any(call.startswith("release create") for call in self.gh_calls()))
++
++    def test_refuses_a_version_tag_that_is_not_on_the_branch(self) -> None:
++        side = run(self.repo, "git", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "side")
++        self.tag_by_hand("v0.5.0", side)
++        self.assert_refused(f"v0.5.0 already names {side[:9]}, which is not on origin/trunk")
++
++    def test_refuses_a_version_tag_on_a_commit_that_names_another_version(self) -> None:
++        early = run(self.repo, "git", "rev-parse", "HEAD")
++        self.tag_by_hand("v0.5.1", early)
++        self.commit("0.5.1")
++        self.assert_refused(f"v0.5.1 already names {early[:9]}, but origin/trunk names 0.5.0 at {early[:9]}")
+ 
+-    def commit_other_change(self) -> None:
+-        (self.repo / "notes.txt").write_text("not a release\n")
+-        run(self.repo, "git", "add", "-A")
+-        run(self.repo, "git", "commit", "--quiet", "-m", "notes")
+-        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
++    def test_refuses_a_version_the_branch_left_and_came_back_to(self) -> None:
++        released_at = self.commit("0.5.1")
++        self.tag_by_hand("v0.5.1", released_at)
++        reverted = self.commit("0.5.0")
++        self.commit("0.5.1")
++        self.assert_refused(f"v0.5.1 already names {released_at[:9]}, but origin/trunk names 0.5.0 at {reverted[:9]}")
++
++    def test_released_fails_as_an_error_when_it_cannot_tell(self) -> None:
++        for broken, expected in (("gh", "gh release view failed: HTTP 403"), ("git", "git fetch")):
++            with self.subTest(broken=broken):
++                if broken == "gh":
++                    os.environ["FAKE_GH_FAIL"] = "release view"
++                else:
++                    run(self.repo, "git", "remote", "set-url", "origin", str(self.repo.parent / "missing.git"))
++                err = io.StringIO()
++                with redirect_stderr(err), redirect_stdout(io.StringIO()):
++                    code = release.main(["released", "--branch", "trunk"], root=self.repo)
++                self.assertEqual(1, code, "an error is not an answer the workflow can act on")
++                self.assertIn(expected, err.getvalue())
+ 
+     def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None:
+         # An unpushed local bump must not name the release.

@@ -1,0 +1,165 @@
+{
+ "version": 1,
+ "name": "Resumable release publishing",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 307,
+  "title": "Finish a release that stopped halfway when the workflow runs again",
+  "head": "b14107d0948a89f8a4288c4eda08d92eb7f3dd41",
+  "headRef": "release-resume",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships each release through its <b>Release workflow</b>. When a pull request that raises the version merges to <code>main</code>, the workflow's <b>publish job</b> runs <code>.github/scripts/release.py</code>. That script pushes the version tag, such as <code>v0.7.18</code>, and force-moves the <b>major tag</b> <code>v0</code> to the same commit. The installer, <code>project upgrade</code>, and every repository's site action follow <code>v0</code>. The script then creates the GitHub release, and the job asks the site workflow to rebuild.",
+   "Before this change, a release that failed partway could not be finished. The script's <code>released</code> command asked only whether the version tag existed, and <code>tag</code> refused once it did. So when GitHub accepted the version tag but rejected the <code>v0</code> push, <code>v0</code> stayed on the previous release, no GitHub release existed, and a re-run of the job called the version released and did nothing.",
+   "This change defines a version as released only when three things hold, and lets <code>tag</code> do whichever of them is missing:",
+   "<ol><li><b>The version tag exists</b> on the remote.</li><li><b><code>v0</code> names the same commit</b> as the version tag, comparing the commit each annotated tag points to.</li><li><b>The GitHub release exists.</b></li></ol>",
+   "Once the version tag exists, its commit is the release commit, so a resumed release finishes there even after <code>main</code> has moved on. A version tag that cannot belong to the version <code>main</code> names makes both commands exit 1 without moving anything."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Version tag</b>: the immutable <code>vX.Y.Z</code> tag a release pushes once.</li><li><b>Major tag</b>: <code>v0</code>, force-moved to each new release; consumers follow it.</li><li><b>Peeled commit</b>: the commit an annotated tag object points to. <code>git ls-remote</code> lists it as <code>refs/tags/NAME^{}</code>.</li><li><b>Release commit</b>: the commit the release tags, which is <code>main</code>'s head until the version tag exists and the tagged commit after.</li><li><b>Publish job</b>: the Release workflow job that runs on a <code>pyproject.toml</code> push to <code>main</code>.</li></ul>"
+   },
+   {
+    "id": "outcomes",
+    "title": "What <code>released</code> answers",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Remote state</th><th>Exit</th><th>Publish job does</th></tr></thead><tbody><tr><td>All three parts in place</td><td class=\"r\">0</td><td>Stops on the first attempt; on a re-run, asks the site to rebuild</td></tr><tr><td>Any part missing</td><td class=\"r\">3</td><td>Runs <code>tag</code>, then asks the site to rebuild</td></tr><tr><td>Version tag cannot belong to this version, or <code>git</code> or <code>gh</code> failed</td><td class=\"r\">1</td><td>Fails the step</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>b14107d</code> found the head clean, with no finding threads. It left two documentation suggestions, noted on <code>docs/plugins.md</code> below.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "script",
+   "title": "The release script reads the remote's state and finishes what is missing",
+   "kicker": "How <code>released</code> decides and how <code>tag</code> resumes",
+   "intro": [
+    "<code>release.py</code> holds both commands the publish job runs. <code>merged</code> fetches <code>main</code> and its tags, reads the version <code>main</code> names, and asks the remote with <code>git ls-remote</code> which commit the version tag and <code>v0</code> each point to. It returns that state as <code>Merged</code>.",
+    "<code>released</code> turns that state, plus a <code>gh release view</code> lookup, into a list of missing parts; an empty list means exit 0. <code>tag</code> walks the same three parts in order and does only the missing ones. On failure, its error lists what it already did and says to run it again.",
+    "<code>check_tagged</code> guards the resume. Once a version tag exists, the script trusts it only when <code>main</code> contains the tagged commit and every commit from there to the head that touched a version file still names the same version. That stops <code>v0</code> from moving back to an old commit after a release is reverted, or reverted and bumped again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/scripts/release.py",
+     "note": "Defines the released state and makes <code>tag</code> idempotent: each step runs only when the remote lacks it.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 118,
+       "text": "<code>published</code> treats only gh's <code>release not found</code> message as absent. Any other failure, such as missing auth, raises, so <code>released</code> exits 1 instead of reporting a release as missing."
+      },
+      {
+       "kind": "verify",
+       "line": 151,
+       "text": "The <code>refs/tags/NAME^{}</code> patterns return peeled commits from GitHub over HTTPS. Running <code>git ls-remote --tags origin</code> with them on this repository showed <code>v0</code> and <code>v0.7.18</code> both peeling to <code>704e570</code>, so today's release reads as complete under the new rule."
+      },
+      {
+       "kind": "context",
+       "line": 170,
+       "text": "This walk reads <code>git log TAG..HEAD</code> limited to the version files. A merge commit could bring side-branch commits naming an older version into that range, but this repository allows only squash merges."
+      },
+      {
+       "kind": "context",
+       "line": 187,
+       "text": "<code>--force</code> matters for a local re-run: the failed run left a local <code>v0</code> that the remote refused, and a plain tag fetch refuses to overwrite it."
+      },
+      {
+       "kind": "context",
+       "line": 219,
+       "text": "The local tag is forced, but the push on the next line is not, so a version tag already on the remote is never replaced. Only <code>v0</code>'s push uses <code>--force</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "The publish job re-requests the site rebuild on a re-run",
+   "kicker": "One <code>case</code> change in <code>release.yml</code>",
+   "intro": [
+    "The publish job runs <code>released</code> and branches on its exit code. Exit 3 now runs <code>tag</code> inside the <code>case</code>; the step then falls through to the <code>repository_dispatch</code> that rebuilds the site. Exit 0 still stops on the first attempt. On a re-run, where <code>GITHUB_RUN_ATTEMPT</code> is above 1, it falls through to the rebuild request too, because the attempt it repeats may have failed after <code>tag</code> and before that request."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/release.yml",
+     "note": "Moves <code>tag</code> into the exit-3 branch and sends the rebuild request on a re-run whose release is already complete.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 92,
+       "text": "Ran this <code>case</code> in <code>bash</code> under <code>set -euo pipefail</code> with stand-ins: exit 0 stops on attempt 1 and dispatches on attempt 2, exit 3 runs <code>tag</code> then dispatches, a failing <code>tag</code> stops the step, and exit 1 fails it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests run each release state against a local remote",
+   "kicker": "A bare Git remote and a fake <code>gh</code> stand in for GitHub",
+   "intro": [
+    "<code>TagTests</code> builds a temporary repository with a local bare remote and puts a fake <code>gh</code> on <code>PATH</code> that keeps its releases in a file. A <code>pre-receive</code> hook on the remote that rejects <code>v0</code> reproduces the failure this change fixes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_release.py",
+     "note": "Covers a fresh release, the resume after a failed <code>v0</code> push or a failed GitHub release, the complete state, and the three refusals.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 18 tests pass at this head with Python 3.12, and the full suite of 926 tests passes with 1 skipped."
+      },
+      {
+       "kind": "context",
+       "line": 222,
+       "text": "This is the scenario the pull request exists for: the version tag lands, <code>v0</code> is refused, <code>main</code> moves on, and the next <code>tag</code> moves <code>v0</code> to the tagged commit rather than the newer head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation says how to finish a stopped release",
+   "kicker": "<code>docs/plugins.md</code> and <code>docs/develop.md</code>",
+   "intro": [
+    "Both documents now define a released version by its three parts and tell you to re-run the failed job, or run <code>tag</code> again, to finish one that stopped partway."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the release section around the three-part definition, the resume, and the refusals.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 583,
+       "text": "Review suggestion: <code>tag --no-release</code> never calls <code>gh</code>, so \"both commands need an authenticated <code>gh</code>\" holds only for <code>released</code> and a <code>tag</code> that creates the release."
+      },
+      {
+       "kind": "context",
+       "line": 589,
+       "text": "Review suggestion: running <code>tag</code> by hand does not ask the site workflow to rebuild. Only the publish job sends that request, so after a hand-run <code>tag</code> the site keeps the old action until the job is re-run."
+      }
+     ]
+    },
+    {
+     "path": "docs/develop.md",
+     "note": "Adds one sentence: re-run the publish job when it fails partway."
+    }
+   ]
+  }
+ ]
+}
