@@ -1229,6 +1229,30 @@ test('a prompt about one of two questions that share a subject leaves the other 
   await ui.unmount()
 })
 
+test('a quote two questions share goes to the one whose drawer you acted in last', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
+  const second = held({ ...merge, ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
+  const session = questionWorld(on, clock, [held(merge), second])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'discuss:1' })
+  await $.prompt.submit({ text: '"Merge it?"\n\nYes\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
+    'inbox answer 1.a --session s1 --json',
+  ])
+  expect(session.store.store.get('2')).toEqual(second)
+  await ui.unmount()
+})
+
 test('an answer from a terminal reaches the live subagent that asked', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

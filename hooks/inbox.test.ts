@@ -191,6 +191,15 @@ test('a quote two questions share speaks to one of them: an answer replies to ne
     answers: [{ question: second, letter: 'a' }],
     replies: [],
   })
+  // The drawer you acted in last wins: a pick in the second, then a discuss in the first.
+  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', 'Yes'), merge('1', '')])).toEqual({
+    answers: [{ question: first, letter: 'a' }],
+    replies: [],
+  })
+  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('1', ''), merge('2', 'Yes')])).toEqual({
+    answers: [{ question: second, letter: 'a' }],
+    replies: [],
+  })
   // Quoted twice, each quote speaks to its own question.
   expect(readPrompt('"Merge it?"\n\nYes\n"Merge it?"\n\nwhy now?', both)).toEqual({
     answers: [{ question: first, letter: 'a' }],

@@ -70,9 +70,10 @@ export type Read = { answers: Given[]; replies: Question[] }
  * its line and the text after it, up to the next quoted item or the prompt's
  * end, is one of its options, whatever blank lines and spaces surround it:
  * what an option's number puts in the prompt. A quote that a drawer put in
- * the prompt, with that answer or alone through discuss, speaks to that
- * drawer's question, `proposed` holding them oldest first: one of its options
- * answers it, and any other text replies to it. A drawer's pick from before
+ * the prompt, with that answer or alone through discuss, speaks to the
+ * question of the drawer that did so last, `proposed` holding them oldest
+ * first: one of its options answers it, and any other text replies to it.
+ * A drawer's pick from before
  * its question was revised only replies, and one whose question was resolved
  * before the prompt was sent does nothing, so a drawer's pick never falls
  * through to another question with the same words.
@@ -107,11 +108,11 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
     const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
     // The drawer that put this text in the prompt: the last to put this
-    // quote and this answer there, else the last to discuss this quote,
-    // leaving out a question an earlier quote in this prompt answered.
-    const source =
-      proposed.findLast(one => one.quote === quote && one.answer === said && !answered.has(one.ref)) ??
-      proposed.findLast(one => one.quote === quote && one.answer === '' && !answered.has(one.ref))
+    // quote there with this answer or alone, through discuss, leaving out a
+    // question an earlier quote in this prompt answered.
+    const source = proposed.findLast(
+      one => one.quote === quote && (one.answer === said || one.answer === '') && !answered.has(one.ref),
+    )
     if (source !== undefined) {
       // A question resolved since its drawer put the quote there takes
       // nothing, and the quote falls through to no other question.

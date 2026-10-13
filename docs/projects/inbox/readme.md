@@ -962,16 +962,18 @@ one beside the old.
 - **Each quote speaks to one question.** When two open questions share a
   subject, a quote that one's drawer put in the prompt, with an option or
   alone through **discuss**, speaks to that question: one of its options
-  answers it, and any other text replies to it. When that question was
-  answered, dismissed, or withdrawn before the prompt was sent, the quote
-  answers and replies to nothing, whether the pick is fresh or stale, so
-  it never falls through to the other question. A quote no drawer put
-  there goes to the oldest question that offers the option, and
-  otherwise replies to the oldest. A prompt that answers or replies to
-  one of them says nothing to the other: it adds no note for the other's
-  subagent and leaves the other's drawer open. To know which drawer put a
-  quote there, the band records **discuss** as well as each option it
-  puts in the prompt.
+  answers it, and any other text replies to it. When both drawers put the
+  quote there, the last drawer action wins among those whose recorded
+  answer is the text sent or empty, as **discuss** records it. When that
+  question was answered, dismissed, or withdrawn before the prompt was
+  sent, the quote answers and replies to nothing, whether the pick is
+  fresh or stale, so it never falls through to the other question. A
+  quote no drawer put there goes to the oldest question that offers the
+  option, and otherwise replies to the oldest. A prompt that answers or
+  replies to one of them says nothing to the other: it adds no note for
+  the other's subagent and leaves the other's drawer open. To know which
+  drawer put a quote there, the band records **discuss** as well as each
+  option it puts in the prompt.
 - **A reply closes the drawer and posts nothing.** A sent prompt closes
   the drawer of each question it answers or replies to, as § 10 has it
   close the drawer of each notice it quotes. A replied question stays
@@ -1064,7 +1066,7 @@ one beside the old.
 | Behavior | Test |
 | --- | --- |
 | Free text, an option with more text after it, a question back, and another question's option answer nothing; an exact option answers, whitespace and a following quoted item included | `a sent prompt answers each question whose quote an option follows`, `anything after a quoted question but one of its options replies to it without answering`, `a quote two questions share goes to the oldest that offers the option it is followed by`, in `hooks/inbox.test.ts` |
-| A quote two open questions share speaks to one of them: an answer to one is no reply to the other, and a reply goes to the question whose drawer put the quote there | `a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it`, in `hooks/inbox.test.ts`; `a prompt about one of two questions that share a subject leaves the other alone`, in `hooks/band.test.tsx` |
+| A quote two open questions share speaks to one of them: an answer to one is no reply to the other, a reply goes to the question whose drawer put the quote there, and the drawer acted in last wins | `a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it`, in `hooks/inbox.test.ts`; `a prompt about one of two questions that share a subject leaves the other alone`, `a quote two questions share goes to the one whose drawer you acted in last`, in `hooks/band.test.tsx` |
 | A sent reply leaves the question listed, closes its drawer, runs no `project inbox answer`, and names the subagent that asked | `a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it`, in `hooks/band.test.tsx` |
 | The `revise` tool redraws the question with its new text under the same number, and a pick made from the old text answers nothing | `the revise tool redraws the question with its new text at once, keeping its number` |
 | A pick made before a revision answers no question, an older question with the same words included, and replies to the revised question; a fresh pick from the new drawer answers it | `a pick made before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one`, `an answer chosen before a revise rewords its question does not answer another question with the old words` |
