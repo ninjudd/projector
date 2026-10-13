@@ -220,17 +220,16 @@ author, branch, size, checks, and when it last changed. Below that:
 
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
-then Enter on a number to open its drawer. The drawer's links take no press
-there; the terminal opens them the way it opens any other link.
+then Enter on a number to open its drawer and Enter on **discuss** to use it.
+The **github** and **projector** links take no press there; the terminal
+opens them the way it opens any other link.
 
 The band lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
 runs the watcher. A loop another session runs stays out of this session's
-band. To show a tracked file by hand, such as another session's, name it:
-
-```text
-/projector ~/loops/review/tracked
-```
+band. When the band cannot tell which file a watcher's `--tracked` argument
+names, such as a path built from a variable the session does not set, it
+says so once and leaves that loop out.
 
 The band reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
@@ -266,8 +265,9 @@ terminal the divider counts the open questions and the open notices.
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press ctrl+x tab to move into the band, then Enter on
 an item. While its drawer is open, the item stays highlighted and has the
-band to itself, the divider included, so the item is the top row and the
-drawer has one more row before the band scrolls:
+band to itself, so the item is the top row. In a terminal, the divider and
+the blank line under it step aside too, which gives the drawer two more rows
+before the band scrolls:
 
 ```text
 - Decline the finding about the retry budget?                 #337  5m [-]
@@ -278,14 +278,13 @@ drawer has one more row before the band scrolls:
   1. Decline it: the total cap already bounds retries to one host
      (recommended)
   2. Add a budget of two retries per host, and keep the total cap
-  3. [ Type something                                                    ]
 
   discuss | dismiss | snooze
 ```
 
-The first option is always the agent's recommendation. Click an option, or
-type an answer and press Enter, and the band puts the question and that
-answer in your prompt, for you to send as it stands or change first:
+The first option is always the agent's recommendation. Click an option's
+number, and the band puts the question and that answer in your prompt, for
+you to send as it stands or change first:
 
 ```text
 "Decline the finding about the retry budget?"
@@ -295,18 +294,25 @@ Add a budget of two retries per host, and keep the total cap
 
 Sending that prompt answers the question. The band finds each quoted question
 whose quote ends its line, and takes the next line that is not blank as its
-answer: the option with that text, or else an answer you typed. Each quote
-answers one question: when two open questions ask the same thing, it answers
-the one whose drawer last put that same answer in your prompt, or else the
-older one. Only a prompt you send, at the terminal or through Remote
-Control, answers a question. Another session's message or a notification
-that quotes one answers nothing. Your prompt is what carries the answer to
-the main loop, and when a subagent asked, the main loop also reads a note
-naming it, so it can pass the answer on.
-**discuss** puts only the quoted question in the prompt, followed by a space,
-so what you type after it on the same line talks the question over and
-answers nothing. **dismiss** sets the question aside without an answer, and
-**snooze** hides it for an hour.
+answer: the option with that text, or else an answer in your own words. Each
+quote answers one question: when two open questions ask the same thing, it
+answers the one whose drawer last put that same answer in your prompt, or
+else the older one.
+
+Only a prompt you send, at the terminal or through Remote Control, answers a
+question. Another session's message or a notification that quotes one
+answers nothing. Your prompt is what carries the answer to the main loop,
+and when a subagent asked, the main loop also reads a note naming it, so it
+can pass the answer on.
+
+Under the options, a question's drawer has three actions:
+
+- **discuss** puts the quoted question in the prompt, followed by a blank
+  line. Type an answer in your own words under it and send the prompt, and
+  that answers the question. Text you add on the quote's own line talks the
+  question over and answers nothing.
+- **dismiss** sets the question aside without an answer.
+- **snooze** hides the question for an hour.
 
 A notice's drawer shows its detail, then the same `discuss | dismiss |
 snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
@@ -319,11 +325,12 @@ pick another time, or to wake an item now, run
 `project inbox snooze <reference> --for <minutes>` in a terminal. An item you
 answer or dismiss from a terminal while it is snoozed does not return.
 
-A resolved item stays in the list, dim, for a minute after it is delivered,
-and a dismissed one is struck through. A dismissed notice is delivered at
-once, since nothing goes back to the agent. A question's drawer still opens
-and marks the answer given with `✓`, and a dismissed notice's drawer keeps
-only **discuss**.
+A resolved item stays in the list, muted, for 30 seconds after it is
+delivered, and a dismissed one is struck through. A dismissed notice is
+delivered at once, since nothing goes back to the agent. A question's drawer
+still opens and marks the answer given with `✓`, listing an answer in your
+own words after the options. A dismissed notice's drawer keeps only
+**discuss**.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still

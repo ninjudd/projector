@@ -74,6 +74,9 @@ test('a sent prompt answers each question whose quote ends its line', () => {
     { question: open[0], letter: 'a' },
     { question: open[1], letter: 'c', text: 'keep it' },
   ])
+  // Spaces or tabs after the quote still end its line.
+  expect(answersIn('"Decline the finding?" \nAdd a budget', open)).toEqual([{ question: open[0], letter: 'b' }])
+  expect(answersIn('"Rebase first?"\t\n\nkeep it', open)).toEqual([{ question: open[1], letter: 'c', text: 'keep it' }])
   // Discussing a question, or leaving its answer empty, answers nothing.
   expect(answersIn('"Decline the finding?" what does the cap cover?', open)).toEqual([])
   expect(answersIn('"Decline the finding?"\n\n', open)).toEqual([])
@@ -117,10 +120,10 @@ test('the note beside an answer names the subagent that asked', () => {
   expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
 })
 
-test('a delivered question leaves the band after a minute', () => {
+test('a delivered question leaves the band after 30 seconds', () => {
   expect(isShownAt(question(), NOW)).toBe(true)
-  expect(isShownAt(question({ deliveredAt: NOW - 59_000 }), NOW)).toBe(true)
-  expect(isShownAt(question({ deliveredAt: NOW - 60_000 }), NOW)).toBe(false)
+  expect(isShownAt(question({ deliveredAt: NOW - 29_000 }), NOW)).toBe(true)
+  expect(isShownAt(question({ deliveredAt: NOW - 30_000 }), NOW)).toBe(false)
 })
 
 test('an answer waits for a deliverer until a live claim holds it', () => {

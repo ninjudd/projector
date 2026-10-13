@@ -4,7 +4,7 @@ import type { Item, Question } from './types'
 import type { Env } from './parse'
 
 /** How long a delivered item stays in the band. */
-export const RESOLVED_MS = 60_000
+export const RESOLVED_MS = 30_000
 
 /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
 export const CLAIM_MS = 60_000
@@ -76,9 +76,10 @@ export function answersIn(text: string, items: readonly Item[], proposed: readon
   const found: { at: number; given: Given }[] = []
   const taken = new Set<string>()
   for (const quote of new Set(open.map(quoteOf))) {
-    const lead = `${quote}\n`
-    for (let at = text.indexOf(lead); at !== -1; at = text.indexOf(lead, at + 1)) {
-      const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
+    for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+      const after = text.slice(at + quote.length)
+      if (!/^[ \t]*\n/.test(after)) continue
+      const said = (after.replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
       const asking = open.filter(question => quoteOf(question) === quote && !taken.has(question.ref))
       if (said === '') continue
       const drawer = proposed.findLast(one => one.answer === said && asking.some(question => question.ref === one.ref))
