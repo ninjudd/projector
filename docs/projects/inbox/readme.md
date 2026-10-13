@@ -471,8 +471,9 @@ project stays `in-progress`.
 ## 10. The band after layer 2
 
 After using layer 2, the owner decided six changes to the band, which
-#295 builds. § 2.1, § 2.5, and § 4 describe the band with these changes,
-and this section gives their reasons, their files, and their evidence.
+#295 builds, and three to its pull request lines and drawers, which #297
+builds. § 2.1, § 2.5, and § 4 describe the band with these changes, and
+this section gives their reasons, their files, and their evidence.
 The `/projector <tracked file>` form that the questions plan describes
 goes away.
 
@@ -528,6 +529,22 @@ goes away.
   learn a loop's kind, and it leaves out a loop that the session's state
   holds without a kind, until the session starts a watcher on that file,
   whose entry then replaces it.
+- **A pull request's line ends with its age.** Each pull request's line in
+  the band ends with how long ago the pull request last changed, its
+  `updatedAt`, in the `subtle` color and the short form an item's age
+  takes, such as `7h`. Pull requests and items share one right-aligned age
+  column as wide as the widest age in the band, so what comes before the
+  ages ends in one column. The title fills its line, so a pull request's
+  notes and age end it as an item's pull request label and age do. A pull
+  request that GitHub gave no time for shows no age. The drawer's facts no
+  longer end with "updated … ago"; the divider's "updated" time, when the
+  band last loaded, stays.
+- **A pull request's drawer starts under the number.** Its lines start in
+  the row's first column, not where the titles start.
+- **Each drawer link has a line of its own.** **discuss** keeps its own
+  row, and **github** and **projector** each take a line, because a
+  terminal without hyperlink support draws a link's URL after its text,
+  and a line shared with another link cut that URL off.
 
 | File | Change |
 | --- | --- |
@@ -537,6 +554,8 @@ goes away.
 | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
 | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
 | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
+| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
+| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
 
 #295 also carries smaller fixes found while using the band, such as the
 pull request drawer's **discuss** becoming a plain `Button`, and its
@@ -555,6 +574,8 @@ description lists them.
 | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
 | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
 | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
+| Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
+| Open a pull request's drawer | Its lines start under the number; its facts end with the checks; **discuss**, **github**, and **projector** each have a line |
 
 Before these changes, the rows for the drawer, for **discuss** on a
 question and the two answers typed under its quote, for the two drawers
@@ -562,7 +583,10 @@ an answer closes, for a quote that ends in spaces, and for the 30 seconds
 each fail their test. The drawer draws the field, **discuss** leaves a
 space and no line break, a quote followed by a space answers nothing, an
 answered question's drawer stays open, and a resolved line stays a
-minute.
+minute. Before #297, the rows for a pull request's line and its drawer
+fail their test too: the line ends with no age, and the drawer starts
+under the title, ends its facts with when the pull request was updated,
+and puts its links on one line.
 
 ## 11. Number each session's items 1, 2, 3
 
