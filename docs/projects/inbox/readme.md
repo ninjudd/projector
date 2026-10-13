@@ -78,7 +78,8 @@ migrating anything.
    `reopen`, `watch`, the band's deliverer, and the band's reading of
    answers out of a sent prompt. A notice is never claimed, and a quoted
    notice in a prompt answers nothing. Snoozing changes no delivery: a
-   snoozed question can still be answered from a terminal, which wakes it.
+   snoozed item can still be answered or dismissed from a terminal. Either
+   one clears `snoozedUntil`, so a resolved item never returns.
 6. `project inbox context` explains a notice's reference as it explains a
    question's, so an agent reading `#337.4` in a prompt learns which notice
    you mean.
@@ -93,10 +94,10 @@ removed, so `project question ...` exits `2` as any unknown command does.
 | --- | --- |
 | `project inbox ask <question> --recommend …` | Renamed from `question ask`; records `kind: question` |
 | `project inbox tell <notice> [--detail <markdown> \| --detail-file <path>] [--pr <owner/repo#number>] [--agent <id>]` | New: checks the line, numbers it in the shared counts, records `kind: notice`, and prints its reference |
-| `project inbox list [--all]` | Renamed; lists both kinds, snoozed ones included. Text output is `ref`, `kind`, state, and subject, tab-separated, after the session when listing every session. A snoozed item's state is `snoozed until <HH:MM>`, in local time; a notice's other states are `open` and `dismissed` |
+| `project inbox list [--all]` | Renamed; lists both kinds, snoozed ones included. Text output is `ref`, `kind`, state, and subject, tab-separated, after the session when listing every session. An item whose `snoozedUntil` is still ahead is `snoozed until <HH:MM>`, in local time; a notice's other states are `open` and `dismissed` |
 | `project inbox show <reference>` | Renamed; a notice prints its reference and subject, `about <pr>`, its detail, and its state, with no options |
 | `project inbox answer` | Renamed; exits `65` for a notice, naming `dismiss`; answering clears `snoozedUntil` |
-| `project inbox dismiss <reference>` | Renamed, and takes either kind. A notice records `{ dismissed: true, answeredAt }` and `deliveredAt` together; a question, as now, waits for its deliverer |
+| `project inbox dismiss <reference>` | Renamed, and takes either kind. A notice records `{ dismissed: true, answeredAt }` and `deliveredAt` together; a question, as now, waits for its deliverer. Dismissing either kind clears `snoozedUntil` |
 | `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` removes it. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
 | `project inbox claim`, `delivered`, `reopen` | Renamed; `claim` exits `65` for a notice, which has nothing to deliver |
 | `project inbox watch` | Renamed; unchanged, since a dismissed notice already has `deliveredAt` |
@@ -126,7 +127,7 @@ its 100 most recently delivered items, either kind.
 | `detail` | Unchanged |
 | `choices` | A question's answers in letter order, as now; absent on a notice |
 | `answer` | A question's as now; a notice's `{ dismissed: true, answeredAt }` once dismissed |
-| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent when it is not snoozed |
+| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent when it is not snoozed, and cleared when the item is answered or dismissed |
 | `claim` | A question's only |
 | `deliveredAt` | As now; a notice's is set when it is dismissed |
 
@@ -178,8 +179,8 @@ first:
 - **A question's drawer** ends the same way, `discuss | dismiss |
   snooze`, gaining **snooze** after **dismiss**.
 - **A snoozed item** leaves the list and closes its drawer. On each tick,
-  shown or hidden, the band checks for an item whose `snoozedUntil` has
-  passed since its last tick; such an item returns to the list, and the
+  shown or hidden, the band checks for an open item whose `snoozedUntil`
+  has passed since its last tick; such an item returns to the list, and the
   band appears if you hid it. Waking needs no `list`, because the band
   already holds the item.
 - **A dismissed notice's line.** Dim and struck through for a minute after
@@ -192,7 +193,7 @@ first:
 | File | Layer | Change |
 | --- | --- | --- |
 | `src/projector/questions.py` → `src/projector/inbox.py` | 1 | `git mv`; the store root `projector/inbox`; `QuestionError`, `QuestionNotFound`, `AmbiguousQuestion` → `InboxError`, `ItemNotFound`, `AmbiguousItem`; `question_file`, `load_questions` → `item_file`, `load_items`; `kind`, `postedAt`, and `subject` in every record it writes and reads |
-| `src/projector/inbox.py` | 2 | `tell`, `snooze`, a notice's `dismiss`, the kind check in `answer` and `claim`, the notice line in `context`, and `answer` clearing `snoozedUntil`; `check` splits into the subject and pull request checks both kinds share, which `tell` reuses, and the recommendation and option checks only `ask` makes |
+| `src/projector/inbox.py` | 2 | `tell`, `snooze`, a notice's `dismiss`, the kind check in `answer` and `claim`, the notice line in `context`, and `answer` and `dismiss` clearing `snoozedUntil`; `check` splits into the subject and pull request checks both kinds share, which `tell` reuses, and the recommendation and option checks only `ask` makes |
 | `src/projector/cli.py` | 1, 2 | The `question` command becomes `inbox`, with `{ "item" }` and `{ "items" }` in its JSON; layer 2 adds `tell`, `snooze`, the kind column, the snoozed state, and a notice's `show` |
 | `tests/test_questions.py` → `tests/test_inbox.py` | 1, 2 | `git mv` and rename in layer 1, every existing test passing under the new names; layer 2 adds the notice and snooze tests in § 4 |
 | `docs/cli.md` | 1, 2 | "Ask and answer questions" becomes "Use the inbox", with `project inbox` throughout; layer 2 adds `tell` and `snooze` and a notice's `dismiss` |
@@ -232,7 +233,8 @@ session's id in every host, which § 7 leaves open.
   rather than a state, so nothing has to run when it ends: the band and
   `list` compare the time with the clock. An hour is long enough to clear a
   view and short enough that nothing is forgotten; the CLI takes any other
-  time.
+  time. Answering or dismissing an item clears the time, because a
+  resolved item has nothing to return for.
 - **Nothing goes back to the agent for a notice.** A notice reports what is
   already done or answers what you already asked, so the agent keeps
   working whether or not you have read it. An agent that needs you to see
@@ -262,12 +264,14 @@ session's id in every host, which § 7 leaves open.
 | `project inbox snooze '#12.1' --session s1`, then `list` | `list` shows `#12.1` as `snoozed until <HH:MM>`, an hour ahead; `snooze --for 0` shows it `open` again |
 | `snooze` on a dismissed item, or with `--for -1` | Exits `65` |
 | `answer` on a snoozed question | Records the answer and clears `snoozedUntil` |
+| `project inbox dismiss` on a snoozed notice, and on a snoozed question | Each records the dismissal and clears `snoozedUntil`; `list` shows the notice `dismissed` and neither as `snoozed until` |
 | `project inbox watch --once` with only a dismissed notice | Prints nothing |
 | `printf 'see #12.2' \| project inbox context --session s1` | Prints `#12.2 is the notice: Force-pushed #12 to drop a stray file` |
 | A subagent calls `mcp__projector__tell` about #7 | Returns `Posted #7.1. …`; the band lists a `•` line naming `#7`, the divider counts `1 notice`, and one `$.ui.notify` is raised |
 | Open a notice's drawer | Its detail, then `discuss \| dismiss \| snooze` as three plain buttons |
 | Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns dim and struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band a minute later |
 | Press **snooze** in either kind's drawer | Runs `project inbox snooze`; the item leaves the list and the divider's count; with the band hidden, an hour later the item returns and the band appears |
+| Snooze an item, hide the band, and dismiss the item from a terminal | An hour later the item does not return and the band stays hidden |
 | Press **discuss** in a notice's drawer | The prompt gains the quoted subject and a space |
 | Send a prompt quoting a notice's subject and a line under it | Nothing is recorded |
 | With no items | The band, its divider, and the tick look and act as they do now |
