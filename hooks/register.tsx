@@ -144,7 +144,7 @@ async function adopt($: Engine, command: string): Promise<void> {
   if (isAdded) show($)
 }
 
-/** Watchers running anywhere on this machine, found by their arguments. */
+/** Watchers running anywhere on this machine, found by their arguments, which give a hand-named file its kind. */
 async function runningLoops($: Engine, env: Env): Promise<Loop[]> {
   let stdout: string
   try {
@@ -183,20 +183,16 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
 }
 
 async function load($: Engine): Promise<void> {
-  const env = await envOf($)
+  // The band lists the session's own loops: the watchers it started, and the
+  // tracked files named with `/projector <file>`. A file named by hand takes
+  // its kind from the watcher reading it, so only then does the band look at
+  // the machine's processes.
   const own = await read($, seen)
-  const running = await runningLoops($, env)
-
-  // A file named by hand takes its kind from the watcher reading it, if one runs.
-  const loops: Loop[] = [
-    ...own.map(loop => ({
-      tracked: loop.tracked,
-      kind: isKind(loop.kind)
-        ? loop.kind
-        : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
-    })),
-    ...running.filter(loop => !own.some(one => one.tracked === loop.tracked)),
-  ]
+  const running = own.every(loop => isKind(loop.kind)) ? [] : await runningLoops($, await envOf($))
+  const loops: Loop[] = own.map(loop => ({
+    tracked: loop.tracked,
+    kind: isKind(loop.kind) ? loop.kind : (running.find(one => one.tracked === loop.tracked)?.kind ?? 'watching'),
+  }))
 
   // A tracked file that is gone belongs to a loop that ended.
   const sets = await Promise.all(
@@ -720,11 +716,11 @@ export const register: Register = on => {
       )
     }
 
-    // A question's numbered options are Markdown links, drawn as a pull
-    // request's number is: a plain click runs `onPress`, and a ctrl, alt or
-    // cmd click opens `href`. Markdown draws only an `https:`, `http:` or
-    // `file:` link as one, so an option links its question's pull request, or
-    // the question's own file in the store when it has none.
+    // A question's numbered options are Markdown links: a plain click runs
+    // `onPress`, and a ctrl, alt or cmd click opens `href`. Markdown draws
+    // only an `https:`, `http:` or `file:` link as one, so an option links its
+    // question's pull request, or the question's own file in the store when it
+    // has none.
     const store = (session: string) => storeOf(env, session) ?? ''
     const hrefOf = (question: Question) => {
       const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
@@ -874,16 +870,12 @@ export const register: Register = on => {
         <Box key={key} flexDirection="column">
           {/* Only the title gives way when the line is short; the label column
               is as wide as the longest label, so every title starts in one
-              column. A plain click on the label opens the drawer; a ctrl, alt
-              or terminal-kept cmd click opens its Projector summary, or the
-              pull request on GitHub when it has none. */}
+              column. The label is a plain Button rather than a link, so it
+              takes a click in fullscreen and Enter on the main screen, and no
+              terminal ever draws a URL beside it. */}
           <Box flexDirection="row" columnGap={1}>
             <Box flexShrink={0} width={labelWidth}>
-              <Markdown
-                key={`pr:${key}`}
-                text={`[${label(pr)}](${pr.summaryUrl ?? pr.url})`}
-                onLinkPress={() => toggle(key)}
-              />
+              <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
             </Box>
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
