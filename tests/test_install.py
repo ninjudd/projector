@@ -542,6 +542,19 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(1, log.count("sleep 5\n"))
         self.assertNotIn("codex plugin add", log)
 
+    def test_codex_adds_a_local_marketplace_once_because_it_clones_nothing(self) -> None:
+        checkout = self.checkout_with_origin(None)
+        (self.state / "codex-fails-once").write_text(f"plugin marketplace add {checkout}")
+
+        result = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(3, result.returncode)
+        self.assertNotIn("retrying", result.stdout)
+        log = self.log.read_text()
+        self.assertEqual(1, log.count(f"codex plugin marketplace add {checkout}\n"))
+        self.assertNotIn("sleep", log)
+        self.assertNotIn("codex plugin add", log)
+
     def test_only_codex_marketplace_commands_are_retried(self) -> None:
         self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
         (self.state / "claude-fails").write_text("plugin marketplace update projector")
