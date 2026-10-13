@@ -1656,33 +1656,61 @@ answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
 Projector's `withdraw` tool rather than from the shell.
 
-## Keep a pull request out of a loop
+## Change a loop's tracked file
 
 A watch or review loop reads its tracked file, one `owner/repo#number` a
-line. A line `!owner/repo#number` keeps that pull request out of the loop
-wherever it sits in the file, and both watchers and Projector's band match it
-without regard to case. `project loop drop` writes that line, and `project
-loop restore` removes it:
+line, and acts only on the pull requests the file lists. A line
+`!owner/repo#number` keeps that pull request out of the loop wherever it sits
+in the file, and both watchers and Projector's band match it without regard
+to case. Change the file with `project loop`, whose four commands each
+change one kind of line:
+
+| Command | What it changes | When to run it |
+| --- | --- | --- |
+| `add` | Appends an `owner/repo#number` line, and creates the file. | To bring a pull request into the loop. |
+| `remove` | Removes the lines that list the pull request, and leaves its `!` lines. | To forget a pull request that merged or closed. |
+| `drop` | Appends a `!owner/repo#number` line. | To keep an open pull request out of the loop. |
+| `restore` | Removes the pull request's `!` lines. | To let a dropped pull request back in. |
 
 ```console
+$ project loop add acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+added acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
+$ project loop remove acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+removed acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 ```
 
-`drop` appends its line rather than rewriting the file, because a watcher may
-be appending a pull request it adopted at the same moment. It changes nothing
-when the file already holds an exclusion for the pull request, in any letter
-case. `restore` removes every `!` line for the pull request, and only those,
-by writing the file anew and renaming it into place. It leaves a plain
-`owner/repo#number` line alone, so the pull request returns to the loop when
-the file names it.
+Each command matches the reference without regard to case.
 
-Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
-and, with exit code 66, a tracked file that does not exist. With `--json`,
-each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
-with the `pr` and the `tracked` file.
+`add` and `drop` append their line rather than rewriting the file, because a
+watcher may be appending a pull request it adopted at the same moment. `add`
+creates the tracked file and any missing directory above it, so a loop
+builds its set from nothing by adding each pull request. It changes nothing
+when the file already lists the pull request. It refuses, with exit code 65,
+a pull request the file drops, because the `!` line would keep that pull
+request out all the same; run `project loop restore` first to let it back
+in. `drop` changes nothing when the file already holds an exclusion for the
+pull request.
+
+`restore` removes every `!` line for the pull request, and only those, by
+writing the file anew and renaming it into place. It leaves a plain
+`owner/repo#number` line alone, so the pull request returns to the loop when
+the file lists it.
+
+`remove` removes every plain line for the pull request by the same rewrite,
+and changes nothing when the file does not list it. A loop runs it when a
+pull request merges or closes. It leaves the pull request's `!` lines alone,
+so a pull request you dropped stays out even if it reopens and a review loop
+would otherwise adopt it again.
+
+Each command refuses, with exit code 65, a reference that is not
+`owner/repo#number`. `drop`, `restore`, and `remove` refuse, with exit code
+66, a tracked file that does not exist. With `--json`, each prints its
+`action`, which is `added`, `dropped`, `restored`, `removed`, or
+`unchanged`, with the `pr` and the `tracked` file.
 
 ## Consume JSON
 
@@ -1737,8 +1765,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
-| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops. |
+| `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox session's lock for five seconds; run the command again. |

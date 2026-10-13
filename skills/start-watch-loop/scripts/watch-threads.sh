@@ -42,11 +42,11 @@
 # listed and nothing is discovered, so a pull request absent from it produces
 # no event however loud its threads are, and every event that does arrive is
 # the loop's to act on. The file is re-read every cycle: the loop adds a pull
-# request it opened or adopted by appending a line and drops a merged one by
-# deleting its line, without a restart. Every line is checked before the watch
-# starts, because a bad one would otherwise be a watch that starts cleanly and
-# never mentions the pull request it was meant for; a bad line that appears
-# later is announced once.
+# request it opened or adopted with `project loop add` and removes a merged
+# one with `project loop remove`, without a restart. Every line is checked before
+# the watch starts, because a bad one would otherwise be a watch that starts
+# cleanly and never mentions the pull request it was meant for; a bad line
+# that appears later is announced once.
 #
 # --renotify is how many seconds before a still-unresolved thread is announced
 # again. Set it high enough to be a reminder rather than a stream. Every line
@@ -277,7 +277,7 @@ EOF
       unsure=1
       err=$(cat "$STATE.err" 2>/dev/null)
       if not_found "$err"; then
-        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; fix the tracked file"
+        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; remove it from the tracked file"
         continue
       fi
       carried=$(awk -v s="$slug" -v p="$n" '$2==s && $3==p' "$STATE" 2>/dev/null || true)
