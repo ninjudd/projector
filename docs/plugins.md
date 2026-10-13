@@ -304,14 +304,16 @@ quotes a notice answers nothing. **dismiss** clears the notice once you have
 read it, and nothing goes back to the agent.
 
 A snoozed item leaves the band and the divider's counts at once. When its
-hour passes, it returns to the list, and the band appears if you hid it. To pick another time, or to wake an item now, run
+hour passes, it returns to the list, and the band appears if you hid it. To
+pick another time, or to wake an item now, run
 `project inbox snooze <reference> --for <minutes>` in a terminal. An item you
 answer or dismiss from a terminal while it is snoozed does not return.
 
 A resolved item stays in the list, dim, for a minute after it is delivered,
 and a dismissed one is struck through. A dismissed notice is delivered at
-once, since nothing goes back to the agent. A question's drawer still opens and marks the answer given with `✓`, and a dismissed notice's drawer
-keeps only **discuss**.
+once, since nothing goes back to the agent. A question's drawer still opens
+and marks the answer given with `✓`, and a dismissed notice's drawer keeps
+only **discuss**.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
