@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "name": "Band pull requests by author",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 298,
+  "title": "Group the band's pull requests by author, and put discuss last in the drawer",
+  "head": "92918f8e79b54d45bc67cb2d572d349ae9968b80",
+  "headRef": "band-pr-author",
+  "base": "07c79766357dacc1d1e550a7b4f081adbc9a9bee",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>band</b> is the strip Claude Code draws above the prompt. It lists the pull requests your review and fix loops track, one line each, and opens a <b>drawer</b> of details under a line when you click its number.",
+   "Before this change the band listed pull requests in the order the loops tracked them, so your own work and the pull requests you review for other people were mixed together, and you saw who wrote one only by opening its drawer. Now the band lists your own pull requests first, then everyone else's, each author's together and the authors in order of login. Another person's line names its author before the title. The drawer stops naming the author and moves its <b>discuss</b> button below the <b>github</b> and <b>projector</b> links.",
+   "To tell which pull requests are yours, the band needs the login of the account its <code>gh</code> is signed in as. It asks for it as <code>viewer { login }</code> inside the GraphQL query it already sends for the pull requests, so a load still makes one <code>gh</code> call."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>viewer</b>: GitHub's name for the account a GraphQL query runs as, here the account <code>gh</code> is signed in as.</li><li><b>snapshot</b>: the band's saved state, the rows it draws plus when it last loaded, kept across plugin reloads.</li><li><b>own</b>: a pull request whose author is the viewer.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review found that a test comment in <code>hooks/band.test.tsx</code> called <code>x/y#7</code> another person's pull request, though its author is the viewer. Commit <code>92918f8</code> rewords it, and the thread is resolved.</li><li>The hook tests, the Python suite, <code>project check</code>, and both plugin validations pass.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "viewer",
+   "title": "Asking GitHub who you are",
+   "kicker": "The query, its parser, and the snapshot carry the signed-in login",
+   "intro": [
+    "The band loads every tracked pull request in one GraphQL query. This group adds <code>viewer { login }</code> to the front of that query, reads the login back from the response, and stores it in the snapshot beside the rows, so the drawing code can compare each pull request's author with it.",
+    "When a load fails, GitHub says nothing about the viewer, so the parser returns <code>null</code> and the band keeps the login it saved last time. A snapshot written by an earlier version of the plugin has no <code>viewer</code> field, and <code>current</code> reads it as <code>null</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>viewer</code> to <code>Snapshot</code>."
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "<code>buildQuery</code> asks for <code>viewer { login }</code>, and <code>parseResponse</code> returns it as <code>Fetched.viewer</code>, or <code>null</code> on every failure path.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every return of <code>parseResponse</code> sets <code>viewer</code>; <code>hooks/parse.test.ts</code> checks the success, offline, and bad-credentials cases, and passed at this head.",
+       "line": 145
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.test.ts"
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "Drawing the band by author",
+   "kicker": "The order of the lines, the author column, and the drawer's new layout",
+   "intro": [
+    "<code>load</code> saves the viewer with the rows. At draw time, <code>byAuthor</code> puts your own pull requests first, in the order the loops track them, then sorts everyone else's by lowercased login. JavaScript's sort is stable, so each author's pull requests keep their tracked order.",
+    "Another person's line gets an author column after <code>draft</code> or <code>ready</code>, as wide as the longest login among those lines, so their titles start in one column. Your own lines have no author column at all. The drawer's facts drop the <code>by &lt;author&gt;</code> part, and the row with <b>discuss</b> moves below the links so later actions can join it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Until the band has a viewer, such as after a failed first load, no pull request counts as yours, so every line shows its author. The next successful load fixes that."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Stores the viewer in <code>load</code>, adds <code>isOwn</code> and <code>byAuthor</code>, draws the author column, and reorders the drawer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "A failed poll, or one with nothing tracked, returns a <code>null</code> viewer, and this line keeps the last one. Traced through <code>fetchPrs</code> and <code>parseResponse</code>.",
+       "line": 209
+      },
+      {
+       "kind": "context",
+       "text": "Logins are compared lowercased for the sort only; <code>isOwn</code> compares them exactly, which is safe because both come from the same GitHub response.",
+       "line": 557
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "A new test tracks your pull requests and two other authors' and checks the order, the author column's width and color, and that one <code>gh</code> call carries the viewer. The drawer test checks the new order of its lines.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "This comment now says only that the drawer's facts name no author, which matches <code>factsOf</code> and the <code>/\\bby\\b/</code> assertion below it; the test passes at this head.",
+       "line": 220
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The band's user guide and the inbox plan's § 10",
+   "intro": [
+    "<code>docs/plugins.md</code> shows another person's line with its author in the band example, draws the drawer in its new order, and splits the paragraph on a line into three: what a line holds, the order of the lines, and the divider. The inbox plan's § 10 records both changes with their reasons, files, and Do/Expect rows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The band example and the drawer's list of links and actions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each pull request line in the example is 80 columns and the divider is 84, which is 80 plus the engine's <code>[-]</code>, matching how <code>register.tsx</code> sizes the divider.",
+       "line": 188
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "§ 10 gains the author grouping and the discuss-last drawer; the plan stays <code>in-progress</code>."
+    }
+   ]
+  }
+ ]
+}
