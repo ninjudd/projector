@@ -1,0 +1,94 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index ee19bfe..125f3ad 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -183,6 +183,7 @@ session starts a loop's watcher for the first time.
+ 
+ ```text
+ ───────────────────────────────────────────────── updated 12s ago [-]
++
+ #267 draft List a loop's open pull requests above the Claude Code prompt
+ #258 draft Name the reviewed head in a review's signature line  conflict
+            reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
+@@ -195,7 +196,8 @@ unresolved review threads. A pull request that both a `start-fix-loop`
+ watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
+ `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
+ terminal. The divider says how long ago the band reloaded, and Claude Code's
+-`[-]` at its end collapses the band.
++`[-]` at its end collapses the band. A blank line sets the divider apart from
++the rows under it.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer says
+@@ -242,6 +244,7 @@ questions still open.
+ 
+ ```text
+ ──────────────────────────────────────── 2 questions · updated 12s ago [-]
++
+ #337 draft Retry failed webhook deliveries with backoff
+ 
+ - Run project init to add the publish rule?                             2m
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 18298ba..b83385f 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -155,6 +155,7 @@ first:
+ 
+ ```text
+ ──────────────────────────── 1 question · 1 notice · updated 12s ago [-]
++
+ #337 draft Retry failed webhook deliveries with backoff
+ 
+ - Decline the finding about the retry budget?                     #337  5m
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index 7a35646..f0974e5 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -233,6 +233,7 @@ too, which reaches the same store.
+ 
+ ```text
+ ──────────────────────────────────────── 2 questions · updated 12s ago [-]
++
+ #337 draft Retry failed webhook deliveries with backoff
+ #258 ready Name the reviewed head in a review's signature line
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index e38b65c..aa16168 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -161,6 +161,9 @@ test('draws one line per open pull request of the session’s own loops', async
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
++  // A blank line sets the divider apart from the rows under it.
++  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
+   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index fff43b1..69d9fb6 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -704,6 +704,7 @@ export const register: Register = on => {
+       return (
+         <Box flexDirection="column">
+           {divider}
++          <Text key="under-divider"> </Text>
+           <Box flexDirection="row" columnGap={1}>
+             <Text dimColor wrap="truncate-end">
+               {shown.fetchedAt === null && failure === undefined
+@@ -929,10 +930,12 @@ export const register: Register = on => {
+       return <Box flexDirection="column">{drawQuestion(focused)}</Box>
+     }
+ 
+-    // Otherwise the pull requests come first, then a blank line, then the questions.
++    // Otherwise the divider and a blank line come first, then the pull requests,
++    // another blank line, and the questions.
+     return (
+       <Box flexDirection="column">
+         {divider}
++        <Text key="under-divider"> </Text>
+         {shown.rows.map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
+         {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}

@@ -1,0 +1,86 @@
+{
+ "version": 1,
+ "name": "Band divider spacing",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 283,
+  "title": "Set the band's divider apart with a blank line",
+  "head": "fcd12ab66519a26b36086f173d95c64df5964bfc",
+  "headRef": "band-divider-space",
+  "base": "fbd85ebb9c211edc1f87075d902244108543b11f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Claude Code plugin draws a <b>band</b> above the prompt: a list of the open pull requests that the session's review and fix loops track, one line each, with any open questions from those loops below them. The band's first row is a <b>divider</b>, a dimmed line of <code>─</code> characters that ends with the question count and how long ago the band reloaded, such as <code>updated 12s ago</code>.",
+   "Before this change the first pull request sat directly under the divider, so the divider's text ran into the rows. The band now draws a blank line under the divider, both when it lists pull requests or questions and when it has nothing to list. When you open a question's drawer, the question still has the band to itself, with no divider and no blank line above it.",
+   "The documentation's examples of the band show the new blank line, and a test checks for it."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "A blank line under the divider",
+   "kicker": "The band's render adds one blank row after its divider",
+   "intro": [
+    "The band renders in the <code>ui.render</code> handler for the <code>AbovePrompt</code> component in <code>hooks/register.tsx</code>. The handler returns one of three layouts. Each layout is a column of rows, and a <code>Text</code> that holds one space is how the file draws a blank row.",
+    "<ul><li><b>Nothing to list.</b> The divider, then a status message such as <code>Looking for pull requests…</code>. This layout gains the blank line.</li><li><b>A question's drawer is open.</b> Only the question and its drawer. This layout returns before the divider is drawn, so it is unchanged.</li><li><b>Pull requests, questions, or both.</b> The divider, the pull request rows, then a blank line and the questions when both are present. This layout gains the blank line under the divider.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The new assertion fails without the change. With the base <code>hooks/register.tsx</code> restored, <code>claude plugin test .</code> fails <code>draws one line per open pull request of the session’s own loops</code>. At this head all 52 tests pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the blank row under the divider in the empty layout and in the main layout, and rewrites the comment above the main layout.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 933,
+       "text": "This comment lists the rows in the order the JSX below draws them. The comment above <code>focused</code>, a few lines up and outside this diff, still says that stepping the divider aside gives a question's drawer one more row. With the blank line, the drawer now gains two rows. The review lists both comments as suggestions, not as findings."
+      },
+      {
+       "kind": "verify",
+       "line": 938,
+       "text": "With questions and no pull requests, the band draws the divider, this blank line, and then the questions. The <code>before-questions</code> blank line needs both rows and questions, so no second blank line appears. Checked by reading the conditions."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Checks that the row after the divider is a blank <code>Text</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Band examples in the documentation",
+   "kicker": "Every drawing of the band shows the blank line",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the band for users, and the <code>questions</code> and <code>inbox</code> plans draw it in their designs. Each example now has a blank line under the divider, and <code>docs/plugins.md</code> says that the blank line sets the divider apart from the rows."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A search of the Markdown files for the divider's <code>updated … ago</code> text finds these four examples of the band and no other, and each shows the blank line. The <code>questions</code> plan stays <code>in-progress</code> and the <code>inbox</code> plan stays <code>ready</code>. Only their examples change."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/questions/readme.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md"
+    }
+   ]
+  }
+ ]
+}
