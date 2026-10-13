@@ -3,7 +3,6 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   ASK_DESCRIPTION,
-  answersIn,
   askArguments,
   forMainLoop,
   isShownAt,
@@ -11,7 +10,10 @@ import {
   needsDelivery,
   proposalOf,
   quoteOf,
+  readPrompt,
   relayNote,
+  replyNote,
+  reviseArguments,
   signatureOf,
   span,
   storeOf,
@@ -19,8 +21,9 @@ import {
   typedLetter,
   withdrawArguments,
   wokeBetween,
+  type Proposal,
 } from './inbox'
-import type { Notice, Question } from './types'
+import type { Item, Notice, Question } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -52,12 +55,27 @@ const notice = (fields: Partial<Notice> = {}): Notice => ({
 const agent = (status: AgentInfo['status']): AgentInfo =>
   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
 
+/** An answer a drawer put in the prompt under the question `question()` asks. */
+const pick = (ref: string, answer: string, fields: Partial<Proposal> = {}): Proposal => ({
+  ref,
+  quote: '"Decline the finding?"',
+  answer,
+  ...fields,
+})
+
+const answersIn = (text: string, items: readonly Item[], proposed: readonly Proposal[] = []) =>
+  readPrompt(text, items, proposed).answers
+
+const repliesIn = (text: string, items: readonly Item[]) => readPrompt(text, items).replies
+
 const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, size: 10, mtimeMs, isLink: false })
 
-test('the ask tool tells the agent that a question’s number names its answer', () => {
-  expect(ASK_DESCRIPTION).toMatch(
-    /The call returns the question’s number, such as 3, and the answer arrives later as a message that starts `ANSWER 3\.<letter>` or `DISMISSED 3`\.$/,
+test('the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt', () => {
+  expect(ASK_DESCRIPTION).toContain(
+    'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   )
+  expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question, and the question stays open')
+  expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
 })
 
 test('letters run from the recommendation to the typed answer', () => {
@@ -69,21 +87,60 @@ test('the prompt carries a question in quotes, and an answer on a line of its ow
   expect(proposalOf(question(), 'Add a budget')).toBe('"Decline the finding?"\n\nAdd a budget')
 })
 
-test('a sent prompt answers each question whose quote ends its line', () => {
+test('a sent prompt answers each question whose quote an option follows', () => {
   const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
   expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
-  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
+  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nRebase', open)).toEqual([
     { question: open[0], letter: 'a' },
-    { question: open[1], letter: 'c', text: 'keep it' },
+    { question: open[1], letter: 'b' },
   ])
-  // Spaces or tabs after the quote still end its line.
+  // Spaces, tabs, and blank lines around the quote and the option change nothing.
   expect(answersIn('"Decline the finding?" \nAdd a budget', open)).toEqual([{ question: open[0], letter: 'b' }])
-  expect(answersIn('"Rebase first?"\t\n\nkeep it', open)).toEqual([{ question: open[1], letter: 'c', text: 'keep it' }])
-  // Discussing a question, or leaving its answer empty, answers nothing.
-  expect(answersIn('"Decline the finding?" what does the cap cover?', open)).toEqual([])
+  expect(answersIn('"Rebase first?"\t\n\n\n  Rebase \t\n\n', open)).toEqual([{ question: open[1], letter: 'b' }])
+  // A quoted notice ends the text that answers the question above it.
+  const told = notice({ ref: '3', number: 3 })
+  expect(answersIn(`"Decline the finding?"\n\nDecline it\n"${told.subject}"\n\nThanks`, [...open, told])).toEqual([
+    { question: open[0], letter: 'a' },
+  ])
+  // Leaving the answer empty answers nothing.
   expect(answersIn('"Decline the finding?"\n\n', open)).toEqual([])
   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
   expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
+})
+
+test('anything after a quoted question but one of its options replies to it without answering', () => {
+  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+  const replies = [
+    // Free text, as discuss leaves room for.
+    '"Rebase first?"\t\n\nkeep it',
+    // An option with more text after it, on its line or on the next.
+    '"Decline the finding?"\n\nAdd a budget of two per host',
+    '"Decline the finding?"\n\nAdd a budget\n\nand log each retry',
+    // A question back, under the quote or on its line.
+    '"Decline the finding?"\n\nWhat does the cap cover?',
+    '"Decline the finding?" what does the cap cover?',
+    // Another question's option.
+    '"Rebase first?"\n\nDecline it',
+  ]
+  for (const text of replies) {
+    expect(answersIn(text, open)).toEqual([])
+    expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(quoteOf(one))))
+  }
+  const text = '"Decline the finding?"\n\nDecline it\n"Rebase first?"\n\nwhy rebase?'
+  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], replies: [open[1]] })
+  // A notice or a resolved question takes no reply.
+  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+  expect(repliesIn(`"${notice().subject}"\n\nThanks`, [notice()])).toEqual([])
+  expect(repliesIn('"Decline the finding?"\n\nwhy?', [answered])).toEqual([])
+})
+
+test('a quote two questions share goes to the oldest that offers the option it is followed by', () => {
+  const older = question({ postedAt: NOW - 120_000, choices: ['Decline it', 'Add a budget'] })
+  const newer = question({ ref: '2', number: 2, choices: ['Decline it', 'Add a budget per host'] })
+  expect(answersIn('"Decline the finding?"\n\nAdd a budget per host', [older, newer])).toEqual([
+    { question: newer, letter: 'b' },
+  ])
+  expect(answersIn('"Decline the finding?"\n\nDecline it', [older, newer])).toEqual([{ question: older, letter: 'a' }])
 })
 
 test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
@@ -92,19 +149,19 @@ test('a quote two questions share answers one: the one whose drawer put that ans
   const budget = '"Decline the finding?"\n\nAdd a budget'
   const decline = '"Decline the finding?"\n\nDecline it'
   expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
-  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Add a budget' }])).toEqual([
+  expect(answersIn(budget, [newer, older], [pick('2', 'Add a budget')])).toEqual([
     { question: newer, letter: 'b' },
   ])
   // A proposal whose answer the prompt no longer holds, as when you cleared it, decides nothing.
   const both = [
-    { ref: '2', answer: 'Decline it' },
-    { ref: '1', answer: 'Add a budget' },
+    pick('2', 'Decline it'),
+    pick('1', 'Add a budget'),
   ]
   expect(answersIn(budget, [newer, older], both)).toEqual([{ question: older, letter: 'b' }])
-  expect(answersIn(decline, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
+  expect(answersIn(decline, [newer, older], [pick('2', 'Decline it')])).toEqual([
     { question: newer, letter: 'a' },
   ])
-  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
+  expect(answersIn(budget, [newer, older], [pick('2', 'Decline it')])).toEqual([
     { question: older, letter: 'b' },
   ])
   // Quoted twice, each quote answers its own question, in the order the quotes appear.
@@ -114,12 +171,113 @@ test('a quote two questions share answers one: the one whose drawer put that ans
   ])
 })
 
-test('the note beside an answer names the subagent that asked', () => {
+test('a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it', () => {
+  const first = question({ postedAt: NOW - 120_000, agentId: 'agent-a', subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const second = question({ ref: '2', number: 2, agentId: 'agent-b', subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const both = [first, second]
+  const merge = (ref: string, answer: string): Proposal => ({ ref, quote: '"Merge it?"', answer })
+  // You pick No in the second question's drawer: it answers the second, and says nothing to the first.
+  expect(readPrompt('"Merge it?"\n\nNo\n', both, [merge('2', 'No')])).toEqual({
+    answers: [{ question: second, letter: 'b' }],
+    replies: [],
+  })
+  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], replies: [] })
+  // A reply goes to the question whose drawer put the quote there, by discuss or by a pick you added to, else the oldest.
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], replies: [second] })
+  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], replies: [second] })
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], replies: [first] })
+  // An option typed under discuss answers the question you discussed.
+  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', '')])).toEqual({
+    answers: [{ question: second, letter: 'a' }],
+    replies: [],
+  })
+  // The drawer you acted in last wins: a pick in the second, then a discuss in the first.
+  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', 'Yes'), merge('1', '')])).toEqual({
+    answers: [{ question: first, letter: 'a' }],
+    replies: [],
+  })
+  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('1', ''), merge('2', 'Yes')])).toEqual({
+    answers: [{ question: second, letter: 'a' }],
+    replies: [],
+  })
+  // Quoted twice, each quote speaks to its own question.
+  expect(readPrompt('"Merge it?"\n\nYes\n"Merge it?"\n\nwhy now?', both)).toEqual({
+    answers: [{ question: first, letter: 'a' }],
+    replies: [second],
+  })
+})
+
+test('a pick made before its question was revised answers no question, and replies to the revised one', () => {
+  const older = question({ postedAt: NOW - 120_000 })
+  const revised = question({ ref: '2', number: 2, detail: 'The cap is three.' })
+  const stale = [pick('2', 'Decline it', { isStale: true })]
+  const decline = '"Decline the finding?"\n\nDecline it\n'
+  // The older question shares the text and offers the option, and still does not take the pick.
+  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], replies: [revised] })
+  // Revised to new words, the question is still the one the pick replies to.
+  const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
+  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], replies: [reworded] })
+  // Text the stale pick does not hold answers as before.
+  expect(readPrompt('"Decline the finding?"\n\nAdd a budget\n', [older, revised], stale)).toEqual({
+    answers: [{ question: older, letter: 'b' }],
+    replies: [],
+  })
+  // A pick from the revised question's new drawer answers it.
+  expect(readPrompt(decline, [older, revised], [pick('2', 'Decline it')])).toEqual({
+    answers: [{ question: revised, letter: 'a' }],
+    replies: [],
+  })
+})
+
+test('an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one', () => {
+  const older = question({ postedAt: NOW - 120_000 })
+  const revised = question({ ref: '2', number: 2, detail: 'The cap is three.' })
+  const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
+  const discussed = [pick('2', '', { isStale: true })]
+  const decline = '"Decline the finding?"\n\nDecline it\n'
+  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], replies: [revised] })
+  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], replies: [reworded] })
+  // A pick you then make in the older question's drawer still answers it.
+  const both = [...discussed, pick('1', 'Decline it')]
+  expect(readPrompt(`"Decline the finding?"\n\nwhy?\n${decline}`, [older, revised], both)).toEqual({
+    answers: [{ question: older, letter: 'a' }],
+    replies: [revised],
+  })
+  // Discussed again in the revised drawer, the quote answers the revised question.
+  expect(readPrompt(decline, [older, revised], [pick('2', '')])).toEqual({
+    answers: [{ question: revised, letter: 'a' }],
+    replies: [],
+  })
+})
+
+test('a quote a drawer put in the prompt for a question resolved before you send speaks to no question', () => {
+  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
+  const open = question({ ...merge, postedAt: NOW - 120_000 })
+  const dismissed = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, answeredAt: NOW } })
+  const withdrawn = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, withdrawn: true, answeredAt: NOW } })
+  const drawer = (answer: string, isStale: boolean): Proposal => ({ ref: '2', quote: '"Merge it?"', answer, isStale })
+  const picks = [drawer('Yes', true), drawer('Yes', false), drawer('', true), drawer('', false)]
+  for (const resolved of [[dismissed], [withdrawn], []]) {
+    for (const proposal of picks) {
+      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], replies: [] })
+    }
+  }
+  // A quote no drawer put there still answers the open question.
+  expect(readPrompt('"Merge it?"\n\nYes\n', [open, dismissed])).toEqual({
+    answers: [{ question: open, letter: 'a' }],
+    replies: [],
+  })
+})
+
+test('the note beside an answer or a reply names the subagent that asked', () => {
   const asked = question({ agentId: 'agent-1' })
   expect(relayNote(asked, [agent('completed')])).toBe(
     'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.',
   )
   expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
+  expect(replyNote(asked, [agent('running')])).toBe(
+    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+  )
 })
 
 test('a delivered question leaves the band after 30 seconds', () => {
@@ -142,6 +300,44 @@ test('a call of the withdraw tool becomes `project inbox withdraw`, and only a w
   for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
     expect(withdrawArguments({ number }, 's1')).toEqual(refusal)
   }
+})
+
+test('a call of the revise tool becomes `project inbox revise` with only what changes, text kept as text', () => {
+  expect(
+    reviseArguments(
+      { number: 3, question: '-Decline it?', recommendation: '--yes', options: ['no', 'later'], detail: '' },
+      's1',
+    ),
+  ).toEqual([
+    'inbox',
+    'revise',
+    '3',
+    '--session',
+    's1',
+    '--question=-Decline it?',
+    '--recommend=--yes',
+    '--option=no',
+    '--option=later',
+    '--detail=',
+    '--json',
+  ])
+  expect(reviseArguments({ number: 3, options: [] }, 's1')).toEqual([
+    'inbox',
+    'revise',
+    '3',
+    '--session',
+    's1',
+    '--no-options',
+    '--json',
+  ])
+  expect(reviseArguments({ number: 3 }, 's1')).toEqual({
+    error: 'give what changes: `question`, `detail`, `recommendation`, or `options`',
+  })
+  expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
+    error: '`number` must be the whole number `ask` returned, such as 3',
+  })
+  expect(reviseArguments({ number: 3, options: 'no' }, 's1')).toEqual({ error: '`options` must be a list of strings' })
+  expect(reviseArguments({ number: 3, question: 7 }, 's1')).toEqual({ error: '`question` must be a string' })
 })
 
 test('an answer waits for a deliverer until a live claim holds it', () => {

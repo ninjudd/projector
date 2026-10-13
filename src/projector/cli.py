@@ -737,6 +737,18 @@ def add_inbox_parser(subcommands) -> None:
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
 
+    revise = command("revise", "replace an open question's text, keeping its number")
+    revise.add_argument("reference", help="the question's number, such as 3")
+    revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
+    revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
+    options = revise.add_mutually_exclusive_group()
+    options.add_argument("--option", action="append",
+                         help="another answer; repeat for each, up to five, to replace every option but answer a")
+    options.add_argument("--no-options", action="store_true", help="drop every option but answer a")
+    detail = revise.add_mutually_exclusive_group()
+    detail.add_argument("--detail", help="the new detail, as Markdown; an empty one clears it")
+    detail.add_argument("--detail-file", type=Path, help="read the new detail from this file")
+
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
@@ -1326,6 +1338,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
+    elif command == "revise":
+        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+        options = [] if arguments.no_options else arguments.option
+        item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
+                            recommend=arguments.recommend, options=options)
+        print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
