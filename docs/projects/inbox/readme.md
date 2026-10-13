@@ -922,10 +922,12 @@ project stayed `in-progress` until the check that § 12 records.
 ## 12. Outcome
 
 The project shipped, in releases 0.7.15 through 0.7.18 and in #303, which
-is on `main` for the next release. An agent posts a question or a notice
-with `project inbox ask` or `project inbox tell`, or with the `ask` and
-`tell` tools in Claude Code. Projector's band lists both kinds, and each
-item's drawer lets you discuss, dismiss, or snooze it. The owner checked
+is on `main` for the next release. #319 followed on `main`, and § 13
+records it: a reply leaves a question open, and the question's agent can
+revise it. An agent posts a question or a notice with `project inbox ask`
+or `project inbox tell`, or with the `ask` and `tell` tools in Claude
+Code. Projector's band lists both kinds, and each item's drawer lets you
+discuss, dismiss, or snooze it. The owner checked
 the main-screen row of § 4 by hand under tmux. That row was the last
 criterion without evidence and the check that § 6, § 9, and § 11.10 made
 the gate for completion, and it also closes the main-screen row that the
@@ -947,18 +949,28 @@ the look of notices and snoozing that stands at this check is the design.
 | 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
 | On `main`, after 0.7.18 | #303 | More band changes of § 10: a pull request's drawer starts under its state, open review threads show as a yellow `⋮` count beside the age, and a sent reply that quotes a notice closes the notice's drawer |
 
+#319 followed #303 on `main`, and § 13 records it. Only picking an option
+answers a question. Anything else you send under a quoted question is a
+reply, which leaves the question open, and the question's agent withdraws
+it, revises it with `project inbox revise` or the `revise` tool, or leaves
+it open.
+
 ### 12.2 How the result differs from § 2
 
-§ 9, § 10, and § 11 record each deviation and its reason. These change how
-you use the inbox:
+§ 9, § 10, § 11, and § 13 record each deviation and its reason. These
+change how you use the inbox:
 
-- **You answer in the prompt.** **discuss** puts the quoted subject and a
-  blank line in the prompt, and the first line you type under a quoted
-  question is your answer. A question's drawer has no `Type something`
-  field (§ 10).
-- **Sending an answer closes its drawer.** A sent reply that quotes a
-  notice closes the notice's drawer too. A resolved line stays 30 seconds,
-  not a minute (§ 10).
+- **Only an option answers, and a reply leaves a question open.** A
+  question's drawer has no `Type something` field (§ 10). Pressing an
+  option puts the quoted question and that option in the prompt, and
+  sending it answers the question. Anything else you send under a quoted
+  question, such as what you type under the quote that **discuss** puts
+  there, is a reply: the question stays open, and its agent withdraws it,
+  revises it, or leaves it open for you to answer (§ 13).
+- **A sent prompt closes the drawers it speaks to.** Sending an answer or
+  a reply closes that question's drawer, and a reply that quotes a notice
+  closes the notice's drawer. A resolved line stays 30 seconds, not a
+  minute (§ 10, § 13).
 - **Items take numbers, not references.** Each session numbers its items
   `1`, `2`, `3` across both kinds and every pull request. `project inbox
   context` and the band's reading of references in a prompt are gone, and
@@ -1000,8 +1012,9 @@ unless the row names another file.
 | § 4, § 10: a sent prompt that quotes a notice answers nothing, and since #303 closes the notice's drawer and leaves the notice listed | `a sent prompt that quotes a notice answers nothing, and closes its drawer`, `a sent prompt answers snoozed questions and never a notice` |
 | § 4: the band with no items | `an idle session with no questions starts no project process` |
 | § 4: the main screen under tmux | Checked by hand by the owner |
-| § 10: a question's drawer, **discuss**, a typed answer, an option's text, text on the quote's own line, and the drawer that closes on send | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it` |
-| § 10: a quote followed by spaces or tabs | `a sent prompt answers each question whose quote ends its line` |
+| § 10: a question's drawer, **discuss**, an option's text, text on the quote's own line, and the drawer that closes on send | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it` |
+| § 10: a typed answer under the quote | Superseded: § 13 makes it a reply that leaves the question open, and § 13.4 gives the evidence |
+| § 10: a quote followed by spaces or tabs | `a sent prompt answers each question whose quote an option follows` in `hooks/inbox.test.ts` |
 | § 10: a resolved line stays 30 seconds | `a delivered question leaves the band after 30 seconds`, and the test of a notice's drawer above |
 | § 10: `/projector`, and a loop that another session runs | `` `/projector` only shows or hides the band, whatever follows it ``, `draws one line per open pull request of the session’s own loops` |
 | § 10: a pull request's age, in the column the items' ages share | `ends each pull request’s line with its age, in one column as wide as the widest`, `a pull request’s age and an item’s age end in one column` |
@@ -1041,13 +1054,14 @@ and owner:
   pile up.
 - **Removing old `projector/questions/` directories.** Deferred, since no
   one but the owner used `project question`.
-- **Revising an open item in place.** Deferred by the owner until revising
-  proves common.
 - **Finding items across sessions.** `project inbox list --pr` is deferred
   until a view needs it.
 
-Answering only under the band's own proposals was considered and set
-aside (§ 7), so it is a rejected design rather than deferred work.
+Revising an open item in place is not among them. § 7 deferred it until
+revising proved common, and § 13 (#319) took it up later for questions.
+§ 13 also replaces the rule § 7 set aside, answering only under the band's
+own proposals, with a different one: only an option's text answers a
+question.
 
 ## 13. A reply leaves a question open
 
