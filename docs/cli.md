@@ -370,6 +370,11 @@ project owner payments --clear
 and `--clear` removes the line. It refuses a value that would not read back
 unchanged, such as one with a leading `@`, a `: `, or a ` #`, with exit code 2.
 
+An `owner:` line with an empty value, such as `owner:` or `owner: ""`, names
+no one, so Projector reads the plan as having no owner: `check` accepts it,
+`list --owner` never selects it, `owner` fills in the value on that line, and
+`--clear` removes the line.
+
 `priority` adds the field when a plan has none, which happens only for a
 completed project being rescheduled. Set the priority first in that case:
 `status` refuses to move a completed plan to another status while it has no
@@ -390,7 +395,7 @@ Project plans are valid.
 ```
 
 The command reports malformed frontmatter, invalid statuses, invalid or
-missing priorities, an empty or multi-line owner, missing top-level
+missing priorities, a multi-line owner, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
