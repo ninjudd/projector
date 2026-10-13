@@ -1,0 +1,197 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 99ecafaa..e2d956a4 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -322,12 +322,12 @@ and in a terminal the divider counts the open questions and the open notices.
+ Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press Enter on it from the keyboard instead. While
+ its drawer is open, the item stays highlighted and has the band to itself,
+-so the item is the top row. In a terminal, the divider and the blank line
+-under it step aside too, which gives the drawer two more rows before the
+-band scrolls:
++so the item is the top row, and `0` before it closes the drawer. In a
++terminal, the divider and the blank line under it step aside too, which
++gives the drawer two more rows before the band scrolls:
+ 
+ ```text
+-- Decline the finding about the retry budget?                 #337  5m [-]
++0: - Decline the finding about the retry budget?              #337  5m [-]
+ 
+   The review asks for a retry budget per host. The loop caps retries at
+   three in total, which covers the case the finding names.
+@@ -504,6 +504,12 @@ that option in your prompt as a click does. A digit only fills the prompt,
+ so nothing reaches the agent until you send. A resolved question's options
+ have no digits.
+ 
++An open item's own line, at the top of its drawer, reads `0:` before it,
++for every item, open or resolved, question or notice. Press `0` the same
++two ways, while the band has the keyboard or first into an empty prompt,
++and the drawer closes, as a click or Enter on that line closes it. A pull
++request's drawer has no `0`, since its number closes it.
++
+ A drawer's actions follow its options, a line each, with the letter that
+ presses it before the label in the accent color, such as
+ `d: discuss question`. Each label ends with what the action acts on:
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 06b48543..ad6c71d3 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1649,3 +1649,49 @@ review threads as a count after `⋮`.
+ | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+ | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
+ | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
++
++## 17. Close an item's drawer on 0
++
++An open item's drawer gives the band to the item, its own line at the top,
++and that line closes the drawer. The line now takes the hotkey `0`, which
++the engine draws before it as `0: `. Pressing `0` closes the drawer as a
++click or Enter on the line does, so the keyboard can close a drawer from
++anywhere in it, not only with the ring on its line.
++
++### 17.1 What changes
++
++- **An open item's line takes `0`.** Every inbox item's drawer gets it:
++  an open or resolved question, an open, dismissed, or snoozed notice,
++  and a snoozed question. The line is the `close:<number>` Button § 15
++  keys, so the hotkey is set only while the drawer is open; a closed
++  item's line in the list takes none.
++- **`0` works as the option digits do.** It presses the line while the
++  band holds the keyboard, and typed first into an empty prompt while the
++  drawer is open, as Claude Code takes a digit for a survey.
++- **Closing is unchanged.** The press runs the line's `toggle`, so it
++  closes the drawer and moves the focus ring exactly as a click or Enter
++  on the line does: the ring follows the line back into the list only when
++  it was on the line.
++- **A pull request's drawer takes no `0`.** Its number's Button opens and
++  closes it in place, and it never has the band to itself.
++
++### 17.2 Why this design
++
++- **`0`, not `/` or `.`.** The owner asked for `/` and then `.`, but a
++  Button's hotkey must be one digit or one lowercase letter, and the
++  engine refuses anything else. The options take `1` to `6`, so `0` is
++  free in every drawer, and it sits beside them on the keyboard.
++- **The line keeps its look.** The engine draws the `0` in its accent
++  color, `suggestion`, and the `: ` in the Button's own text color, before
++  the line's bullet and subject. Those keep their colors and stay
++  inverted while the drawer is open, so the line still reads as the open
++  item. An open question's line is drawn in `permission`, the same color
++  as `suggestion` in every built-in theme, so its `0` matches it.
++
++### 17.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| No line of the list and no pull request's drawer takes `0`; each open item's line takes it, open, answered, dismissed, or snoozed, and pressing it closes the drawer | `an open item’s line closes its drawer on 0, and no other line takes 0` in `hooks/band.test.tsx` |
++| The only digit in a resolved question's, a notice's, or a snoozing drawer is the line's `0` | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `snooze asks how long, and only a length it offers snoozes the item` |
++| `0` from an empty prompt and the line's look with the prefix | Checked by hand by the owner in a preview session |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 0cf43ffe..eea5964e 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1223,7 +1223,8 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
+   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
+   expect(await optionsOf(ui)).toEqual([])
+-  expect(await digitsOf(ui)).toEqual([])
++  // Only the line itself takes a digit, `0`, which closes the drawer.
++  expect(await digitsOf(ui)).toEqual(['close:1'])
+   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
+ 
+   await ui.press({ key: 'close:1' })
+@@ -2466,10 +2467,10 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+   const ui = await $.ui.mount(BAND)
+   const digits = () => digitsOf(ui)
+ 
+-  // A closed drawer leaves the digits to the prompt.
++  // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line.
+   expect(await digits()).toEqual([])
+   await ui.press({ key: 'item:2' })
+-  expect(await digits()).toEqual([])
++  expect(await digits()).toEqual(['close:2'])
+   await ui.press({ key: 'close:2' })
+ 
+   await ui.press({ key: 'item:1' })
+@@ -2488,10 +2489,47 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+   await clock.settle()
+   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
+ 
+-  // The answered question's drawer lists its options with no digits.
++  // The answered question's drawer lists its options with no digits; only its line takes `0`.
+   await ui.press({ key: 'item:1' })
+   expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
+-  expect(await digits()).toEqual([])
++  expect(await digits()).toEqual(['close:1'])
++  await ui.unmount()
++})
++
++test('an open item’s line closes its drawer on 0, and no other line takes 0', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
++  const snoozed = { snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }
++  questionWorld(on, clock, [
++    held(),
++    notice(),
++    held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 }),
++    notice({ ref: '4', number: 4, subject: 'Pushed a fix', answer: dismissed, deliveredAt: NOW - 1_000 }),
++    notice({ ref: '5', number: 5, subject: 'Merged #6', ...snoozed }),
++  ])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  const zeros = async () =>
++    (await ui.findAll({ type: 'Button' })).flatMap(button => (button.props.hotkey === '0' ? [button.key] : []))
++
++  // No line of the list takes `0`, nor a pull request's drawer.
++  expect(await zeros()).toEqual([])
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(await zeros()).toEqual([])
++  await ui.press({ key: 'pr:x/y#7' })
++
++  // Each open item's line takes `0`, whatever state the item is in, and pressing it closes the drawer.
++  for (const ref of ['1', '2', '3', '4', '5']) {
++    await ui.press({ key: `item:${ref}` })
++    const line = await ui.find({ type: 'Button', key: `close:${ref}` })
++    expect([line?.props.hotkey, line?.props.plain]).toEqual(['0', true])
++    expect(await zeros()).toEqual([`close:${ref}`])
++    await ui.press({ key: `close:${ref}` })
++    expect(await ui.find({ type: 'Button', key: `close:${ref}` })).toBeUndefined()
++    expect(await ui.find({ type: 'Button', key: `item:${ref}` })).toBeDefined()
++  }
+   await ui.unmount()
+ })
+ 
+@@ -2745,7 +2783,7 @@ test('snooze asks how long, and only a length it offers snoozes the item', async
+     'cancel:2 cancel',
+   ])
+   expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
+-  expect(await digitsOf(ui)).toEqual([])
++  expect(await digitsOf(ui)).toEqual(['close:2'])
+   expect(snoozes()).toEqual([])
+ 
+   // Cancel puts the actions back.
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index d4f94805..98e2a574 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1198,8 +1198,16 @@ export const register: Register = on => {
+                 opens its drawer: a click in fullscreen, Enter on the main
+                 screen. */}
+             <Box flexGrow={1} flexShrink={1}>
+-              {/* An open drawer keeps its item inverted, as the pointer draws it. */}
+-              <Button key={line} plain onPress={() => toggle(key, line, isOpened ? key : first)}>
++              {/* An open drawer keeps its item inverted, as the pointer draws it,
++                  and its line closes the drawer on `0`, a digit the options
++                  leave free, drawn before it as `0: `. Like the options' digits,
++                  it works from an empty prompt too. */}
++              <Button
++                key={line}
++                plain
++                hotkey={isOpened ? '0' : undefined}
++                onPress={() => toggle(key, line, isOpened ? key : first)}
++              >
+                 <Text color={color} inverse={isOpened}>
+                   -{' '}
+                 </Text>
