@@ -103,6 +103,8 @@ declare module 'claude-code' {
       bandInbox: Item[]
       /** The answers the band is delivering, by reference. */
       bandSending: Record<string, Sending>
+      /** What the band says when it has nothing to list: the model's quote, or null until it is asked. */
+      bandQuote: string | null
     }
   }
 }

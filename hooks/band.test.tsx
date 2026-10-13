@@ -1,4 +1,4 @@
-import type { AgentInfo, FsEntry, On } from 'claude-code'
+import type { AgentInfo, FsEntry, ModelCompleteResult, On } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 
 import type { Notice, Question } from './types'
@@ -109,14 +109,26 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
+const USAGE = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+const QUOTE = '“The unexamined life is not worth living.” — Socrates'
+
+/** GitHub's answer to a query, and the model's to a prompt, where a test needs others. */
+type Beneath = { github?: (query: string) => Ran; model?: () => ModelCompleteResult }
+
 function world(
   on: On,
   files: Record<string, string>,
   ps = PS,
   project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
+  { github = query => ran(answer(query)), model = () => ({ isAnswered: true, text: QUOTE, usage: USAGE }) }: Beneath = {},
 ) {
   const commands: string[][] = []
   const filled: string[] = []
+  const prompts: string[] = []
+  on('model.complete', ($, e) => {
+    prompts.push(e.prompt)
+    return { value: model() }
+  })
   on('fs.stat', ($, e) => ({
     value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false, realPath: e.path },
   }))
@@ -128,7 +140,7 @@ function world(
       const outcome = project([...e.argv], e.init?.stdin ?? '')
       return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
     }
-    return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
+    return { value: e.argv[0] === 'ps' ? ran(ps) : github(e.argv.join(' ')) }
   })
   on('prompt.fill', ($, e) => {
     filled.push(`${e.mode}:${e.text}`)
@@ -142,7 +154,7 @@ function world(
     const { Text } = $.ui.resolve(e)
     return <Text>{ENGINE_BAND}</Text>
   })
-  return { commands, filled }
+  return { commands, filled, prompts }
 }
 
 test('draws one line per open pull request of the session’s own loops', async ($, on) => {
@@ -327,25 +339,84 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await ui.unmount()
 })
 
-test('says so when no loop tracks an open pull request', async ($, on) => {
+test('shows a quote the model gives, dimmed and once a session, when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  world(on, {}, '')
+  const { prompts } = world(on, {}, '', undefined, {
+    model: () => ({ isAnswered: true, text: `  ${QUOTE.replace(' — ', '\n— ')}\n`, usage: USAGE }),
+  })
 
   await $.command.run(COMMAND)
   await clock.advance(1)
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[0]).toMatch(/No open pull requests/)
+  expect(texts[0]).toBe(QUOTE)
   expect(texts.filter(text => text.includes('─'))).toEqual([])
   await desktop.unmount()
+
+  // The band keeps its quote as it reloads.
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toMatch(/philosophical quote/)
+})
+
+test('says no pull request is tracked when the model gives no quote', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, { HOME })
+  world(on, {}, '', undefined, { model: () => ({ isAnswered: false, reason: 'empty-reply', usage: USAGE }) })
+
+  await $.command.run(COMMAND)
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(
+    (await ui.find({ type: 'Text', text: 'No open pull requests are being watched or reviewed.' }))?.props.dimColor,
+  ).toBe(true)
+  await ui.unmount()
+})
+
+test('says why GitHub failed only until the band first loads', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  let isDown = true
+  const down = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
+  world(on, { [REVIEW]: 'o/r#1\n' }, PS, undefined, { github: query => (isDown ? down : ran(answer(query))) })
+  // Hiding the band and showing it again loads it again.
+  const reload = async () => {
+    await $.command.run(COMMAND)
+    await $.command.run(COMMAND)
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
+
+  isDown = false
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+
+  // A later failure keeps what GitHub said last, and says nothing of it.
+  isDown = true
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^GitHub:/ })).toBeUndefined()
+  await ui.unmount()
 })
 
 const SESSION = 's1'

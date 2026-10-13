@@ -202,6 +202,14 @@ Claude Desktop, VS Code, and the mobile app do not set the band's text in a
 terminal's columns, so a rule sized to them would wrap, and there the band
 starts with its first row.
 
+When a poll cannot reach GitHub, the band keeps showing what GitHub said
+last, and the divider's time shows how old that is. It shows GitHub's error
+only while GitHub has not answered once. When your loops track no open pull
+request and your inbox is empty, the band shows a short philosophical quote,
+dimmed. It asks
+Claude's `haiku` model for the quote once a session, and says that no open
+pull requests are being watched or reviewed when the model gives none.
+
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says
 whether your loops are watching or reviewing the pull request, then its

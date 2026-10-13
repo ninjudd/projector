@@ -38,6 +38,10 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
+const NOTHING_TRACKED = 'No open pull requests are being watched or reviewed.'
+const QUOTE_PROMPT =
+  'Reply with one short philosophical quote that you are sure is attributed correctly, ' +
+  'as “Quote.” — Author, in at most 100 characters, and nothing else.'
 
 // Watching first: a pull request both loops track is listed once, where its
 // watch loop puts it.
@@ -56,6 +60,7 @@ const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false
 const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
 const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+const quote = atom({ plugin: 'projector', key: 'bandQuote' } as const, null)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -65,6 +70,7 @@ const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? valu
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 let envLoad: Promise<Env> | undefined
+let isQuoteAsked = false
 let inFlight: Promise<void> | undefined
 let isQueued = false
 let attemptedAt = 0
@@ -239,6 +245,21 @@ async function load($: Engine): Promise<void> {
     error: fetched.error,
   }))
   await update($, now, () => time)
+  if (rows.length === 0) void askForQuote($).catch(() => undefined)
+}
+
+/**
+ * Asks the model, once a session, for the quote a band with nothing to list
+ * shows, and settles on saying that nothing is tracked when it gives none.
+ */
+async function askForQuote($: Engine): Promise<void> {
+  if (isQuoteAsked || (await read($, quote)) !== null) return
+  isQuoteAsked = true
+  const reply = await $.model
+    .complete({ model: 'haiku', prompt: QUOTE_PROMPT, maxTokens: 100, timeoutMs: 15_000 })
+    .catch(() => undefined)
+  const said = reply?.isAnswered === true ? reply.text.trim().replace(/\s+/g, ' ') : ''
+  await update($, quote, () => (said === '' ? NOTHING_TRACKED : said))
 }
 
 /**
@@ -742,7 +763,11 @@ export const register: Register = on => {
       .filter(part => part !== undefined)
       .join(' · ')
     const updated = heading === '' ? '' : ` ${heading}`
-    const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
+    // Once GitHub has answered, the band keeps drawing what it last said through
+    // a failed poll, and the divider's time says how old that is, so only a
+    // band that has never loaded says why.
+    const failure = shown.error === null || shown.fetchedAt !== null ? undefined : `GitHub: ${shown.error}`
+    const said = await read($, quote)
     const toggle = (key: string) => {
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
     }
@@ -766,14 +791,11 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {divider}
-          <Box flexDirection="row" columnGap={1}>
-            <Text dimColor wrap="truncate-end">
-              {shown.fetchedAt === null && failure === undefined
-                ? 'Looking for pull requests…'
-                : 'No open pull requests are being watched or reviewed.'}
-            </Text>
-            {failure !== undefined && <Text color="error">{failure}</Text>}
-          </Box>
+          {failure !== undefined ? (
+            <Text color="error">{failure}</Text>
+          ) : (
+            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : (said ?? ' ')}</Text>
+          )}
         </Box>
       )
     }
